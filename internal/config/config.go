@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"sync"
 	"time"
@@ -84,26 +83,11 @@ func New(filePath string) *Config {
 			Username: DefaultWebUsername,
 			Password: DefaultWebPassword,
 		},
-		Audio: AudioConfig{
-			Input: defaultAudioInput(),
-		},
+		Audio: AudioConfig{},
 		SilenceDetection: SilenceDetectionConfig{},
 		Notifications:    NotificationsConfig{},
 		Outputs:          []types.Output{},
 		filePath:         filePath,
-	}
-}
-
-// defaultAudioInput returns the default audio input device for the current platform.
-func defaultAudioInput() string {
-	switch runtime.GOOS {
-	case "darwin":
-		return ":0"
-	case "windows":
-		// Empty triggers auto-detection of first available device at runtime.
-		return ""
-	default:
-		return "default:CARD=sndrpihifiberry"
 	}
 }
 
@@ -138,9 +122,6 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Web.Password == "" {
 		c.Web.Password = DefaultWebPassword
-	}
-	if c.Audio.Input == "" {
-		c.Audio.Input = defaultAudioInput()
 	}
 	if c.Outputs == nil {
 		c.Outputs = []types.Output{}

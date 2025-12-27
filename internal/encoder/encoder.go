@@ -132,6 +132,10 @@ func (e *Encoder) AllOutputStatuses() map[string]types.OutputStatus {
 
 // Start begins audio capture and all output processes.
 func (e *Encoder) Start() error {
+	if e.config.AudioInput() == "" {
+		return fmt.Errorf("no audio input configured")
+	}
+
 	e.mu.Lock()
 
 	if e.state == types.StateRunning || e.state == types.StateStarting {
