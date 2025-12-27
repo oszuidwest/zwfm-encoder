@@ -5,19 +5,13 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 	"github.com/wneessen/go-mail"
 )
 
-// EmailConfig contains SMTP server settings for email notifications.
-type EmailConfig struct {
-	Host       string
-	Port       int
-	FromName   string
-	Username   string
-	Password   string
-	Recipients string
-}
+// EmailConfig is an alias for types.EmailConfig for backward compatibility.
+type EmailConfig = types.EmailConfig
 
 // SendSilenceAlert sends an email notification for critical silence.
 func SendSilenceAlert(cfg *EmailConfig, duration, threshold float64) error {

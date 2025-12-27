@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"sync"
 	"time"
@@ -47,21 +46,11 @@ type SilenceDetectionConfig struct {
 	RecoverySeconds float64 `json:"recovery_seconds,omitempty"`
 }
 
-// EmailConfig contains email notification configuration.
-type EmailConfig struct {
-	Host       string `json:"host,omitempty"`
-	Port       int    `json:"port,omitempty"`
-	FromName   string `json:"from_name,omitempty"`
-	Username   string `json:"username,omitempty"`
-	Password   string `json:"password,omitempty"`
-	Recipients string `json:"recipients,omitempty"`
-}
-
 // NotificationsConfig contains all notification configuration.
 type NotificationsConfig struct {
-	WebhookURL string      `json:"webhook_url,omitempty"`
-	LogPath    string      `json:"log_path,omitempty"`
-	Email      EmailConfig `json:"email,omitempty"`
+	WebhookURL string            `json:"webhook_url,omitempty"`
+	LogPath    string            `json:"log_path,omitempty"`
+	Email      types.EmailConfig `json:"email,omitempty"`
 }
 
 // Config holds all application configuration. It is safe for concurrent use.
@@ -84,26 +73,11 @@ func New(filePath string) *Config {
 			Username: DefaultWebUsername,
 			Password: DefaultWebPassword,
 		},
-		Audio: AudioConfig{
-			Input: defaultAudioInput(),
-		},
+		Audio:            AudioConfig{},
 		SilenceDetection: SilenceDetectionConfig{},
 		Notifications:    NotificationsConfig{},
 		Outputs:          []types.Output{},
 		filePath:         filePath,
-	}
-}
-
-// defaultAudioInput returns the default audio input device for the current platform.
-func defaultAudioInput() string {
-	switch runtime.GOOS {
-	case "darwin":
-		return ":0"
-	case "windows":
-		// Empty triggers auto-detection of first available device at runtime.
-		return ""
-	default:
-		return "default:CARD=sndrpihifiberry"
 	}
 }
 
@@ -139,15 +113,12 @@ func (c *Config) applyDefaults() {
 	if c.Web.Password == "" {
 		c.Web.Password = DefaultWebPassword
 	}
-	if c.Audio.Input == "" {
-		c.Audio.Input = defaultAudioInput()
-	}
 	if c.Outputs == nil {
 		c.Outputs = []types.Output{}
 	}
 	for i := range c.Outputs {
 		if c.Outputs[i].Codec == "" {
-			c.Outputs[i].Codec = "mp3"
+			c.Outputs[i].Codec = types.DefaultCodec
 		}
 		if c.Outputs[i].CreatedAt == 0 {
 			c.Outputs[i].CreatedAt = time.Now().UnixMilli()
@@ -222,7 +193,7 @@ func (c *Config) AddOutput(output *types.Output) error {
 		output.ID = fmt.Sprintf("output-%d", len(c.Outputs)+1)
 	}
 	if output.Codec == "" {
-		output.Codec = "mp3"
+		output.Codec = types.DefaultCodec
 	}
 	output.CreatedAt = time.Now().UnixMilli()
 

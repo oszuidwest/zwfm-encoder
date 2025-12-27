@@ -112,6 +112,9 @@
                         <template x-if="devices.length === 0">
                             <option value="">No devices found</option>
                         </template>
+                        <template x-if="devices.length > 0 && !settings.audioInput">
+                            <option value="" disabled selected>Select audio input...</option>
+                        </template>
                         <template x-for="device in devices" :key="device.id">
                             <option :value="device.id" x-text="device.name"></option>
                         </template>

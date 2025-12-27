@@ -35,6 +35,7 @@ type WSCommand struct {
 // without depending on the concrete Encoder implementation.
 type EncoderController interface {
 	State() types.EncoderState
+	Start() error
 	StartOutput(outputID string) error
 	StopOutput(outputID string) error
 	Restart() error
@@ -112,7 +113,7 @@ func (h *CommandHandler) handleAddOutput(cmd WSCommand) {
 		output.StreamID = "studio"
 	}
 	if output.Codec == "" {
-		output.Codec = "mp3"
+		output.Codec = types.DefaultCodec
 	}
 	if err := h.cfg.AddOutput(&output); err != nil {
 		slog.Error("add_output: failed to add", "error", err)
@@ -172,6 +173,27 @@ func updateStringSetting(value *string, name string, setter func(string) error) 
 	}
 }
 
+// handleAudioInputChange saves the new audio input and starts/restarts the encoder.
+func (h *CommandHandler) handleAudioInputChange(input string) {
+	slog.Info("update_settings: changing audio input", "input", input)
+	if err := h.cfg.SetAudioInput(input); err != nil {
+		slog.Error("update_settings: failed to save audio input", "error", err)
+		return
+	}
+	go func() {
+		var err error
+		switch h.encoder.State() {
+		case types.StateRunning:
+			err = h.encoder.Restart()
+		case types.StateStopped:
+			err = h.encoder.Start()
+		}
+		if err != nil {
+			slog.Error("update_settings: encoder state change failed", "error", err)
+		}
+	}()
+}
+
 func (h *CommandHandler) handleUpdateSettings(cmd WSCommand) {
 	var settings struct {
 		AudioInput       string   `json:"audio_input"`
@@ -192,17 +214,7 @@ func (h *CommandHandler) handleUpdateSettings(cmd WSCommand) {
 		return
 	}
 	if settings.AudioInput != "" {
-		slog.Info("update_settings: changing audio input", "input", settings.AudioInput)
-		if err := h.cfg.SetAudioInput(settings.AudioInput); err != nil {
-			slog.Error("update_settings: failed to save", "error", err)
-		}
-		if h.encoder.State() == types.StateRunning {
-			go func() {
-				if err := h.encoder.Restart(); err != nil {
-					slog.Error("update_settings: failed to restart encoder", "error", err)
-				}
-			}()
-		}
+		h.handleAudioInputChange(settings.AudioInput)
 	}
 	updateFloatSetting(settings.SilenceThreshold, -60, 0, "silence threshold", h.cfg.SetSilenceThreshold)
 	updateFloatSetting(settings.SilenceDuration, 1, 300, "silence duration", h.cfg.SetSilenceDuration)
