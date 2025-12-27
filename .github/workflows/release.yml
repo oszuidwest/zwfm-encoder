@@ -63,6 +63,9 @@ jobs:
           build() {
             local os=$1 arch=$2
             local output="encoder-${os}-${arch}"
+            if [[ "$os" == "windows" ]]; then
+              output="${output}.exe"
+            fi
             echo "Building $output"
             GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o "dist/$output" .
           }
@@ -72,6 +75,8 @@ jobs:
           build linux arm64
           build darwin arm64
           build darwin amd64
+          build windows amd64
+          build windows arm64
 
       - name: Create release
         if: steps.version.outputs.is_release == 'true'

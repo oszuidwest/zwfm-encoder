@@ -96,10 +96,15 @@ func New(filePath string) *Config {
 
 // defaultAudioInput returns the default audio input device for the current platform.
 func defaultAudioInput() string {
-	if runtime.GOOS == "darwin" {
+	switch runtime.GOOS {
+	case "darwin":
 		return ":0"
+	case "windows":
+		// Empty triggers auto-detection of first available device at runtime.
+		return ""
+	default:
+		return "default:CARD=sndrpihifiberry"
 	}
-	return "default:CARD=sndrpihifiberry"
 }
 
 // Load reads config from file, creating a default if none exists.

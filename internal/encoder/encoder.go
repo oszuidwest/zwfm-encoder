@@ -12,7 +12,6 @@ import (
 	"log/slog"
 	"os/exec"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
@@ -182,10 +181,10 @@ func (e *Encoder) Stop() error {
 		errs = append(errs, fmt.Errorf("stop outputs: %w", err))
 	}
 
-	// Send SIGINT to source for graceful shutdown
+	// Send graceful termination signal to source.
 	if sourceProcess != nil && sourceProcess.Process != nil {
-		if err := sourceProcess.Process.Signal(syscall.SIGINT); err != nil {
-			slog.Warn("failed to send SIGINT to source", "error", err)
+		if err := util.GracefulSignal(sourceProcess.Process); err != nil {
+			slog.Warn("failed to send signal to source", "error", err)
 			errs = append(errs, fmt.Errorf("signal source: %w", err))
 		}
 	}
@@ -350,16 +349,19 @@ func (e *Encoder) runSourceLoop() {
 // runSource executes the audio capture process.
 func (e *Encoder) runSource() (string, error) {
 	audioInput := e.config.Snapshot().AudioInput
-	cmdName, args := GetSourceCommand(audioInput)
+	cmdName, args, err := audio.BuildCaptureCommand(audioInput)
+	if err != nil {
+		return "", err
+	}
 
 	slog.Info("starting audio capture", "command", cmdName, "input", audioInput)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, cmdName, args...)
 
-	// Go 1.20+: Declarative graceful shutdown - sends SIGINT first, waits, then SIGKILL
+	// Go 1.20+: Declarative graceful shutdown - sends signal first, waits, then kills.
 	cmd.Cancel = func() error {
-		return cmd.Process.Signal(syscall.SIGINT)
+		return util.GracefulSignal(cmd.Process)
 	}
 	cmd.WaitDelay = types.ShutdownTimeout
 

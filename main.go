@@ -15,11 +15,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"syscall"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 func main() {
@@ -62,7 +62,7 @@ func main() {
 	httpServer := srv.Start()
 
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigChan, util.ShutdownSignals()...)
 	<-sigChan
 
 	slog.Info("shutting down")
