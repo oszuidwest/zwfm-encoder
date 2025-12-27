@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"slices"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
@@ -146,7 +145,7 @@ func (m *Manager) Stop(outputID string) error {
 	}
 
 	if process != nil {
-		if err := process.Signal(syscall.SIGINT); err != nil && cancelCause != nil {
+		if err := util.GracefulSignal(process); err != nil && cancelCause != nil {
 			cancelCause(errors.New("user requested stop"))
 		}
 	}
