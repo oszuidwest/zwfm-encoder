@@ -28,7 +28,7 @@ type CaptureConfig struct {
 
 // BuildCaptureCommand returns the command and arguments for audio capture.
 // If device is empty, it attempts to use the default or auto-detect.
-func BuildCaptureCommand(device string) (string, []string, error) {
+func BuildCaptureCommand(device string) (cmd string, args []string, err error) {
 	cfg := getPlatformConfig()
 
 	if device == "" {

@@ -31,7 +31,7 @@ func buildLinuxArgs(device string) []string {
 }
 
 func (cfg CaptureConfig) ListDevices() []types.AudioDevice {
-	return parseDeviceList(DeviceListConfig{
+	return parseDeviceList(&DeviceListConfig{
 		Command:          []string{"arecord", "-l"},
 		AudioStartMarker: "", // No marker, parse all lines
 		DevicePattern:    regexp.MustCompile(`card\s+(\d+):\s+(\w+)\s+\[([^\]]+)\]`),

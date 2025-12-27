@@ -38,7 +38,7 @@ type DeviceListConfig struct {
 }
 
 // parseDeviceList is a shared helper for parsing device list output.
-func parseDeviceList(cfg DeviceListConfig) []types.AudioDevice {
+func parseDeviceList(cfg *DeviceListConfig) []types.AudioDevice {
 	if len(cfg.Command) == 0 {
 		return cfg.FallbackDevices
 	}

@@ -35,7 +35,7 @@ func buildWindowsArgs(device string) []string {
 }
 
 func (cfg CaptureConfig) ListDevices() []types.AudioDevice {
-	return parseDeviceList(DeviceListConfig{
+	return parseDeviceList(&DeviceListConfig{
 		Command:          []string{"ffmpeg", "-f", "dshow", "-list_devices", "true", "-i", "dummy"},
 		AudioStartMarker: "DirectShow audio devices",
 		AudioStopMarker:  "DirectShow video devices",

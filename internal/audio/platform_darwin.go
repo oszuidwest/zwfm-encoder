@@ -34,7 +34,7 @@ func buildDarwinArgs(device string) []string {
 }
 
 func (cfg CaptureConfig) ListDevices() []types.AudioDevice {
-	return parseDeviceList(DeviceListConfig{
+	return parseDeviceList(&DeviceListConfig{
 		Command:          []string{"ffmpeg", "-f", "avfoundation", "-list_devices", "true", "-i", ""},
 		AudioStartMarker: "AVFoundation audio devices:",
 		AudioStopMarker:  "AVFoundation video devices:",
