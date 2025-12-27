@@ -350,7 +350,10 @@ func (e *Encoder) runSourceLoop() {
 // runSource executes the audio capture process.
 func (e *Encoder) runSource() (string, error) {
 	audioInput := e.config.Snapshot().AudioInput
-	cmdName, args := GetSourceCommand(audioInput)
+	cmdName, args, err := audio.BuildCaptureCommand(audioInput)
+	if err != nil {
+		return "", err
+	}
 
 	slog.Info("starting audio capture", "command", cmdName, "input", audioInput)
 

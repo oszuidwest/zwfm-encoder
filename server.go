@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
 	"github.com/oszuidwest/zwfm-encoder/internal/server"
@@ -102,7 +103,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			Encoder:          status,
 			Outputs:          cfg.Outputs,
 			OutputStatus:     s.encoder.AllOutputStatuses(),
-			Devices:          encoder.ListAudioDevices(),
+			Devices:          audio.ListDevices(),
 			SilenceThreshold: cfg.SilenceThreshold,
 			SilenceDuration:  cfg.SilenceDuration,
 			SilenceRecovery:  cfg.SilenceRecovery,
