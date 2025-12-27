@@ -31,8 +31,6 @@ type WSCommand struct {
 }
 
 // EncoderController provides control operations for the audio encoder.
-// This interface allows the command handler to control encoder state
-// without depending on the concrete Encoder implementation.
 type EncoderController interface {
 	State() types.EncoderState
 	StartOutput(outputID string) error

@@ -43,7 +43,7 @@ func WriteTestLog(logPath string) error {
 	})
 }
 
-// appendLogEntry appends a JSON log entry to the file.
+// appends a JSON log entry to the file.
 func appendLogEntry(logPath string, entry types.SilenceLogEntry) error {
 	if !util.IsConfigured(logPath) {
 		return nil

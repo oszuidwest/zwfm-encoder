@@ -27,8 +27,6 @@ type SilenceEvent struct {
 }
 
 // SilenceDetector tracks silence state with hysteresis.
-// It reports silence after Duration seconds of continuous quiet audio,
-// and recovery after Recovery seconds of continuous audio.
 type SilenceDetector struct {
 	silenceStart    time.Time // when current silence period started
 	recoveryStart   time.Time // when audio returned after silence

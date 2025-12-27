@@ -22,7 +22,7 @@ func ValidateRequired(field, value string) *ValidationError {
 	return nil
 }
 
-// ValidateRange checks that an integer is within bounds.
+// ValidateRange checks that an integer is within bounds (inclusive).
 func ValidateRange(field string, value, minVal, maxVal int) *ValidationError {
 	if value < minVal || value > maxVal {
 		return &ValidationError{
@@ -33,7 +33,7 @@ func ValidateRange(field string, value, minVal, maxVal int) *ValidationError {
 	return nil
 }
 
-// ValidateRangeFloat checks that a float64 is within bounds.
+// ValidateRangeFloat checks that a float64 is within bounds (inclusive).
 func ValidateRangeFloat(field string, value, minVal, maxVal float64) *ValidationError {
 	if value < minVal || value > maxVal {
 		return &ValidationError{

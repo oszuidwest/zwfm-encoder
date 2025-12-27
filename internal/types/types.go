@@ -72,7 +72,7 @@ var CodecPresets = map[string]CodecPreset{
 // DefaultCodec is used when an unknown codec is specified.
 const DefaultCodec = "mp3"
 
-// CodecArgs returns FFmpeg codec arguments for this output's codec.
+// CodecArgs returns FFmpeg codec arguments for the output's codec.
 func (o *Output) CodecArgs() []string {
 	if preset, ok := CodecPresets[o.Codec]; ok {
 		return preset.Args
@@ -80,7 +80,7 @@ func (o *Output) CodecArgs() []string {
 	return CodecPresets[DefaultCodec].Args
 }
 
-// Format returns the FFmpeg output format for this output's codec.
+// Format returns the FFmpeg output format for the output's codec.
 func (o *Output) Format() string {
 	if preset, ok := CodecPresets[o.Codec]; ok {
 		return preset.Format

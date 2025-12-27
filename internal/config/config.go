@@ -18,14 +18,22 @@ import (
 
 // Configuration defaults.
 const (
-	DefaultWebPort          = 8080
-	DefaultWebUsername      = "admin"
-	DefaultWebPassword      = "encoder"
+	// DefaultWebPort is the default port for the web server.
+	DefaultWebPort = 8080
+	// DefaultWebUsername is the default username for web authentication.
+	DefaultWebUsername = "admin"
+	// DefaultWebPassword is the default password for web authentication.
+	DefaultWebPassword = "encoder"
+	// DefaultSilenceThreshold is the default silence threshold in decibels.
 	DefaultSilenceThreshold = -40.0
-	DefaultSilenceDuration  = 15.0
-	DefaultSilenceRecovery  = 5.0
-	DefaultEmailSMTPPort    = 587
-	DefaultEmailFromName    = "ZuidWest FM Encoder"
+	// DefaultSilenceDuration is the default silence duration in seconds.
+	DefaultSilenceDuration = 15.0
+	// DefaultSilenceRecovery is the default recovery duration in seconds.
+	DefaultSilenceRecovery = 5.0
+	// DefaultEmailSMTPPort is the default SMTP port.
+	DefaultEmailSMTPPort = 587
+	// DefaultEmailFromName is the default sender display name.
+	DefaultEmailFromName = "ZuidWest FM Encoder"
 )
 
 // WebConfig contains web server configuration.
@@ -487,17 +495,17 @@ func (c *Config) Snapshot() Snapshot {
 	}
 }
 
-// HasWebhook returns true if a webhook URL is configured.
+// HasWebhook reports whether a webhook URL is configured.
 func (s *Snapshot) HasWebhook() bool {
 	return s.WebhookURL != ""
 }
 
-// HasEmail returns true if email notifications are configured.
+// HasEmail reports whether email notifications are configured.
 func (s *Snapshot) HasEmail() bool {
 	return s.EmailSMTPHost != "" && s.EmailRecipients != ""
 }
 
-// HasLogPath returns true if a log path is configured.
+// HasLogPath reports whether a log path is configured.
 func (s *Snapshot) HasLogPath() bool {
 	return s.LogPath != ""
 }

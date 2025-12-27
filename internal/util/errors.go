@@ -16,7 +16,8 @@ func WrapError(operation string, err error) error {
 	return fmt.Errorf("failed to %s: %w", operation, err)
 }
 
-// ExtractLastError returns the last meaningful line from FFmpeg stderr output.
+// ExtractLastError returns the last non-empty line from stderr output,
+// truncated to MaxErrorLineLength if needed.
 func ExtractLastError(stderr string) string {
 	lines := strings.Split(strings.TrimSpace(stderr), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {

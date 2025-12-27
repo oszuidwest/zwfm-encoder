@@ -51,7 +51,7 @@ func SendTestWebhook(webhookURL string) error {
 	})
 }
 
-// sendWebhook delivers a notification to the configured webhook endpoint.
+// delivers a notification to the configured webhook endpoint.
 func sendWebhook(webhookURL string, payload WebhookPayload) error {
 	if !util.IsConfigured(webhookURL) {
 		return nil // Silently skip if not configured

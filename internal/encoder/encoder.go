@@ -76,8 +76,7 @@ func (e *Encoder) Output(outputID string) *types.Output {
 	return e.config.Output(outputID)
 }
 
-// IsRunning returns true if the encoder is in running state.
-// Implements output.OutputContext.
+// IsRunning reports whether the encoder is in running state.
 func (e *Encoder) IsRunning() bool {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -85,11 +84,6 @@ func (e *Encoder) IsRunning() bool {
 }
 
 // AudioLevels returns the current audio levels.
-//
-// This method uses TryRLock to avoid blocking the 10 fps WebSocket level updates
-// during encoder state changes (start/stop) that hold the write lock. Stale cached
-// levels are acceptable for VU meter display purposes where visual smoothness
-// matters more than sub-100ms accuracy.
 func (e *Encoder) AudioLevels() types.AudioLevels {
 	if !e.mu.TryRLock() {
 		return e.lastKnownLevels
@@ -240,7 +234,6 @@ func (e *Encoder) StartOutput(outputID string) error {
 		return fmt.Errorf("output not found: %s", outputID)
 	}
 
-	// Start preserves existing retry state automatically
 	if err := e.outputManager.Start(out); err != nil {
 		return fmt.Errorf("failed to start output: %w", err)
 	}
@@ -255,7 +248,7 @@ func (e *Encoder) StopOutput(outputID string) error {
 	return e.outputManager.Stop(outputID)
 }
 
-// buildEmailConfig constructs an EmailConfig from the current configuration.
+// constructs an EmailConfig from the current configuration.
 func (e *Encoder) buildEmailConfig() *notify.EmailConfig {
 	cfg := e.config.Snapshot()
 	return &notify.EmailConfig{
@@ -283,7 +276,7 @@ func (e *Encoder) TriggerTestLog() error {
 	return notify.WriteTestLog(e.config.Snapshot().LogPath)
 }
 
-// runSourceLoop runs the audio capture process with auto-restart.
+// runs the audio capture process with auto-restart.
 func (e *Encoder) runSourceLoop() {
 	for {
 		e.mu.Lock()
@@ -347,7 +340,7 @@ func (e *Encoder) runSourceLoop() {
 	}
 }
 
-// runSource executes the audio capture process.
+// executes the audio capture process.
 func (e *Encoder) runSource() (string, error) {
 	audioInput := e.config.Snapshot().AudioInput
 	cmdName, args := GetSourceCommand(audioInput)
@@ -403,7 +396,7 @@ func (e *Encoder) runSource() (string, error) {
 	return util.ExtractLastError(stderrBuf.String()), err
 }
 
-// startEnabledOutputs starts the audio distributor and all output processes.
+// starts the audio distributor and all output processes.
 func (e *Encoder) startEnabledOutputs() {
 	go e.runDistributor()
 
@@ -414,11 +407,10 @@ func (e *Encoder) startEnabledOutputs() {
 	}
 }
 
-// runDistributor delivers audio from the source to all output processes and calculates audio levels.
+// delivers audio from the source to all output processes and calculates audio levels.
 func (e *Encoder) runDistributor() {
 	buf := make([]byte, 19200) // ~100ms of audio at 48kHz stereo
 
-	// Snapshot silence config once at startup (avoids mutex contention in hot path)
 	cfg := e.config.Snapshot()
 	silenceCfg := audio.SilenceConfig{
 		Threshold: cfg.SilenceThreshold,
@@ -462,13 +454,12 @@ func (e *Encoder) runDistributor() {
 		distributor.ProcessSamples(buf, n)
 
 		for _, out := range e.config.ConfiguredOutputs() {
-			// WriteAudio logs errors internally and marks output as stopped
-			_ = e.outputManager.WriteAudio(out.ID, buf[:n]) //nolint:errcheck // Errors logged internally by WriteAudio
+			_ = e.outputManager.WriteAudio(out.ID, buf[:n]) //nolint:errcheck // Errors logged internally
 		}
 	}
 }
 
-// updateAudioLevels updates audio levels from calculated metrics.
+// updates audio levels from calculated metrics.
 func (e *Encoder) updateAudioLevels(m *types.AudioMetrics) {
 	levels := types.AudioLevels{
 		Left:            m.RMSL,
@@ -484,11 +475,11 @@ func (e *Encoder) updateAudioLevels(m *types.AudioMetrics) {
 
 	e.mu.Lock()
 	e.audioLevels = levels
-	e.lastKnownLevels = levels // Update cache for TryRLock fallback
+	e.lastKnownLevels = levels
 	e.mu.Unlock()
 }
 
-// pollUntil signals when the given condition becomes true.
+// signals when the given condition becomes true.
 func (e *Encoder) pollUntil(condition func() bool) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {

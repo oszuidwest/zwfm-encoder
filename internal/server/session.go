@@ -103,7 +103,6 @@ func (sm *SessionManager) Delete(token string) {
 }
 
 // AuthMiddleware returns middleware that requires a valid session cookie.
-// Unauthenticated requests are redirected to /login.
 func (sm *SessionManager) AuthMiddleware(username, password string) func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -145,7 +144,7 @@ func (sm *SessionManager) Login(w http.ResponseWriter, r *http.Request, username
 	return true
 }
 
-// Logout clears the session cookie and deletes the session.
+// Logout ends the current user session.
 func (sm *SessionManager) Logout(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie(sessionCookieName); err == nil {
 		sm.Delete(cookie.Value)
@@ -187,7 +186,7 @@ func (sm *SessionManager) CreateCSRFToken() string {
 	return token
 }
 
-// ValidateCSRFToken checks if a CSRF token is valid and removes it.
+// ValidateCSRFToken reports whether a CSRF token is valid.
 func (sm *SessionManager) ValidateCSRFToken(token string) bool {
 	if token == "" {
 		return false

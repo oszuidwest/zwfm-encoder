@@ -12,9 +12,6 @@ import (
 // It tracks which notifications have been sent to avoid duplicates,
 // and independently triggers webhook, email, and log notifications
 // based on configuration.
-//
-// This separates notification concerns from the SilenceDetector,
-// which only handles pure audio level detection.
 type SilenceNotifier struct {
 	cfg *config.Config
 
@@ -33,7 +30,6 @@ func NewSilenceNotifier(cfg *config.Config) *SilenceNotifier {
 }
 
 // HandleEvent processes a silence event and triggers appropriate notifications.
-// Call this after each SilenceDetector.Update() with the returned event.
 func (n *SilenceNotifier) HandleEvent(event audio.SilenceEvent) {
 	if event.JustEntered {
 		n.handleSilenceStart(event.Duration)
@@ -53,7 +49,7 @@ func (n *SilenceNotifier) handleSilenceStart(duration float64) {
 	n.trySend(&n.logSent, cfg.HasLogPath(), func() { n.logSilenceStart(cfg.SilenceThreshold) })
 }
 
-// trySend atomically checks and sets a notification flag, then spawns the sender if needed.
+// trySend sends a notification if not already sent.
 func (n *SilenceNotifier) trySend(sent *bool, condition bool, sender func()) {
 	n.mu.Lock()
 	shouldSend := !*sent && condition
@@ -70,7 +66,7 @@ func (n *SilenceNotifier) trySend(sent *bool, condition bool, sender func()) {
 func (n *SilenceNotifier) handleSilenceEnd(totalDuration float64) {
 	cfg := n.cfg.Snapshot()
 
-	// Only send recovery notifications if we sent the corresponding start notification
+	// Send recovery only if start was sent
 	n.mu.Lock()
 	shouldSendWebhookRecovery := n.webhookSent
 	shouldSendEmailRecovery := n.emailSent

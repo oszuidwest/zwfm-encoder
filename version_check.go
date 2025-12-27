@@ -68,7 +68,7 @@ func (vc *VersionChecker) checkWithRetry() {
 	}
 }
 
-// githubRelease represents the GitHub API response for a release.
+// represents the GitHub API response for a release.
 type githubRelease struct {
 	TagName    string `json:"tag_name"`
 	Draft      bool   `json:"draft"`

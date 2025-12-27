@@ -247,14 +247,14 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
-// staticFile represents an embedded static file with its content type and content.
+// represents an embedded static file with its content type and content.
 type staticFile struct {
 	contentType string
 	content     string
 	name        string
 }
 
-// staticFiles maps URL paths to their corresponding static file definitions.
+// maps URL paths to their corresponding static file definitions.
 var staticFiles = map[string]staticFile{
 	"/style.css": {
 		contentType: "text/css",

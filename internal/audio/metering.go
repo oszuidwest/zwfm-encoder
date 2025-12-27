@@ -66,7 +66,7 @@ type Levels struct {
 	ClipR int
 }
 
-// CalculateLevels computes RMS and peak levels from accumulated sample data.
+// CalculateLevels returns audio levels in dB from accumulated sample data.
 func CalculateLevels(data *LevelData) Levels {
 	if data.SampleCount == 0 {
 		return Levels{
@@ -94,7 +94,7 @@ func CalculateLevels(data *LevelData) Levels {
 	}
 }
 
-// ResetLevelData resets accumulators for the next measurement period.
+// ResetLevelData resets all level data to zero.
 func ResetLevelData(data *LevelData) {
 	data.SampleCount = 0
 	data.SumSquaresL = 0

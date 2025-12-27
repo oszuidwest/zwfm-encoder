@@ -19,11 +19,10 @@ import (
 )
 
 // OutputContext provides encoder state for monitoring and retry decisions.
-// This interface breaks the closure dependency by making the contract explicit.
 type OutputContext interface {
 	// Output returns the output configuration, or nil if removed.
 	Output(outputID string) *types.Output
-	// IsRunning returns true if the encoder is in running state.
+	// IsRunning reports whether the encoder is in running state.
 	IsRunning() bool
 }
 
@@ -294,6 +293,7 @@ func (m *Manager) RetryCount(outputID string) int {
 }
 
 // MonitorAndRetry monitors an output process and handles automatic retry with exponential backoff.
+// It runs until the encoder stops or retries are exhausted.
 func (m *Manager) MonitorAndRetry(outputID string, ctx OutputContext, stopChan <-chan struct{}) {
 	for {
 		select {

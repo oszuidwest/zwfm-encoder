@@ -78,7 +78,7 @@ func SendTestEmail(cfg *EmailConfig) error {
 	return sendEmail(cfg, subject, body)
 }
 
-// sendEmail delivers an email message to configured recipients.
+// delivers an email message to configured recipients.
 func sendEmail(cfg *EmailConfig, subject, body string) error {
 	var recipients []string
 	for _, r := range strings.Split(cfg.Recipients, ",") {
