@@ -15,6 +15,16 @@ Audio streaming software for [ZuidWest FM](https://www.zuidwestfm.nl/) and [Radi
 - **Update notifications** - Alerts when new versions are available
 - **Single binary** - Web interface embedded, minimal runtime dependencies
 
+## Platform Support
+
+| Platform | Status | Audio Capture |
+|----------|--------|---------------|
+| Linux (Raspberry Pi) | **Primary** | arecord (ALSA) |
+| macOS | Development only | FFmpeg (AVFoundation) |
+| Windows | Experimental | FFmpeg (DirectShow) |
+
+Linux on Raspberry Pi is the primary supported platform. macOS support exists for local development. Windows support is experimental and not recommended for production use.
+
 ## Requirements
 
 - Raspberry Pi 4 or 5
@@ -161,7 +171,7 @@ flowchart LR
 
 On Linux, `arecord` captures audio from ALSA with minimal CPU overhead. The Go distributor calculates RMS/peak audio levels directly from the PCM stream, runs silence detection, and fans out the audio to multiple FFmpeg encoder processes. Each encoder streams to its own SRT destination. Audio levels are sent to the web interface via WebSocket, and silence events trigger configured alerts.
 
-On macOS (for development), FFmpeg with AVFoundation is used for capture instead of arecord.
+On macOS and Windows, FFmpeg handles audio capture (AVFoundation and DirectShow respectively).
 
 ### Component Architecture
 
