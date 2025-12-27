@@ -113,7 +113,7 @@ func (h *CommandHandler) handleAddOutput(cmd WSCommand) {
 		output.StreamID = "studio"
 	}
 	if output.Codec == "" {
-		output.Codec = "mp3"
+		output.Codec = types.DefaultCodec
 	}
 	if err := h.cfg.AddOutput(&output); err != nil {
 		slog.Error("add_output: failed to add", "error", err)

@@ -70,7 +70,7 @@ var CodecPresets = map[string]CodecPreset{
 }
 
 // DefaultCodec is used when an unknown codec is specified.
-const DefaultCodec = "mp3"
+const DefaultCodec = "wav"
 
 // CodecArgs returns FFmpeg codec arguments for this output's codec.
 func (o *Output) CodecArgs() []string {
@@ -201,6 +201,16 @@ type SilenceLogEntry struct {
 type AudioDevice struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+}
+
+// EmailConfig contains SMTP server settings for email notifications.
+type EmailConfig struct {
+	Host       string `json:"host,omitempty"`
+	Port       int    `json:"port,omitempty"`
+	FromName   string `json:"from_name,omitempty"`
+	Username   string `json:"username,omitempty"`
+	Password   string `json:"password,omitempty"`
+	Recipients string `json:"recipients,omitempty"`
 }
 
 // VersionInfo contains version comparison data.

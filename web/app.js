@@ -49,7 +49,7 @@ const DEFAULT_OUTPUT = {
     port: 8080,
     streamid: '',
     password: '',
-    codec: 'mp3',
+    codec: 'wav',
     max_retries: 99
 };
 
