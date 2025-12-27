@@ -38,7 +38,9 @@ type DeviceListConfig struct {
 }
 
 // parseDeviceList is a shared helper for parsing device list output.
-func parseDeviceList(cfg *DeviceListConfig) []types.AudioDevice {
+//
+//nolint:gocritic // hugeParam: 96 bytes is acceptable, no performance impact
+func parseDeviceList(cfg DeviceListConfig) []types.AudioDevice {
 	if len(cfg.Command) == 0 {
 		return cfg.FallbackDevices
 	}
