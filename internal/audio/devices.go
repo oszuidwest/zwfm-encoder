@@ -27,7 +27,6 @@ type DeviceListConfig struct {
 	AudioStopMarker string
 
 	// DevicePattern is the regex to extract device info.
-	// Group 1: device ID or index, Group 2: device name (optional).
 	DevicePattern *regexp.Regexp
 
 	// ParseDevice converts regex matches to a Device.

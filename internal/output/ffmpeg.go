@@ -24,7 +24,7 @@ func BuildFFmpegArgs(output *types.Output) []string {
 	return args
 }
 
-// BuildSRTURL constructs the SRT URL for an output with properly encoded parameters.
+// BuildSRTURL constructs the SRT URL for an output.
 func BuildSRTURL(output *types.Output) string {
 	params := url.Values{}
 	params.Set("pkt_size", "1316")

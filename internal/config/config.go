@@ -27,26 +27,26 @@ const (
 	DefaultEmailFromName    = "ZuidWest FM Encoder"
 )
 
-// WebConfig contains web server configuration.
+// WebConfig is the web server configuration.
 type WebConfig struct {
 	Port     int    `json:"port"`
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
-// AudioConfig contains audio input configuration.
+// AudioConfig is the audio input configuration.
 type AudioConfig struct {
 	Input string `json:"input"`
 }
 
-// SilenceDetectionConfig contains silence detection configuration.
+// SilenceDetectionConfig is the silence detection configuration.
 type SilenceDetectionConfig struct {
 	ThresholdDB     float64 `json:"threshold_db,omitempty"`
 	DurationSeconds float64 `json:"duration_seconds,omitempty"`
 	RecoverySeconds float64 `json:"recovery_seconds,omitempty"`
 }
 
-// NotificationsConfig contains all notification configuration.
+// NotificationsConfig is the notification configuration.
 type NotificationsConfig struct {
 	WebhookURL string            `json:"webhook_url,omitempty"`
 	LogPath    string            `json:"log_path,omitempty"`
@@ -174,7 +174,6 @@ func (c *Config) Output(id string) *types.Output {
 }
 
 // findOutputIndex returns the index of the output with the given ID, or -1 if not found.
-// Caller must hold c.mu (read or write lock).
 func (c *Config) findOutputIndex(id string) int {
 	for i, o := range c.Outputs {
 		if o.ID == id {
@@ -395,8 +394,7 @@ func (c *Config) SetEmailConfig(host string, port int, fromName, username, passw
 	return c.saveLocked()
 }
 
-// Snapshot contains a point-in-time copy of all configuration values.
-// Use this instead of multiple individual getters to reduce mutex contention.
+// Snapshot is a point-in-time copy of configuration values.
 type Snapshot struct {
 	// Web
 	WebPort     int
@@ -463,17 +461,17 @@ func (c *Config) Snapshot() Snapshot {
 	}
 }
 
-// HasWebhook returns true if a webhook URL is configured.
+// HasWebhook reports whether a webhook URL is configured.
 func (s *Snapshot) HasWebhook() bool {
 	return s.WebhookURL != ""
 }
 
-// HasEmail returns true if email notifications are configured.
+// HasEmail reports whether email notifications are configured.
 func (s *Snapshot) HasEmail() bool {
 	return s.EmailSMTPHost != "" && s.EmailRecipients != ""
 }
 
-// HasLogPath returns true if a log path is configured.
+// HasLogPath reports whether a log path is configured.
 func (s *Snapshot) HasLogPath() bool {
 	return s.LogPath != ""
 }

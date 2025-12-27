@@ -13,7 +13,6 @@ func ShutdownSignals() []os.Signal {
 }
 
 // GracefulSignal attempts graceful process termination.
-// On Unix, this sends SIGINT to allow the process to clean up.
 func GracefulSignal(p *os.Process) error {
 	return p.Signal(syscall.SIGINT)
 }

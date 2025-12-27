@@ -1,4 +1,3 @@
-// Package audio provides cross-platform audio capture functionality.
 package audio
 
 import "errors"

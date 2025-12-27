@@ -27,7 +27,6 @@ type LevelData struct {
 }
 
 // ProcessSamples processes S16LE stereo PCM data and accumulates level data.
-// Format: [L_low, L_high, R_low, R_high, ...].
 func ProcessSamples(buf []byte, n int, data *LevelData) {
 	for i := 0; i+3 < n; i += 4 {
 		leftSample := int16(binary.LittleEndian.Uint16(buf[i:]))
@@ -58,20 +57,20 @@ func ProcessSamples(buf []byte, n int, data *LevelData) {
 
 // Levels contains calculated audio levels in dB.
 type Levels struct {
-	RMSL  float64
-	RMSR  float64
-	PeakL float64
-	PeakR float64
-	ClipL int
-	ClipR int
+	RMSLeft   float64
+	RMSRight  float64
+	PeakLeft  float64
+	PeakRight float64
+	ClipLeft  int
+	ClipRight int
 }
 
 // CalculateLevels computes RMS and peak levels from accumulated sample data.
 func CalculateLevels(data *LevelData) Levels {
 	if data.SampleCount == 0 {
 		return Levels{
-			RMSL: MinDB, RMSR: MinDB,
-			PeakL: MinDB, PeakR: MinDB,
+			RMSLeft: MinDB, RMSRight: MinDB,
+			PeakLeft: MinDB, PeakRight: MinDB,
 		}
 	}
 
@@ -85,12 +84,12 @@ func CalculateLevels(data *LevelData) Levels {
 	peakDbR := 20 * math.Log10(data.PeakR/MaxSampleValue)
 
 	return Levels{
-		RMSL:  max(dbL, MinDB),
-		RMSR:  max(dbR, MinDB),
-		PeakL: max(peakDbL, MinDB),
-		PeakR: max(peakDbR, MinDB),
-		ClipL: data.ClipCountL,
-		ClipR: data.ClipCountR,
+		RMSLeft:   max(dbL, MinDB),
+		RMSRight:  max(dbR, MinDB),
+		PeakLeft:  max(peakDbL, MinDB),
+		PeakRight: max(peakDbR, MinDB),
+		ClipLeft:  data.ClipCountL,
+		ClipRight: data.ClipCountR,
 	}
 }
 

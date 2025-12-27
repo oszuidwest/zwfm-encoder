@@ -3,18 +3,17 @@ package util
 import "fmt"
 
 // ValidationError represents a field validation failure.
-// It implements the error interface for idiomatic error handling.
 type ValidationError struct {
 	Field   string
 	Message string
 }
 
-// Error implements the error interface.
+// Error returns a formatted validation error message.
 func (v *ValidationError) Error() string {
 	return fmt.Sprintf("%s: %s", v.Field, v.Message)
 }
 
-// ValidateRequired checks that a string field is not empty.
+// ValidateRequired returns an error if the string field is empty.
 func ValidateRequired(field, value string) *ValidationError {
 	if value == "" {
 		return &ValidationError{Field: field, Message: fmt.Sprintf("%s is required", field)}
@@ -22,7 +21,7 @@ func ValidateRequired(field, value string) *ValidationError {
 	return nil
 }
 
-// ValidateRange checks that an integer is within bounds.
+// ValidateRange returns an error if value is outside the range [minVal, maxVal].
 func ValidateRange(field string, value, minVal, maxVal int) *ValidationError {
 	if value < minVal || value > maxVal {
 		return &ValidationError{
@@ -33,7 +32,7 @@ func ValidateRange(field string, value, minVal, maxVal int) *ValidationError {
 	return nil
 }
 
-// ValidateRangeFloat checks that a float64 is within bounds.
+// ValidateRangeFloat returns an error if value is outside the range [minVal, maxVal].
 func ValidateRangeFloat(field string, value, minVal, maxVal float64) *ValidationError {
 	if value < minVal || value > maxVal {
 		return &ValidationError{
@@ -44,7 +43,7 @@ func ValidateRangeFloat(field string, value, minVal, maxVal float64) *Validation
 	return nil
 }
 
-// ValidateMaxLength checks that a string doesn't exceed max length.
+// ValidateMaxLength returns an error if value exceeds maxLen characters.
 func ValidateMaxLength(field, value string, maxLen int) *ValidationError {
 	if len(value) > maxLen {
 		return &ValidationError{
@@ -55,12 +54,12 @@ func ValidateMaxLength(field, value string, maxLen int) *ValidationError {
 	return nil
 }
 
-// ValidatePort checks that a port number is valid (1-65535).
+// ValidatePort returns an error if port is not in the valid range 1-65535.
 func ValidatePort(field string, port int) *ValidationError {
 	return ValidateRange(field, port, 1, 65535)
 }
 
-// IsConfigured returns true if all provided values are non-empty.
+// IsConfigured reports whether all provided values are non-empty.
 func IsConfigured(values ...string) bool {
 	for _, v := range values {
 		if v == "" {

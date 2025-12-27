@@ -68,7 +68,7 @@ func (sm *SessionManager) Create() string {
 	return token
 }
 
-// Validate checks if a session token is valid.
+// Validate reports whether a session token is valid.
 func (sm *SessionManager) Validate(token string) bool {
 	if token == "" {
 		return false
@@ -119,8 +119,7 @@ func (sm *SessionManager) AuthMiddleware(username, password string) func(http.Ha
 	}
 }
 
-// Login validates credentials and creates a session if valid.
-// Returns true if login succeeded.
+// Login reports whether login succeeded and creates a session if valid.
 func (sm *SessionManager) Login(w http.ResponseWriter, r *http.Request, username, password, configUser, configPass string) bool {
 	userMatch := subtle.ConstantTimeCompare([]byte(username), []byte(configUser)) == 1
 	passMatch := subtle.ConstantTimeCompare([]byte(password), []byte(configPass)) == 1
@@ -187,7 +186,7 @@ func (sm *SessionManager) CreateCSRFToken() string {
 	return token
 }
 
-// ValidateCSRFToken checks if a CSRF token is valid and removes it.
+// ValidateCSRFToken reports whether a CSRF token is valid and removes it.
 func (sm *SessionManager) ValidateCSRFToken(token string) bool {
 	if token == "" {
 		return false

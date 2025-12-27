@@ -54,7 +54,7 @@ func NewServer(cfg *config.Config, enc *encoder.Encoder) *Server {
 	}
 }
 
-// handleWebSocket manages bidirectional WebSocket communication for status updates and commands.
+// handleWebSocket handles bidirectional WebSocket communication for real-time updates.
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := server.UpgradeConnection(w, r)
 	if err != nil {
@@ -171,7 +171,7 @@ func (s *Server) SetupRoutes() http.Handler {
 	return securityHeaders(mux)
 }
 
-// securityHeaders adds security headers to all responses.
+// securityHeaders returns middleware that adds security headers to responses.
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Frame-Options", "DENY")
@@ -181,14 +181,14 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// handlePublicStatic serves static files without authentication.
+// handlePublicStatic handles requests for static files without authentication.
 func (s *Server) handlePublicStatic(w http.ResponseWriter, r *http.Request) {
 	if !serveStaticFile(w, r.URL.Path) {
 		http.NotFound(w, r)
 	}
 }
 
-// serveStaticFile serves a static file by path. Returns true if file was found.
+// serveStaticFile serves a static file by path and reports whether it was found.
 func serveStaticFile(w http.ResponseWriter, path string) bool {
 	file, ok := staticFiles[path]
 	if !ok {
@@ -201,7 +201,7 @@ func serveStaticFile(w http.ResponseWriter, path string) bool {
 	return true
 }
 
-// handleLogin serves the login page (GET) and processes login form submissions (POST).
+// handleLogin handles login page display and form submission.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie("encoder_session"); err == nil {
 		if s.sessions.Validate(cookie.Value) {
@@ -242,20 +242,20 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleLogout clears the session and redirects to login.
+// handleLogout handles logout by clearing the session and redirecting.
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	s.sessions.Logout(w, r)
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
-// staticFile represents an embedded static file with its content type and content.
+// staticFile is an embedded static file with content type and data.
 type staticFile struct {
 	contentType string
 	content     string
 	name        string
 }
 
-// staticFiles maps URL paths to their corresponding static file definitions.
+// staticFiles is a map from URL paths to static file definitions.
 var staticFiles = map[string]staticFile{
 	"/style.css": {
 		contentType: "text/css",
@@ -284,7 +284,7 @@ var staticFiles = map[string]staticFile{
 	},
 }
 
-// handleStatic serves the embedded static web interface files.
+// handleStatic handles requests for embedded static web interface files.
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	if path == "/" {

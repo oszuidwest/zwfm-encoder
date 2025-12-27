@@ -17,31 +17,36 @@ const (
 	StateStopping EncoderState = "stopping"
 )
 
-// Retry configuration constants.
 const (
+	// InitialRetryDelay is the starting delay between retry attempts.
 	InitialRetryDelay = 3 * time.Second
-	MaxRetryDelay     = 60 * time.Second
-	MaxRetries        = 10
-	SuccessThreshold  = 30 * time.Second // Reset retry count after running this long
-	StableThreshold   = 10 * time.Second // Consider connection stable after this duration
+	// MaxRetryDelay is the maximum delay between retry attempts.
+	MaxRetryDelay = 60 * time.Second
+	// MaxRetries is the maximum number of retry attempts for the audio source.
+	MaxRetries = 10
+	// SuccessThreshold is the duration after which retry count resets.
+	SuccessThreshold = 30 * time.Second
+	// StableThreshold is the duration after which a connection is considered stable.
+	StableThreshold = 10 * time.Second
 )
 
-// Shutdown configuration constants.
 const (
-	ShutdownTimeout = 3 * time.Second       // Time to wait for graceful shutdown before SIGKILL
-	PollInterval    = 50 * time.Millisecond // Interval for polling process state
+	// ShutdownTimeout is the duration to wait for graceful shutdown.
+	ShutdownTimeout = 3 * time.Second
+	// PollInterval is the interval for polling process state.
+	PollInterval = 50 * time.Millisecond
 )
 
 // Output represents a single SRT output destination.
 type Output struct {
-	ID         string `json:"id"`
-	Host       string `json:"host"`
-	Port       int    `json:"port"`
-	Password   string `json:"password"`
-	StreamID   string `json:"streamid"`
-	Codec      string `json:"codec"`
-	MaxRetries int    `json:"max_retries,omitempty"`
-	CreatedAt  int64  `json:"created_at"`
+	ID         string `json:"id"`                    // Unique identifier
+	Host       string `json:"host"`                  // SRT server hostname
+	Port       int    `json:"port"`                  // SRT server port
+	Password   string `json:"password"`              // SRT encryption passphrase
+	StreamID   string `json:"streamid"`              // SRT stream identifier
+	Codec      string `json:"codec"`                 // Audio codec (mp2, mp3, ogg, wav)
+	MaxRetries int    `json:"max_retries,omitempty"` // Maximum retry attempts
+	CreatedAt  int64  `json:"created_at"`            // Unix timestamp of creation
 }
 
 // DefaultMaxRetries is the default number of retry attempts for outputs.
@@ -57,8 +62,8 @@ func (o *Output) MaxRetriesOrDefault() int {
 
 // CodecPreset defines FFmpeg encoding parameters for a codec.
 type CodecPreset struct {
-	Args   []string
-	Format string
+	Args   []string // FFmpeg codec arguments
+	Format string   // FFmpeg output format
 }
 
 // CodecPresets maps codec names to their FFmpeg configuration.
@@ -90,30 +95,32 @@ func (o *Output) Format() string {
 
 // OutputStatus contains runtime status for an output.
 type OutputStatus struct {
-	Running    bool   `json:"running"`
-	Stable     bool   `json:"stable,omitzero"`
-	LastError  string `json:"last_error,omitzero"`
-	RetryCount int    `json:"retry_count,omitzero"`
-	MaxRetries int    `json:"max_retries"`
-	GivenUp    bool   `json:"given_up,omitzero"`
+	Running    bool   `json:"running"`              // FFmpeg process is running
+	Stable     bool   `json:"stable,omitzero"`      // Connection is stable
+	LastError  string `json:"last_error,omitzero"`  // Most recent error
+	RetryCount int    `json:"retry_count,omitzero"` // Current retry attempt
+	MaxRetries int    `json:"max_retries"`          // Maximum retry attempts
+	GivenUp    bool   `json:"given_up,omitzero"`    // Max retries exhausted
 }
 
 // EncoderStatus contains a summary of the encoder's current operational state.
 type EncoderStatus struct {
-	State            EncoderState `json:"state"`
-	Uptime           string       `json:"uptime,omitzero"`
-	LastError        string       `json:"last_error,omitzero"`
-	OutputCount      int          `json:"output_count"`
-	SourceRetryCount int          `json:"source_retry_count,omitzero"`
-	SourceMaxRetries int          `json:"source_max_retries"`
+	State            EncoderState `json:"state"`                       // Current encoder state
+	Uptime           string       `json:"uptime,omitzero"`             // Time since start
+	LastError        string       `json:"last_error,omitzero"`         // Most recent error
+	OutputCount      int          `json:"output_count"`                // Number of outputs
+	SourceRetryCount int          `json:"source_retry_count,omitzero"` // Source retry attempts
+	SourceMaxRetries int          `json:"source_max_retries"`          // Max source retries
 }
 
 // SilenceLevel represents the silence detection state.
 type SilenceLevel string
 
 const (
-	SilenceLevelNone   SilenceLevel = ""       // No silence detected
-	SilenceLevelActive SilenceLevel = "active" // Silence confirmed (duration threshold exceeded)
+	// SilenceLevelNone indicates no silence is detected.
+	SilenceLevelNone SilenceLevel = ""
+	// SilenceLevelActive indicates silence is confirmed.
+	SilenceLevelActive SilenceLevel = "active"
 )
 
 // AudioLevels contains current audio level measurements.
@@ -131,93 +138,93 @@ type AudioLevels struct {
 
 // AudioMetrics contains audio level metrics for callback processing.
 type AudioMetrics struct {
-	RMSL, RMSR      float64      // RMS levels in dB
-	PeakL, PeakR    float64      // Peak levels in dB
-	Silence         bool         // True if audio below threshold
-	SilenceDuration float64      // Silence duration in seconds
-	SilenceLevel    SilenceLevel // "active" when in confirmed silence state
-	ClipL, ClipR    int          // Clipped sample counts
+	RMSLeft, RMSRight   float64      // RMS levels in dB
+	PeakLeft, PeakRight float64      // Peak levels in dB
+	Silence             bool         // True if audio below threshold
+	SilenceDuration     float64      // Silence duration in seconds
+	SilenceLevel        SilenceLevel // "active" when in confirmed silence state
+	ClipLeft, ClipRight int          // Clipped sample counts
 }
 
 // WSStatusResponse is sent to clients with full encoder and output status.
 type WSStatusResponse struct {
-	Type             string                  `json:"type"`
-	Encoder          EncoderStatus           `json:"encoder"`
-	Outputs          []Output                `json:"outputs"`
-	OutputStatus     map[string]OutputStatus `json:"output_status"`
-	Devices          []AudioDevice           `json:"devices"`
-	SilenceThreshold float64                 `json:"silence_threshold"`
-	SilenceDuration  float64                 `json:"silence_duration"`
-	SilenceRecovery  float64                 `json:"silence_recovery"`
-	SilenceWebhook   string                  `json:"silence_webhook"`
-	SilenceLogPath   string                  `json:"silence_log_path"`
-	EmailSMTPHost    string                  `json:"email_smtp_host"`
-	EmailSMTPPort    int                     `json:"email_smtp_port"`
-	EmailFromName    string                  `json:"email_from_name"`
-	EmailUsername    string                  `json:"email_username"`
-	EmailRecipients  string                  `json:"email_recipients"`
-	Settings         WSSettings              `json:"settings"`
-	Version          VersionInfo             `json:"version"`
+	Type             string                  `json:"type"`              // Message type identifier
+	Encoder          EncoderStatus           `json:"encoder"`           // Encoder status
+	Outputs          []Output                `json:"outputs"`           // Output configurations
+	OutputStatus     map[string]OutputStatus `json:"output_status"`     // Runtime output status
+	Devices          []AudioDevice           `json:"devices"`           // Available audio devices
+	SilenceThreshold float64                 `json:"silence_threshold"` // Silence threshold in dB
+	SilenceDuration  float64                 `json:"silence_duration"`  // Silence duration in seconds
+	SilenceRecovery  float64                 `json:"silence_recovery"`  // Recovery duration in seconds
+	SilenceWebhook   string                  `json:"silence_webhook"`   // Webhook URL for alerts
+	SilenceLogPath   string                  `json:"silence_log_path"`  // Log file path
+	EmailSMTPHost    string                  `json:"email_smtp_host"`   // SMTP server hostname
+	EmailSMTPPort    int                     `json:"email_smtp_port"`   // SMTP server port
+	EmailFromName    string                  `json:"email_from_name"`   // Sender display name
+	EmailUsername    string                  `json:"email_username"`    // SMTP username
+	EmailRecipients  string                  `json:"email_recipients"`  // Comma-separated recipients
+	Settings         WSSettings              `json:"settings"`          // Current settings
+	Version          VersionInfo             `json:"version"`           // Version information
 }
 
 // WSSettings contains the settings sub-object in status responses.
 type WSSettings struct {
-	AudioInput string `json:"audio_input"`
-	Platform   string `json:"platform"`
+	AudioInput string `json:"audio_input"` // Selected audio input device
+	Platform   string `json:"platform"`    // Operating system platform
 }
 
 // WSLevelsResponse is sent to clients with audio level updates.
 type WSLevelsResponse struct {
-	Type   string      `json:"type"`
-	Levels AudioLevels `json:"levels"`
+	Type   string      `json:"type"`   // Message type identifier
+	Levels AudioLevels `json:"levels"` // Current audio levels
 }
 
 // WSTestResult is sent to clients after a test operation completes.
 type WSTestResult struct {
-	Type     string `json:"type"`
-	TestType string `json:"test_type"`
-	Success  bool   `json:"success"`
-	Error    string `json:"error,omitempty"`
+	Type     string `json:"type"`            // Message type identifier
+	TestType string `json:"test_type"`       // Type of test performed
+	Success  bool   `json:"success"`         // Test succeeded
+	Error    string `json:"error,omitempty"` // Error message if failed
 }
 
 // WSSilenceLogResult is sent to clients with silence log entries.
 type WSSilenceLogResult struct {
-	Type    string            `json:"type"`
-	Success bool              `json:"success"`
-	Error   string            `json:"error,omitempty"`
-	Entries []SilenceLogEntry `json:"entries,omitempty"`
-	Path    string            `json:"path,omitempty"`
+	Type    string            `json:"type"`              // Message type identifier
+	Success bool              `json:"success"`           // Operation succeeded
+	Error   string            `json:"error,omitempty"`   // Error message if failed
+	Entries []SilenceLogEntry `json:"entries,omitempty"` // Log entries
+	Path    string            `json:"path,omitempty"`    // Log file path
 }
 
 // SilenceLogEntry represents a single entry in the silence log.
 type SilenceLogEntry struct {
-	Timestamp   string  `json:"timestamp"`
-	Event       string  `json:"event"`
-	DurationSec float64 `json:"duration_sec,omitempty"` // Duration of the silence period in seconds.
-	ThresholdDB float64 `json:"threshold_db"`
+	Timestamp   string  `json:"timestamp"`              // RFC3339 timestamp
+	Event       string  `json:"event"`                  // Event type (silence_start, silence_end)
+	DurationSec float64 `json:"duration_sec,omitempty"` // Silence duration in seconds
+	ThresholdDB float64 `json:"threshold_db"`           // Threshold in dB
 }
 
 // AudioDevice represents an available audio input device.
 type AudioDevice struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID   string `json:"id"`   // Device identifier
+	Name string `json:"name"` // Device display name
 }
 
 // EmailConfig contains SMTP server settings for email notifications.
 type EmailConfig struct {
-	Host       string `json:"host,omitempty"`
-	Port       int    `json:"port,omitempty"`
-	FromName   string `json:"from_name,omitempty"`
-	Username   string `json:"username,omitempty"`
-	Password   string `json:"password,omitempty"`
-	Recipients string `json:"recipients,omitempty"`
+	Host       string `json:"host,omitempty"`       // SMTP server hostname
+	Port       int    `json:"port,omitempty"`       // SMTP server port
+	FromName   string `json:"from_name,omitempty"`  // Sender display name
+	Username   string `json:"username,omitempty"`   // SMTP username
+	Password   string `json:"password,omitempty"`   // SMTP password
+	Recipients string `json:"recipients,omitempty"` // Comma-separated recipients
 }
 
 // VersionInfo contains version comparison data.
 type VersionInfo struct {
-	Current     string `json:"current"`
-	Latest      string `json:"latest,omitempty"`
-	UpdateAvail bool   `json:"update_available"`
-	Commit      string `json:"commit,omitempty"`
-	BuildTime   string `json:"build_time,omitempty"`
+	Current     string `json:"current"`              // Current version
+	Latest      string `json:"latest,omitempty"`     // Latest available version
+	UpdateAvail bool   `json:"update_available"`     // Update is available
+	Commit      string `json:"commit,omitempty"`     // Git commit hash
+	BuildTime   string `json:"build_time,omitempty"` // Build timestamp
 }

@@ -23,7 +23,7 @@ const (
 	versionRetryDelay    = 1 * time.Minute  // Delay between retries
 )
 
-// VersionChecker periodically checks GitHub for new releases.
+// VersionChecker is a background service that checks GitHub for new releases.
 type VersionChecker struct {
 	mu     sync.RWMutex
 	latest string
@@ -37,7 +37,7 @@ func NewVersionChecker() *VersionChecker {
 	return vc
 }
 
-// run is the main loop that periodically checks for updates.
+// run executes the periodic version check loop.
 func (vc *VersionChecker) run() {
 	defer func() {
 		if r := recover(); r != nil {
@@ -56,7 +56,7 @@ func (vc *VersionChecker) run() {
 	}
 }
 
-// checkWithRetry attempts the version check with retries on failure.
+// checkWithRetry performs the version check with automatic retries.
 func (vc *VersionChecker) checkWithRetry() {
 	for attempt := range versionMaxRetries {
 		if vc.check() {
@@ -68,14 +68,14 @@ func (vc *VersionChecker) checkWithRetry() {
 	}
 }
 
-// githubRelease represents the GitHub API response for a release.
+// githubRelease is the GitHub API response structure for a release.
 type githubRelease struct {
 	TagName    string `json:"tag_name"`
 	Draft      bool   `json:"draft"`
 	Prerelease bool   `json:"prerelease"`
 }
 
-// check fetches the latest release from GitHub. Returns true on success.
+// check fetches the latest release from GitHub and reports success.
 func (vc *VersionChecker) check() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), versionCheckTimeout)
 	defer cancel()
@@ -169,12 +169,12 @@ func (vc *VersionChecker) Info() types.VersionInfo {
 	return info
 }
 
-// normalizeVersion removes 'v' prefix and trims whitespace.
+// normalizeVersion returns the version without 'v' prefix and whitespace.
 func normalizeVersion(v string) string {
 	return strings.TrimPrefix(strings.TrimSpace(v), "v")
 }
 
-// canonicalVersion ensures a version string is in semver canonical form (v prefix).
+// canonicalVersion returns the version in semver canonical form with v prefix.
 func canonicalVersion(v string) string {
 	v = strings.TrimSpace(v)
 	if !strings.HasPrefix(v, "v") {

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
@@ -13,7 +12,7 @@ import (
 // LogSilenceStart records the beginning of a silence event.
 func LogSilenceStart(logPath string, threshold float64) error {
 	return appendLogEntry(logPath, types.SilenceLogEntry{
-		Timestamp:   time.Now().UTC().Format(time.RFC3339),
+		Timestamp:   timestampUTC(),
 		Event:       "silence_start",
 		ThresholdDB: threshold,
 	})
@@ -22,7 +21,7 @@ func LogSilenceStart(logPath string, threshold float64) error {
 // LogSilenceEnd records the end of a silence event with its total duration.
 func LogSilenceEnd(logPath string, silenceDuration, threshold float64) error {
 	return appendLogEntry(logPath, types.SilenceLogEntry{
-		Timestamp:   time.Now().UTC().Format(time.RFC3339),
+		Timestamp:   timestampUTC(),
 		Event:       "silence_end",
 		DurationSec: silenceDuration,
 		ThresholdDB: threshold,
@@ -36,7 +35,7 @@ func WriteTestLog(logPath string) error {
 	}
 
 	return appendLogEntry(logPath, types.SilenceLogEntry{
-		Timestamp:   time.Now().UTC().Format(time.RFC3339),
+		Timestamp:   timestampUTC(),
 		Event:       "test",
 		DurationSec: 0,
 		ThresholdDB: 0,

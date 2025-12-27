@@ -2,7 +2,7 @@ package util
 
 import "time"
 
-// Backoff calculates exponential backoff delays with a configurable factor and maximum.
+// Backoff is an exponential backoff calculator.
 type Backoff struct {
 	current  time.Duration
 	initial  time.Duration
@@ -10,7 +10,7 @@ type Backoff struct {
 	factor   float64
 }
 
-// NewBackoff creates a backoff calculator with sensible defaults.
+// NewBackoff returns a new Backoff with the given initial and maximum delays.
 func NewBackoff(initial, maxDelay time.Duration) *Backoff {
 	return &Backoff{
 		current:  initial,
@@ -32,7 +32,7 @@ func (b *Backoff) Current() time.Duration {
 	return b.current
 }
 
-// Reset returns the backoff to the initial delay.
+// Reset sets the backoff back to the given initial delay.
 func (b *Backoff) Reset(initial time.Duration) {
 	b.current = initial
 	b.initial = initial

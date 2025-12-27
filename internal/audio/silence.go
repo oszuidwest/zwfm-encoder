@@ -26,9 +26,7 @@ type SilenceEvent struct {
 	TotalDuration float64 // Total silence duration (only set when JustRecovered)
 }
 
-// SilenceDetector tracks silence state with hysteresis.
-// It reports silence after Duration seconds of continuous quiet audio,
-// and recovery after Recovery seconds of continuous audio.
+// SilenceDetector tracks audio silence state and generates detection events.
 type SilenceDetector struct {
 	silenceStart    time.Time // when current silence period started
 	recoveryStart   time.Time // when audio returned after silence

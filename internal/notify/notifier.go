@@ -8,13 +8,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// SilenceNotifier orchestrates notifications for silence events.
-// It tracks which notifications have been sent to avoid duplicates,
-// and independently triggers webhook, email, and log notifications
-// based on configuration.
-//
-// This separates notification concerns from the SilenceDetector,
-// which only handles pure audio level detection.
+// SilenceNotifier manages notifications for silence detection events.
 type SilenceNotifier struct {
 	cfg *config.Config
 
@@ -32,8 +26,7 @@ func NewSilenceNotifier(cfg *config.Config) *SilenceNotifier {
 	return &SilenceNotifier{cfg: cfg}
 }
 
-// HandleEvent processes a silence event and triggers appropriate notifications.
-// Call this after each SilenceDetector.Update() with the returned event.
+// HandleEvent processes a silence event and triggers notifications.
 func (n *SilenceNotifier) HandleEvent(event audio.SilenceEvent) {
 	if event.JustEntered {
 		n.handleSilenceStart(event.Duration)
@@ -48,12 +41,12 @@ func (n *SilenceNotifier) HandleEvent(event audio.SilenceEvent) {
 func (n *SilenceNotifier) handleSilenceStart(duration float64) {
 	cfg := n.cfg.Snapshot()
 
-	n.trySend(&n.webhookSent, cfg.HasWebhook(), func() { n.sendSilenceWebhook(duration) })
-	n.trySend(&n.emailSent, cfg.HasEmail(), func() { n.sendSilenceEmail(duration) })
-	n.trySend(&n.logSent, cfg.HasLogPath(), func() { n.logSilenceStart(cfg.SilenceThreshold) })
+	n.trySend(&n.webhookSent, cfg.HasWebhook(), func() { n.sendSilenceWebhook(cfg, duration) })
+	n.trySend(&n.emailSent, cfg.HasEmail(), func() { n.sendSilenceEmail(cfg, duration) })
+	n.trySend(&n.logSent, cfg.HasLogPath(), func() { n.logSilenceStart(cfg) })
 }
 
-// trySend atomically checks and sets a notification flag, then spawns the sender if needed.
+// trySend sends a notification if the condition is met and not already sent.
 func (n *SilenceNotifier) trySend(sent *bool, condition bool, sender func()) {
 	n.mu.Lock()
 	shouldSend := !*sent && condition
@@ -82,15 +75,15 @@ func (n *SilenceNotifier) handleSilenceEnd(totalDuration float64) {
 	n.mu.Unlock()
 
 	if shouldSendWebhookRecovery {
-		go n.sendRecoveryWebhook(totalDuration)
+		go n.sendRecoveryWebhook(cfg, totalDuration)
 	}
 
 	if shouldSendEmailRecovery {
-		go n.sendRecoveryEmail(totalDuration)
+		go n.sendRecoveryEmail(cfg, totalDuration)
 	}
 
 	if shouldSendLogRecovery {
-		go n.logSilenceEnd(totalDuration, cfg.SilenceThreshold)
+		go n.logSilenceEnd(cfg, totalDuration)
 	}
 }
 
@@ -103,10 +96,8 @@ func (n *SilenceNotifier) Reset() {
 	n.mu.Unlock()
 }
 
-// Notification senders.
-
-func (n *SilenceNotifier) sendSilenceWebhook(duration float64) {
-	cfg := n.cfg.Snapshot()
+//nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
+func (n *SilenceNotifier) sendSilenceWebhook(cfg config.Snapshot, duration float64) {
 	util.LogNotifyResult(
 		func() error { return SendSilenceWebhook(cfg.WebhookURL, duration, cfg.SilenceThreshold) },
 		"Silence webhook",
@@ -114,8 +105,8 @@ func (n *SilenceNotifier) sendSilenceWebhook(duration float64) {
 	)
 }
 
-func (n *SilenceNotifier) sendRecoveryWebhook(duration float64) {
-	cfg := n.cfg.Snapshot()
+//nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
+func (n *SilenceNotifier) sendRecoveryWebhook(cfg config.Snapshot, duration float64) {
 	util.LogNotifyResult(
 		func() error { return SendRecoveryWebhook(cfg.WebhookURL, duration) },
 		"Recovery webhook",
@@ -123,9 +114,11 @@ func (n *SilenceNotifier) sendRecoveryWebhook(duration float64) {
 	)
 }
 
-func (n *SilenceNotifier) sendSilenceEmail(duration float64) {
-	cfg := n.cfg.Snapshot()
-	emailCfg := &EmailConfig{
+// buildEmailConfig creates an EmailConfig from the config snapshot.
+//
+//nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
+func buildEmailConfig(cfg config.Snapshot) *EmailConfig {
+	return &EmailConfig{
 		Host:       cfg.EmailSMTPHost,
 		Port:       cfg.EmailSMTPPort,
 		FromName:   cfg.EmailFromName,
@@ -133,6 +126,11 @@ func (n *SilenceNotifier) sendSilenceEmail(duration float64) {
 		Password:   cfg.EmailPassword,
 		Recipients: cfg.EmailRecipients,
 	}
+}
+
+//nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
+func (n *SilenceNotifier) sendSilenceEmail(cfg config.Snapshot, duration float64) {
+	emailCfg := buildEmailConfig(cfg)
 	util.LogNotifyResult(
 		func() error { return SendSilenceAlert(emailCfg, duration, cfg.SilenceThreshold) },
 		"Silence email",
@@ -140,16 +138,9 @@ func (n *SilenceNotifier) sendSilenceEmail(duration float64) {
 	)
 }
 
-func (n *SilenceNotifier) sendRecoveryEmail(duration float64) {
-	cfg := n.cfg.Snapshot()
-	emailCfg := &EmailConfig{
-		Host:       cfg.EmailSMTPHost,
-		Port:       cfg.EmailSMTPPort,
-		FromName:   cfg.EmailFromName,
-		Username:   cfg.EmailUsername,
-		Password:   cfg.EmailPassword,
-		Recipients: cfg.EmailRecipients,
-	}
+//nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
+func (n *SilenceNotifier) sendRecoveryEmail(cfg config.Snapshot, duration float64) {
+	emailCfg := buildEmailConfig(cfg)
 	util.LogNotifyResult(
 		func() error { return SendRecoveryAlert(emailCfg, duration) },
 		"Recovery email",
@@ -157,19 +148,19 @@ func (n *SilenceNotifier) sendRecoveryEmail(duration float64) {
 	)
 }
 
-func (n *SilenceNotifier) logSilenceStart(threshold float64) {
-	cfg := n.cfg.Snapshot()
+//nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
+func (n *SilenceNotifier) logSilenceStart(cfg config.Snapshot) {
 	util.LogNotifyResult(
-		func() error { return LogSilenceStart(cfg.LogPath, threshold) },
+		func() error { return LogSilenceStart(cfg.LogPath, cfg.SilenceThreshold) },
 		"Silence log",
 		true,
 	)
 }
 
-func (n *SilenceNotifier) logSilenceEnd(duration, threshold float64) {
-	cfg := n.cfg.Snapshot()
+//nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
+func (n *SilenceNotifier) logSilenceEnd(cfg config.Snapshot, duration float64) {
 	util.LogNotifyResult(
-		func() error { return LogSilenceEnd(cfg.LogPath, duration, threshold) },
+		func() error { return LogSilenceEnd(cfg.LogPath, duration, cfg.SilenceThreshold) },
 		"Recovery log",
 		true,
 	)

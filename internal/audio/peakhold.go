@@ -21,7 +21,7 @@ func NewPeakHolder() *PeakHolder {
 	}
 }
 
-// Update updates held peaks based on current peaks and time.
+// Update refreshes held peak values based on current peaks and elapsed time.
 func (p *PeakHolder) Update(peakL, peakR float64, now time.Time) (heldL, heldR float64) {
 	if peakL >= p.heldPeakL || now.Sub(p.peakHoldTimeL) > PeakHoldDuration {
 		p.heldPeakL = peakL
@@ -34,7 +34,7 @@ func (p *PeakHolder) Update(peakL, peakR float64, now time.Time) (heldL, heldR f
 	return p.heldPeakL, p.heldPeakR
 }
 
-// Reset resets peak hold to minimum levels.
+// Reset clears held peak values to minimum levels.
 func (p *PeakHolder) Reset() {
 	p.heldPeakL = MinDB
 	p.heldPeakR = MinDB

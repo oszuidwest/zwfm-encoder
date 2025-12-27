@@ -12,7 +12,6 @@ import (
 type AudioLevelCallback func(metrics *types.AudioMetrics)
 
 // Distributor handles audio sample processing, level metering, and silence detection.
-// It encapsulates the audio processing pipeline separate from the distribution logic.
 type Distributor struct {
 	levelData       *audio.LevelData
 	silenceDetect   *audio.SilenceDetector
@@ -43,25 +42,25 @@ func (d *Distributor) ProcessSamples(buf []byte, n int) {
 		levels := audio.CalculateLevels(d.levelData)
 
 		now := time.Now()
-		heldPeakL, heldPeakR := d.peakHolder.Update(levels.PeakL, levels.PeakR, now)
+		heldPeakL, heldPeakR := d.peakHolder.Update(levels.PeakLeft, levels.PeakRight, now)
 
 		// Silence detection (using snapshot from startup)
-		silenceEvent := d.silenceDetect.Update(levels.RMSL, levels.RMSR, d.silenceCfg, now)
+		silenceEvent := d.silenceDetect.Update(levels.RMSLeft, levels.RMSRight, d.silenceCfg, now)
 
 		// Delegate notification handling to the notifier (separation of concerns)
 		d.silenceNotifier.HandleEvent(silenceEvent)
 
 		if d.callback != nil {
 			d.callback(&types.AudioMetrics{
-				RMSL:            levels.RMSL,
-				RMSR:            levels.RMSR,
-				PeakL:           heldPeakL,
-				PeakR:           heldPeakR,
+				RMSLeft:         levels.RMSLeft,
+				RMSRight:        levels.RMSRight,
+				PeakLeft:        heldPeakL,
+				PeakRight:       heldPeakR,
 				Silence:         silenceEvent.InSilence,
 				SilenceDuration: silenceEvent.Duration,
 				SilenceLevel:    silenceEvent.Level,
-				ClipL:           levels.ClipL,
-				ClipR:           levels.ClipR,
+				ClipLeft:        levels.ClipLeft,
+				ClipRight:       levels.ClipRight,
 			})
 		}
 

@@ -10,7 +10,7 @@ import (
 	"github.com/wneessen/go-mail"
 )
 
-// EmailConfig is an alias for types.EmailConfig for backward compatibility.
+// EmailConfig is the SMTP configuration for email notifications.
 type EmailConfig = types.EmailConfig
 
 // SendSilenceAlert sends an email notification for critical silence.
@@ -19,7 +19,7 @@ func SendSilenceAlert(cfg *EmailConfig, duration, threshold float64) error {
 		return nil // Silently skip if not configured
 	}
 
-	subject := "[ALERT] Silence Detected - ZuidWest FM Encoder"
+	subject := "[ALERT] Silence Detected - " + AppName
 	body := fmt.Sprintf(
 		"Silence detected on the audio encoder.\n\n"+
 			"Duration:  %.1f seconds\n"+
@@ -38,7 +38,7 @@ func SendRecoveryAlert(cfg *EmailConfig, silenceDuration float64) error {
 		return nil // Silently skip if not configured
 	}
 
-	subject := "[OK] Audio Recovered - ZuidWest FM Encoder"
+	subject := "[OK] Audio Recovered - " + AppName
 	body := fmt.Sprintf(
 		"Audio recovered on the encoder.\n\n"+
 			"Silence lasted: %.1f seconds\n"+
@@ -61,7 +61,7 @@ func SendTestEmail(cfg *EmailConfig) error {
 		return fmt.Errorf("email recipients not configured")
 	}
 
-	subject := "[TEST] ZuidWest FM Encoder"
+	subject := "[TEST] " + AppName
 	body := fmt.Sprintf(
 		"Test email from the audio encoder.\n\n"+
 			"Time: %s\n\n"+

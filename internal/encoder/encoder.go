@@ -22,13 +22,10 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// LevelUpdateSamples is the number of samples before updating audio levels (~250ms).
+// LevelUpdateSamples is the number of samples before updating audio levels.
 const LevelUpdateSamples = 12000
 
-// Encoder orchestrates audio capture from a platform-specific source (arecord
-// on Linux, FFmpeg on macOS) and distributes PCM audio to multiple output
-// FFmpeg processes. It handles automatic retry with exponential backoff,
-// calculates real-time audio levels, and detects silence conditions.
+// Encoder manages audio capture and distribution to multiple streaming outputs.
 type Encoder struct {
 	config          *config.Config
 	outputManager   *output.Manager
@@ -70,13 +67,11 @@ func (e *Encoder) State() types.EncoderState {
 }
 
 // Output returns the output configuration for the given ID.
-// Implements output.OutputContext.
 func (e *Encoder) Output(outputID string) *types.Output {
 	return e.config.Output(outputID)
 }
 
-// IsRunning returns true if the encoder is in running state.
-// Implements output.OutputContext.
+// IsRunning reports whether the encoder is in running state.
 func (e *Encoder) IsRunning() bool {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -84,11 +79,6 @@ func (e *Encoder) IsRunning() bool {
 }
 
 // AudioLevels returns the current audio levels.
-//
-// This method uses TryRLock to avoid blocking the 10 fps WebSocket level updates
-// during encoder state changes (start/stop) that hold the write lock. Stale cached
-// levels are acceptable for VU meter display purposes where visual smoothness
-// matters more than sub-100ms accuracy.
 func (e *Encoder) AudioLevels() types.AudioLevels {
 	if !e.mu.TryRLock() {
 		return e.lastKnownLevels
@@ -137,9 +127,9 @@ func (e *Encoder) Start() error {
 	}
 
 	e.mu.Lock()
+	defer e.mu.Unlock()
 
 	if e.state == types.StateRunning || e.state == types.StateStarting {
-		e.mu.Unlock()
 		return fmt.Errorf("encoder already running")
 	}
 
@@ -150,7 +140,6 @@ func (e *Encoder) Start() error {
 	e.silenceDetect.Reset()
 	e.silenceNotifier.Reset()
 	e.peakHolder.Reset()
-	e.mu.Unlock()
 
 	go e.runSourceLoop()
 
@@ -230,12 +219,14 @@ func (e *Encoder) Restart() error {
 
 // StartOutput starts an individual output FFmpeg process.
 func (e *Encoder) StartOutput(outputID string) error {
+	var stopChan chan struct{}
+
 	e.mu.RLock()
 	if e.state != types.StateRunning {
 		e.mu.RUnlock()
 		return fmt.Errorf("encoder not running")
 	}
-	stopChan := e.stopChan
+	stopChan = e.stopChan
 	e.mu.RUnlock()
 
 	out := e.config.Output(outputID)
@@ -286,7 +277,7 @@ func (e *Encoder) TriggerTestLog() error {
 	return notify.WriteTestLog(e.config.Snapshot().LogPath)
 }
 
-// runSourceLoop runs the audio capture process with auto-restart.
+// runSourceLoop runs the audio capture process.
 func (e *Encoder) runSourceLoop() {
 	for {
 		e.mu.Lock()
@@ -378,15 +369,17 @@ func (e *Encoder) runSource() (string, error) {
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf
 
-	e.mu.Lock()
-	e.sourceCmd = cmd
-	e.sourceCancel = cancel
-	e.sourceStdout = stdoutPipe
-	e.state = types.StateRunning
-	e.startTime = time.Now()
-	e.lastError = ""
-	e.audioLevels = types.AudioLevels{Left: -60, Right: -60, PeakLeft: -60, PeakRight: -60}
-	e.mu.Unlock()
+	func() {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		e.sourceCmd = cmd
+		e.sourceCancel = cancel
+		e.sourceStdout = stdoutPipe
+		e.state = types.StateRunning
+		e.startTime = time.Now()
+		e.lastError = ""
+		e.audioLevels = types.AudioLevels{Left: -60, Right: -60, PeakLeft: -60, PeakRight: -60}
+	}()
 
 	if err := cmd.Start(); err != nil {
 		return "", err
@@ -400,11 +393,13 @@ func (e *Encoder) runSource() (string, error) {
 
 	err = cmd.Wait()
 
-	e.mu.Lock()
-	e.sourceCmd = nil
-	e.sourceCancel = nil
-	e.sourceStdout = nil
-	e.mu.Unlock()
+	func() {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		e.sourceCmd = nil
+		e.sourceCancel = nil
+		e.sourceStdout = nil
+	}()
 
 	return util.ExtractLastError(stderrBuf.String()), err
 }
@@ -420,7 +415,7 @@ func (e *Encoder) startEnabledOutputs() {
 	}
 }
 
-// runDistributor delivers audio from the source to all output processes and calculates audio levels.
+// runDistributor delivers audio from the source to all output processes.
 func (e *Encoder) runDistributor() {
 	buf := make([]byte, 19200) // ~100ms of audio at 48kHz stereo
 
@@ -477,21 +472,21 @@ func (e *Encoder) runDistributor() {
 // updateAudioLevels updates audio levels from calculated metrics.
 func (e *Encoder) updateAudioLevels(m *types.AudioMetrics) {
 	levels := types.AudioLevels{
-		Left:            m.RMSL,
-		Right:           m.RMSR,
-		PeakLeft:        m.PeakL,
-		PeakRight:       m.PeakR,
+		Left:            m.RMSLeft,
+		Right:           m.RMSRight,
+		PeakLeft:        m.PeakLeft,
+		PeakRight:       m.PeakRight,
 		Silence:         m.Silence,
 		SilenceDuration: m.SilenceDuration,
 		SilenceLevel:    m.SilenceLevel,
-		ClipLeft:        m.ClipL,
-		ClipRight:       m.ClipR,
+		ClipLeft:        m.ClipLeft,
+		ClipRight:       m.ClipRight,
 	}
 
 	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.audioLevels = levels
 	e.lastKnownLevels = levels // Update cache for TryRLock fallback
-	e.mu.Unlock()
 }
 
 // pollUntil signals when the given condition becomes true.

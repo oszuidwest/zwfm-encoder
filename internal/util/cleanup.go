@@ -7,7 +7,6 @@ import (
 )
 
 // SafeClose closes an io.Closer and logs any error that occurs.
-// It safely handles nil closers.
 func SafeClose(closer io.Closer, name string) {
 	if closer == nil {
 		return

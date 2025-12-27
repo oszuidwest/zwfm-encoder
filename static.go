@@ -1,6 +1,3 @@
-// Package main embeds static web assets (HTML, CSS, JavaScript) directly into
-// the compiled binary using Go's embed directive. This eliminates external file
-// dependencies and simplifies deployment to a single executable.
 package main
 
 import _ "embed"
