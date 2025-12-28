@@ -381,7 +381,7 @@ func (e *Encoder) runSource() (string, error) {
 
 	// Start distributor and outputs after brief delay
 	go func() {
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(types.OutputRestartDelay)
 		e.startEnabledOutputs()
 	}()
 
@@ -398,11 +398,15 @@ func (e *Encoder) runSource() (string, error) {
 	return util.ExtractLastError(stderrBuf.String()), err
 }
 
-// startEnabledOutputs starts the audio distributor and all output processes.
+// startEnabledOutputs starts the audio distributor and all enabled output processes.
 func (e *Encoder) startEnabledOutputs() {
 	go e.runDistributor()
 
 	for _, out := range e.config.ConfiguredOutputs() {
+		if !out.IsEnabled() {
+			slog.Info("skipping disabled output", "output_id", out.ID)
+			continue
+		}
 		if err := e.StartOutput(out.ID); err != nil {
 			slog.Error("failed to start output", "output_id", out.ID, "error", err)
 		}

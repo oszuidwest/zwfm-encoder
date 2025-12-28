@@ -53,6 +53,13 @@ const DEFAULT_OUTPUT = {
     max_retries: 99
 };
 
+const DEFAULT_EDIT_OUTPUT = {
+    ...DEFAULT_OUTPUT,
+    id: '',
+    enabled: true,
+    created_at: 0
+};
+
 const DEFAULT_LEVELS = {
     left: -60,
     right: -60,
@@ -111,6 +118,9 @@ document.addEventListener('alpine:init', () => {
         ],
 
         newOutput: { ...DEFAULT_OUTPUT },
+
+        editOutput: { ...DEFAULT_EDIT_OUTPUT },
+        editOutputDirty: false,
 
         encoder: {
             state: 'connecting',
@@ -217,6 +227,9 @@ document.addEventListener('alpine:init', () => {
                     event.preventDefault();
                 } else if (this.view === 'add-output') {
                     this.showDashboard();
+                    event.preventDefault();
+                } else if (this.view === 'edit-output') {
+                    this.cancelEditOutput();
                     event.preventDefault();
                 }
                 return;
@@ -487,7 +500,12 @@ document.addEventListener('alpine:init', () => {
          * Shows success state on save button, then navigates to dashboard.
          */
         saveAndClose() {
-            const viewId = this.view === 'settings' ? 'settings-view' : 'add-output-view';
+            const viewIds = {
+                'settings': 'settings-view',
+                'add-output': 'add-output-view',
+                'edit-output': 'edit-output-view'
+            };
+            const viewId = viewIds[this.view] || 'settings-view';
             const saveBtn = document.querySelector(`#${viewId} .nav-btn--save`);
             if (saveBtn) {
                 saveBtn.classList.add('nav-btn--saved');
@@ -589,15 +607,86 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
-         * Initiates output deletion with optimistic UI update.
-         * Tracks deletion state to prevent double-clicks.
+         * Initiates output deletion with confirmation and optimistic UI update.
          * @param {string} id - Output ID to delete
+         * @param {boolean} [returnToDashboard=false] - Navigate to dashboard after delete
          */
-        deleteOutput(id) {
+        deleteOutput(id, returnToDashboard = false) {
             if (!confirm('Delete this output? This action cannot be undone.')) return;
             const output = this.outputs.find(o => o.id === id);
             if (output) this.deletingOutputs[id] = output.created_at;
             this.send('delete_output', id, null);
+            if (returnToDashboard) this.showDashboard();
+        },
+
+        /**
+         * Opens the edit output view and populates it with existing output data.
+         * @param {string} id - ID of the output to edit
+         */
+        showEditOutput(id) {
+            const output = this.outputs.find(o => o.id === id);
+            if (!output) return;
+
+            this.editOutput = {
+                id: output.id,
+                host: output.host,
+                port: output.port,
+                streamid: output.streamid || '',
+                password: '',
+                codec: output.codec || 'wav',
+                max_retries: output.max_retries || 99,
+                enabled: output.enabled !== false,
+                created_at: output.created_at
+            };
+            this.editOutputDirty = false;
+            this.view = 'edit-output';
+        },
+
+        /**
+         * Marks edit output form as dirty (modified).
+         */
+        markEditOutputDirty() {
+            this.editOutputDirty = true;
+        },
+
+        /**
+         * Cancels edit and returns to dashboard without saving.
+         */
+        cancelEditOutput() {
+            this.editOutput = { ...DEFAULT_EDIT_OUTPUT };
+            this.editOutputDirty = false;
+            this.showDashboard();
+        },
+
+        /**
+         * Submits the edited output to the backend.
+         */
+        submitEditOutput() {
+            if (!this.editOutput.host || !this.editOutput.id) return;
+
+            const data = {
+                host: this.editOutput.host.trim(),
+                port: this.editOutput.port,
+                streamid: this.editOutput.streamid.trim() || 'studio',
+                codec: this.editOutput.codec,
+                max_retries: this.editOutput.max_retries,
+                enabled: this.editOutput.enabled,
+                created_at: this.editOutput.created_at
+            };
+
+            if (this.editOutput.password) {
+                data.password = this.editOutput.password;
+            }
+
+            this.send('update_output', this.editOutput.id, data);
+            this.saveAndClose();
+        },
+
+        /**
+         * Deletes the output being edited and returns to dashboard.
+         */
+        confirmDeleteOutput() {
+            this.deleteOutput(this.editOutput.id, true);
         },
 
         /**

@@ -40,6 +40,7 @@ const (
 // Output represents a single SRT output destination.
 type Output struct {
 	ID         string `json:"id"`                    // Unique identifier
+	Enabled    *bool  `json:"enabled,omitempty"`     // Whether output is active (nil defaults to true)
 	Host       string `json:"host"`                  // SRT server hostname
 	Port       int    `json:"port"`                  // SRT server port
 	Password   string `json:"password"`              // SRT encryption passphrase
@@ -49,8 +50,16 @@ type Output struct {
 	CreatedAt  int64  `json:"created_at"`            // Unix timestamp of creation
 }
 
+// IsEnabled returns whether the output is enabled (defaults to true if not set).
+func (o *Output) IsEnabled() bool {
+	return o.Enabled == nil || *o.Enabled
+}
+
 // DefaultMaxRetries is the default number of retry attempts for outputs.
 const DefaultMaxRetries = 99
+
+// OutputRestartDelay is the delay between stopping and starting an output during restart.
+const OutputRestartDelay = 500 * time.Millisecond
 
 // MaxRetriesOrDefault returns the configured max retries or the default value.
 func (o *Output) MaxRetriesOrDefault() int {

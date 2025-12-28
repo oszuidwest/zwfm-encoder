@@ -191,8 +191,10 @@ func (c *Config) AddOutput(output *types.Output) error {
 	if output.ID == "" {
 		output.ID = fmt.Sprintf("output-%d", len(c.Outputs)+1)
 	}
-	if output.Codec == "" {
-		output.Codec = types.DefaultCodec
+	// Codec default is handled by validateOutput in the command handler
+	if output.Enabled == nil {
+		enabled := true
+		output.Enabled = &enabled
 	}
 	output.CreatedAt = time.Now().UnixMilli()
 

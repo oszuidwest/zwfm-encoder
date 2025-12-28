@@ -210,10 +210,9 @@
                             <div class="output__row" :data-output-id="output.id">
                                 <span class="output__dot" :class="getOutputStateClass(output)"></span>
                                 <span class="output__host" x-text="`${output.host}:${output.port}`"></span>
-                                <button class="icon-btn icon-btn--delete" type="button" tabindex="0" title="Delete" aria-label="Delete output"
-                                        @click="deleteOutput(output.id)"
-                                        :disabled="deletingOutputs[output.id] === output.created_at">
-                                    <span class="icon-container" x-html="icons.close"></span>
+                                <button class="icon-btn icon-btn--edit" type="button" tabindex="0" title="Edit" aria-label="Edit output"
+                                        @click="showEditOutput(output.id)">
+                                    <span class="icon-container" x-html="icons.edit"></span>
                                 </button>
                             </div>
                             <div class="output__details">
@@ -511,6 +510,79 @@
                                 <input id="new-retries" type="number" max="9999" min="1" x-model.number="newOutput.max_retries">
                             </div>
                         </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- === Edit Output View ===
+             Form for editing existing stream outputs.
+             Includes all editable fields plus delete option. -->
+        <div id="edit-output-view" x-show="view === 'edit-output'" x-transition:enter.duration.200ms x-cloak>
+            <header class="modal__nav">
+                <button class="nav-btn" type="button" tabindex="0" @click="cancelEditOutput()">Cancel</button>
+                <h1>Edit Output</h1>
+                <button class="nav-btn nav-btn--save" type="button" tabindex="0" @click="submitEditOutput()" :disabled="!editOutput.host || !editOutputDirty">Save</button>
+            </header>
+
+            <div class="settings__panels">
+                <div class="settings__panel">
+                    <label class="form__checkbox form__checkbox--prominent" for="edit-enabled">
+                        <input type="checkbox" id="edit-enabled"
+                               x-model="editOutput.enabled"
+                               @change="markEditOutputDirty()">
+                        <span x-text="editOutput.enabled ? 'Output Enabled' : 'Output Disabled'"></span>
+                    </label>
+                    <div class="settings__section">
+                        <div class="settings__section-header">
+                            <span x-html="icons.server"></span>
+                            <h3>Server</h3>
+                        </div>
+                        <div class="form__row">
+                            <div class="form__group">
+                                <label for="edit-host">Host</label>
+                                <input id="edit-host" type="text" placeholder="stream.example.com" x-model="editOutput.host" @input="markEditOutputDirty()">
+                            </div>
+                            <div class="form__group form__group--small">
+                                <label for="edit-port">Port</label>
+                                <input id="edit-port" type="number" x-model.number="editOutput.port" @input="markEditOutputDirty()">
+                            </div>
+                        </div>
+                        <div class="form__row">
+                            <div class="form__group">
+                                <label for="edit-streamid">Stream ID</label>
+                                <input id="edit-streamid" type="text" placeholder="studio" x-model="editOutput.streamid" @input="markEditOutputDirty()">
+                            </div>
+                            <div class="form__group">
+                                <label for="edit-password">Password</label>
+                                <input id="edit-password" type="password" placeholder="Leave empty to keep" x-model="editOutput.password" @input="markEditOutputDirty()">
+                            </div>
+                        </div>
+                        <div class="form__row">
+                            <div class="form__group">
+                                <label for="edit-codec">Codec</label>
+                                <select id="edit-codec" x-model="editOutput.codec" @change="markEditOutputDirty()">
+                                    <option value="mp3">MP3 (320 kbit/s)</option>
+                                    <option value="mp2">MP2 (384 kbit/s)</option>
+                                    <option value="ogg">Ogg Vorbis (~500 kbit/s)</option>
+                                    <option value="wav">WAV (uncompressed)</option>
+                                </select>
+                            </div>
+                            <div class="form__group form__group--small">
+                                <label for="edit-retries">Max Retries</label>
+                                <input id="edit-retries" type="number" max="9999" min="1" x-model.number="editOutput.max_retries" @input="markEditOutputDirty()">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="settings__section settings__section--danger">
+                        <div class="settings__section-header">
+                            <span x-html="icons.warning"></span>
+                            <h3>Danger Zone</h3>
+                        </div>
+                        <p class="settings__section-desc">Permanently delete this output configuration.</p>
+                        <button class="btn btn--danger btn--block" type="button" tabindex="0" @click="confirmDeleteOutput()">
+                            Delete Output
+                        </button>
                     </div>
                 </div>
             </div>
