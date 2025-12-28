@@ -100,6 +100,18 @@ if [ "$ENABLE_HEARTBEAT" == "y" ]; then
   done
 fi
 
+# Ask for beta version installation
+INSTALL_BETA="n"
+while true; do
+  read -r -p "Do you want to install a beta/prerelease version? (y/n) [default: n]: " answer < /dev/tty
+  answer="${answer:-n}"
+  if [[ "$answer" =~ ^[yn]$ ]]; then
+    INSTALL_BETA="$answer"
+    break
+  fi
+  echo "Invalid input. Please enter 'y' or 'n'."
+done
+
 # Timezone configuration
 set_timezone Europe/Amsterdam
 
@@ -136,14 +148,26 @@ else
   fi
 fi
 
-# Get latest release version from GitHub API
-echo -e "${BLUE}►► Fetching latest release information...${NC}"
-LATEST_RELEASE=$(curl -s "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+# Get release version from GitHub API
+echo -e "${BLUE}►► Fetching release information...${NC}"
+if [ "$INSTALL_BETA" == "y" ]; then
+  # Fetch the most recent prerelease
+  LATEST_RELEASE=$(curl -s "https://api.github.com/repos/${GITHUB_REPO}/releases" | grep -E '"tag_name":|"prerelease":' | paste - - | grep 'true' | head -1 | sed -E 's/.*"tag_name": "([^"]+)".*/\1/')
+  if [ -z "$LATEST_RELEASE" ]; then
+    echo -e "${YELLOW}No beta/prerelease found, falling back to latest stable...${NC}"
+    LATEST_RELEASE=$(curl -s "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+  else
+    echo -e "${YELLOW}Installing prerelease version${NC}"
+  fi
+else
+  # Fetch the latest stable release
+  LATEST_RELEASE=$(curl -s "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+fi
 if [ -z "$LATEST_RELEASE" ]; then
-  echo -e "${RED}Failed to fetch latest release version${NC}"
+  echo -e "${RED}Failed to fetch release version${NC}"
   exit 1
 fi
-echo -e "${GREEN}✓ Latest version: ${LATEST_RELEASE}${NC}"
+echo -e "${GREEN}✓ Version: ${LATEST_RELEASE}${NC}"
 
 # Download encoder binary
 echo -e "${BLUE}►► Downloading encoder binary...${NC}"
