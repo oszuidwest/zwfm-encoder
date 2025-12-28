@@ -80,12 +80,20 @@
     --overlay-light: rgb(255 255 255 / 20%);
     --overlay-medium: rgb(255 255 255 / 25%);
     --overlay-strong: rgb(255 255 255 / 30%);
-    /* Transitions */
+    /* Transition timing scale:
+       --transition-fast (0.2s): Standard UI transitions
+       --transition-precise (0.15s): Animation timing for precise feel
+
+       75ms: VU meter level updates (smooth but responsive)
+       200ms: Most hover/focus states
+       250ms: Panel transitions, larger movements */
     --transition-fast: 0.2s ease;
     --transition-precise: 0.15s ease;
 
-    /* Typography */
+    /* Small text (11px) - used for monospace labels */
     --text-xs: 0.6875rem;
+
+    /* Focus ring - used for accessible focus indicators */
     --focus-ring: rgb(230 0 126 / 40%);
 
 }
@@ -126,7 +134,9 @@
     font-weight: 500;
 }
 
-/* Icon Container - handles span > svg pattern from icons.js */
+/* Icon Container - handles span > svg pattern from icons.js
+   Apply to parent element, sets size on both span and nested svg
+   Usage: class="icon-container" or use component-specific overrides */
 .icon-container,
 .icon-container svg {
     width: 1rem;
@@ -139,7 +149,9 @@
     height: 100%;
 }
 
-/* List Item - Base pattern for bordered list items */
+/* List Item - Base pattern for bordered list items
+   Used by: .output__item, .log__entry
+   Provides: border separator, last-child cleanup, optional hover */
 .list-item {
     border-bottom: 1px solid var(--border-default);
 }
@@ -153,7 +165,12 @@
 }
 
 /* Focus Ring - Unified focus-visible style for interactive elements */
-:is(.icon-btn, .card__add-btn, .vu__mode-btn, .nav-btn, .settings__tab, .icon-btn--close, .footer__links a, .about__links a):focus-visible {
+.icon-btn:focus-visible,
+.card__add-btn:focus-visible,
+.vu__mode-btn:focus-visible,
+.nav-btn:focus-visible,
+.settings__tab:focus-visible,
+.icon-btn--close:focus-visible {
     outline: 2px solid var(--brand);
     outline-offset: 2px;
 }
@@ -191,7 +208,8 @@
 .state-danger { --state-color: var(--danger); --state-bg: var(--danger-bg); }
 .state-stopped { --state-color: var(--stopped); --state-bg: var(--stopped-bg); }
 
-/* Empty State */
+/* Empty State - Base class for loading/error/empty content
+   Usage: Apply to container, optionally add .empty-state--error for danger color */
 .empty-state {
     display: flex;
     flex-direction: column;
@@ -208,6 +226,11 @@
 
 /* =============================================================================
    Animations
+
+   pulse: Breathing effect for status indicators (used by .animate-pulse)
+   fadeIn: View transition animation using --fade-offset CSS variable
+          Applied to .settings-view and component panels
+   slide-out-right: Delete animation for output items
    ============================================================================= */
 
 @keyframes pulse {
@@ -305,7 +328,7 @@ body {
 }
 
 /* =============================================================================
-   Header
+   Header - Split design with logo in branded pill
    ============================================================================= */
 
 .header {
@@ -318,60 +341,60 @@ body {
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-sm);
     border: 1px solid var(--border-default);
+}
 
-    &__brand {
-        display: flex;
-        align-items: center;
-        gap: 0.625rem;
-        flex: 1;
-        min-width: 0;
-    }
+.header__brand {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    flex: 1;
+    min-width: 0;
+}
 
-    &__logo {
-        flex-shrink: 0;
-        width: 2.75rem;
-        height: 2.75rem;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: var(--brand);
-        border-radius: var(--radius-sm);
-        color: var(--text-inverse);
+.header__logo {
+    flex-shrink: 0;
+    width: 2.75rem;
+    height: 2.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--brand);
+    border-radius: var(--radius-sm);
+    color: var(--text-inverse);
+}
 
-        & svg {
-            width: 1.75rem;
-            height: 1.75rem;
-            stroke: currentColor;
-            stroke-width: 8px;
-        }
-    }
+.header__logo svg {
+    width: 1.75rem;
+    height: 1.75rem;
+    stroke: currentColor;
+    stroke-width: 8px;
+}
 
-    &__title {
-        font-size: 1rem;
-        font-weight: 600;
-        color: var(--text-primary);
-        letter-spacing: -0.02em;
-    }
+.header__title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
+}
 
-    &__actions {
-        display: flex;
-        align-items: center;
-        gap: 0.25rem;
+.header__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
 
-        & .icon-btn {
-            width: 2.75rem;
-            height: 2.75rem;
-            background: transparent;
-            color: var(--text-muted);
-            border: none;
-            box-shadow: none;
+.header__actions .icon-btn {
+    width: 2.75rem;
+    height: 2.75rem;
+    background: transparent;
+    color: var(--text-muted);
+    border: none;
+    box-shadow: none;
+}
 
-            &:hover {
-                background: var(--surface-elevated);
-                color: var(--brand);
-            }
-        }
-    }
+.header__actions .icon-btn:hover {
+    background: var(--surface-elevated);
+    color: var(--brand);
 }
 
 /* =============================================================================
@@ -385,55 +408,51 @@ body {
     overflow: hidden;
     margin-bottom: 1rem;
     transition: box-shadow var(--transition-fast);
+}
 
-    &:hover {
-        box-shadow: var(--shadow-md);
-    }
+.card:hover {
+    box-shadow: var(--shadow-md);
+}
 
-    &__header {
-        padding: 1rem;
-        color: var(--text-inverse);
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
+.card__header {
+    padding: 1rem;
+    color: var(--text-inverse);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
 
-        &--brand { background: var(--header-primary); }
-        &--slate { background: var(--header-secondary); }
+.card__header--brand { background: var(--header-primary); }
+.card__header--slate { background: var(--header-secondary); }
 
-        & h2 {
-            font-size: 1.125rem;
-            font-weight: 700;
-        }
-    }
+.card__header h2 {
+    font-size: 1.125rem;
+    font-weight: 700;
+}
 
-    &__actions {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-    }
+.card__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
 
-    &__add-btn {
-        display: flex;
-        align-items: center;
-        gap: 0.25rem;
-        background: var(--overlay-light);
-        border: 1px solid var(--overlay-strong);
-        padding: 0.25rem 0.75rem;
-        border-radius: var(--radius-full);
-        font-size: 0.875rem;
-        font-weight: 500;
-        color: var(--text-inverse);
-        cursor: pointer;
-        transition: background var(--transition-fast);
+.card__add-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    background: var(--overlay-light);
+    border: 1px solid var(--overlay-strong);
+    padding: 0.25rem 0.75rem;
+    border-radius: var(--radius-full);
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-inverse);
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
 
-        &:hover {
-            background: var(--overlay-strong);
-        }
-    }
-
-    &__body {
-        padding: 1.25rem;
-    }
+.card__add-btn:hover {
+    background: var(--overlay-strong);
 }
 
 .badge {
@@ -443,6 +462,10 @@ body {
     font-size: 0.875rem;
     font-weight: 500;
     border: 1px solid var(--overlay-strong);
+}
+
+.card__body {
+    padding: 1.25rem;
 }
 
 /* =============================================================================
@@ -495,6 +518,7 @@ input::placeholder {
 select {
     appearance: none;
     -webkit-appearance: none;
+    /* Custom dropdown arrow - inline SVG chevron icon */
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 1rem center;
@@ -503,6 +527,7 @@ select {
 }
 
 .dark select {
+    /* Lighter arrow color for dark mode (neutral-400) */
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239ca3af' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
 }
 
@@ -531,6 +556,15 @@ select {
     font-size: 0.75rem;
     color: var(--text-muted);
     margin-top: 0.375rem;
+}
+
+/* Password field with toggle */
+.form__group--password {
+    position: relative;
+}
+
+.form__group--password input {
+    padding-right: 2.75rem;
 }
 
 .form__toggle {
@@ -565,6 +599,10 @@ select {
 }
 
 @media (max-width: 640px) {
+    .form__group--password input {
+        padding-right: 3rem;
+    }
+
     .form__toggle {
         padding: 0.5rem;
     }
@@ -583,196 +621,214 @@ select {
     background: var(--vu-bg);
     border-radius: var(--radius-lg);
     padding: 0.75rem;
-
-    &__header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 0.5rem;
-    }
-
-    &__mode-btn {
-        font-size: 0.625rem;
-        font-family: var(--font-mono);
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        padding: 0.25rem 0.5rem;
-        border-radius: var(--radius-sm);
-        border: none;
-        background: var(--surface-card);
-        color: var(--text-secondary);
-        cursor: pointer;
-        transition: color var(--transition-fast);
-
-        &:hover {
-            color: var(--text-primary);
-        }
-    }
-
-    &__indicators {
-        display: flex;
-        gap: 0.75rem;
-    }
-
-    &__indicator {
-        display: flex;
-        align-items: center;
-        gap: 0.25rem;
-        font-size: var(--text-xs);
-        font-weight: 500;
-        color: var(--text-secondary);
-    }
-
-    &__indicator-dot {
-        width: 0.375rem;
-        height: 0.375rem;
-        border-radius: 50%;
-        background: var(--border-strong);
-        transition: background 0.15s, box-shadow 0.15s;
-        flex-shrink: 0;
-
-        &--silence-active {
-            background: var(--warning);
-            box-shadow: 0 0 6px var(--warning);
-            animation: pulse 2s infinite;
-        }
-
-        &--silence-warning {
-            background: var(--warning-urgent);
-            box-shadow: 0 0 8px var(--warning-urgent);
-            animation: pulse 1s infinite;
-        }
-
-        &--silence-critical {
-            background: var(--danger);
-            box-shadow: 0 0 10px var(--danger);
-            animation: pulse 0.4s infinite;
-        }
-
-        &--clip-active {
-            background: var(--danger);
-            box-shadow: 0 0 4px var(--danger);
-            --pulse-opacity: 0.4;
-            animation: pulse 0.15s infinite;
-        }
-    }
-
-    &__channel {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        margin-bottom: 0.375rem;
-
-        &:last-of-type {
-            margin-bottom: 0;
-        }
-    }
-
-    &__label {
-        width: 0.875rem;
-        font-size: var(--text-xs);
-        font-family: var(--font-mono);
-        font-weight: 700;
-        color: var(--text-secondary);
-    }
-
-    &__track {
-        flex: 1;
-        height: 1.125rem;
-        border-radius: var(--radius-md);
-        overflow: hidden;
-        position: relative;
-        box-shadow: var(--shadow-inset);
-    }
-
-    &__gradient {
-        position: absolute;
-        inset: 0;
-        background: linear-gradient(to right,
-            var(--success) 0%,
-            var(--success) 80%,
-            var(--warning) 80%,
-            var(--warning) 90%,
-            var(--danger) 90%,
-            var(--danger) 100%
-        );
-    }
-
-    &__cover {
-        position: absolute;
-        top: 0;
-        right: 0;
-        height: 100%;
-        width: 100%;
-        background: var(--surface-card);
-        transition: width 75ms linear;
-    }
-
-    &__peak {
-        position: absolute;
-        top: -2px;
-        height: calc(100% + 4px);
-        width: 3px;
-        background: var(--vu-peak);
-        border-radius: 1px;
-        transition: left 75ms cubic-bezier(0.34, 1.56, 0.64, 1);
-        left: 0;
-        z-index: 1;
-        opacity: 0;
-
-        &--visible {
-            opacity: 1;
-        }
-
-        &::after {
-            content: '';
-            position: absolute;
-            top: -4px;
-            left: 50%;
-            transform: translateX(-50%);
-            border-left: 4px solid transparent;
-            border-right: 4px solid transparent;
-            border-bottom: 4px solid var(--vu-peak);
-            transition: filter 75ms ease;
-        }
-
-        &--danger::after {
-            filter: drop-shadow(0 0 3px var(--danger)) drop-shadow(0 0 5px var(--danger));
-        }
-    }
-
-    &__db {
-        width: 3.5rem;
-        font-size: var(--text-xs);
-        font-family: var(--font-mono);
-        font-weight: 700;
-        color: var(--text-secondary);
-        text-align: right;
-        white-space: nowrap;
-    }
-
-    &__scale {
-        position: relative;
-        margin: 0.25rem 4rem 0 1.375rem;
-        height: 0.875rem;
-        font-size: 0.5625rem;
-        font-family: var(--font-mono);
-        color: var(--text-muted);
-
-        & span {
-            position: absolute;
-            transform: translateX(-50%);
-        }
-    }
-
-    &__mark--60 { left: 0%; }
-    &__mark--48 { left: 20%; }
-    &__mark--24 { left: 60%; }
-    &__mark--12 { left: 80%; }
-    &__mark--6 { left: 90%; }
-    &__mark--0 { left: 100%; }
 }
+
+.vu__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.vu__mode-btn {
+    font-size: 0.625rem;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--radius-sm);
+    border: none;
+    background: var(--surface-card);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: color var(--transition-fast);
+}
+
+.vu__mode-btn:hover {
+    color: var(--text-primary);
+}
+
+.vu__indicators {
+    display: flex;
+    gap: 0.75rem;
+}
+
+.vu__indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: var(--text-xs);
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.vu__indicator-dot {
+    width: 0.375rem;
+    height: 0.375rem;
+    border-radius: 50%;
+    background: var(--border-strong);
+    transition: background 0.15s, box-shadow 0.15s;
+    flex-shrink: 0;
+}
+
+/* Silence indicator - escalating urgency based on configured threshold
+   Thresholds are multiples of the "Alert after" setting (silenceDuration):
+   --silence-active (1x): Amber warning, slow pulse
+   --silence-warning (2x): Orange, faster pulse
+   --silence-critical (4x): Red, rapid pulse */
+.vu__indicator-dot--silence-active {
+    background: var(--warning);
+    box-shadow: 0 0 6px var(--warning);
+    animation: pulse 2s infinite;
+}
+
+.vu__indicator-dot--silence-warning {
+    background: var(--warning-urgent);
+    box-shadow: 0 0 8px var(--warning-urgent);
+    animation: pulse 1s infinite;
+}
+
+.vu__indicator-dot--silence-critical {
+    background: var(--danger);
+    box-shadow: 0 0 10px var(--danger);
+    animation: pulse 0.4s infinite;
+}
+
+/* Clip indicator - rapid 0.15s flash for transient peak clipping */
+.vu__indicator-dot--clip-active {
+    background: var(--danger);
+    box-shadow: 0 0 4px var(--danger);
+    --pulse-opacity: 0.4;
+    animation: pulse 0.15s infinite;
+}
+
+.vu__channel {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.375rem;
+}
+
+.vu__channel:last-of-type {
+    margin-bottom: 0;
+}
+
+.vu__label {
+    width: 0.875rem;
+    font-size: var(--text-xs);
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--text-secondary);
+}
+
+.vu__track {
+    flex: 1;
+    height: 1.125rem;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    position: relative;
+    box-shadow: var(--shadow-inset);
+}
+
+.vu__gradient {
+    position: absolute;
+    inset: 0;
+    /* Audio level color zones:
+       0-80%: Green (safe operating level)
+       80-90%: Yellow (warning - approaching limit)
+       90-100%: Red (danger - clipping/distortion) */
+    background: linear-gradient(to right,
+        var(--success) 0%,
+        var(--success) 80%,
+        var(--warning) 80%,
+        var(--warning) 90%,
+        var(--danger) 90%,
+        var(--danger) 100%
+    );
+}
+
+.vu__cover {
+    position: absolute;
+    top: 0;
+    right: 0;
+    height: 100%;
+    width: 100%;
+    background: var(--surface-card);
+    transition: width 75ms linear;
+}
+
+.vu__peak {
+    position: absolute;
+    top: -2px;
+    height: calc(100% + 4px);
+    width: 3px;
+    background: var(--vu-peak);
+    border-radius: 1px;
+    transition: left 75ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    left: 0;
+    z-index: 1;
+    opacity: 0;
+}
+
+.vu__peak.vu__peak--visible {
+    opacity: 1;
+}
+
+/* Peak hold indicator - triangular marker above the level bar
+   Shows maximum peak level, held for 1.5s before decay */
+.vu__peak::after {
+    content: '';
+    position: absolute;
+    top: -4px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-bottom: 4px solid var(--vu-peak);
+    transition: filter 75ms ease;
+}
+
+/* Peak marker glow in danger zone (>90%)
+   Adds subtle red glow when peaks approach clipping levels
+   Use .vu__peak--danger class applied via JavaScript */
+.vu__peak--danger::after {
+    filter: drop-shadow(0 0 3px var(--danger)) drop-shadow(0 0 5px var(--danger));
+}
+
+.vu__db {
+    width: 3.5rem;
+    font-size: var(--text-xs);
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--text-secondary);
+    text-align: right;
+    white-space: nowrap;
+}
+
+.vu__scale {
+    position: relative;
+    margin: 0.25rem 4rem 0 1.375rem;
+    height: 0.875rem;
+    font-size: 0.5625rem;
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+}
+
+.vu__scale span {
+    position: absolute;
+    transform: translateX(-50%);
+}
+
+/* VU meter scale markings - positioned as percentage of meter width
+   Maps to decibel values: 0%=-60dB, 20%=-48dB, 60%=-24dB,
+   80%=-12dB, 90%=-6dB, 100%=0dB */
+.vu__mark--60 { left: 0%; }
+.vu__mark--48 { left: 20%; }
+.vu__mark--24 { left: 60%; }
+.vu__mark--12 { left: 80%; }
+.vu__mark--6 { left: 90%; }
+.vu__mark--0 { left: 100%; }
 
 /* =============================================================================
    Alert
@@ -788,6 +844,7 @@ select {
     margin-top: 1rem;
 }
 
+/* Alert icon styling - color and vertical alignment */
 .alert > span,
 .alert > svg {
     color: var(--warning);
@@ -809,6 +866,7 @@ select {
     word-break: break-word;
 }
 
+/* Alert Modifiers */
 .alert--danger {
     background: var(--danger-bg);
 }
@@ -867,6 +925,7 @@ select {
     color: var(--text-muted);
 }
 
+/* Extends .list-item base */
 .output__item {
     padding: 1rem 0;
 }
@@ -954,8 +1013,8 @@ select {
    ============================================================================= */
 
 .btn {
-    padding: 1rem;
-    font-size: 1.125rem;
+    padding: 0.875rem 1rem;
+    font-size: 1rem;
     font-weight: 600;
     border: none;
     border-radius: var(--radius-lg);
@@ -972,16 +1031,32 @@ select {
     background: var(--border-default);
 }
 
+.btn--primary {
+    background: var(--brand);
+    color: var(--text-inverse);
+}
+
+.btn--primary:hover {
+    background: var(--brand-hover);
+}
+
+.btn--block {
+    width: 100%;
+}
+
 .btn:focus-visible {
     outline: none;
     box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
+/* Test buttons in settings sections */
 .btn--test {
     padding: 0.625rem 1rem;
     font-size: 0.875rem;
     margin-top: 0.75rem;
 }
+
+/* Disabled state handled by utility */
 
 /* =============================================================================
    Footer
@@ -1013,6 +1088,11 @@ select {
     color: var(--text-primary);
 }
 
+.footer__links a:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+}
+
 .footer__sep {
     color: var(--border-default);
 }
@@ -1032,6 +1112,7 @@ select {
     animation: fadeIn 0.2s ease;
 }
 
+/* Modal Navigation Bar */
 .modal__nav {
     display: flex;
     align-items: center;
@@ -1081,18 +1162,21 @@ select {
     color: var(--text-inverse);
 }
 
+/* Success state - temporary visual feedback after saving */
 .nav-btn--saved {
     background: var(--success);
     border-color: var(--success);
     color: var(--text-inverse);
 }
 
+/* Disabled state uses utility, just override colors */
 .nav-btn--save:disabled {
     background: var(--surface-elevated);
     border-color: var(--border-default);
     color: var(--text-muted);
 }
 
+/* Settings Tabs - Segmented Control */
 .settings__tabs {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -1108,7 +1192,14 @@ select {
     background: var(--neutral-700);
 }
 
-/* Sliding tab indicator (nth-child offset by 1 due to Alpine template element) */
+/* Sliding tab indicator - animated background behind active tab
+   Uses ::before pseudo-element positioned absolutely within .settings__tabs
+
+   Width: Each tab is 1/3 of inner width (after subtracting padding and gaps)
+   Position: Shifts via transform based on which tab has .active class
+
+   Note: nth-child indices are offset by 1 because Alpine's <template x-for>
+   element counts as the first child even though it renders no visible content */
 .settings__tabs::before {
     content: '';
     position: absolute;
@@ -1123,6 +1214,7 @@ select {
     z-index: 0;
 }
 
+/* nth-child accounts for <template> element being child 1 */
 .settings__tabs:has(.settings__tab--active:nth-child(3))::before {
     transform: translateX(calc(100% + 0.25rem));
 }
@@ -1181,6 +1273,7 @@ select {
     font-weight: 600;
 }
 
+/* Compact on small screens */
 @media (max-width: 360px) {
     .settings__tab {
         padding: 0.5rem;
@@ -1202,6 +1295,7 @@ select {
     animation: fadeIn var(--transition-precise);
 }
 
+/* Settings Sections - Card-like containers */
 .settings__section {
     background: var(--surface-card);
     border-radius: var(--radius-lg);
@@ -1315,6 +1409,11 @@ select {
     color: var(--text-primary);
 }
 
+.about__links a:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+}
+
 .about__text {
     font-size: 0.75rem;
     line-height: 1.5;
@@ -1348,7 +1447,7 @@ select {
 }
 
 /* =============================================================================
-   Modal
+   Log Viewer Modal - Matches existing UI patterns
    ============================================================================= */
 
 .modal__overlay {
@@ -1440,13 +1539,14 @@ select {
 }
 
 /* =============================================================================
-   Log Entries
+   Log Entries - Matches output__item pattern
    ============================================================================= */
 
+/* Log states extend .empty-state base class */
 .log__loading,
 .log__error,
 .log__empty {
-    padding: 3rem 1rem;
+    padding: 3rem 1rem; /* Override base padding */
 }
 
 @keyframes spin {
@@ -1463,6 +1563,7 @@ select {
     flex-direction: column;
 }
 
+/* Extends .list-item and .list-item--hover base */
 .log__entry {
     display: flex;
     align-items: flex-start;
@@ -1471,6 +1572,7 @@ select {
     transition: background var(--transition-fast);
 }
 
+/* Status dot - matches output__dot pattern */
 .log__entry::before {
     content: '';
     width: 0.5rem;
@@ -1577,6 +1679,7 @@ select {
     text-align: center;
 }
 
+/* Responsive - stack on small screens */
 @media (max-width: 400px) {
     .log__entry {
         flex-wrap: wrap;
@@ -1590,7 +1693,8 @@ select {
 }
 
 /* =============================================================================
-   Connection Overlay
+   Connection Overlay - Shown when WebSocket is disconnected
+   Frosted glass effect with subtle pulsing indicator
    ============================================================================= */
 
 .connection-overlay {
@@ -1641,6 +1745,7 @@ select {
 
 /* =============================================================================
    Login Page
+   Reuses: .card, .btn, .alert, .form__group, .form__toggle, .footer
    ============================================================================= */
 
 .page--login {
@@ -1693,7 +1798,8 @@ select {
 }
 
 /* =============================================================================
-   Accessibility
+   Accessibility - Reduced Motion
+   Respects user preference for reduced motion to prevent vestibular issues
    ============================================================================= */
 
 @media (prefers-reduced-motion: reduce) {
