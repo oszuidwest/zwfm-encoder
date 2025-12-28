@@ -1161,10 +1161,14 @@ select {
     grid-template-columns: repeat(3, 1fr);
     gap: 0.25rem;
     padding: 0.1875rem;
-    background: var(--surface-elevated);
+    background: var(--neutral-300);
     border-radius: var(--radius-lg);
     margin-bottom: 1.5rem;
     position: relative;
+}
+
+.dark .settings__tabs {
+    background: var(--neutral-700);
 }
 
 /* Sliding tab indicator - animated background behind active tab
@@ -1208,7 +1212,7 @@ select {
     background: transparent;
     border: none;
     border-radius: calc(var(--radius-lg) - 0.125rem);
-    color: var(--text-muted);
+    color: var(--neutral-600);
     font-size: 0.8125rem;
     font-weight: 500;
     cursor: pointer;
@@ -1216,6 +1220,10 @@ select {
     position: relative;
     z-index: 1;
     -webkit-tap-highlight-color: transparent;
+}
+
+.dark .settings__tab {
+    color: var(--neutral-300);
 }
 
 .settings__tab svg {
@@ -1229,7 +1237,11 @@ select {
 }
 
 .settings__tab:hover {
-    color: var(--text-secondary);
+    color: var(--neutral-800);
+}
+
+.dark .settings__tab:hover {
+    color: var(--neutral-100);
 }
 
 .settings__tab--active {
