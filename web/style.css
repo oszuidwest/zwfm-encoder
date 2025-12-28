@@ -45,7 +45,7 @@
     /* Text */
     --text-primary: var(--neutral-900);
     --text-secondary: var(--neutral-500);
-    --text-muted: var(--neutral-400);
+    --text-muted: var(--neutral-500);
     --text-inverse: #fff;
     --warning-text: #b45309;
 
@@ -93,6 +93,9 @@
     /* Small text (11px) - used for monospace labels */
     --text-xs: 0.6875rem;
 
+    /* Focus ring - used for accessible focus indicators */
+    --focus-ring: rgb(230 0 126 / 40%);
+
 }
 
 /* Dark theme overrides */
@@ -103,7 +106,7 @@
     --surface-input: var(--neutral-700);
     --text-primary: var(--neutral-50);
     --text-secondary: var(--neutral-400);
-    --text-muted: var(--neutral-500);
+    --text-muted: var(--neutral-400);
     --border-default: var(--neutral-700);
     --border-strong: var(--neutral-600);
     --vu-bg: var(--neutral-950);
@@ -313,6 +316,8 @@ body {
 }
 
 .icon-btn--delete {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
     padding: 0.25rem;
     background: none;
     color: var(--border-strong);
@@ -348,8 +353,8 @@ body {
 
 .header__logo {
     flex-shrink: 0;
-    width: 2.25rem;
-    height: 2.25rem;
+    width: 2.75rem;
+    height: 2.75rem;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -359,8 +364,8 @@ body {
 }
 
 .header__logo svg {
-    width: 1.5rem;
-    height: 1.5rem;
+    width: 1.75rem;
+    height: 1.75rem;
     stroke: currentColor;
     stroke-width: 8px;
 }
@@ -379,8 +384,8 @@ body {
 }
 
 .header__actions .icon-btn {
-    width: 2rem;
-    height: 2rem;
+    width: 2.75rem;
+    height: 2.75rem;
     background: transparent;
     color: var(--text-muted);
     border: none;
@@ -503,10 +508,7 @@ input, select {
 input:focus, select:focus {
     outline: none;
     border-color: var(--brand);
-    /* Focus ring using brand color at 10% opacity
-       Provides visible focus indicator without overwhelming the input
-       10% alpha balances visibility with subtlety */
-    box-shadow: 0 0 0 3px rgb(230 0 126 / 10%);
+    border-width: 2px;
 }
 
 input::placeholder {
@@ -515,13 +517,18 @@ input::placeholder {
 
 select {
     appearance: none;
-    /* Custom dropdown arrow - inline SVG chevron icon
-       Uses neutral-500 color (#6b7280) encoded as URL-safe SVG */
+    -webkit-appearance: none;
+    /* Custom dropdown arrow - inline SVG chevron icon */
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 1rem center;
     padding-right: 2.5rem;
     cursor: pointer;
+}
+
+.dark select {
+    /* Lighter arrow color for dark mode (neutral-400) */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239ca3af' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
 }
 
 .input__group {
@@ -562,15 +569,19 @@ select {
 
 .form__toggle {
     position: absolute;
-    right: 0.5rem;
+    right: 0.25rem;
     top: 1.875rem;
     bottom: 0;
     display: flex;
     align-items: center;
+    justify-content: center;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
     background: none;
     border: none;
     color: var(--text-muted);
-    padding: 0 0.5rem;
+    padding: 0.5rem;
+    cursor: pointer;
 }
 
 .form__toggle:hover {
@@ -606,7 +617,7 @@ select {
    VU Meter
    ============================================================================= */
 
-.vu-meter {
+.vu {
     background: var(--vu-bg);
     border-radius: var(--radius-lg);
     padding: 0.75rem;
@@ -647,7 +658,7 @@ select {
     display: flex;
     align-items: center;
     gap: 0.25rem;
-    font-size: 0.6875rem;
+    font-size: var(--text-xs);
     font-weight: 500;
     color: var(--text-secondary);
 }
@@ -705,7 +716,7 @@ select {
 
 .vu__label {
     width: 0.875rem;
-    font-size: 0.6875rem;
+    font-size: var(--text-xs);
     font-family: var(--font-mono);
     font-weight: 700;
     color: var(--text-secondary);
@@ -779,15 +790,15 @@ select {
 }
 
 /* Peak marker glow in danger zone (>90%)
-   Adds subtle red glow when peaks approach clipping levels */
-.vu__peak[style*="left: 9"][style*="%"]::after,
-.vu__peak[style*="left: 10"][style*="%"]::after {
+   Adds subtle red glow when peaks approach clipping levels
+   Use .vu__peak--danger class applied via JavaScript */
+.vu__peak--danger::after {
     filter: drop-shadow(0 0 3px var(--danger)) drop-shadow(0 0 5px var(--danger));
 }
 
 .vu__db {
     width: 3.5rem;
-    font-size: 0.6875rem;
+    font-size: var(--text-xs);
     font-family: var(--font-mono);
     font-weight: 700;
     color: var(--text-secondary);
@@ -897,6 +908,11 @@ select {
     opacity: 0.9;
 }
 
+.banner a:focus-visible {
+    outline: 2px solid var(--text-inverse);
+    outline-offset: 2px;
+}
+
 /* =============================================================================
    Outputs List
    ============================================================================= */
@@ -961,7 +977,7 @@ select {
 
 .output__codec {
     font-family: var(--font-mono);
-    font-size: 0.6875rem;
+    font-size: var(--text-xs);
     font-weight: 600;
     letter-spacing: 0.025em;
     padding: 0.125rem 0.375rem;
@@ -1030,7 +1046,7 @@ select {
 
 .btn:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 3px rgb(230 0 126 / 10%);
+    box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 /* Test buttons in settings sections */
@@ -1070,6 +1086,11 @@ select {
 
 .footer__links a:hover {
     color: var(--text-primary);
+}
+
+.footer__links a:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
 }
 
 .footer__sep {
@@ -1388,6 +1409,11 @@ select {
     color: var(--text-primary);
 }
 
+.about__links a:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+}
+
 .about__text {
     font-size: 0.75rem;
     line-height: 1.5;
@@ -1476,8 +1502,8 @@ select {
 }
 
 .icon-btn--close {
-    width: 1.75rem;
-    height: 1.75rem;
+    width: 2.75rem;
+    height: 2.75rem;
     background: var(--overlay-subtle);
     color: var(--text-inverse);
 }
@@ -1503,7 +1529,7 @@ select {
 }
 
 .log__path {
-    font-size: 0.6875rem;
+    font-size: var(--text-xs);
     font-family: var(--font-mono);
     color: var(--text-muted);
     overflow: hidden;
@@ -1612,7 +1638,7 @@ select {
 }
 
 .log__time {
-    font-size: 0.6875rem;
+    font-size: var(--text-xs);
     font-family: var(--font-mono);
     color: var(--text-muted);
     white-space: nowrap;
@@ -1769,4 +1795,20 @@ select {
     font-size: 0.875rem;
     color: var(--text-secondary);
     margin: 0;
+}
+
+/* =============================================================================
+   Accessibility - Reduced Motion
+   Respects user preference for reduced motion to prevent vestibular issues
+   ============================================================================= */
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
 }

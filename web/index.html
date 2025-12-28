@@ -129,7 +129,7 @@
                      - Two channels (L/R): Gradient bar with peak hold marker
                      - Scale: Reference marks at -60, -48, -24, -12, -6, 0 dB
                      Updates ~4 times per second -->
-                <div class="vu-meter">
+                <div class="vu">
                     <div class="vu__header">
                         <button class="vu__mode-btn" type="button" tabindex="0" @click="toggleVuMode()" x-text="vuMode === 'peak' ? 'Peak' : 'RMS'"></button>
                         <!-- Status indicators - visual feedback for audio state
@@ -146,7 +146,7 @@
                             <div class="vu__track">
                                 <div class="vu__gradient"></div>
                                 <div class="vu__cover" :style="{ width: `${100 - dbToPercent(vuMode === 'peak' ? levels[ch.peak] : levels[ch.level])}%` }"></div>
-                                <div class="vu__peak" :style="{ left: `${dbToPercent(levels[ch.peak])}%` }" :class="{ 'vu__peak--visible': vuMode === 'peak' && dbToPercent(levels[ch.peak]) > 0 }"></div>
+                                <div class="vu__peak" :style="{ left: `${dbToPercent(levels[ch.peak])}%` }" :class="{ 'vu__peak--visible': vuMode === 'peak' && dbToPercent(levels[ch.peak]) > 0, 'vu__peak--danger': dbToPercent(levels[ch.peak]) >= 90 }"></div>
                             </div>
                             <span class="vu__db" x-text="`${(vuMode === 'peak' ? levels[ch.peak] : levels[ch.level]).toFixed(1)} dB`"></span>
                         </div>
