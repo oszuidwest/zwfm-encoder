@@ -80,20 +80,12 @@
     --overlay-light: rgb(255 255 255 / 20%);
     --overlay-medium: rgb(255 255 255 / 25%);
     --overlay-strong: rgb(255 255 255 / 30%);
-    /* Transition timing scale:
-       --transition-fast (0.2s): Standard UI transitions
-       --transition-precise (0.15s): Animation timing for precise feel
-
-       75ms: VU meter level updates (smooth but responsive)
-       200ms: Most hover/focus states
-       250ms: Panel transitions, larger movements */
+    /* Transitions */
     --transition-fast: 0.2s ease;
     --transition-precise: 0.15s ease;
 
-    /* Small text (11px) - used for monospace labels */
+    /* Typography */
     --text-xs: 0.6875rem;
-
-    /* Focus ring - used for accessible focus indicators */
     --focus-ring: rgb(230 0 126 / 40%);
 
 }
@@ -134,9 +126,7 @@
     font-weight: 500;
 }
 
-/* Icon Container - handles span > svg pattern from icons.js
-   Apply to parent element, sets size on both span and nested svg
-   Usage: class="icon-container" or use component-specific overrides */
+/* Icon Container - handles span > svg pattern from icons.js */
 .icon-container,
 .icon-container svg {
     width: 1rem;
@@ -149,9 +139,7 @@
     height: 100%;
 }
 
-/* List Item - Base pattern for bordered list items
-   Used by: .output__item, .log__entry
-   Provides: border separator, last-child cleanup, optional hover */
+/* List Item - Base pattern for bordered list items */
 .list-item {
     border-bottom: 1px solid var(--border-default);
 }
@@ -203,8 +191,7 @@
 .state-danger { --state-color: var(--danger); --state-bg: var(--danger-bg); }
 .state-stopped { --state-color: var(--stopped); --state-bg: var(--stopped-bg); }
 
-/* Empty State - Base class for loading/error/empty content
-   Usage: Apply to container, optionally add .empty-state--error for danger color */
+/* Empty State */
 .empty-state {
     display: flex;
     flex-direction: column;
@@ -221,11 +208,6 @@
 
 /* =============================================================================
    Animations
-
-   pulse: Breathing effect for status indicators (used by .animate-pulse)
-   fadeIn: View transition animation using --fade-offset CSS variable
-          Applied to .settings-view and component panels
-   slide-out-right: Delete animation for output items
    ============================================================================= */
 
 @keyframes pulse {
@@ -323,7 +305,7 @@ body {
 }
 
 /* =============================================================================
-   Header - Split design with logo in branded pill
+   Header
    ============================================================================= */
 
 .header {
@@ -513,7 +495,6 @@ input::placeholder {
 select {
     appearance: none;
     -webkit-appearance: none;
-    /* Custom dropdown arrow - inline SVG chevron icon */
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 1rem center;
@@ -522,7 +503,6 @@ select {
 }
 
 .dark select {
-    /* Lighter arrow color for dark mode (neutral-400) */
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239ca3af' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
 }
 
@@ -644,11 +624,6 @@ select {
         color: var(--text-secondary);
     }
 
-    /* Silence indicator - escalating urgency based on configured threshold
-       Thresholds are multiples of the "Alert after" setting (silenceDuration):
-       --silence-active (1x): Amber warning, slow pulse
-       --silence-warning (2x): Orange, faster pulse
-       --silence-critical (4x): Red, rapid pulse */
     &__indicator-dot {
         width: 0.375rem;
         height: 0.375rem;
@@ -675,7 +650,6 @@ select {
             animation: pulse 0.4s infinite;
         }
 
-        /* Clip indicator - rapid 0.15s flash for transient peak clipping */
         &--clip-active {
             background: var(--danger);
             box-shadow: 0 0 4px var(--danger);
@@ -715,10 +689,6 @@ select {
     &__gradient {
         position: absolute;
         inset: 0;
-        /* Audio level color zones:
-           0-80%: Green (safe operating level)
-           80-90%: Yellow (warning - approaching limit)
-           90-100%: Red (danger - clipping/distortion) */
         background: linear-gradient(to right,
             var(--success) 0%,
             var(--success) 80%,
@@ -739,8 +709,6 @@ select {
         transition: width 75ms linear;
     }
 
-    /* Peak hold indicator - triangular marker above the level bar
-       Shows maximum peak level, held for 1.5s before decay */
     &__peak {
         position: absolute;
         top: -2px;
@@ -769,9 +737,6 @@ select {
             transition: filter 75ms ease;
         }
 
-        /* Peak marker glow in danger zone (>90%)
-           Adds subtle red glow when peaks approach clipping levels
-           Use .vu__peak--danger class applied via JavaScript */
         &--danger::after {
             filter: drop-shadow(0 0 3px var(--danger)) drop-shadow(0 0 5px var(--danger));
         }
@@ -787,9 +752,6 @@ select {
         white-space: nowrap;
     }
 
-    /* VU meter scale markings - positioned as percentage of meter width
-       Maps to decibel values: 0%=-60dB, 20%=-48dB, 60%=-24dB,
-       80%=-12dB, 90%=-6dB, 100%=0dB */
     &__scale {
         position: relative;
         margin: 0.25rem 4rem 0 1.375rem;
@@ -826,7 +788,6 @@ select {
     margin-top: 1rem;
 }
 
-/* Alert icon styling - color and vertical alignment */
 .alert > span,
 .alert > svg {
     color: var(--warning);
@@ -848,7 +809,6 @@ select {
     word-break: break-word;
 }
 
-/* Alert Modifiers */
 .alert--danger {
     background: var(--danger-bg);
 }
@@ -907,7 +867,6 @@ select {
     color: var(--text-muted);
 }
 
-/* Extends .list-item base */
 .output__item {
     padding: 1rem 0;
 }
@@ -1018,14 +977,11 @@ select {
     box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
-/* Test buttons in settings sections */
 .btn--test {
     padding: 0.625rem 1rem;
     font-size: 0.875rem;
     margin-top: 0.75rem;
 }
-
-/* Disabled state handled by utility */
 
 /* =============================================================================
    Footer
@@ -1076,7 +1032,6 @@ select {
     animation: fadeIn 0.2s ease;
 }
 
-/* Modal Navigation Bar */
 .modal__nav {
     display: flex;
     align-items: center;
@@ -1126,21 +1081,18 @@ select {
     color: var(--text-inverse);
 }
 
-/* Success state - temporary visual feedback after saving */
 .nav-btn--saved {
     background: var(--success);
     border-color: var(--success);
     color: var(--text-inverse);
 }
 
-/* Disabled state uses utility, just override colors */
 .nav-btn--save:disabled {
     background: var(--surface-elevated);
     border-color: var(--border-default);
     color: var(--text-muted);
 }
 
-/* Settings Tabs - Segmented Control */
 .settings__tabs {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -1156,14 +1108,7 @@ select {
     background: var(--neutral-700);
 }
 
-/* Sliding tab indicator - animated background behind active tab
-   Uses ::before pseudo-element positioned absolutely within .settings__tabs
-
-   Width: Each tab is 1/3 of inner width (after subtracting padding and gaps)
-   Position: Shifts via transform based on which tab has .active class
-
-   Note: nth-child indices are offset by 1 because Alpine's <template x-for>
-   element counts as the first child even though it renders no visible content */
+/* Sliding tab indicator (nth-child offset by 1 due to Alpine template element) */
 .settings__tabs::before {
     content: '';
     position: absolute;
@@ -1178,7 +1123,6 @@ select {
     z-index: 0;
 }
 
-/* nth-child accounts for <template> element being child 1 */
 .settings__tabs:has(.settings__tab--active:nth-child(3))::before {
     transform: translateX(calc(100% + 0.25rem));
 }
@@ -1237,7 +1181,6 @@ select {
     font-weight: 600;
 }
 
-/* Compact on small screens */
 @media (max-width: 360px) {
     .settings__tab {
         padding: 0.5rem;
@@ -1259,7 +1202,6 @@ select {
     animation: fadeIn var(--transition-precise);
 }
 
-/* Settings Sections - Card-like containers */
 .settings__section {
     background: var(--surface-card);
     border-radius: var(--radius-lg);
@@ -1406,7 +1348,7 @@ select {
 }
 
 /* =============================================================================
-   Log Viewer Modal - Matches existing UI patterns
+   Modal
    ============================================================================= */
 
 .modal__overlay {
@@ -1498,14 +1440,13 @@ select {
 }
 
 /* =============================================================================
-   Log Entries - Matches output__item pattern
+   Log Entries
    ============================================================================= */
 
-/* Log states extend .empty-state base class */
 .log__loading,
 .log__error,
 .log__empty {
-    padding: 3rem 1rem; /* Override base padding */
+    padding: 3rem 1rem;
 }
 
 @keyframes spin {
@@ -1522,7 +1463,6 @@ select {
     flex-direction: column;
 }
 
-/* Extends .list-item and .list-item--hover base */
 .log__entry {
     display: flex;
     align-items: flex-start;
@@ -1531,7 +1471,6 @@ select {
     transition: background var(--transition-fast);
 }
 
-/* Status dot - matches output__dot pattern */
 .log__entry::before {
     content: '';
     width: 0.5rem;
@@ -1638,7 +1577,6 @@ select {
     text-align: center;
 }
 
-/* Responsive - stack on small screens */
 @media (max-width: 400px) {
     .log__entry {
         flex-wrap: wrap;
@@ -1652,8 +1590,7 @@ select {
 }
 
 /* =============================================================================
-   Connection Overlay - Shown when WebSocket is disconnected
-   Frosted glass effect with subtle pulsing indicator
+   Connection Overlay
    ============================================================================= */
 
 .connection-overlay {
@@ -1704,7 +1641,6 @@ select {
 
 /* =============================================================================
    Login Page
-   Reuses: .card, .btn, .alert, .form__group, .form__toggle, .footer
    ============================================================================= */
 
 .page--login {
@@ -1757,8 +1693,7 @@ select {
 }
 
 /* =============================================================================
-   Accessibility - Reduced Motion
-   Respects user preference for reduced motion to prevent vestibular issues
+   Accessibility
    ============================================================================= */
 
 @media (prefers-reduced-motion: reduce) {
