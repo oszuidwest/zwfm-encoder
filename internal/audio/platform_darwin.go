@@ -19,18 +19,7 @@ func getPlatformConfig() CaptureConfig {
 }
 
 func buildDarwinArgs(device string) []string {
-	return []string{
-		"-f", "avfoundation",
-		"-i", device,
-		"-nostdin",
-		"-hide_banner",
-		"-loglevel", "warning",
-		"-vn",
-		"-f", "s16le",
-		"-ac", "2",
-		"-ar", "48000",
-		"pipe:1",
-	}
+	return buildFFmpegCaptureArgs("avfoundation", device)
 }
 
 func (cfg CaptureConfig) ListDevices() []types.AudioDevice {

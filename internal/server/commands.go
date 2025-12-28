@@ -30,36 +30,17 @@ type WSCommand struct {
 	Data json.RawMessage `json:"data,omitempty"`
 }
 
-// StateProvider is implemented by types that provide encoder state.
-type StateProvider interface {
+// EncoderController provides encoder control operations.
+type EncoderController interface {
 	State() types.EncoderState
-}
-
-// EncoderControl provides start/restart operations for the encoder.
-type EncoderControl interface {
 	Start() error
+	Stop() error
 	Restart() error
-}
-
-// OutputControl provides output management operations.
-type OutputControl interface {
 	StartOutput(outputID string) error
 	StopOutput(outputID string) error
-}
-
-// NotificationTester provides test operations for notifications.
-type NotificationTester interface {
 	TriggerTestWebhook() error
 	TriggerTestLog() error
 	TriggerTestEmail() error
-}
-
-// EncoderController combines all encoder control interfaces.
-type EncoderController interface {
-	StateProvider
-	EncoderControl
-	OutputControl
-	NotificationTester
 }
 
 // CommandHandler processes WebSocket commands.

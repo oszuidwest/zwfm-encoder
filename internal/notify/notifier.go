@@ -114,10 +114,10 @@ func (n *SilenceNotifier) sendRecoveryWebhook(cfg config.Snapshot, duration floa
 	)
 }
 
-// buildEmailConfig creates an EmailConfig from the config snapshot.
+// BuildEmailConfig creates an EmailConfig from the config snapshot.
 //
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
-func buildEmailConfig(cfg config.Snapshot) *EmailConfig {
+func BuildEmailConfig(cfg config.Snapshot) *EmailConfig {
 	return &EmailConfig{
 		Host:       cfg.EmailSMTPHost,
 		Port:       cfg.EmailSMTPPort,
@@ -130,7 +130,7 @@ func buildEmailConfig(cfg config.Snapshot) *EmailConfig {
 
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) sendSilenceEmail(cfg config.Snapshot, duration float64) {
-	emailCfg := buildEmailConfig(cfg)
+	emailCfg := BuildEmailConfig(cfg)
 	util.LogNotifyResult(
 		func() error { return SendSilenceAlert(emailCfg, duration, cfg.SilenceThreshold) },
 		"Silence email",
@@ -140,7 +140,7 @@ func (n *SilenceNotifier) sendSilenceEmail(cfg config.Snapshot, duration float64
 
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) sendRecoveryEmail(cfg config.Snapshot, duration float64) {
-	emailCfg := buildEmailConfig(cfg)
+	emailCfg := BuildEmailConfig(cfg)
 	util.LogNotifyResult(
 		func() error { return SendRecoveryAlert(emailCfg, duration) },
 		"Recovery email",

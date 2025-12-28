@@ -16,8 +16,3 @@ func ShutdownSignals() []os.Signal {
 func GracefulSignal(p *os.Process) error {
 	return p.Signal(syscall.SIGINT)
 }
-
-// ForceKill forcefully terminates a process.
-func ForceKill(p *os.Process) error {
-	return p.Signal(syscall.SIGKILL)
-}

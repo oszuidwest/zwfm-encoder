@@ -1,10 +1,8 @@
 package main
 
-// Version is the application version.
-var Version = "dev"
-
-// Commit is the git commit hash.
-var Commit = "unknown"
-
-// BuildTime is the build timestamp.
-var BuildTime = "unknown"
+// Build information set via ldflags.
+var (
+	Version   = "dev"     // Application version
+	Commit    = "unknown" // Git commit hash
+	BuildTime = "unknown" // Build timestamp
+)

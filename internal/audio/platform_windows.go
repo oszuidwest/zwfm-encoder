@@ -20,18 +20,7 @@ func getPlatformConfig() CaptureConfig {
 }
 
 func buildWindowsArgs(device string) []string {
-	return []string{
-		"-f", "dshow",
-		"-i", device,
-		"-nostdin",
-		"-hide_banner",
-		"-loglevel", "warning",
-		"-vn",
-		"-f", "s16le",
-		"-ac", "2",
-		"-ar", "48000",
-		"pipe:1",
-	}
+	return buildFFmpegCaptureArgs("dshow", device)
 }
 
 func (cfg CaptureConfig) ListDevices() []types.AudioDevice {

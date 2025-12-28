@@ -1,9 +1,14 @@
 package util
 
-import "time"
+import (
+	"sync"
+	"time"
+)
 
 // Backoff is an exponential backoff calculator.
+// It is safe for concurrent use.
 type Backoff struct {
+	mu       sync.Mutex
 	current  time.Duration
 	initial  time.Duration
 	maxDelay time.Duration
@@ -22,6 +27,8 @@ func NewBackoff(initial, maxDelay time.Duration) *Backoff {
 
 // Next returns the current delay and advances to the next value.
 func (b *Backoff) Next() time.Duration {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	current := b.current
 	b.current = min(time.Duration(float64(b.current)*b.factor), b.maxDelay)
 	return current
@@ -29,11 +36,15 @@ func (b *Backoff) Next() time.Duration {
 
 // Current returns the current delay without advancing.
 func (b *Backoff) Current() time.Duration {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	return b.current
 }
 
 // Reset sets the backoff back to the given initial delay.
 func (b *Backoff) Reset(initial time.Duration) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.current = initial
 	b.initial = initial
 }

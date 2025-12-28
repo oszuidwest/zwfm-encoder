@@ -119,6 +119,19 @@ func (sm *SessionManager) AuthMiddleware(username, password string) func(http.Ha
 	}
 }
 
+// setSessionCookie sets or clears the session cookie.
+func setSessionCookie(w http.ResponseWriter, r *http.Request, value string, maxAge int) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    value,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
 // Login reports whether login succeeded and creates a session if valid.
 func (sm *SessionManager) Login(w http.ResponseWriter, r *http.Request, username, password, configUser, configPass string) bool {
 	userMatch := subtle.ConstantTimeCompare([]byte(username), []byte(configUser)) == 1
@@ -132,15 +145,7 @@ func (sm *SessionManager) Login(w http.ResponseWriter, r *http.Request, username
 		return false
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    token,
-		Path:     "/",
-		MaxAge:   int(sessionDuration.Seconds()),
-		HttpOnly: true,
-		Secure:   r.TLS != nil,
-		SameSite: http.SameSiteStrictMode,
-	})
+	setSessionCookie(w, r, token, int(sessionDuration.Seconds()))
 	return true
 }
 
@@ -149,16 +154,7 @@ func (sm *SessionManager) Logout(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie(sessionCookieName); err == nil {
 		sm.Delete(cookie.Value)
 	}
-
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    "",
-		Path:     "/",
-		MaxAge:   -1,
-		HttpOnly: true,
-		Secure:   r.TLS != nil,
-		SameSite: http.SameSiteStrictMode,
-	})
+	setSessionCookie(w, r, "", -1)
 }
 
 // CreateCSRFToken generates a new CSRF token.

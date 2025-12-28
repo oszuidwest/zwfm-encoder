@@ -116,12 +116,8 @@ type EncoderStatus struct {
 // SilenceLevel represents the silence detection state.
 type SilenceLevel string
 
-const (
-	// SilenceLevelNone indicates no silence is detected.
-	SilenceLevelNone SilenceLevel = ""
-	// SilenceLevelActive indicates silence is confirmed.
-	SilenceLevelActive SilenceLevel = "active"
-)
+// SilenceLevelActive indicates silence is confirmed.
+const SilenceLevelActive SilenceLevel = "active"
 
 // AudioLevels contains current audio level measurements.
 type AudioLevels struct {

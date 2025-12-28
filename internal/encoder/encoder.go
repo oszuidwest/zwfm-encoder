@@ -25,6 +25,13 @@ import (
 // LevelUpdateSamples is the number of samples before updating audio levels.
 const LevelUpdateSamples = 12000
 
+// Sentinel errors for encoder operations.
+var (
+	ErrNoAudioInput   = errors.New("no audio input configured")
+	ErrAlreadyRunning = errors.New("encoder already running")
+	ErrNotRunning     = errors.New("encoder not running")
+)
+
 // Encoder manages audio capture and distribution to multiple streaming outputs.
 type Encoder struct {
 	config          *config.Config
@@ -123,14 +130,14 @@ func (e *Encoder) AllOutputStatuses() map[string]types.OutputStatus {
 // Start begins audio capture and all output processes.
 func (e *Encoder) Start() error {
 	if e.config.AudioInput() == "" {
-		return fmt.Errorf("no audio input configured")
+		return ErrNoAudioInput
 	}
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	if e.state == types.StateRunning || e.state == types.StateStarting {
-		return fmt.Errorf("encoder already running")
+		return ErrAlreadyRunning
 	}
 
 	e.state = types.StateStarting
@@ -224,7 +231,7 @@ func (e *Encoder) StartOutput(outputID string) error {
 	e.mu.RLock()
 	if e.state != types.StateRunning {
 		e.mu.RUnlock()
-		return fmt.Errorf("encoder not running")
+		return ErrNotRunning
 	}
 	stopChan = e.stopChan
 	e.mu.RUnlock()
@@ -249,22 +256,9 @@ func (e *Encoder) StopOutput(outputID string) error {
 	return e.outputManager.Stop(outputID)
 }
 
-// buildEmailConfig constructs an EmailConfig from the current configuration.
-func (e *Encoder) buildEmailConfig() *notify.EmailConfig {
-	cfg := e.config.Snapshot()
-	return &notify.EmailConfig{
-		Host:       cfg.EmailSMTPHost,
-		Port:       cfg.EmailSMTPPort,
-		FromName:   cfg.EmailFromName,
-		Username:   cfg.EmailUsername,
-		Password:   cfg.EmailPassword,
-		Recipients: cfg.EmailRecipients,
-	}
-}
-
 // TriggerTestEmail sends a test email to verify configuration.
 func (e *Encoder) TriggerTestEmail() error {
-	return notify.SendTestEmail(e.buildEmailConfig())
+	return notify.SendTestEmail(notify.BuildEmailConfig(e.config.Snapshot()))
 }
 
 // TriggerTestWebhook sends a test webhook to verify configuration.

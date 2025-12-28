@@ -291,6 +291,53 @@ func (m *Manager) RetryCount(outputID string) int {
 	return 0
 }
 
+// handleProcessExit processes the result of a terminated FFmpeg process.
+// It logs errors, updates retry state, and advances the backoff if needed.
+func (m *Manager) handleProcessExit(outputID string, cmd *exec.Cmd, procCtx context.Context, backoff *util.Backoff, err error, runDuration time.Duration) {
+	if err != nil {
+		var errMsg string
+		if stderr, ok := cmd.Stderr.(*bytes.Buffer); ok && stderr != nil {
+			errMsg = util.ExtractLastError(stderr.String())
+		}
+		if errMsg == "" {
+			errMsg = err.Error()
+		}
+		if cause := context.Cause(procCtx); cause != nil {
+			slog.Error("output error", "output_id", outputID, "error", errMsg, "cause", cause)
+		} else {
+			slog.Error("output error", "output_id", outputID, "error", errMsg)
+		}
+		m.SetError(outputID, errMsg)
+
+		if runDuration >= types.SuccessThreshold {
+			m.ResetRetry(outputID)
+		} else {
+			m.IncrementRetry(outputID)
+			backoff.Next()
+		}
+	} else {
+		m.ResetRetry(outputID)
+	}
+}
+
+// shouldContinueRetry checks if the output should continue retrying.
+// Returns false with a reason if retry should stop.
+func (m *Manager) shouldContinueRetry(outputID string, ctx OutputContext) (shouldRetry bool, reason string) {
+	if !ctx.IsRunning() {
+		return false, "encoder stopped"
+	}
+	out := ctx.Output(outputID)
+	if out == nil {
+		return false, "output removed"
+	}
+	retryCount := m.RetryCount(outputID)
+	maxRetries := out.MaxRetriesOrDefault()
+	if retryCount > maxRetries {
+		return false, "max retries exceeded"
+	}
+	return true, ""
+}
+
 // MonitorAndRetry monitors an output process and handles automatic retry on failure.
 func (m *Manager) MonitorAndRetry(outputID string, ctx OutputContext, stopChan <-chan struct{}) {
 	for {
@@ -311,56 +358,24 @@ func (m *Manager) MonitorAndRetry(outputID string, ctx OutputContext, stopChan <
 		runDuration := time.Since(startTime)
 
 		m.MarkStopped(outputID)
+		m.handleProcessExit(outputID, cmd, procCtx, backoff, err, runDuration)
 
-		if err != nil {
-			var errMsg string
-			if stderr, ok := cmd.Stderr.(*bytes.Buffer); ok && stderr != nil {
-				errMsg = util.ExtractLastError(stderr.String())
+		shouldRetry, reason := m.shouldContinueRetry(outputID, ctx)
+		if !shouldRetry {
+			if reason != "" {
+				slog.Info("output monitoring stopped", "output_id", outputID, "reason", reason)
 			}
-			if errMsg == "" {
-				errMsg = err.Error()
+			if reason != "max retries exceeded" {
+				m.Remove(outputID)
 			}
-			if cause := context.Cause(procCtx); cause != nil {
-				slog.Error("output error", "output_id", outputID, "error", errMsg, "cause", cause)
-			} else {
-				slog.Error("output error", "output_id", outputID, "error", errMsg)
-			}
-			m.SetError(outputID, errMsg)
-
-			if runDuration >= types.SuccessThreshold {
-				m.ResetRetry(outputID)
-			} else {
-				m.IncrementRetry(outputID)
-				backoff.Next() // Advance to next delay
-			}
-		} else {
-			m.ResetRetry(outputID)
-		}
-
-		// Re-read retryCount after state changes to avoid stale data
-		retryCount := m.RetryCount(outputID)
-
-		if !ctx.IsRunning() {
-			m.Remove(outputID)
 			return
-		}
-
-		out := ctx.Output(outputID)
-		if out == nil {
-			m.Remove(outputID)
-			return
-		}
-
-		maxRetries := out.MaxRetriesOrDefault()
-		if retryCount > maxRetries {
-			slog.Warn("output gave up after retries", "output_id", outputID, "retries", maxRetries)
-			return // Keep in processes for status reporting
 		}
 
 		retryDelay := backoff.Current()
-
+		retryCount := m.RetryCount(outputID)
+		out := ctx.Output(outputID)
 		slog.Info("output stopped, waiting before retry",
-			"output_id", outputID, "delay", retryDelay, "retry", retryCount, "max_retries", maxRetries)
+			"output_id", outputID, "delay", retryDelay, "retry", retryCount, "max_retries", out.MaxRetriesOrDefault())
 
 		select {
 		case <-stopChan:
@@ -369,18 +384,17 @@ func (m *Manager) MonitorAndRetry(outputID string, ctx OutputContext, stopChan <
 		case <-time.After(retryDelay):
 		}
 
+		// Re-check conditions after wait
+		shouldRetry, reason = m.shouldContinueRetry(outputID, ctx)
+		if !shouldRetry {
+			slog.Info("output not restarting", "output_id", outputID, "reason", reason)
+			if reason != "max retries exceeded" {
+				m.Remove(outputID)
+			}
+			return
+		}
+
 		out = ctx.Output(outputID)
-		if out == nil {
-			slog.Info("output was removed during retry wait, not restarting", "output_id", outputID)
-			m.Remove(outputID)
-			return
-		}
-
-		if !ctx.IsRunning() {
-			m.Remove(outputID)
-			return
-		}
-
 		if err := m.Start(out); err != nil {
 			slog.Error("failed to restart output", "output_id", outputID, "error", err)
 			m.Remove(outputID)

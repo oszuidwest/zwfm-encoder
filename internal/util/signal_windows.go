@@ -22,8 +22,3 @@ func GracefulSignal(p *os.Process) error {
 	// This is safer than immediate kill - gives stdin EOF time to work.
 	return ErrGracefulNotSupported
 }
-
-// ForceKill forcefully terminates a process.
-func ForceKill(p *os.Process) error {
-	return p.Signal(os.Kill)
-}
