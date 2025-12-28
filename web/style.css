@@ -1244,7 +1244,10 @@ select {
     color: var(--neutral-100);
 }
 
-.settings__tab--active {
+.settings__tab--active,
+.dark .settings__tab--active,
+.settings__tab--active:hover,
+.dark .settings__tab--active:hover {
     color: var(--brand);
     font-weight: 600;
 }
