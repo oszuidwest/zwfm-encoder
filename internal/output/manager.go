@@ -17,6 +17,9 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
+// errStoppedByUser indicates the output was intentionally stopped.
+var errStoppedByUser = errors.New("stopped by user")
+
 // OutputContext provides encoder state for monitoring and retry decisions.
 type OutputContext interface {
 	// Output returns the output configuration, or nil if removed.
@@ -143,10 +146,12 @@ func (m *Manager) Stop(outputID string) error {
 		}
 	}
 
+	// Mark as intentionally stopped before signaling
+	if cancelCause != nil {
+		cancelCause(errStoppedByUser)
+	}
 	if process != nil {
-		if err := util.GracefulSignal(process); err != nil && cancelCause != nil {
-			cancelCause(errors.New("user requested stop"))
-		}
+		_ = util.GracefulSignal(process)
 	}
 
 	// Wait briefly for graceful exit
@@ -294,6 +299,12 @@ func (m *Manager) RetryCount(outputID string) int {
 // handleProcessExit processes the result of a terminated FFmpeg process.
 // It logs errors, updates retry state, and advances the backoff if needed.
 func (m *Manager) handleProcessExit(outputID string, cmd *exec.Cmd, procCtx context.Context, backoff *util.Backoff, err error, runDuration time.Duration) {
+	// Check if this was an intentional stop - don't treat as error
+	cause := context.Cause(procCtx)
+	if errors.Is(cause, errStoppedByUser) {
+		return
+	}
+
 	if err != nil {
 		var errMsg string
 		if stderr, ok := cmd.Stderr.(*bytes.Buffer); ok && stderr != nil {
@@ -302,7 +313,7 @@ func (m *Manager) handleProcessExit(outputID string, cmd *exec.Cmd, procCtx cont
 		if errMsg == "" {
 			errMsg = err.Error()
 		}
-		if cause := context.Cause(procCtx); cause != nil {
+		if cause != nil {
 			slog.Error("output error", "output_id", outputID, "error", errMsg, "cause", cause)
 		} else {
 			slog.Error("output error", "output_id", outputID, "error", errMsg)
