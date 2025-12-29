@@ -606,7 +606,7 @@ document.addEventListener('alpine:init', () => {
 
         // Output management
         submitOutputForm() {
-            if (!this.outputForm.host) return;
+            if (!this.outputForm.host?.trim()) return;
 
             const data = {
                 host: this.outputForm.host.trim(),

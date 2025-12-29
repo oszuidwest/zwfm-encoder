@@ -171,6 +171,7 @@
 .settings__tab:focus-visible,
 .icon-btn--close:focus-visible,
 .form__toggle:focus-visible,
+.segmented__btn:focus-visible,
 .footer__links a:focus-visible,
 .about__links a:focus-visible {
     outline: 2px solid var(--brand);
