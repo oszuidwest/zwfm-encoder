@@ -330,6 +330,9 @@ func (m *Manager) shouldContinueRetry(outputID string, ctx OutputContext) (shoul
 	if out == nil {
 		return false, "output removed"
 	}
+	if !out.IsEnabled() {
+		return false, "output disabled"
+	}
 	retryCount := m.RetryCount(outputID)
 	maxRetries := out.MaxRetriesOrDefault()
 	if retryCount > maxRetries {
