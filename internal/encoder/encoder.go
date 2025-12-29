@@ -268,6 +268,9 @@ func (e *Encoder) StartOutput(outputID string) error {
 	if out == nil {
 		return fmt.Errorf("output not found: %s", outputID)
 	}
+	if !out.IsEnabled() {
+		return fmt.Errorf("output is disabled: %s", outputID)
+	}
 
 	// Start preserves existing retry state automatically
 	if err := e.outputManager.Start(out); err != nil {
