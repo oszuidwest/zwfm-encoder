@@ -227,17 +227,6 @@
             </div>
         </section>
 
-            <footer class="footer">
-                <div class="footer__links">
-                    <a rel="noopener" href="https://github.com/oszuidwest/zwfm-encoder" title="View source on GitHub" target="_blank">
-                        <span class="icon-container" x-html="icons.github"></span>
-                        GitHub
-                    </a>
-                    <span class="footer__sep">|</span>
-                    <span>Version <span class="footer__version">{{.Version}}</span></span>
-                </div>
-                <div class="footer__copyright">© {{.Year}} Streekomroep ZuidWest • MIT License</div>
-            </footer>
         </div>
 
         <!-- === Settings View ===
@@ -252,7 +241,7 @@
         <div id="settings-view" class="settings-view" x-show="view === 'settings'" x-transition:enter.duration.200ms x-cloak>
             <header class="modal__nav">
                 <button class="nav-btn" type="button" tabindex="0" @click="cancelSettings()">Cancel</button>
-                <h1>Settings</h1>
+                <h2>Settings</h2>
                 <button class="nav-btn nav-btn--save" type="button" tabindex="0" @click="saveSettings()" :disabled="!settingsDirty">Save</button>
             </header>
 
@@ -261,7 +250,7 @@
                  Sliding indicator animates between tabs -->
             <div class="settings__tabs" role="tablist">
                 <template x-for="tab in settingsTabs" :key="tab.id">
-                    <button class="settings__tab" type="button" role="tab" :aria-selected="settingsTab === tab.id" :tabindex="settingsTab === tab.id ? 0 : -1" @click="showTab(tab.id)" :class="{ 'settings__tab--active': settingsTab === tab.id }">
+                    <button class="settings__tab" type="button" role="tab" :id="'tab-' + tab.id" :aria-selected="settingsTab === tab.id" :aria-controls="'panel-' + tab.id" :tabindex="settingsTab === tab.id ? 0 : -1" @click="showTab(tab.id)" :class="{ 'settings__tab--active': settingsTab === tab.id }">
                         <span x-html="icons[tab.icon]"></span>
                         <span x-text="tab.label"></span>
                     </button>
@@ -273,7 +262,7 @@
                      - Threshold: dB level below which audio is considered silent (-60 to 0)
                      - Duration: Seconds of silence before triggering alerts (1-3600)
                      - Recovery: Seconds of audio before clearing silence state (1-60) -->
-                <div class="settings__panel" role="tabpanel" id="panel-audio" x-show="settingsTab === 'audio'">
+                <div class="settings__panel" role="tabpanel" id="panel-audio" aria-labelledby="tab-audio" x-show="settingsTab === 'audio'">
                     <div class="settings__section">
                         <div class="settings__section-header">
                             <span x-html="icons.audio"></span>
@@ -313,7 +302,7 @@
                      - Webhook: HTTP POST to URL on silence start/end
                      - File Log: Append JSON lines to local file
                      - Email: SMTP notifications with configurable server -->
-                <div class="settings__panel" role="tabpanel" id="panel-notifications" x-show="settingsTab === 'notifications'">
+                <div class="settings__panel" role="tabpanel" id="panel-notifications" aria-labelledby="tab-notifications" x-show="settingsTab === 'notifications'">
                     <div class="settings__section">
                         <div class="settings__section-header">
                             <span x-html="icons.link"></span>
@@ -385,7 +374,7 @@
                 <!-- About Panel - Version info and attribution
                      Shows: Version, commit hash, build date, update availability
                      Includes: MIT license text, audio plug logo SVG -->
-                <div class="settings__panel" role="tabpanel" id="panel-about" x-show="settingsTab === 'about'">
+                <div class="settings__panel" role="tabpanel" id="panel-about" aria-labelledby="tab-about" x-show="settingsTab === 'about'">
                     <div class="settings__section about__section">
                         <div class="about__logo">
                             <span x-html="icons.appLogo"></span>
@@ -458,7 +447,7 @@
         <div id="add-output-view" x-show="view === 'add-output'" x-transition:enter.duration.200ms x-cloak>
             <header class="modal__nav">
                 <button class="nav-btn" type="button" tabindex="0" @click="showDashboard()">Cancel</button>
-                <h1>New Output</h1>
+                <h2>New Output</h2>
                 <button class="nav-btn nav-btn--save" type="button" tabindex="0" @click="submitNewOutput()" :disabled="!newOutput.host">Save</button>
             </header>
 
@@ -521,7 +510,7 @@
         <div id="edit-output-view" x-show="view === 'edit-output'" x-transition:enter.duration.200ms x-cloak>
             <header class="modal__nav">
                 <button class="nav-btn" type="button" tabindex="0" @click="cancelEditOutput()">Cancel</button>
-                <h1>Edit Output</h1>
+                <h2>Edit Output</h2>
                 <button class="nav-btn nav-btn--save" type="button" tabindex="0" @click="submitEditOutput()" :disabled="!editOutput.host || !editOutputDirty">Save</button>
             </header>
 
@@ -630,6 +619,18 @@
                 </footer>
             </div>
         </div>
+
+        <footer class="footer">
+            <div class="footer__links">
+                <a rel="noopener" href="https://github.com/oszuidwest/zwfm-encoder" title="View source on GitHub" target="_blank">
+                    <span class="icon-container" x-html="icons.github"></span>
+                    GitHub
+                </a>
+                <span class="footer__sep">|</span>
+                <span>Version <span class="footer__version">{{.Version}}</span></span>
+            </div>
+            <div class="footer__copyright">© {{.Year}} Streekomroep ZuidWest • MIT License</div>
+        </footer>
     </main>
 
     <script src="/icons.js"></script>

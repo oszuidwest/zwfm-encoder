@@ -46,7 +46,6 @@
     /* Text */
     --text-primary: var(--neutral-900);
     --text-secondary: var(--neutral-500);
-    --text-muted: var(--neutral-500);
     --text-inverse: #fff;
     --warning-text: #b45309;
 
@@ -107,7 +106,6 @@
     --surface-input: var(--neutral-700);
     --text-primary: var(--neutral-50);
     --text-secondary: var(--neutral-400);
-    --text-muted: var(--neutral-400);
     --border-default: var(--neutral-700);
     --border-strong: var(--neutral-600);
     --vu-bg: var(--neutral-950);
@@ -171,13 +169,15 @@
 .vu__mode-btn:focus-visible,
 .nav-btn:focus-visible,
 .settings__tab:focus-visible,
-.icon-btn--close:focus-visible {
+.icon-btn--close:focus-visible,
+.form__toggle:focus-visible,
+.footer__links a:focus-visible,
+.about__links a:focus-visible {
     outline: 2px solid var(--brand);
     outline-offset: 2px;
 }
 
 /* Spinner - Loading indicator animation */
-.spinner,
 .log__loading::before,
 .connection-overlay__spinner {
     width: 1.5rem;
@@ -218,7 +218,7 @@
     justify-content: center;
     gap: 0.5rem;
     padding: 2rem 1rem;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     font-size: 0.875rem;
     text-align: center;
 }
@@ -388,7 +388,7 @@ body {
     width: 2.75rem;
     height: 2.75rem;
     background: transparent;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     border: none;
     box-shadow: none;
 }
@@ -577,14 +577,14 @@ select {
     transform: translateY(-50%);
     font-size: 0.8125rem;
     font-family: var(--font-mono);
-    color: var(--text-muted);
+    color: var(--text-secondary);
     pointer-events: none;
 }
 
 .input__hint {
     display: block;
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     margin-top: 0.375rem;
 }
 
@@ -609,18 +609,13 @@ select {
     min-height: 2.75rem;
     background: none;
     border: none;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     padding: 0.5rem;
     cursor: pointer;
 }
 
 .form__toggle:hover {
     color: var(--text-primary);
-}
-
-.form__toggle:focus-visible {
-    outline: 2px solid var(--brand);
-    outline-offset: 1px;
 }
 
 .form__toggle svg {
@@ -842,7 +837,7 @@ select {
     height: 0.875rem;
     font-size: 0.5625rem;
     font-family: var(--font-mono);
-    color: var(--text-muted);
+    color: var(--text-secondary);
 }
 
 .vu__scale span {
@@ -952,7 +947,7 @@ select {
     display: block;
     text-align: center;
     padding: 2rem;
-    color: var(--text-muted);
+    color: var(--text-secondary);
 }
 
 /* Extends .list-item base */
@@ -1018,7 +1013,7 @@ select {
 
 .output__streamid {
     font-family: var(--font-mono);
-    color: var(--text-muted);
+    color: var(--text-secondary);
 }
 
 .output__status {
@@ -1028,12 +1023,12 @@ select {
     font-size: 0.75rem;
     font-weight: 500;
     background: var(--state-bg, var(--stopped-bg));
-    color: var(--state-color, var(--text-muted));
+    color: var(--state-color, var(--text-secondary));
 }
 
 .output__error {
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     margin: 0.375rem 0 0 1.25rem;
     word-break: break-word;
 }
@@ -1127,11 +1122,6 @@ select {
     color: var(--text-primary);
 }
 
-.footer__links a:focus-visible {
-    outline: 2px solid var(--brand);
-    outline-offset: 2px;
-}
-
 .footer__sep {
     color: var(--border-default);
 }
@@ -1212,7 +1202,7 @@ select {
 .nav-btn--save:disabled {
     background: var(--surface-elevated);
     border-color: var(--border-default);
-    color: var(--text-muted);
+    color: var(--text-secondary);
 }
 
 /* Settings Tabs - Segmented Control */
@@ -1421,7 +1411,7 @@ select {
 .about__list dt {
     font-size: 0.8125rem;
     font-weight: 500;
-    color: var(--text-muted);
+    color: var(--text-secondary);
 }
 
 .about__list dd {
@@ -1457,15 +1447,10 @@ select {
     color: var(--text-primary);
 }
 
-.about__links a:focus-visible {
-    outline: 2px solid var(--brand);
-    outline-offset: 2px;
-}
-
 .about__text {
     font-size: 0.75rem;
     line-height: 1.5;
-    color: var(--text-muted);
+    color: var(--text-secondary);
 }
 
 .about__text p {
@@ -1579,7 +1564,7 @@ select {
 .log__path {
     font-size: var(--text-xs);
     font-family: var(--font-mono);
-    color: var(--text-muted);
+    color: var(--text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1626,7 +1611,7 @@ select {
     width: 0.5rem;
     height: 0.5rem;
     border-radius: 50%;
-    background: var(--text-muted);
+    background: var(--text-secondary);
     flex-shrink: 0;
     margin-top: 0.375rem;
 }
@@ -1664,7 +1649,7 @@ select {
 }
 
 .log__entry--test::before {
-    background: var(--text-muted);
+    background: var(--text-secondary);
 }
 
 .log__entry--test .log__event {
@@ -1688,7 +1673,7 @@ select {
 .log__time {
     font-size: var(--text-xs);
     font-family: var(--font-mono);
-    color: var(--text-muted);
+    color: var(--text-secondary);
     white-space: nowrap;
     flex-shrink: 0;
     margin-top: 0.125rem;

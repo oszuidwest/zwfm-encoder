@@ -93,11 +93,17 @@ function setNestedValue(obj, path, value) {
     const keys = path.split('.');
     let current = obj;
     for (let i = 0; i < keys.length - 1; i++) {
-        if (!Object.hasOwn(current, keys[i])) return;
+        if (!Object.hasOwn(current, keys[i])) {
+            console.warn(`setNestedValue: invalid path '${path}' - key '${keys[i]}' not found`);
+            return;
+        }
         current = current[keys[i]];
     }
     const finalKey = keys[keys.length - 1];
-    if (!Object.hasOwn(current, finalKey)) return;
+    if (!Object.hasOwn(current, finalKey)) {
+        console.warn(`setNestedValue: invalid path '${path}' - final key '${finalKey}' not found`);
+        return;
+    }
     current[finalKey] = value;
 }
 
@@ -298,7 +304,9 @@ document.addEventListener('alpine:init', () => {
                 setTimeout(() => this.connectWebSocket(), WS_RECONNECT_MS);
             };
 
-            this.ws.onerror = () => this.ws.close();
+            // Note: Don't call close() here - it triggers onclose which causes reconnect.
+            // The socket will close naturally on error, triggering onclose once.
+            this.ws.onerror = () => {};
         },
 
         /**
@@ -428,7 +436,7 @@ document.addEventListener('alpine:init', () => {
                 }
             }
 
-            this.previousOutputStatuses = JSON.parse(JSON.stringify(newOutputStatuses));
+            this.previousOutputStatuses = structuredClone(newOutputStatuses);
             this.outputStatuses = newOutputStatuses;
 
             for (const id in this.deletingOutputs) {
@@ -482,7 +490,10 @@ document.addEventListener('alpine:init', () => {
 
             this.testStates[type].pending = false;
             this.testStates[type].text = msg.success ? 'Sent!' : 'Failed';
-            if (!msg.success) alert(`${type.charAt(0).toUpperCase() + type.slice(1)} test failed: ${msg.error || 'Unknown error'}`);
+            if (!msg.success) {
+                const typeName = type.charAt(0).toUpperCase() + type.slice(1);
+                this.showBanner(`${typeName} test failed: ${msg.error || 'Unknown error'}`, 'danger', false);
+            }
             setTimeout(() => { this.testStates[type].text = 'Test'; }, EMAIL_FEEDBACK_MS);
         },
 
@@ -523,7 +534,7 @@ document.addEventListener('alpine:init', () => {
          * Snapshot enables cancel/restore functionality.
          */
         showSettings() {
-            this.originalSettings = JSON.parse(JSON.stringify(this.settings));
+            this.originalSettings = structuredClone(this.settings);
             this.settingsDirty = false;
             this.view = 'settings';
         },
@@ -542,7 +553,7 @@ document.addEventListener('alpine:init', () => {
          */
         cancelSettings() {
             if (this.originalSettings) {
-                this.settings = JSON.parse(JSON.stringify(this.originalSettings));
+                this.settings = structuredClone(this.originalSettings);
             }
             this.showDashboard();
         },
@@ -690,7 +701,50 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
+         * Computes all display data for an output in a single call.
+         * Use this method to avoid multiple getOutputStatus() calls per render.
+         *
+         * @param {Object} output - Output object with id and created_at
+         * @returns {Object} Object with stateClass, statusText, showError, and lastError
+         */
+        getOutputDisplayData(output) {
+            const status = this.outputStatuses[output.id] || {};
+            const isDeleting = this.deletingOutputs[output.id] === output.created_at;
+
+            // Compute state class
+            let stateClass;
+            if (isDeleting) stateClass = 'state-warning';
+            else if (status.stable) stateClass = 'state-success';
+            else if (status.given_up) stateClass = 'state-danger';
+            else if (status.retry_count > 0) stateClass = 'state-warning';
+            else if (status.running) stateClass = 'state-warning';
+            else if (!this.encoderRunning) stateClass = 'state-stopped';
+            else stateClass = 'state-warning';
+
+            // Compute status text
+            let statusText;
+            if (isDeleting) statusText = 'Deleting...';
+            else if (status.stable) statusText = 'Connected';
+            else if (status.given_up) statusText = 'Failed';
+            else if (status.retry_count > 0) statusText = `Retry ${status.retry_count}/${status.max_retries}`;
+            else if (status.running) statusText = 'Connecting...';
+            else if (!this.encoderRunning) statusText = 'Offline';
+            else statusText = 'Connecting...';
+
+            // Compute error visibility
+            const showError = !isDeleting && (status.given_up || status.retry_count > 0) && status.last_error;
+
+            return {
+                stateClass,
+                statusText,
+                showError,
+                lastError: status.last_error || ''
+            };
+        },
+
+        /**
          * Gets output status and deletion state.
+         * @deprecated Use getOutputDisplayData() for better performance
          *
          * @param {Object} output - Output object with id and created_at
          * @returns {Object} Object with status and isDeleting properties
@@ -705,48 +759,36 @@ document.addEventListener('alpine:init', () => {
         /**
          * Determines CSS state class for output status indicator.
          * Priority: deleting > encoder stopped > failed > retrying > connected.
+         * @deprecated Use getOutputDisplayData().stateClass for better performance
          *
          * @param {Object} output - Output configuration object
          * @returns {string} CSS class for state styling
          */
         getOutputStateClass(output) {
-            const { status, isDeleting } = this.getOutputStatus(output);
-            if (isDeleting) return 'state-warning';
-            if (status.stable) return 'state-success';
-            if (status.given_up) return 'state-danger';
-            if (status.retry_count > 0) return 'state-warning';
-            if (status.running) return 'state-warning';
-            if (!this.encoderRunning) return 'state-stopped';
-            return 'state-warning';
+            return this.getOutputDisplayData(output).stateClass;
         },
 
         /**
          * Generates human-readable status text for output.
+         * @deprecated Use getOutputDisplayData().statusText for better performance
          *
          * @param {Object} output - Output configuration object
          * @returns {string} Status text (e.g., 'Connected', 'Retry 2/5')
          */
         getOutputStatusText(output) {
-            const { status, isDeleting } = this.getOutputStatus(output);
-            if (isDeleting) return 'Deleting...';
-            if (status.stable) return 'Connected';
-            if (status.given_up) return 'Failed';
-            if (status.retry_count > 0) return `Retry ${status.retry_count}/${status.max_retries}`;
-            if (status.running) return 'Connecting...';
-            if (!this.encoderRunning) return 'Offline';
-            return 'Connecting...';
+            return this.getOutputDisplayData(output).statusText;
         },
 
         /**
          * Determines if error message should be shown for output.
          * Shows error when output has failed state with error message.
+         * @deprecated Use getOutputDisplayData().showError for better performance
          *
          * @param {Object} output - Output configuration object
          * @returns {boolean} True if error should be displayed
          */
         shouldShowError(output) {
-            const { status, isDeleting } = this.getOutputStatus(output);
-            return !isDeleting && (status.given_up || status.retry_count > 0) && status.last_error;
+            return this.getOutputDisplayData(output).showError;
         },
 
         /**
