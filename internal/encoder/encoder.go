@@ -117,14 +117,38 @@ func (e *Encoder) Status() types.EncoderStatus {
 	}
 }
 
-// AllOutputStatuses returns status for all tracked outputs.
-func (e *Encoder) AllOutputStatuses() map[string]types.OutputStatus {
-	return e.outputManager.AllStatuses(func(id string) int {
+// AllOutputStatuses returns status for all configured outputs.
+// This includes disabled outputs (with Disabled: true) and outputs without
+// active processes, ensuring the frontend always has complete status data.
+func (e *Encoder) AllOutputStatuses(outputs []types.Output) map[string]types.OutputStatus {
+	// Get statuses for outputs with active processes
+	processStatuses := e.outputManager.AllStatuses(func(id string) int {
 		if o := e.config.Output(id); o != nil {
 			return o.MaxRetriesOrDefault()
 		}
 		return types.DefaultMaxRetries
 	})
+
+	// Build complete status map for all configured outputs
+	result := make(map[string]types.OutputStatus, len(outputs))
+	for _, out := range outputs {
+		if status, exists := processStatuses[out.ID]; exists {
+			// Output has active process - use its status
+			result[out.ID] = status
+		} else if !out.IsEnabled() {
+			// Output is disabled - mark explicitly
+			result[out.ID] = types.OutputStatus{
+				Disabled:   true,
+				MaxRetries: out.MaxRetriesOrDefault(),
+			}
+		} else {
+			// Output is enabled but has no process (encoder not running)
+			result[out.ID] = types.OutputStatus{
+				MaxRetries: out.MaxRetriesOrDefault(),
+			}
+		}
+	}
+	return result
 }
 
 // Start begins audio capture and all output processes.

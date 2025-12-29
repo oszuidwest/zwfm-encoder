@@ -711,6 +711,16 @@ document.addEventListener('alpine:init', () => {
             const status = this.outputStatuses[output.id] || {};
             const isDeleting = this.deletingOutputs[output.id] === output.created_at;
 
+            // Handle disabled outputs first (explicit from backend)
+            if (status.disabled) {
+                return {
+                    stateClass: 'state-stopped',
+                    statusText: 'Disabled',
+                    showError: false,
+                    lastError: ''
+                };
+            }
+
             // Compute state class
             let stateClass;
             if (isDeleting) stateClass = 'state-warning';

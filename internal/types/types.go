@@ -106,6 +106,7 @@ func (o *Output) Format() string {
 type OutputStatus struct {
 	Running    bool   `json:"running"`              // FFmpeg process is running
 	Stable     bool   `json:"stable,omitzero"`      // Connection is stable
+	Disabled   bool   `json:"disabled,omitzero"`    // Output is disabled in config
 	LastError  string `json:"last_error,omitzero"`  // Most recent error
 	RetryCount int    `json:"retry_count,omitzero"` // Current retry attempt
 	MaxRetries int    `json:"max_retries"`          // Maximum retry attempts

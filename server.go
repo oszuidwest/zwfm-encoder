@@ -102,7 +102,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			Type:             "status",
 			Encoder:          status,
 			Outputs:          cfg.Outputs,
-			OutputStatus:     s.encoder.AllOutputStatuses(),
+			OutputStatus:     s.encoder.AllOutputStatuses(cfg.Outputs),
 			Devices:          audio.ListDevices(),
 			SilenceThreshold: cfg.SilenceThreshold,
 			SilenceDuration:  cfg.SilenceDuration,
