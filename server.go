@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/subtle"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -180,6 +182,9 @@ func (s *Server) buildWSStatus() types.WSStatusResponse {
 		Encoder:          status,
 		Outputs:          cfg.Outputs,
 		OutputStatus:     s.encoder.AllOutputStatuses(cfg.Outputs),
+		Recorders:        cfg.Recorders,
+		RecorderStatuses: s.encoder.AllRecorderStatuses(),
+		RecordingAPIKey:  cfg.RecordingAPIKey,
 		Devices:          audio.ListDevices(),
 		SilenceThreshold: cfg.SilenceThreshold,
 		SilenceDuration:  cfg.SilenceDuration,
@@ -212,6 +217,10 @@ func (s *Server) SetupRoutes() http.Handler {
 	mux.HandleFunc("/style.css", s.handlePublicStatic)
 	mux.HandleFunc("/icons.js", s.handlePublicStatic)
 	mux.HandleFunc("/favicon.svg", s.handleFavicon)
+
+	// Recording API routes (API key auth)
+	mux.HandleFunc("/api/recordings/start", s.apiKeyAuth(s.handleStartRecording))
+	mux.HandleFunc("/api/recordings/stop", s.apiKeyAuth(s.handleStopRecording))
 
 	// Protected routes
 	mux.HandleFunc("/ws", auth(s.handleWebSocket))
@@ -367,6 +376,90 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.NotFound(w, r)
+}
+
+// apiKeyAuth returns middleware that validates API key authentication.
+func (s *Server) apiKeyAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		apiKey := s.config.GetRecordingAPIKey()
+		if apiKey == "" {
+			http.Error(w, "API key not configured", http.StatusServiceUnavailable)
+			return
+		}
+
+		providedKey := r.Header.Get("X-API-Key")
+		if subtle.ConstantTimeCompare([]byte(providedKey), []byte(apiKey)) != 1 {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
+// handleStartRecording handles POST /api/recordings/start?recorder_id=xxx.
+func (s *Server) handleStartRecording(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	recorderID := r.URL.Query().Get("recorder_id")
+	if recorderID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		if err := json.NewEncoder(w).Encode(map[string]string{"error": "recorder_id is required"}); err != nil {
+			slog.Error("failed to encode error response", "error", err)
+		}
+		return
+	}
+
+	if err := s.encoder.StartRecorder(recorderID); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		if err := json.NewEncoder(w).Encode(map[string]string{"error": err.Error()}); err != nil {
+			slog.Error("failed to encode error response", "error", err)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "recording_started", "recorder_id": recorderID}); err != nil {
+		slog.Error("failed to encode success response", "error", err)
+	}
+}
+
+// handleStopRecording handles POST /api/recordings/stop?recorder_id=xxx.
+func (s *Server) handleStopRecording(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	recorderID := r.URL.Query().Get("recorder_id")
+	if recorderID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		if err := json.NewEncoder(w).Encode(map[string]string{"error": "recorder_id is required"}); err != nil {
+			slog.Error("failed to encode error response", "error", err)
+		}
+		return
+	}
+
+	if err := s.encoder.StopRecorder(recorderID); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		if err := json.NewEncoder(w).Encode(map[string]string{"error": err.Error()}); err != nil {
+			slog.Error("failed to encode error response", "error", err)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "recording_stopped", "recorder_id": recorderID}); err != nil {
+		slog.Error("failed to encode success response", "error", err)
+	}
 }
 
 // Start begins listening and serving HTTP requests on the configured port.

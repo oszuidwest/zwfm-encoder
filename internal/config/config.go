@@ -3,8 +3,10 @@ package config
 
 import (
 	"cmp"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -18,16 +20,17 @@ import (
 
 // Configuration defaults.
 const (
-	DefaultWebPort           = 8080
-	DefaultWebUsername       = "admin"
-	DefaultWebPassword       = "encoder"
-	DefaultSilenceThreshold  = -40.0
-	DefaultSilenceDuration   = 15.0
-	DefaultSilenceRecovery   = 5.0
-	DefaultEmailSMTPPort     = 587
-	DefaultStationName       = "ZuidWest FM"
-	DefaultStationColorLight = "#E6007E"
-	DefaultStationColorDark  = "#E6007E"
+	DefaultWebPort                     = 8080
+	DefaultWebUsername                 = "admin"
+	DefaultWebPassword                 = "encoder"
+	DefaultSilenceThreshold            = -40.0
+	DefaultSilenceDuration             = 15.0
+	DefaultSilenceRecovery             = 5.0
+	DefaultEmailSMTPPort               = 587
+	DefaultStationName                 = "ZuidWest FM"
+	DefaultStationColorLight           = "#E6007E"
+	DefaultStationColorDark            = "#E6007E"
+	DefaultRecordingMaxDurationMinutes = 240 // 4 hours for on-demand recorders
 )
 
 // Default email from name placeholder.
@@ -75,13 +78,16 @@ type StationConfig struct {
 
 // Config holds all application configuration. It is safe for concurrent use.
 type Config struct {
-	FFmpegPath       string                 `json:"ffmpeg_path,omitempty"` // Path to FFmpeg binary (empty = use PATH)
-	Station          StationConfig          `json:"station"`
-	Web              WebConfig              `json:"web"`
-	Audio            AudioConfig            `json:"audio"`
-	SilenceDetection SilenceDetectionConfig `json:"silence_detection,omitempty"`
-	Notifications    NotificationsConfig    `json:"notifications,omitempty"`
-	Outputs          []types.Output         `json:"outputs"`
+	FFmpegPath                  string                 `json:"ffmpeg_path,omitempty"` // Path to FFmpeg binary (empty = use PATH)
+	Station                     StationConfig          `json:"station"`
+	Web                         WebConfig              `json:"web"`
+	Audio                       AudioConfig            `json:"audio"`
+	SilenceDetection            SilenceDetectionConfig `json:"silence_detection,omitempty"`
+	Notifications               NotificationsConfig    `json:"notifications,omitempty"`
+	RecordingAPIKey             string                 `json:"recording_api_key,omitempty"`              // Global API key for all recorders
+	RecordingMaxDurationMinutes int                    `json:"recording_max_duration_minutes,omitempty"` // Max duration for on-demand recorders (default 240)
+	Outputs                     []types.Output         `json:"outputs"`
+	Recorders                   []types.Recorder       `json:"recorders"`
 
 	mu       sync.RWMutex
 	filePath string
@@ -104,6 +110,7 @@ func New(filePath string) *Config {
 		SilenceDetection: SilenceDetectionConfig{},
 		Notifications:    NotificationsConfig{},
 		Outputs:          []types.Output{},
+		Recorders:        []types.Recorder{},
 		filePath:         filePath,
 	}
 }
@@ -178,6 +185,20 @@ func (c *Config) applyDefaults() {
 		}
 		if c.Outputs[i].CreatedAt == 0 {
 			c.Outputs[i].CreatedAt = time.Now().UnixMilli()
+		}
+	}
+	if c.Recorders == nil {
+		c.Recorders = []types.Recorder{}
+	}
+	for i := range c.Recorders {
+		if c.Recorders[i].Codec == "" {
+			c.Recorders[i].Codec = types.DefaultCodec
+		}
+		if c.Recorders[i].RotationMode == "" {
+			c.Recorders[i].RotationMode = types.RotationHourly
+		}
+		if c.Recorders[i].CreatedAt == 0 {
+			c.Recorders[i].CreatedAt = time.Now().UnixMilli()
 		}
 	}
 }
@@ -283,6 +304,89 @@ func (c *Config) UpdateOutput(output *types.Output) error {
 	}
 
 	c.Outputs[i] = *output
+	return c.saveLocked()
+}
+
+// ConfiguredRecorders returns a copy of all recorders.
+func (c *Config) ConfiguredRecorders() []types.Recorder {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return slices.Clone(c.Recorders)
+}
+
+// Recorder returns a copy of the recorder with the given ID, or nil if not found.
+func (c *Config) Recorder(id string) *types.Recorder {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	for i := range c.Recorders {
+		if c.Recorders[i].ID == id {
+			recorder := c.Recorders[i]
+			return &recorder
+		}
+	}
+	return nil
+}
+
+// findRecorderIndex returns the index of the recorder with the given ID, or -1 if not found.
+func (c *Config) findRecorderIndex(id string) int {
+	for i := range c.Recorders {
+		if c.Recorders[i].ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// AddRecorder adds a new recorder and saves the configuration.
+func (c *Config) AddRecorder(recorder *types.Recorder) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if recorder.ID == "" {
+		recorder.ID = fmt.Sprintf("recorder-%d", len(c.Recorders)+1)
+	}
+	if recorder.Codec == "" {
+		recorder.Codec = types.DefaultCodec
+	}
+	if recorder.RotationMode == "" {
+		recorder.RotationMode = types.RotationHourly
+	}
+	if recorder.Enabled == nil {
+		enabled := true
+		recorder.Enabled = &enabled
+	}
+	recorder.CreatedAt = time.Now().UnixMilli()
+
+	c.Recorders = append(c.Recorders, *recorder)
+	return c.saveLocked()
+}
+
+// RemoveRecorder removes a recorder by ID and saves the configuration.
+func (c *Config) RemoveRecorder(id string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	i := c.findRecorderIndex(id)
+	if i == -1 {
+		return fmt.Errorf("recorder not found: %s", id)
+	}
+
+	c.Recorders = append(c.Recorders[:i], c.Recorders[i+1:]...)
+	return c.saveLocked()
+}
+
+// UpdateRecorder updates an existing recorder and saves the configuration.
+func (c *Config) UpdateRecorder(recorder *types.Recorder) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	i := c.findRecorderIndex(recorder.ID)
+	if i == -1 {
+		return fmt.Errorf("recorder not found: %s", recorder.ID)
+	}
+
+	c.Recorders[i] = *recorder
 	return c.saveLocked()
 }
 
@@ -403,8 +507,15 @@ type Snapshot struct {
 	EmailPassword   string
 	EmailRecipients string
 
+	// Recording
+	RecordingAPIKey             string
+	RecordingMaxDurationMinutes int
+
 	// Outputs (copy)
 	Outputs []types.Output
+
+	// Recorders (copy)
+	Recorders []types.Recorder
 }
 
 // Snapshot returns a point-in-time copy of all configuration values.
@@ -446,8 +557,15 @@ func (c *Config) Snapshot() Snapshot {
 		EmailPassword:   c.Notifications.Email.Password,
 		EmailRecipients: c.Notifications.Email.Recipients,
 
+		// Recording
+		RecordingAPIKey:             c.RecordingAPIKey,
+		RecordingMaxDurationMinutes: cmp.Or(c.RecordingMaxDurationMinutes, DefaultRecordingMaxDurationMinutes),
+
 		// Outputs
 		Outputs: slices.Clone(c.Outputs),
+
+		// Recorders
+		Recorders: slices.Clone(c.Recorders),
 	}
 }
 
@@ -464,4 +582,45 @@ func (s *Snapshot) HasEmail() bool {
 // HasLogPath reports whether a log path is configured.
 func (s *Snapshot) HasLogPath() bool {
 	return s.LogPath != ""
+}
+
+// GetRecordingAPIKey returns the API key for recording REST endpoints.
+func (c *Config) GetRecordingAPIKey() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.RecordingAPIKey
+}
+
+// RecordingAPIKeyPreview returns the last 4 characters of the API key for display.
+func (c *Config) RecordingAPIKeyPreview() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	key := c.RecordingAPIKey
+	if len(key) <= 4 {
+		return key
+	}
+	return "••••••••" + key[len(key)-4:]
+}
+
+// SetRecordingAPIKey updates the API key and saves the configuration.
+func (c *Config) SetRecordingAPIKey(key string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.RecordingAPIKey = key
+	return c.saveLocked()
+}
+
+// GenerateAPIKey generates a new random 32-character alphanumeric API key.
+func GenerateAPIKey() (string, error) {
+	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	const length = 32
+	result := make([]byte, length)
+	for i := range result {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(chars))))
+		if err != nil {
+			return "", err
+		}
+		result[i] = chars[n.Int64()]
+	}
+	return string(result), nil
 }

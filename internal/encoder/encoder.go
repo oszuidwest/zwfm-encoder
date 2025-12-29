@@ -18,6 +18,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/notify"
 	"github.com/oszuidwest/zwfm-encoder/internal/output"
+	"github.com/oszuidwest/zwfm-encoder/internal/recording"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
@@ -36,24 +37,25 @@ var (
 
 // Encoder manages audio capture and distribution to multiple streaming outputs.
 type Encoder struct {
-	config          *config.Config
-	ffmpegPath      string
-	outputManager   *output.Manager
-	sourceCmd       *exec.Cmd
-	sourceCancel    context.CancelFunc
-	sourceStdout    io.ReadCloser
-	state           types.EncoderState
-	stopChan        chan struct{}
-	mu              sync.RWMutex
-	lastError       string
-	startTime       time.Time
-	retryCount      int
-	backoff         *util.Backoff
-	audioLevels     types.AudioLevels
-	lastKnownLevels types.AudioLevels // Cache for TryRLock fallback
-	silenceDetect   *audio.SilenceDetector
-	silenceNotifier *notify.SilenceNotifier
-	peakHolder      *audio.PeakHolder
+	config           *config.Config
+	ffmpegPath       string
+	outputManager    *output.Manager
+	recordingManager *recording.Manager
+	sourceCmd        *exec.Cmd
+	sourceCancel     context.CancelFunc
+	sourceStdout     io.ReadCloser
+	state            types.EncoderState
+	stopChan         chan struct{}
+	mu               sync.RWMutex
+	lastError        string
+	startTime        time.Time
+	retryCount       int
+	backoff          *util.Backoff
+	audioLevels      types.AudioLevels
+	lastKnownLevels  types.AudioLevels // Cache for TryRLock fallback
+	silenceDetect    *audio.SilenceDetector
+	silenceNotifier  *notify.SilenceNotifier
+	peakHolder       *audio.PeakHolder
 }
 
 // New creates a new Encoder with the given configuration and FFmpeg binary path.
@@ -68,6 +70,56 @@ func New(cfg *config.Config, ffmpegPath string) *Encoder {
 		silenceNotifier: notify.NewSilenceNotifier(cfg),
 		peakHolder:      audio.NewPeakHolder(),
 	}
+}
+
+// InitRecording initializes the recording manager.
+// This should be called before Start().
+func (e *Encoder) InitRecording() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	snap := e.config.Snapshot()
+	apiKey := e.config.GetRecordingAPIKey()
+	recorders := snap.Recorders
+
+	// Skip if no recorders configured
+	if len(recorders) == 0 {
+		return nil
+	}
+
+	mgr, err := recording.NewManager(apiKey, "", snap.RecordingMaxDurationMinutes)
+	if err != nil {
+		return fmt.Errorf("create recording manager: %w", err)
+	}
+
+	// Add all configured recorders
+	for i := range recorders {
+		if err := mgr.AddRecorder(&recorders[i]); err != nil {
+			slog.Warn("failed to add recorder", "id", recorders[i].ID, "error", err)
+		}
+	}
+
+	e.recordingManager = mgr
+	return nil
+}
+
+// RecordingManager returns the recording manager, or nil if not initialized.
+func (e *Encoder) RecordingManager() *recording.Manager {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.recordingManager
+}
+
+// AllRecorderStatuses returns status for all configured recorders.
+func (e *Encoder) AllRecorderStatuses() map[string]types.RecorderStatus {
+	e.mu.RLock()
+	mgr := e.recordingManager
+	e.mu.RUnlock()
+
+	if mgr == nil {
+		return make(map[string]types.RecorderStatus)
+	}
+	return mgr.AllStatuses()
 }
 
 // State returns the current encoder state.
@@ -211,6 +263,13 @@ func (e *Encoder) Stop() error {
 	// Stop all outputs first
 	if err := e.outputManager.StopAll(); err != nil {
 		errs = append(errs, fmt.Errorf("stop outputs: %w", err))
+	}
+
+	// Stop recording manager (note: compliance recording continues independently)
+	if e.recordingManager != nil {
+		if err := e.recordingManager.Stop(); err != nil {
+			errs = append(errs, fmt.Errorf("stop recording: %w", err))
+		}
 	}
 
 	// Send graceful termination signal to source.
@@ -448,6 +507,13 @@ func (e *Encoder) startEnabledOutputs() {
 			slog.Error("failed to start output", "output_id", out.ID, "error", err)
 		}
 	}
+
+	// Start recording manager (starts auto-start recorders)
+	if e.recordingManager != nil {
+		if err := e.recordingManager.Start(); err != nil {
+			slog.Error("failed to start recording manager", "error", err)
+		}
+	}
 }
 
 // runDistributor delivers audio from the source to all output processes.
@@ -501,6 +567,11 @@ func (e *Encoder) runDistributor() {
 			// WriteAudio logs errors internally and marks output as stopped
 			_ = e.outputManager.WriteAudio(out.ID, buf[:n]) //nolint:errcheck // Errors logged internally by WriteAudio
 		}
+
+		// Send audio to recording manager if initialized
+		if e.recordingManager != nil {
+			_ = e.recordingManager.WriteAudio(buf[:n]) //nolint:errcheck // Errors logged internally by recording manager
+		}
 	}
 }
 
@@ -534,4 +605,54 @@ func (e *Encoder) pollUntil(condition func() bool) <-chan struct{} {
 		close(done)
 	}()
 	return done
+}
+
+// AddRecorder adds a new recorder and saves to config.
+func (e *Encoder) AddRecorder(cfg *types.Recorder) error {
+	if err := e.config.AddRecorder(cfg); err != nil {
+		return err
+	}
+
+	if e.recordingManager != nil {
+		return e.recordingManager.AddRecorder(cfg)
+	}
+	return nil
+}
+
+// RemoveRecorder removes a recorder and saves to config.
+func (e *Encoder) RemoveRecorder(id string) error {
+	if e.recordingManager != nil {
+		if err := e.recordingManager.RemoveRecorder(id); err != nil {
+			slog.Warn("error removing recorder from manager", "id", id, "error", err)
+		}
+	}
+	return e.config.RemoveRecorder(id)
+}
+
+// UpdateRecorder updates a recorder configuration.
+func (e *Encoder) UpdateRecorder(cfg *types.Recorder) error {
+	if err := e.config.UpdateRecorder(cfg); err != nil {
+		return err
+	}
+
+	if e.recordingManager != nil {
+		return e.recordingManager.UpdateRecorder(cfg)
+	}
+	return nil
+}
+
+// StartRecorder starts a specific recorder.
+func (e *Encoder) StartRecorder(id string) error {
+	if e.recordingManager == nil {
+		return recording.ErrRecordingDisabled
+	}
+	return e.recordingManager.StartRecorder(id)
+}
+
+// StopRecorder stops a specific recorder.
+func (e *Encoder) StopRecorder(id string) error {
+	if e.recordingManager == nil {
+		return recording.ErrRecordingDisabled
+	}
+	return e.recordingManager.StopRecorder(id)
 }

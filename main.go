@@ -63,6 +63,11 @@ func main() {
 
 	srv := NewServer(cfg, enc, ffmpegAvailable)
 
+	// Initialize recording manager if configured
+	if err := enc.InitRecording(); err != nil {
+		slog.Error("failed to initialize recording", "error", err)
+	}
+
 	if ffmpegAvailable {
 		slog.Info("starting encoder")
 		if err := enc.Start(); err != nil {
