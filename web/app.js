@@ -53,13 +53,6 @@ const DEFAULT_OUTPUT = {
     max_retries: 99
 };
 
-const DEFAULT_EDIT_OUTPUT = {
-    ...DEFAULT_OUTPUT,
-    id: '',
-    enabled: true,
-    created_at: 0
-};
-
 const DEFAULT_LEVELS = {
     left: -60,
     right: -60,
@@ -123,10 +116,8 @@ document.addEventListener('alpine:init', () => {
             { id: 'about', label: 'About', icon: 'info' }
         ],
 
-        newOutput: { ...DEFAULT_OUTPUT },
-
-        editOutput: { ...DEFAULT_EDIT_OUTPUT },
-        editOutputDirty: false,
+        outputForm: { ...DEFAULT_OUTPUT, id: '', enabled: true },
+        outputFormDirty: false,
 
         encoder: {
             state: 'connecting',
@@ -200,6 +191,10 @@ document.addEventListener('alpine:init', () => {
             return this.encoder.state === 'running';
         },
 
+        get isEditMode() {
+            return this.outputForm.id !== '';
+        },
+
         // Lifecycle
         /**
          * Alpine.js lifecycle hook - initializes WebSocket connection.
@@ -231,11 +226,8 @@ document.addEventListener('alpine:init', () => {
                 } else if (this.view === 'settings') {
                     this.cancelSettings();
                     event.preventDefault();
-                } else if (this.view === 'add-output') {
+                } else if (this.view === 'output-form') {
                     this.showDashboard();
-                    event.preventDefault();
-                } else if (this.view === 'edit-output') {
-                    this.cancelEditOutput();
                     event.preventDefault();
                 }
                 return;
@@ -436,7 +428,7 @@ document.addEventListener('alpine:init', () => {
                 }
             }
 
-            this.previousOutputStatuses = structuredClone(newOutputStatuses);
+            this.previousOutputStatuses = JSON.parse(JSON.stringify(newOutputStatuses));
             this.outputStatuses = newOutputStatuses;
 
             for (const id in this.deletingOutputs) {
@@ -513,8 +505,7 @@ document.addEventListener('alpine:init', () => {
         saveAndClose() {
             const viewIds = {
                 'settings': 'settings-view',
-                'add-output': 'add-output-view',
-                'edit-output': 'edit-output-view'
+                'output-form': 'output-form-view'
             };
             const viewId = viewIds[this.view] || 'settings-view';
             const saveBtn = document.querySelector(`#${viewId} .nav-btn--save`);
@@ -534,7 +525,7 @@ document.addEventListener('alpine:init', () => {
          * Snapshot enables cancel/restore functionality.
          */
         showSettings() {
-            this.originalSettings = structuredClone(this.settings);
+            this.originalSettings = JSON.parse(JSON.stringify(this.settings));
             this.settingsDirty = false;
             this.view = 'settings';
         },
@@ -553,7 +544,7 @@ document.addEventListener('alpine:init', () => {
          */
         cancelSettings() {
             if (this.originalSettings) {
-                this.settings = structuredClone(this.originalSettings);
+                this.settings = JSON.parse(JSON.stringify(this.originalSettings));
             }
             this.showDashboard();
         },
@@ -584,9 +575,25 @@ document.addEventListener('alpine:init', () => {
             this.saveAndClose();
         },
 
-        showAddOutput() {
-            this.newOutput = { ...DEFAULT_OUTPUT };
-            this.view = 'add-output';
+        showOutputForm(id = null) {
+            if (id) {
+                const output = this.outputs.find(o => o.id === id);
+                if (!output) return;
+                this.outputForm = {
+                    id: output.id,
+                    host: output.host,
+                    port: output.port,
+                    streamid: output.streamid || '',
+                    password: '',
+                    codec: output.codec || 'wav',
+                    max_retries: output.max_retries || 99,
+                    enabled: output.enabled !== false
+                };
+            } else {
+                this.outputForm = { ...DEFAULT_OUTPUT, id: '', enabled: true };
+            }
+            this.outputFormDirty = false;
+            this.view = 'output-form';
         },
 
         /**
@@ -598,22 +605,27 @@ document.addEventListener('alpine:init', () => {
         },
 
         // Output management
-        /**
-         * Validates and submits new output configuration.
-         * Requires host and port; other fields have defaults.
-         */
-        submitNewOutput() {
-            if (!this.newOutput.host) {
-                return;
+        submitOutputForm() {
+            if (!this.outputForm.host) return;
+
+            const data = {
+                host: this.outputForm.host.trim(),
+                port: this.outputForm.port,
+                streamid: this.outputForm.streamid.trim() || 'studio',
+                codec: this.outputForm.codec,
+                max_retries: this.outputForm.max_retries
+            };
+
+            if (this.outputForm.password) {
+                data.password = this.outputForm.password;
             }
-            this.send('add_output', null, {
-                host: this.newOutput.host.trim(),
-                port: this.newOutput.port,
-                streamid: this.newOutput.streamid.trim() || 'studio',
-                password: this.newOutput.password,
-                codec: this.newOutput.codec,
-                max_retries: this.newOutput.max_retries
-            });
+
+            if (this.isEditMode) {
+                data.enabled = this.outputForm.enabled;
+                this.send('update_output', this.outputForm.id, data);
+            } else {
+                this.send('add_output', null, data);
+            }
             this.saveAndClose();
         },
 
@@ -630,74 +642,8 @@ document.addEventListener('alpine:init', () => {
             if (returnToDashboard) this.showDashboard();
         },
 
-        /**
-         * Opens the edit output view and populates it with existing output data.
-         * @param {string} id - ID of the output to edit
-         */
-        showEditOutput(id) {
-            const output = this.outputs.find(o => o.id === id);
-            if (!output) return;
-
-            this.editOutput = {
-                id: output.id,
-                host: output.host,
-                port: output.port,
-                streamid: output.streamid || '',
-                password: '',
-                codec: output.codec || 'wav',
-                max_retries: output.max_retries || 99,
-                enabled: output.enabled !== false,
-                created_at: output.created_at
-            };
-            this.editOutputDirty = false;
-            this.view = 'edit-output';
-        },
-
-        /**
-         * Marks edit output form as dirty (modified).
-         */
-        markEditOutputDirty() {
-            this.editOutputDirty = true;
-        },
-
-        /**
-         * Cancels edit and returns to dashboard without saving.
-         */
-        cancelEditOutput() {
-            this.editOutput = { ...DEFAULT_EDIT_OUTPUT };
-            this.editOutputDirty = false;
-            this.showDashboard();
-        },
-
-        /**
-         * Submits the edited output to the backend.
-         */
-        submitEditOutput() {
-            if (!this.editOutput.host || !this.editOutput.id) return;
-
-            const data = {
-                host: this.editOutput.host.trim(),
-                port: this.editOutput.port,
-                streamid: this.editOutput.streamid.trim() || 'studio',
-                codec: this.editOutput.codec,
-                max_retries: this.editOutput.max_retries,
-                enabled: this.editOutput.enabled,
-                created_at: this.editOutput.created_at
-            };
-
-            if (this.editOutput.password) {
-                data.password = this.editOutput.password;
-            }
-
-            this.send('update_output', this.editOutput.id, data);
-            this.saveAndClose();
-        },
-
-        /**
-         * Deletes the output being edited and returns to dashboard.
-         */
-        confirmDeleteOutput() {
-            this.deleteOutput(this.editOutput.id, true);
+        markOutputFormDirty() {
+            this.outputFormDirty = true;
         },
 
         /**

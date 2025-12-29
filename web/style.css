@@ -1150,7 +1150,8 @@ select {
     padding-top: 0.75rem;
 }
 
-.modal__nav h1 {
+.modal__nav h1,
+.modal__nav h2 {
     flex: 1;
     font-size: 1.5rem;
     font-weight: 600;
@@ -1344,6 +1345,46 @@ select {
 
 .settings__section--danger .settings__section-header svg {
     color: var(--danger);
+}
+
+.settings__section--warning {
+    border: 1px solid var(--warning);
+    background: var(--warning-bg);
+}
+
+.settings__section--warning .settings__section-header svg {
+    color: var(--warning);
+}
+
+/* Segmented Control - iOS/macOS style toggle */
+.segmented {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.segmented__btn {
+    flex: 1;
+    padding: 0.875rem 1rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    border: 2px solid var(--warning);
+    border-radius: var(--radius-lg);
+    background: transparent;
+    color: var(--warning);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    opacity: 0.6;
+}
+
+.segmented__btn:hover {
+    opacity: 0.8;
+}
+
+.segmented__btn--active {
+    background: var(--warning);
+    border-color: var(--warning);
+    color: var(--neutral-900);
+    opacity: 1;
 }
 
 .settings__section-header {

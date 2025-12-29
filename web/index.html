@@ -197,7 +197,7 @@
                 <h2>Outputs</h2>
                 <div class="card__actions">
                     <span class="badge" x-text="outputs.length"></span>
-                    <button class="card__add-btn" type="button" tabindex="0" aria-label="Add output" @click="showAddOutput()">
+                    <button class="card__add-btn" type="button" tabindex="0" aria-label="Add output" @click="showOutputForm()">
                         <span class="icon-container" x-html="icons.plus"></span>
                         Add
                     </button>
@@ -211,7 +211,7 @@
                                 <span class="output__dot" :class="getOutputStateClass(output)"></span>
                                 <span class="output__host" x-text="`${output.host}:${output.port}`"></span>
                                 <button class="icon-btn icon-btn--edit" type="button" tabindex="0" title="Edit" aria-label="Edit output"
-                                        @click="showEditOutput(output.id)">
+                                        @click="showOutputForm(output.id)">
                                     <span class="icon-container" x-html="icons.edit"></span>
                                 </button>
                             </div>
@@ -437,22 +437,21 @@
             </div>
         </div>
 
-        <!-- === Add Output View ===
-             Form for creating new stream outputs.
-
-             Required fields: Host, Port
-             Optional fields: Stream ID, Password, Codec, Max Retries
-
-             Defaults: codec 'mp3', max retries 99 -->
-        <div id="add-output-view" x-show="view === 'add-output'" x-transition:enter.duration.200ms x-cloak>
+        <!-- === Output Form View ===
+             Unified form for creating and editing stream outputs.
+             Mode detection: isEditMode checks if outputForm.id is set -->
+        <div id="output-form-view" x-show="view === 'output-form'" x-transition:enter.duration.200ms x-cloak>
             <header class="modal__nav">
                 <button class="nav-btn" type="button" tabindex="0" @click="showDashboard()">Cancel</button>
-                <h2>New Output</h2>
-                <button class="nav-btn nav-btn--save" type="button" tabindex="0" @click="submitNewOutput()" :disabled="!newOutput.host">Save</button>
+                <h2 x-text="isEditMode ? 'Edit Output' : 'New Output'">Output</h2>
+                <button class="nav-btn nav-btn--save" type="button" tabindex="0"
+                        @click="submitOutputForm()"
+                        :disabled="!outputForm.host || (isEditMode && !outputFormDirty)">Save</button>
             </header>
 
             <div class="settings__panels">
                 <div class="settings__panel">
+                    <!-- Server Connection Section -->
                     <div class="settings__section">
                         <div class="settings__section-header">
                             <span x-html="icons.server"></span>
@@ -460,24 +459,31 @@
                         </div>
                         <p class="settings__section-desc">Configure the SRT server to stream audio to.</p>
                         <div class="form__group">
-                            <label for="new-host">Host</label>
-                            <input id="new-host" type="text" placeholder="stream.example.com" x-model="newOutput.host">
+                            <label for="output-host">Host</label>
+                            <input id="output-host" type="text" placeholder="stream.example.com"
+                                   x-model="outputForm.host" @input="markOutputFormDirty()">
                         </div>
                         <div class="form__row">
                             <div class="form__group">
-                                <label for="new-port">Port</label>
-                                <input id="new-port" type="number" x-model.number="newOutput.port">
+                                <label for="output-port">Port</label>
+                                <input id="output-port" type="number"
+                                       x-model.number="outputForm.port" @input="markOutputFormDirty()">
                             </div>
                             <div class="form__group">
-                                <label for="new-streamid">Stream ID</label>
-                                <input id="new-streamid" type="text" placeholder="studio" x-model="newOutput.streamid">
+                                <label for="output-streamid">Stream ID</label>
+                                <input id="output-streamid" type="text" placeholder="studio"
+                                       x-model="outputForm.streamid" @input="markOutputFormDirty()">
                             </div>
                         </div>
                         <div class="form__group">
-                            <label for="new-password">Password</label>
-                            <input id="new-password" type="password" placeholder="Optional" x-model="newOutput.password">
+                            <label for="output-password">Password</label>
+                            <input id="output-password" type="password"
+                                   :placeholder="isEditMode ? 'Leave empty to keep' : 'Optional'"
+                                   x-model="outputForm.password" @input="markOutputFormDirty()">
                         </div>
                     </div>
+
+                    <!-- Encoding Section -->
                     <div class="settings__section">
                         <div class="settings__section-header">
                             <span x-html="icons.settings"></span>
@@ -486,8 +492,8 @@
                         <p class="settings__section-desc">Audio encoding format and retry settings.</p>
                         <div class="form__row">
                             <div class="form__group">
-                                <label for="new-codec">Codec</label>
-                                <select id="new-codec" x-model="newOutput.codec">
+                                <label for="output-codec">Codec</label>
+                                <select id="output-codec" x-model="outputForm.codec" @change="markOutputFormDirty()">
                                     <option value="mp3">MP3 (320 kbit/s)</option>
                                     <option value="mp2">MP2 (384 kbit/s)</option>
                                     <option value="ogg">Ogg Vorbis (~500 kbit/s)</option>
@@ -495,81 +501,43 @@
                                 </select>
                             </div>
                             <div class="form__group">
-                                <label for="new-retries">Max Retries</label>
-                                <input id="new-retries" type="number" max="9999" min="1" x-model.number="newOutput.max_retries">
+                                <label for="output-retries">Max Retries</label>
+                                <input id="output-retries" type="number" max="9999" min="1"
+                                       x-model.number="outputForm.max_retries" @input="markOutputFormDirty()">
                             </div>
                         </div>
                     </div>
-                </div>
-            </div>
-        </div>
 
-        <!-- === Edit Output View ===
-             Form for editing existing stream outputs.
-             Includes all editable fields plus delete option. -->
-        <div id="edit-output-view" x-show="view === 'edit-output'" x-transition:enter.duration.200ms x-cloak>
-            <header class="modal__nav">
-                <button class="nav-btn" type="button" tabindex="0" @click="cancelEditOutput()">Cancel</button>
-                <h2>Edit Output</h2>
-                <button class="nav-btn nav-btn--save" type="button" tabindex="0" @click="submitEditOutput()" :disabled="!editOutput.host || !editOutputDirty">Save</button>
-            </header>
-
-            <div class="settings__panels">
-                <div class="settings__panel">
-                    <label class="form__checkbox form__checkbox--prominent" for="edit-enabled">
-                        <input type="checkbox" id="edit-enabled"
-                               x-model="editOutput.enabled"
-                               @change="markEditOutputDirty()">
-                        <span x-text="editOutput.enabled ? 'Output Enabled' : 'Output Disabled'"></span>
-                    </label>
-                    <div class="settings__section">
+                    <!-- Output Status Section - Only in edit mode (yellow/warning) -->
+                    <div class="settings__section settings__section--warning" x-show="isEditMode" x-cloak>
                         <div class="settings__section-header">
-                            <span x-html="icons.server"></span>
-                            <h3>Server</h3>
+                            <span x-html="icons.power"></span>
+                            <h3>Output Status</h3>
                         </div>
-                        <div class="form__row">
-                            <div class="form__group">
-                                <label for="edit-host">Host</label>
-                                <input id="edit-host" type="text" placeholder="stream.example.com" x-model="editOutput.host" @input="markEditOutputDirty()">
-                            </div>
-                            <div class="form__group form__group--small">
-                                <label for="edit-port">Port</label>
-                                <input id="edit-port" type="number" x-model.number="editOutput.port" @input="markEditOutputDirty()">
-                            </div>
-                        </div>
-                        <div class="form__row">
-                            <div class="form__group">
-                                <label for="edit-streamid">Stream ID</label>
-                                <input id="edit-streamid" type="text" placeholder="studio" x-model="editOutput.streamid" @input="markEditOutputDirty()">
-                            </div>
-                            <div class="form__group">
-                                <label for="edit-password">Password</label>
-                                <input id="edit-password" type="password" placeholder="Leave empty to keep" x-model="editOutput.password" @input="markEditOutputDirty()">
-                            </div>
-                        </div>
-                        <div class="form__row">
-                            <div class="form__group">
-                                <label for="edit-codec">Codec</label>
-                                <select id="edit-codec" x-model="editOutput.codec" @change="markEditOutputDirty()">
-                                    <option value="mp3">MP3 (320 kbit/s)</option>
-                                    <option value="mp2">MP2 (384 kbit/s)</option>
-                                    <option value="ogg">Ogg Vorbis (~500 kbit/s)</option>
-                                    <option value="wav">WAV (uncompressed)</option>
-                                </select>
-                            </div>
-                            <div class="form__group form__group--small">
-                                <label for="edit-retries">Max Retries</label>
-                                <input id="edit-retries" type="number" max="9999" min="1" x-model.number="editOutput.max_retries" @input="markEditOutputDirty()">
-                            </div>
+                        <p class="settings__section-desc">Disabling stops the stream to this server. Changes apply on save.</p>
+                        <div class="segmented" role="group" aria-label="Output status">
+                            <button type="button" class="segmented__btn"
+                                    :class="{ 'segmented__btn--active': !outputForm.enabled }"
+                                    @click="outputForm.enabled = false; markOutputFormDirty()">
+                                Disabled
+                            </button>
+                            <button type="button" class="segmented__btn"
+                                    :class="{ 'segmented__btn--active': outputForm.enabled }"
+                                    @click="outputForm.enabled = true; markOutputFormDirty()">
+                                Enabled
+                            </button>
                         </div>
                     </div>
-                    <div class="settings__section settings__section--danger">
+
+                    <!-- Danger Zone Section - Only in edit mode -->
+                    <div class="settings__section settings__section--danger" x-show="isEditMode" x-cloak>
                         <div class="settings__section-header">
                             <span x-html="icons.warning"></span>
                             <h3>Danger Zone</h3>
                         </div>
                         <p class="settings__section-desc">Permanently delete this output configuration.</p>
-                        <button class="btn btn--danger btn--block" type="button" tabindex="0" @click="confirmDeleteOutput()">
+                        <button class="btn btn--danger btn--block" type="button" tabindex="0"
+                                @click="deleteOutput(outputForm.id, true)">
                             Delete Output
                         </button>
                     </div>
