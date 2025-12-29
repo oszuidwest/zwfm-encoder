@@ -665,7 +665,7 @@
                 <h2 x-text="isRecorderEditMode ? 'Edit Recorder' : 'New Recorder'">Recorder</h2>
                 <button class="nav-btn nav-btn--save" type="button" tabindex="0"
                         @click="submitRecorderForm()"
-                        :disabled="!recorderForm.name || !recorderForm.s3_bucket || !recorderForm.s3_access_key_id || (!isRecorderEditMode && !recorderForm.s3_secret_access_key) || (isRecorderEditMode && !recorderFormDirty)">Save</button>
+                        :disabled="!recorderForm.name || ((recorderForm.storage_mode === 'local' || recorderForm.storage_mode === 'both') && !recorderForm.local_path) || ((recorderForm.storage_mode === 's3' || recorderForm.storage_mode === 'both') && (!recorderForm.s3_bucket || !recorderForm.s3_access_key_id || (!isRecorderEditMode && !recorderForm.s3_secret_access_key))) || (isRecorderEditMode && !recorderFormDirty)">Save</button>
             </header>
 
             <div class="settings__panels">
@@ -700,10 +700,44 @@
                                 <option value="wav">WAV (uncompressed)</option>
                             </select>
                         </div>
+                        <div class="form__group">
+                            <label for="recorder-storage">Storage</label>
+                            <select id="recorder-storage" x-model="recorderForm.storage_mode" @change="markRecorderFormDirty()">
+                                <option value="local">Local only</option>
+                                <option value="s3">S3 only</option>
+                                <option value="both">Local + S3</option>
+                            </select>
+                        </div>
+                        <div class="form__group">
+                            <label for="recorder-retention">Retention</label>
+                            <div class="input__group">
+                                <input id="recorder-retention" type="number" min="0" max="365"
+                                       x-model.number="recorderForm.retention_days"
+                                       @input="markRecorderFormDirty()">
+                                <span class="input__unit">days</span>
+                            </div>
+                            <span class="input__hint">Files older than this are automatically deleted. Set to 0 to keep forever.</span>
+                        </div>
+                    </div>
+
+                    <!-- Local Storage Section -->
+                    <div class="settings__section" x-show="recorderForm.storage_mode !== 's3'" x-cloak>
+                        <div class="settings__section-header">
+                            <span x-html="icons.folder"></span>
+                            <h3>Local Storage</h3>
+                        </div>
+                        <p class="settings__section-desc">Configure local directory for recordings.</p>
+                        <div class="form__group">
+                            <label for="recorder-local-path">Local Path</label>
+                            <input id="recorder-local-path" type="text" placeholder="/var/recordings/my-recorder"
+                                   x-model="recorderForm.local_path"
+                                   @input="markRecorderFormDirty()">
+                            <span class="input__hint">Directory will be created if it doesn't exist.</span>
+                        </div>
                     </div>
 
                     <!-- S3 Storage Section -->
-                    <div class="settings__section">
+                    <div class="settings__section" x-show="recorderForm.storage_mode !== 'local'" x-cloak>
                         <div class="settings__section-header">
                             <span x-html="icons.cloud"></span>
                             <h3>S3 Storage</h3>

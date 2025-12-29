@@ -126,18 +126,40 @@ const (
 	RotationOnDemand RotationMode = "ondemand"
 )
 
+// StorageMode determines where recordings are saved.
+type StorageMode string
+
+const (
+	// StorageLocal saves recordings only to local filesystem.
+	StorageLocal StorageMode = "local"
+	// StorageS3 uploads recordings only to S3.
+	StorageS3 StorageMode = "s3"
+	// StorageBoth saves locally AND uploads to S3.
+	StorageBoth StorageMode = "both"
+)
+
+// DefaultRetentionDays is the default number of days to keep recordings.
+const DefaultRetentionDays = 90
+
 // Recorder represents a recording destination configuration.
 type Recorder struct {
-	ID                string       `json:"id"`                             // Unique identifier
-	Name              string       `json:"name"`                           // Display name
-	Enabled           *bool        `json:"enabled,omitempty"`              // Whether recorder is active (nil defaults to true)
-	Codec             string       `json:"codec"`                          // Audio codec (mp2, mp3, ogg, wav)
-	S3Endpoint        string       `json:"s3_endpoint,omitempty"`          // S3-compatible endpoint URL
-	S3Bucket          string       `json:"s3_bucket,omitempty"`            // S3 bucket name
-	S3AccessKeyID     string       `json:"s3_access_key_id,omitempty"`     // S3 access key ID
-	S3SecretAccessKey string       `json:"s3_secret_access_key,omitempty"` // S3 secret access key
-	RotationMode      RotationMode `json:"rotation_mode"`                  // hourly or ondemand
-	CreatedAt         int64        `json:"created_at"`                     // Unix timestamp of creation
+	ID           string       `json:"id"`                   // Unique identifier
+	Name         string       `json:"name"`                 // Display name
+	Enabled      *bool        `json:"enabled,omitempty"`    // Whether recorder is active (nil defaults to true)
+	Codec        string       `json:"codec"`                // Audio codec (mp2, mp3, ogg, wav)
+	RotationMode RotationMode `json:"rotation_mode"`        // hourly or ondemand
+	StorageMode  StorageMode  `json:"storage_mode"`         // local, s3, or both
+	LocalPath    string       `json:"local_path,omitempty"` // Local directory for recordings (required for local/both)
+
+	// S3 configuration (required for s3/both modes)
+	S3Endpoint        string `json:"s3_endpoint,omitempty"`          // S3-compatible endpoint URL
+	S3Bucket          string `json:"s3_bucket,omitempty"`            // S3 bucket name
+	S3AccessKeyID     string `json:"s3_access_key_id,omitempty"`     // S3 access key ID
+	S3SecretAccessKey string `json:"s3_secret_access_key,omitempty"` // S3 secret access key
+	// S3 prefix auto-generated: recordings/{sanitized-name}/
+
+	RetentionDays int   `json:"retention_days,omitempty"` // Days to keep recordings (default 90)
+	CreatedAt     int64 `json:"created_at"`               // Unix timestamp of creation
 }
 
 // IsEnabled returns whether the recorder is enabled (defaults to true if not set).

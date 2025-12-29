@@ -5,13 +5,9 @@ import (
 	"log/slog"
 	"os"
 	"sync"
-	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
-
-// RotationWindow is the time window over which hourly rotations are staggered.
-const RotationWindow = 30 * time.Second
 
 // Manager orchestrates multiple GenericRecorders.
 type Manager struct {
@@ -23,12 +19,12 @@ type Manager struct {
 	maxDurationMinutes int  // Global max duration for on-demand recorders
 	running            bool // Whether encoder is running (recorders should be active)
 
-	statusCallback func()
+	cleanupStopCh chan struct{} // Stop signal for cleanup scheduler
 }
 
 // NewManager creates a new recording manager.
 // maxDurationMinutes is the global max duration for on-demand recorders.
-func NewManager(apiKey, tempDir string, maxDurationMinutes int, statusCallback func()) (*Manager, error) {
+func NewManager(apiKey, tempDir string, maxDurationMinutes int) (*Manager, error) {
 	if tempDir == "" {
 		tempDir = DefaultTempDir
 	}
@@ -43,7 +39,7 @@ func NewManager(apiKey, tempDir string, maxDurationMinutes int, statusCallback f
 		apiKey:             apiKey,
 		tempDir:            tempDir,
 		maxDurationMinutes: maxDurationMinutes,
-		statusCallback:     statusCallback,
+		cleanupStopCh:      make(chan struct{}),
 	}, nil
 }
 
@@ -56,10 +52,7 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 		return fmt.Errorf("recorder already exists: %s", cfg.ID)
 	}
 
-	// Calculate staggered rotation offset for hourly recorders
-	rotationOffset := m.calculateRotationOffsetLocked(cfg)
-
-	recorder, err := NewGenericRecorder(cfg, m.tempDir, m.maxDurationMinutes, rotationOffset, m.statusCallback)
+	recorder, err := NewGenericRecorder(cfg, m.tempDir, m.maxDurationMinutes)
 	if err != nil {
 		return fmt.Errorf("create recorder: %w", err)
 	}
@@ -73,34 +66,8 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 		}
 	}
 
-	slog.Info("recorder added", "id", cfg.ID, "name", cfg.Name, "rotation_offset", rotationOffset)
+	slog.Info("recorder added", "id", cfg.ID, "name", cfg.Name)
 	return nil
-}
-
-// calculateRotationOffsetLocked calculates the staggered rotation offset for a new hourly recorder.
-// Spreads hourly recorders across the RotationWindow (30s) to prevent I/O spikes.
-// Must be called with lock held.
-func (m *Manager) calculateRotationOffsetLocked(cfg *types.Recorder) time.Duration {
-	if cfg.RotationMode != types.RotationHourly {
-		return 0 // Only hourly recorders need staggered rotation
-	}
-
-	// Count existing hourly recorders
-	hourlyCount := 0
-	for _, rec := range m.recorders {
-		if rec.Config().RotationMode == types.RotationHourly {
-			hourlyCount++
-		}
-	}
-
-	// New recorder will be at index hourlyCount (0-based)
-	// Total count including new recorder
-	totalCount := hourlyCount + 1
-
-	// Spread across RotationWindow: offset = (index / total) * window
-	offset := time.Duration(float64(hourlyCount) / float64(totalCount) * float64(RotationWindow))
-
-	return offset
 }
 
 // RemoveRecorder stops and removes a recorder.
@@ -203,6 +170,9 @@ func (m *Manager) Start() error {
 		}
 	}
 
+	// Start cleanup scheduler
+	m.startCleanupScheduler()
+
 	slog.Info("recording manager started", "recorders", len(m.recorders))
 	return nil
 }
@@ -213,6 +183,10 @@ func (m *Manager) Stop() error {
 	defer m.mu.Unlock()
 
 	m.running = false
+
+	// Stop cleanup scheduler
+	close(m.cleanupStopCh)
+	m.cleanupStopCh = make(chan struct{}) // Reset for potential restart
 
 	var lastErr error
 	for id, recorder := range m.recorders {

@@ -352,6 +352,12 @@ func (c *Config) AddRecorder(recorder *types.Recorder) error {
 	if recorder.RotationMode == "" {
 		recorder.RotationMode = types.RotationHourly
 	}
+	if recorder.StorageMode == "" {
+		recorder.StorageMode = types.StorageLocal
+	}
+	if recorder.RetentionDays == 0 {
+		recorder.RetentionDays = types.DefaultRetentionDays
+	}
 	if recorder.Enabled == nil {
 		enabled := true
 		recorder.Enabled = &enabled

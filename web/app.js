@@ -58,10 +58,13 @@ const DEFAULT_RECORDER = {
     enabled: true,
     codec: 'mp3',
     rotation_mode: 'hourly',
+    storage_mode: 'local',
+    local_path: '',
     s3_endpoint: '',
     s3_bucket: '',
     s3_access_key_id: '',
-    s3_secret_access_key: ''
+    s3_secret_access_key: '',
+    retention_days: 90
 };
 
 const DEFAULT_LEVELS = {
@@ -689,10 +692,13 @@ document.addEventListener('alpine:init', () => {
                     enabled: recorder.enabled !== false,
                     codec: recorder.codec || 'mp3',
                     rotation_mode: recorder.rotation_mode || 'hourly',
+                    storage_mode: recorder.storage_mode || 'local',
+                    local_path: recorder.local_path || '',
                     s3_endpoint: recorder.s3_endpoint || '',
                     s3_bucket: recorder.s3_bucket || '',
                     s3_access_key_id: recorder.s3_access_key_id || '',
-                    s3_secret_access_key: ''
+                    s3_secret_access_key: '',
+                    retention_days: recorder.retention_days || 90
                 };
             } else {
                 this.recorderForm = { ...DEFAULT_RECORDER, id: '' };
@@ -710,6 +716,8 @@ document.addEventListener('alpine:init', () => {
          */
         submitRecorderForm() {
             const name = this.recorderForm.name?.trim();
+            const storageMode = this.recorderForm.storage_mode;
+            const localPath = this.recorderForm.local_path?.trim();
             const bucket = this.recorderForm.s3_bucket?.trim();
             const accessKey = this.recorderForm.s3_access_key_id?.trim();
             const secretKey = this.recorderForm.s3_secret_access_key;
@@ -719,18 +727,29 @@ document.addEventListener('alpine:init', () => {
                 this.showBanner('Name is required', 'danger', true);
                 return;
             }
-            if (!bucket) {
-                this.showBanner('S3 Bucket is required', 'danger', true);
+
+            // Validate based on storage mode
+            const needsLocal = storageMode === 'local' || storageMode === 'both';
+            const needsS3 = storageMode === 's3' || storageMode === 'both';
+
+            if (needsLocal && !localPath) {
+                this.showBanner('Local Path is required', 'danger', true);
                 return;
             }
-            if (!accessKey) {
-                this.showBanner('S3 Access Key ID is required', 'danger', true);
-                return;
-            }
-            // Secret key required for new recorders
-            if (!this.isRecorderEditMode && !secretKey) {
-                this.showBanner('S3 Secret Access Key is required', 'danger', true);
-                return;
+            if (needsS3) {
+                if (!bucket) {
+                    this.showBanner('S3 Bucket is required', 'danger', true);
+                    return;
+                }
+                if (!accessKey) {
+                    this.showBanner('S3 Access Key ID is required', 'danger', true);
+                    return;
+                }
+                // Secret key required for new recorders
+                if (!this.isRecorderEditMode && !secretKey) {
+                    this.showBanner('S3 Secret Access Key is required', 'danger', true);
+                    return;
+                }
             }
 
             const data = {
@@ -738,9 +757,12 @@ document.addEventListener('alpine:init', () => {
                 enabled: this.recorderForm.enabled,
                 codec: this.recorderForm.codec,
                 rotation_mode: this.recorderForm.rotation_mode,
+                storage_mode: storageMode,
+                local_path: localPath,
                 s3_endpoint: this.recorderForm.s3_endpoint.trim(),
                 s3_bucket: bucket,
-                s3_access_key_id: accessKey
+                s3_access_key_id: accessKey,
+                retention_days: this.recorderForm.retention_days || 90
             };
 
             if (secretKey) {

@@ -4,6 +4,8 @@ package recording
 import (
 	"errors"
 	"time"
+
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
 // Sentinel errors for recording operations.
@@ -67,4 +69,14 @@ func truncateToHour(t time.Time) time.Time {
 func timeUntilNextHour(t time.Time) time.Duration {
 	nextHour := truncateToHour(t).Add(time.Hour)
 	return nextHour.Sub(t)
+}
+
+// RecorderToS3Config extracts S3 configuration from a Recorder.
+func RecorderToS3Config(r *types.Recorder) *S3Config {
+	return &S3Config{
+		Endpoint:        r.S3Endpoint,
+		Bucket:          r.S3Bucket,
+		AccessKeyID:     r.S3AccessKeyID,
+		SecretAccessKey: r.S3SecretAccessKey,
+	}
 }

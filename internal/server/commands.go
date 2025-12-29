@@ -515,16 +515,60 @@ func validateRecorder(recorder *types.Recorder) error {
 	if err := util.ValidateRequired("name", recorder.Name); err != nil {
 		return err
 	}
-	if err := util.ValidateRequired("s3_bucket", recorder.S3Bucket); err != nil {
-		return err
-	}
+
+	// Validate rotation mode
 	if recorder.RotationMode != types.RotationHourly && recorder.RotationMode != types.RotationOnDemand {
 		return fmt.Errorf("invalid rotation_mode: must be 'hourly' or 'ondemand'")
 	}
+
+	// Validate storage mode and required fields
+	switch recorder.StorageMode {
+	case types.StorageLocal:
+		if recorder.LocalPath == "" {
+			return fmt.Errorf("local_path is required for local storage mode")
+		}
+	case types.StorageS3:
+		if recorder.S3Bucket == "" {
+			return fmt.Errorf("s3_bucket is required for S3 storage mode")
+		}
+		if recorder.S3AccessKeyID == "" {
+			return fmt.Errorf("s3_access_key_id is required for S3 storage mode")
+		}
+		if recorder.S3SecretAccessKey == "" {
+			return fmt.Errorf("s3_secret_access_key is required for S3 storage mode")
+		}
+	case types.StorageBoth:
+		if recorder.LocalPath == "" {
+			return fmt.Errorf("local_path is required for both storage mode")
+		}
+		if recorder.S3Bucket == "" {
+			return fmt.Errorf("s3_bucket is required for both storage mode")
+		}
+		if recorder.S3AccessKeyID == "" {
+			return fmt.Errorf("s3_access_key_id is required for both storage mode")
+		}
+		if recorder.S3SecretAccessKey == "" {
+			return fmt.Errorf("s3_secret_access_key is required for both storage mode")
+		}
+	default:
+		return fmt.Errorf("invalid storage_mode: must be 'local', 's3', or 'both'")
+	}
+
+	// Create local directory if specified
+	if recorder.LocalPath != "" {
+		if err := os.MkdirAll(recorder.LocalPath, 0o755); err != nil {
+			return fmt.Errorf("cannot create local_path directory: %w", err)
+		}
+	}
+
 	// Apply defaults
 	if recorder.Codec == "" {
 		recorder.Codec = types.DefaultCodec
 	}
+	if recorder.RetentionDays == 0 {
+		recorder.RetentionDays = types.DefaultRetentionDays
+	}
+
 	return nil
 }
 
@@ -593,17 +637,17 @@ func (h *CommandHandler) handleUpdateRecorder(cmd WSCommand, send chan<- interfa
 		return
 	}
 
-	if err := validateRecorder(&updated); err != nil {
-		slog.Warn("update_recorder: validation failed", "error", err)
-		sendRecorderResult(send, "update", cmd.ID, false, err.Error())
-		return
-	}
-
-	// Preserve immutable fields and secret if not provided
+	// Preserve immutable fields and secret if not provided (before validation)
 	updated.ID = existing.ID
 	updated.CreatedAt = existing.CreatedAt
 	if updated.S3SecretAccessKey == "" {
 		updated.S3SecretAccessKey = existing.S3SecretAccessKey
+	}
+
+	if err := validateRecorder(&updated); err != nil {
+		slog.Warn("update_recorder: validation failed", "error", err)
+		sendRecorderResult(send, "update", cmd.ID, false, err.Error())
+		return
 	}
 
 	if err := h.encoder.UpdateRecorder(&updated); err != nil {

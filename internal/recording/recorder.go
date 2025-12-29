@@ -25,12 +25,11 @@ type GenericRecorder struct {
 
 	id                 string
 	config             types.Recorder
-	maxDurationMinutes int           // For on-demand mode (from global config)
-	rotationOffset     time.Duration // Staggered offset for hourly rotation
+	maxDurationMinutes int // For on-demand mode (from global config)
 
-	tempDir string
-	state   RecordingState
-	error   string
+	tempDir   string
+	state     RecordingState
+	lastError string
 
 	// FFmpeg process
 	cmd    *exec.Cmd
@@ -59,13 +58,6 @@ type GenericRecorder struct {
 
 	// Max duration timer (on-demand mode)
 	durationTimer *time.Timer
-
-	// Callbacks
-	statusCallback func()
-
-	// File cleanup tracking
-	cleanupMu     sync.Mutex
-	uploadedFiles map[string]time.Time // path -> upload time
 }
 
 // uploadRequest represents a file ready for S3 upload.
@@ -77,19 +69,15 @@ type uploadRequest struct {
 
 // NewGenericRecorder creates a new recorder with the given configuration.
 // maxDurationMinutes is the global max duration for on-demand recorders.
-// rotationOffset is the staggered delay for hourly rotation (spread across 30s window).
-func NewGenericRecorder(cfg *types.Recorder, tempDir string, maxDurationMinutes int, rotationOffset time.Duration, statusCallback func()) (*GenericRecorder, error) {
+func NewGenericRecorder(cfg *types.Recorder, tempDir string, maxDurationMinutes int) (*GenericRecorder, error) {
 	r := &GenericRecorder{
 		id:                 cfg.ID,
 		config:             *cfg,
 		maxDurationMinutes: maxDurationMinutes,
-		rotationOffset:     rotationOffset,
 		tempDir:            tempDir,
 		state:              StateIdle,
-		statusCallback:     statusCallback,
 		uploadQueue:        make(chan uploadRequest, 100),
 		uploadStopCh:       make(chan struct{}),
-		uploadedFiles:      make(map[string]time.Time),
 	}
 
 	// Create S3 client if configured
@@ -116,19 +104,40 @@ func (r *GenericRecorder) Config() types.Recorder {
 	return r.config
 }
 
+// S3Client returns the S3 client for this recorder.
+func (r *GenericRecorder) S3Client() *s3.Client {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.s3Client
+}
+
+// IsCurrentFile returns true if the given path is the currently recording file.
+func (r *GenericRecorder) IsCurrentFile(path string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.currentFile == path
+}
+
 // Start begins recording.
 func (r *GenericRecorder) Start() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if r.state == StateRecording {
-		return nil // Already recording
+		return ErrAlreadyRecording
 	}
 
-	// Create temp directory for this recorder
-	recorderDir := filepath.Join(r.tempDir, "recorders", r.id)
-	if err := os.MkdirAll(recorderDir, 0o755); err != nil {
-		return fmt.Errorf("create recorder directory: %w", err)
+	// Create output directory based on storage mode
+	var outputDir string
+	if r.config.StorageMode == types.StorageS3 {
+		// S3-only: use temp directory
+		outputDir = filepath.Join(r.tempDir, "recorders", r.id)
+	} else {
+		// Local or Both: use configured LocalPath
+		outputDir = r.config.LocalPath
+	}
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return fmt.Errorf("create output directory: %w", err)
 	}
 
 	// Start FFmpeg encoder
@@ -136,13 +145,9 @@ func (r *GenericRecorder) Start() error {
 		return err
 	}
 
-	// Start upload worker
+	// Start upload worker (after encoder to prevent goroutine leak on failure)
 	r.uploadWg.Add(1)
 	go r.uploadWorker()
-
-	// Start file cleanup worker
-	r.uploadWg.Add(1)
-	go r.cleanupWorker()
 
 	// Schedule based on rotation mode
 	if r.config.RotationMode == types.RotationHourly {
@@ -152,7 +157,7 @@ func (r *GenericRecorder) Start() error {
 	}
 
 	r.state = StateRecording
-	r.error = ""
+	r.lastError = ""
 
 	slog.Info("recorder started", "id", r.id, "name", r.config.Name, "mode", r.config.RotationMode)
 	return nil
@@ -190,7 +195,8 @@ func (r *GenericRecorder) Stop() error {
 
 	r.mu.Lock()
 	r.state = StateIdle
-	r.uploadStopCh = make(chan struct{}) // Reset for next start
+	r.uploadStopCh = make(chan struct{})          // Reset for next start
+	r.uploadQueue = make(chan uploadRequest, 100) // Reset for next start
 	r.mu.Unlock()
 
 	slog.Info("recorder stopped", "id", r.id, "name", r.config.Name)
@@ -211,7 +217,7 @@ func (r *GenericRecorder) WriteAudio(pcm []byte) error {
 	n, err := stdin.Write(pcm)
 	if err != nil {
 		r.mu.Lock()
-		r.error = err.Error()
+		r.lastError = err.Error()
 		r.mu.Unlock()
 		return err
 	}
@@ -230,7 +236,7 @@ func (r *GenericRecorder) Status() types.RecorderStatus {
 
 	status := types.RecorderStatus{
 		State: string(r.state),
-		Error: r.error,
+		Error: r.lastError,
 	}
 
 	if r.state == StateRecording && !r.startTime.IsZero() {
@@ -287,8 +293,16 @@ func (r *GenericRecorder) startEncoderLocked() error {
 		filename = r.generateFilename(r.startTime)
 	}
 
-	recorderDir := filepath.Join(r.tempDir, "recorders", r.id)
-	r.currentFile = filepath.Join(recorderDir, filename)
+	// Determine output directory based on storage mode
+	var outputDir string
+	if r.config.StorageMode == types.StorageS3 {
+		// S3-only: use temp directory
+		outputDir = filepath.Join(r.tempDir, "recorders", r.id)
+	} else {
+		// Local or Both: use configured LocalPath
+		outputDir = r.config.LocalPath
+	}
+	r.currentFile = filepath.Join(outputDir, filename)
 
 	// Get codec configuration
 	codecArgs := r.config.CodecArgs()
@@ -361,7 +375,7 @@ func (r *GenericRecorder) stopEncoderAndUpload() {
 		}
 	}
 
-	// Wait for FFmpeg to finish
+	// Wait for FFmpeg to finish with 2-stage timeout
 	if r.cmd != nil {
 		done := make(chan error, 1)
 		go func() {
@@ -375,14 +389,28 @@ func (r *GenericRecorder) stopEncoderAndUpload() {
 				if r.stderr != nil {
 					errMsg := util.ExtractLastError(r.stderr.String())
 					if errMsg != "" {
-						r.error = errMsg
+						r.lastError = errMsg
 					}
 				}
 				r.mu.Unlock()
 			}
 		case <-time.After(10 * time.Second):
-			slog.Warn("recorder ffmpeg did not stop in time", "id", r.id)
+			// Stage 1: Cancel context (sends SIGTERM)
+			slog.Warn("recorder ffmpeg did not stop in time, canceling context", "id", r.id)
 			r.cancel()
+
+			// Stage 2: Wait for graceful shutdown or force kill
+			select {
+			case <-done:
+				// Process stopped after cancel
+			case <-time.After(2 * time.Second):
+				// Force kill if still running
+				if r.cmd.Process != nil {
+					slog.Error("recorder ffmpeg force killed", "id", r.id)
+					_ = r.cmd.Process.Kill()
+					<-done // Wait for process to exit after kill
+				}
+			}
 		}
 	}
 
@@ -390,13 +418,9 @@ func (r *GenericRecorder) stopEncoderAndUpload() {
 	if currentFile != "" {
 		r.queueForUpload(currentFile)
 	}
-
-	if r.statusCallback != nil {
-		r.statusCallback()
-	}
 }
 
-// queueForUpload adds a completed file to the upload queue.
+// queueForUpload adds a completed file to the upload queue based on storage mode.
 func (r *GenericRecorder) queueForUpload(filePath string) {
 	info, err := os.Stat(filePath)
 	if err != nil {
@@ -404,8 +428,15 @@ func (r *GenericRecorder) queueForUpload(filePath string) {
 		return
 	}
 
+	// Local-only mode: no upload needed
+	if r.config.StorageMode == types.StorageLocal {
+		slog.Info("local storage mode, file saved", "id", r.id, "path", filePath)
+		return
+	}
+
+	// S3 or Both mode: queue for upload
 	if !r.isS3Configured() {
-		slog.Info("S3 not configured, keeping local file", "id", r.id, "path", filePath)
+		slog.Warn("S3 not configured but storage mode requires it", "id", r.id, "mode", r.config.StorageMode)
 		return
 	}
 
@@ -493,62 +524,26 @@ func (r *GenericRecorder) uploadFile(req uploadRequest) {
 	r.mu.Lock()
 	r.lastUploadTime = &now
 	r.lastUploadErr = ""
+	storageMode := r.config.StorageMode
 	r.mu.Unlock()
-
-	// Track for delayed cleanup
-	r.cleanupMu.Lock()
-	r.uploadedFiles[req.localPath] = now
-	r.cleanupMu.Unlock()
 
 	slog.Info("upload completed", "id", r.id, "s3_key", req.s3Key)
 
-	if r.statusCallback != nil {
-		r.statusCallback()
-	}
-}
-
-// cleanupWorker periodically cleans up local files after upload.
-func (r *GenericRecorder) cleanupWorker() {
-	defer r.uploadWg.Done()
-
-	ticker := time.NewTicker(10 * time.Minute)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-r.uploadStopCh:
-			return
-		case <-ticker.C:
-			r.cleanupOldFiles()
+	// Handle local file based on storage mode
+	if storageMode == types.StorageS3 {
+		// S3-only: delete temp file immediately after successful upload
+		if err := os.Remove(req.localPath); err != nil {
+			slog.Warn("failed to delete temp file after upload", "id", r.id, "path", req.localPath, "error", err)
+		} else {
+			slog.Debug("deleted temp file after upload", "id", r.id, "path", req.localPath)
 		}
 	}
-}
-
-// cleanupOldFiles removes local files that were uploaded more than 1 hour ago.
-func (r *GenericRecorder) cleanupOldFiles() {
-	r.cleanupMu.Lock()
-	defer r.cleanupMu.Unlock()
-
-	cutoff := time.Now().Add(-1 * time.Hour)
-
-	for path, uploadTime := range r.uploadedFiles {
-		if uploadTime.Before(cutoff) {
-			if err := os.Remove(path); err != nil {
-				if !os.IsNotExist(err) {
-					slog.Warn("failed to cleanup local file", "id", r.id, "path", path, "error", err)
-				}
-			} else {
-				slog.Debug("cleaned up local file", "id", r.id, "path", path)
-			}
-			delete(r.uploadedFiles, path)
-		}
-	}
+	// For "both" mode: file stays in LocalPath until retention cleanup
 }
 
 // scheduleRotationLocked schedules the next hourly rotation. Must be called with lock held.
-// The rotation is staggered by rotationOffset to spread I/O across multiple recorders.
 func (r *GenericRecorder) scheduleRotationLocked() {
-	duration := timeUntilNextHour(time.Now()) + r.rotationOffset
+	duration := timeUntilNextHour(time.Now())
 	r.rotationTimer = time.AfterFunc(duration, r.rotateFile)
 }
 
@@ -571,16 +566,12 @@ func (r *GenericRecorder) rotateFile() {
 	// Start new encoder
 	if err := r.startEncoderLocked(); err != nil {
 		slog.Error("failed to start new recording file", "id", r.id, "error", err)
-		r.error = err.Error()
+		r.lastError = err.Error()
 	}
 
 	// Schedule next rotation
 	r.scheduleRotationLocked()
 	r.mu.Unlock()
-
-	if r.statusCallback != nil {
-		r.statusCallback()
-	}
 }
 
 // scheduleDurationLimitLocked schedules auto-stop for on-demand mode. Must be called with lock held.
@@ -601,10 +592,11 @@ func (r *GenericRecorder) generateFilename(t time.Time) string {
 	return fmt.Sprintf("%s-%s.%s", safeName, t.Format("2006-01-02-15-04"), ext)
 }
 
-// generateS3Key creates the S3 object key.
+// generateS3Key creates the S3 object key with recorder-specific prefix.
 func (r *GenericRecorder) generateS3Key(filename string) string {
-	// Flat path with prefix: recordings/recorder-name-2025-01-15-14-00.mp3
-	return fmt.Sprintf("recordings/%s", filename)
+	// Prefix: recordings/{sanitized-recorder-name}/filename
+	safeName := sanitizeFilename(r.config.Name)
+	return fmt.Sprintf("recordings/%s/%s", safeName, filename)
 }
 
 // getFileExtension returns the file extension for the configured codec.
@@ -646,24 +638,12 @@ func (r *GenericRecorder) isS3Configured() bool {
 
 // createS3Client creates an S3 client for this recorder.
 func (r *GenericRecorder) createS3Client() (*s3.Client, error) {
-	cfg := &S3Config{
-		Endpoint:        r.config.S3Endpoint,
-		Bucket:          r.config.S3Bucket,
-		AccessKeyID:     r.config.S3AccessKeyID,
-		SecretAccessKey: r.config.S3SecretAccessKey,
-	}
-	return createS3Client(cfg)
+	return createS3Client(RecorderToS3Config(&r.config))
 }
 
 // TestS3 tests the S3 connection for this recorder.
 func (r *GenericRecorder) TestS3() error {
-	cfg := &S3Config{
-		Endpoint:        r.config.S3Endpoint,
-		Bucket:          r.config.S3Bucket,
-		AccessKeyID:     r.config.S3AccessKeyID,
-		SecretAccessKey: r.config.S3SecretAccessKey,
-	}
-	return TestS3Connection(cfg)
+	return TestS3Connection(RecorderToS3Config(&r.config))
 }
 
 // sanitizeFilename removes or replaces characters that are invalid in filenames.
@@ -685,11 +665,5 @@ func sanitizeFilename(name string) string {
 
 // TestRecorderS3Connection tests S3 connectivity for a recorder configuration.
 func TestRecorderS3Connection(cfg *types.Recorder) error {
-	s3Cfg := &S3Config{
-		Endpoint:        cfg.S3Endpoint,
-		Bucket:          cfg.S3Bucket,
-		AccessKeyID:     cfg.S3AccessKeyID,
-		SecretAccessKey: cfg.S3SecretAccessKey,
-	}
-	return TestS3Connection(s3Cfg)
+	return TestS3Connection(RecorderToS3Config(cfg))
 }
