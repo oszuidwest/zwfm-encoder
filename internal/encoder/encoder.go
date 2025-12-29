@@ -27,11 +27,11 @@ const LevelUpdateSamples = 12000
 
 // Sentinel errors for encoder operations.
 var (
-	ErrNoAudioInput    = errors.New("no audio input configured")
-	ErrAlreadyRunning  = errors.New("encoder already running")
-	ErrNotRunning      = errors.New("encoder not running")
-	ErrOutputDisabled  = errors.New("output is disabled")
-	ErrOutputNotFound  = errors.New("output not found")
+	ErrNoAudioInput   = errors.New("no audio input configured")
+	ErrAlreadyRunning = errors.New("encoder already running")
+	ErrNotRunning     = errors.New("encoder not running")
+	ErrOutputDisabled = errors.New("output is disabled")
+	ErrOutputNotFound = errors.New("output not found")
 )
 
 // Encoder manages audio capture and distribution to multiple streaming outputs.
