@@ -668,8 +668,10 @@ select {
     font-family: var(--font-mono);
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    padding: 0.25rem 0.5rem;
+    letter-spacing: 0.01em;
+    padding: 0.1875rem 0.3125rem;
+    min-width: 2.5rem;
+    text-align: center;
     border-radius: var(--radius-sm);
     border: none;
     background: var(--surface-card);
