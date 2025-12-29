@@ -1371,7 +1371,7 @@ select {
     border: 2px solid var(--warning);
     border-radius: var(--radius-lg);
     background: transparent;
-    color: var(--warning);
+    color: var(--warning-text);
     cursor: pointer;
     transition: all var(--transition-fast);
     opacity: 0.6;
