@@ -134,6 +134,10 @@ func (e *Encoder) AllOutputStatuses(outputs []types.Output) map[string]types.Out
 	for _, out := range outputs {
 		if status, exists := processStatuses[out.ID]; exists {
 			// Output has active process - use its status
+			// Also reflect disabled state if output was disabled while running
+			if !out.IsEnabled() {
+				status.Disabled = true
+			}
 			result[out.ID] = status
 		} else if !out.IsEnabled() {
 			// Output is disabled - mark explicitly

@@ -518,11 +518,13 @@
                         <div class="segmented" role="group" aria-label="Output status">
                             <button type="button" class="segmented__btn"
                                     :class="{ 'segmented__btn--active': !outputForm.enabled }"
+                                    :aria-pressed="!outputForm.enabled"
                                     @click="outputForm.enabled = false; markOutputFormDirty()">
                                 Disabled
                             </button>
                             <button type="button" class="segmented__btn"
                                     :class="{ 'segmented__btn--active': outputForm.enabled }"
+                                    :aria-pressed="outputForm.enabled"
                                     @click="outputForm.enabled = true; markOutputFormDirty()">
                                 Enabled
                             </button>
