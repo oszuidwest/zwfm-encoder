@@ -27,9 +27,11 @@ const LevelUpdateSamples = 12000
 
 // Sentinel errors for encoder operations.
 var (
-	ErrNoAudioInput   = errors.New("no audio input configured")
-	ErrAlreadyRunning = errors.New("encoder already running")
-	ErrNotRunning     = errors.New("encoder not running")
+	ErrNoAudioInput    = errors.New("no audio input configured")
+	ErrAlreadyRunning  = errors.New("encoder already running")
+	ErrNotRunning      = errors.New("encoder not running")
+	ErrOutputDisabled  = errors.New("output is disabled")
+	ErrOutputNotFound  = errors.New("output not found")
 )
 
 // Encoder manages audio capture and distribution to multiple streaming outputs.
@@ -266,10 +268,10 @@ func (e *Encoder) StartOutput(outputID string) error {
 
 	out := e.config.Output(outputID)
 	if out == nil {
-		return fmt.Errorf("output not found: %s", outputID)
+		return ErrOutputNotFound
 	}
 	if !out.IsEnabled() {
-		return fmt.Errorf("output is disabled: %s", outputID)
+		return ErrOutputDisabled
 	}
 
 	// Start preserves existing retry state automatically
