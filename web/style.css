@@ -20,9 +20,13 @@
 
     /* State backgrounds */
     --success-bg: rgb(34 197 94 / 10%);
-    --warning-bg: rgb(250 204 21 / 15%);
+    --warning-bg: rgb(251 191 36 / 25%);
     --danger-bg: rgb(239 68 68 / 10%);
     --stopped-bg: rgb(107 114 128 / 15%);
+
+    /* Warning state - optimized for light backgrounds */
+    --warning-border: #f59e0b;
+    --warning-icon: #d97706;
 
     /* Neutral scale */
     --neutral-50: #f9fafb;
@@ -111,6 +115,9 @@
     --vu-bg: var(--neutral-950);
     --vu-peak: var(--neutral-300);
     --warning-text: #fbbf24;
+    --warning-bg: rgb(250 204 21 / 15%);
+    --warning-border: #facc15;
+    --warning-icon: #fbbf24;
     --stopped: var(--neutral-500);
 }
 
@@ -873,7 +880,7 @@ select {
 /* Alert icon styling - color and vertical alignment */
 .alert > span,
 .alert > svg {
-    color: var(--warning);
+    color: var(--warning-icon);
     margin-top: 0.125rem;
 }
 
@@ -1349,12 +1356,12 @@ select {
 }
 
 .settings__section--warning {
-    border: 1px solid var(--warning);
+    border: 1px solid var(--warning-border);
     background: var(--warning-bg);
 }
 
 .settings__section--warning .settings__section-header svg {
-    color: var(--warning);
+    color: var(--warning-icon);
 }
 
 /* Segmented Control - iOS/macOS style toggle */
@@ -1368,10 +1375,10 @@ select {
     padding: 0.875rem 1rem;
     font-size: 0.9375rem;
     font-weight: 600;
-    border: 2px solid var(--warning);
+    border: 2px solid var(--warning-border);
     border-radius: var(--radius-lg);
     background: transparent;
-    color: var(--warning);
+    color: var(--warning-text);
     cursor: pointer;
     transition: all var(--transition-fast);
     opacity: 0.6;
