@@ -59,7 +59,8 @@ func (o *Output) IsEnabled() bool {
 const DefaultMaxRetries = 99
 
 // OutputRestartDelay is the delay between stopping and starting an output during restart.
-const OutputRestartDelay = 500 * time.Millisecond
+// SRT connections with high latency settings need time to fully close on the server side.
+const OutputRestartDelay = 2 * time.Second
 
 // MaxRetriesOrDefault returns the configured max retries or the default value.
 func (o *Output) MaxRetriesOrDefault() int {
