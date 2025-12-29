@@ -53,6 +53,16 @@ func main() {
 
 	srv := NewServer(cfg, enc)
 
+	// Set status callback for recording manager updates
+	enc.SetStatusCallback(func() {
+		// Status updates are handled via WebSocket polling
+	})
+
+	// Initialize recording manager if configured
+	if err := enc.InitRecording(); err != nil {
+		slog.Error("failed to initialize recording", "error", err)
+	}
+
 	slog.Info("starting encoder")
 	if err := enc.Start(); err != nil {
 		slog.Error("failed to start encoder", "error", err)

@@ -114,6 +114,61 @@ type OutputStatus struct {
 	GivenUp    bool   `json:"given_up,omitzero"`    // Max retries exhausted
 }
 
+// RotationMode determines how recordings are split into files.
+type RotationMode string
+
+const (
+	// RotationHourly rotates recordings at system clock hour boundaries.
+	// Hourly recorders always auto-start when encoder starts.
+	RotationHourly RotationMode = "hourly"
+	// RotationOnDemand allows API-controlled start/stop with global max duration.
+	// On-demand recorders never auto-start - require explicit API call.
+	RotationOnDemand RotationMode = "ondemand"
+)
+
+// Recorder represents a recording destination configuration.
+type Recorder struct {
+	ID                string       `json:"id"`                             // Unique identifier
+	Name              string       `json:"name"`                           // Display name
+	Enabled           *bool        `json:"enabled,omitempty"`              // Whether recorder is active (nil defaults to true)
+	Codec             string       `json:"codec"`                          // Audio codec (mp2, mp3, ogg, wav)
+	S3Endpoint        string       `json:"s3_endpoint,omitempty"`          // S3-compatible endpoint URL
+	S3Bucket          string       `json:"s3_bucket,omitempty"`            // S3 bucket name
+	S3AccessKeyID     string       `json:"s3_access_key_id,omitempty"`     // S3 access key ID
+	S3SecretAccessKey string       `json:"s3_secret_access_key,omitempty"` // S3 secret access key
+	RotationMode      RotationMode `json:"rotation_mode"`                  // hourly or ondemand
+	RetentionDays     int          `json:"retention_days,omitempty"`       // S3 lifecycle retention
+	CreatedAt         int64        `json:"created_at"`                     // Unix timestamp of creation
+}
+
+// IsEnabled returns whether the recorder is enabled (defaults to true if not set).
+func (r *Recorder) IsEnabled() bool {
+	return r.Enabled == nil || *r.Enabled
+}
+
+// CodecArgs returns FFmpeg codec arguments for this recorder's codec.
+func (r *Recorder) CodecArgs() []string {
+	if preset, ok := CodecPresets[r.Codec]; ok {
+		return preset.Args
+	}
+	return CodecPresets[DefaultCodec].Args
+}
+
+// Format returns the FFmpeg output format for this recorder's codec.
+func (r *Recorder) Format() string {
+	if preset, ok := CodecPresets[r.Codec]; ok {
+		return preset.Format
+	}
+	return CodecPresets[DefaultCodec].Format
+}
+
+// RecorderStatus contains runtime status for a recorder.
+type RecorderStatus struct {
+	State    string  `json:"state"`                     // idle, recording, finalizing, error
+	Duration float64 `json:"duration_seconds,omitzero"` // Current recording duration
+	Error    string  `json:"error,omitempty"`           // Error message if state is error
+}
+
 // EncoderStatus contains a summary of the encoder's current operational state.
 type EncoderStatus struct {
 	State            EncoderState `json:"state"`                       // Current encoder state
@@ -155,23 +210,26 @@ type AudioMetrics struct {
 
 // WSStatusResponse is sent to clients with full encoder and output status.
 type WSStatusResponse struct {
-	Type             string                  `json:"type"`              // Message type identifier
-	Encoder          EncoderStatus           `json:"encoder"`           // Encoder status
-	Outputs          []Output                `json:"outputs"`           // Output configurations
-	OutputStatus     map[string]OutputStatus `json:"output_status"`     // Runtime output status
-	Devices          []AudioDevice           `json:"devices"`           // Available audio devices
-	SilenceThreshold float64                 `json:"silence_threshold"` // Silence threshold in dB
-	SilenceDuration  float64                 `json:"silence_duration"`  // Silence duration in seconds
-	SilenceRecovery  float64                 `json:"silence_recovery"`  // Recovery duration in seconds
-	SilenceWebhook   string                  `json:"silence_webhook"`   // Webhook URL for alerts
-	SilenceLogPath   string                  `json:"silence_log_path"`  // Log file path
-	EmailSMTPHost    string                  `json:"email_smtp_host"`   // SMTP server hostname
-	EmailSMTPPort    int                     `json:"email_smtp_port"`   // SMTP server port
-	EmailFromName    string                  `json:"email_from_name"`   // Sender display name
-	EmailUsername    string                  `json:"email_username"`    // SMTP username
-	EmailRecipients  string                  `json:"email_recipients"`  // Comma-separated recipients
-	Settings         WSSettings              `json:"settings"`          // Current settings
-	Version          VersionInfo             `json:"version"`           // Version information
+	Type             string                    `json:"type"`              // Message type identifier
+	Encoder          EncoderStatus             `json:"encoder"`           // Encoder status
+	Outputs          []Output                  `json:"outputs"`           // Output configurations
+	OutputStatus     map[string]OutputStatus   `json:"output_status"`     // Runtime output status
+	Recorders        []Recorder                `json:"recorders"`         // Recorder configurations
+	RecorderStatuses map[string]RecorderStatus `json:"recorder_statuses"` // Runtime recorder status
+	RecordingAPIKey  string                    `json:"recording_api_key"` // API key for recording control
+	Devices          []AudioDevice             `json:"devices"`           // Available audio devices
+	SilenceThreshold float64                   `json:"silence_threshold"` // Silence threshold in dB
+	SilenceDuration  float64                   `json:"silence_duration"`  // Silence duration in seconds
+	SilenceRecovery  float64                   `json:"silence_recovery"`  // Recovery duration in seconds
+	SilenceWebhook   string                    `json:"silence_webhook"`   // Webhook URL for alerts
+	SilenceLogPath   string                    `json:"silence_log_path"`  // Log file path
+	EmailSMTPHost    string                    `json:"email_smtp_host"`   // SMTP server hostname
+	EmailSMTPPort    int                       `json:"email_smtp_port"`   // SMTP server port
+	EmailFromName    string                    `json:"email_from_name"`   // Sender display name
+	EmailUsername    string                    `json:"email_username"`    // SMTP username
+	EmailRecipients  string                    `json:"email_recipients"`  // Comma-separated recipients
+	Settings         WSSettings                `json:"settings"`          // Current settings
+	Version          VersionInfo               `json:"version"`           // Version information
 }
 
 // WSSettings contains the settings sub-object in status responses.

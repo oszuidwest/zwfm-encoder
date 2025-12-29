@@ -11,6 +11,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
+	"github.com/oszuidwest/zwfm-encoder/internal/recording"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
@@ -42,6 +43,11 @@ type EncoderController interface {
 	TriggerTestWebhook() error
 	TriggerTestLog() error
 	TriggerTestEmail() error
+	AddRecorder(cfg *types.Recorder) error
+	RemoveRecorder(id string) error
+	UpdateRecorder(cfg *types.Recorder) error
+	StartRecorder(id string) error
+	StopRecorder(id string) error
 }
 
 // CommandHandler processes WebSocket commands.
@@ -73,6 +79,20 @@ func (h *CommandHandler) Handle(cmd WSCommand, conn *websocket.Conn, triggerStat
 		h.handleTest(conn, cmd.Type)
 	case "view_silence_log":
 		h.handleViewSilenceLog(conn)
+	case "add_recorder":
+		h.handleAddRecorder(cmd, conn)
+	case "delete_recorder":
+		h.handleDeleteRecorder(cmd, conn)
+	case "update_recorder":
+		h.handleUpdateRecorder(cmd, conn)
+	case "start_recorder":
+		h.handleStartRecorder(cmd, conn)
+	case "stop_recorder":
+		h.handleStopRecorder(cmd, conn)
+	case "test_recorder_s3":
+		h.handleTestRecorderS3(cmd, conn)
+	case "regenerate_api_key":
+		h.handleRegenerateAPIKey(conn)
 	default:
 		slog.Warn("unknown WebSocket command type", "type", cmd.Type)
 	}
@@ -475,4 +495,255 @@ func readSilenceLog(logPath string, maxEntries int) ([]types.SilenceLogEntry, er
 	slices.Reverse(entries)
 
 	return entries, nil
+}
+
+// validateRecorder validates a recorder configuration.
+func validateRecorder(recorder *types.Recorder) error {
+	if err := util.ValidateRequired("name", recorder.Name); err != nil {
+		return err
+	}
+	if err := util.ValidateRequired("s3_bucket", recorder.S3Bucket); err != nil {
+		return err
+	}
+	if recorder.RotationMode != types.RotationHourly && recorder.RotationMode != types.RotationOnDemand {
+		return fmt.Errorf("invalid rotation_mode: must be 'hourly' or 'ondemand'")
+	}
+	// Apply defaults
+	if recorder.Codec == "" {
+		recorder.Codec = types.DefaultCodec
+	}
+	return nil
+}
+
+// handleAddRecorder creates a new recorder.
+func (h *CommandHandler) handleAddRecorder(cmd WSCommand, conn *websocket.Conn) {
+	var recorder types.Recorder
+	if err := json.Unmarshal(cmd.Data, &recorder); err != nil {
+		slog.Warn("add_recorder: invalid JSON data", "error", err)
+		sendRecorderResult(conn, "add", "", false, err.Error())
+		return
+	}
+
+	if err := validateRecorder(&recorder); err != nil {
+		slog.Warn("add_recorder: validation failed", "error", err)
+		sendRecorderResult(conn, "add", "", false, err.Error())
+		return
+	}
+
+	if err := h.encoder.AddRecorder(&recorder); err != nil {
+		slog.Error("add_recorder: failed to add", "error", err)
+		sendRecorderResult(conn, "add", "", false, err.Error())
+		return
+	}
+
+	slog.Info("add_recorder: added recorder", "id", recorder.ID, "name", recorder.Name)
+	sendRecorderResult(conn, "add", recorder.ID, true, "")
+}
+
+// handleDeleteRecorder removes a recorder.
+func (h *CommandHandler) handleDeleteRecorder(cmd WSCommand, conn *websocket.Conn) {
+	if cmd.ID == "" {
+		slog.Warn("delete_recorder: no ID provided")
+		sendRecorderResult(conn, "delete", "", false, "no ID provided")
+		return
+	}
+
+	if err := h.encoder.RemoveRecorder(cmd.ID); err != nil {
+		slog.Error("delete_recorder: failed to remove", "error", err)
+		sendRecorderResult(conn, "delete", cmd.ID, false, err.Error())
+		return
+	}
+
+	slog.Info("delete_recorder: removed recorder", "id", cmd.ID)
+	sendRecorderResult(conn, "delete", cmd.ID, true, "")
+}
+
+// handleUpdateRecorder updates a recorder configuration.
+func (h *CommandHandler) handleUpdateRecorder(cmd WSCommand, conn *websocket.Conn) {
+	if cmd.ID == "" {
+		slog.Warn("update_recorder: no ID provided")
+		sendRecorderResult(conn, "update", "", false, "no ID provided")
+		return
+	}
+
+	existing := h.cfg.Recorder(cmd.ID)
+	if existing == nil {
+		slog.Warn("update_recorder: recorder not found", "id", cmd.ID)
+		sendRecorderResult(conn, "update", cmd.ID, false, "recorder not found")
+		return
+	}
+
+	var updated types.Recorder
+	if err := json.Unmarshal(cmd.Data, &updated); err != nil {
+		slog.Warn("update_recorder: invalid JSON data", "error", err)
+		sendRecorderResult(conn, "update", cmd.ID, false, err.Error())
+		return
+	}
+
+	if err := validateRecorder(&updated); err != nil {
+		slog.Warn("update_recorder: validation failed", "error", err)
+		sendRecorderResult(conn, "update", cmd.ID, false, err.Error())
+		return
+	}
+
+	// Preserve immutable fields and secret if not provided
+	updated.ID = existing.ID
+	updated.CreatedAt = existing.CreatedAt
+	if updated.S3SecretAccessKey == "" {
+		updated.S3SecretAccessKey = existing.S3SecretAccessKey
+	}
+
+	if err := h.encoder.UpdateRecorder(&updated); err != nil {
+		slog.Error("update_recorder: failed to update", "error", err)
+		sendRecorderResult(conn, "update", cmd.ID, false, err.Error())
+		return
+	}
+
+	slog.Info("update_recorder: updated recorder", "id", updated.ID, "name", updated.Name)
+	sendRecorderResult(conn, "update", updated.ID, true, "")
+}
+
+// handleStartRecorder starts a specific recorder.
+func (h *CommandHandler) handleStartRecorder(cmd WSCommand, conn *websocket.Conn) {
+	if cmd.ID == "" {
+		slog.Warn("start_recorder: no ID provided")
+		sendRecorderResult(conn, "start", "", false, "no ID provided")
+		return
+	}
+
+	if err := h.encoder.StartRecorder(cmd.ID); err != nil {
+		slog.Error("start_recorder: failed to start", "error", err)
+		sendRecorderResult(conn, "start", cmd.ID, false, err.Error())
+		return
+	}
+
+	slog.Info("start_recorder: started recorder", "id", cmd.ID)
+	sendRecorderResult(conn, "start", cmd.ID, true, "")
+}
+
+// handleStopRecorder stops a specific recorder.
+func (h *CommandHandler) handleStopRecorder(cmd WSCommand, conn *websocket.Conn) {
+	if cmd.ID == "" {
+		slog.Warn("stop_recorder: no ID provided")
+		sendRecorderResult(conn, "stop", "", false, "no ID provided")
+		return
+	}
+
+	if err := h.encoder.StopRecorder(cmd.ID); err != nil {
+		slog.Error("stop_recorder: failed to stop", "error", err)
+		sendRecorderResult(conn, "stop", cmd.ID, false, err.Error())
+		return
+	}
+
+	slog.Info("stop_recorder: stopped recorder", "id", cmd.ID)
+	sendRecorderResult(conn, "stop", cmd.ID, true, "")
+}
+
+// handleTestRecorderS3 tests S3 connectivity for a recorder.
+func (h *CommandHandler) handleTestRecorderS3(cmd WSCommand, conn *websocket.Conn) {
+	var data struct {
+		Endpoint  string `json:"s3_endpoint"`
+		Bucket    string `json:"s3_bucket"`
+		AccessKey string `json:"s3_access_key_id"`
+		SecretKey string `json:"s3_secret_access_key"`
+	}
+
+	if err := json.Unmarshal(cmd.Data, &data); err != nil {
+		slog.Warn("test_recorder_s3: invalid JSON data", "error", err)
+		return
+	}
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("panic in test_recorder_s3 handler", "panic", r)
+			}
+		}()
+
+		result := struct {
+			Type    string `json:"type"`
+			Success bool   `json:"success"`
+			Error   string `json:"error,omitempty"`
+		}{
+			Type:    "recorder_s3_test_result",
+			Success: true,
+		}
+
+		cfg := &types.Recorder{
+			S3Endpoint:        data.Endpoint,
+			S3Bucket:          data.Bucket,
+			S3AccessKeyID:     data.AccessKey,
+			S3SecretAccessKey: data.SecretKey,
+		}
+
+		if err := recording.TestRecorderS3Connection(cfg); err != nil {
+			slog.Error("recorder S3 connection test failed", "error", err)
+			result.Success = false
+			result.Error = err.Error()
+		} else {
+			slog.Info("recorder S3 connection test succeeded")
+		}
+
+		if wsErr := conn.WriteJSON(result); wsErr != nil {
+			slog.Error("failed to send S3 test result", "error", wsErr)
+		}
+	}()
+}
+
+// sendRecorderResult sends a recorder operation result to the client.
+func sendRecorderResult(conn *websocket.Conn, action, id string, success bool, errMsg string) {
+	result := struct {
+		Type    string `json:"type"`
+		Action  string `json:"action"`
+		ID      string `json:"id,omitempty"`
+		Success bool   `json:"success"`
+		Error   string `json:"error,omitempty"`
+	}{
+		Type:    "recorder_result",
+		Action:  action,
+		ID:      id,
+		Success: success,
+		Error:   errMsg,
+	}
+
+	if wsErr := conn.WriteJSON(result); wsErr != nil {
+		slog.Error("failed to send recorder result", "error", wsErr)
+	}
+}
+
+// handleRegenerateAPIKey generates a new API key.
+func (h *CommandHandler) handleRegenerateAPIKey(conn *websocket.Conn) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("panic in regenerate_api_key handler", "panic", r)
+			}
+		}()
+
+		result := struct {
+			Type   string `json:"type"`
+			APIKey string `json:"api_key"`
+			Error  string `json:"error,omitempty"`
+		}{
+			Type: "api_key_regenerated",
+		}
+
+		newKey, err := config.GenerateAPIKey()
+		if err != nil {
+			slog.Error("failed to generate API key", "error", err)
+			result.Error = err.Error()
+		} else {
+			if err := h.cfg.SetRecordingAPIKey(newKey); err != nil {
+				slog.Error("failed to save API key", "error", err)
+				result.Error = err.Error()
+			} else {
+				result.APIKey = newKey
+				slog.Info("API key regenerated")
+			}
+		}
+
+		if wsErr := conn.WriteJSON(result); wsErr != nil {
+			slog.Error("failed to send API key result", "error", wsErr)
+		}
+	}()
 }
