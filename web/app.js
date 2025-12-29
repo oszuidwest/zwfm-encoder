@@ -61,8 +61,7 @@ const DEFAULT_RECORDER = {
     s3_endpoint: '',
     s3_bucket: '',
     s3_access_key_id: '',
-    s3_secret_access_key: '',
-    retention_days: 90
+    s3_secret_access_key: ''
 };
 
 const DEFAULT_LEVELS = {
@@ -690,13 +689,10 @@ document.addEventListener('alpine:init', () => {
                     enabled: recorder.enabled !== false,
                     codec: recorder.codec || 'mp3',
                     rotation_mode: recorder.rotation_mode || 'hourly',
-                    max_duration_minutes: recorder.max_duration_minutes || 60,
-                    auto_start: recorder.auto_start || false,
                     s3_endpoint: recorder.s3_endpoint || '',
                     s3_bucket: recorder.s3_bucket || '',
                     s3_access_key_id: recorder.s3_access_key_id || '',
-                    s3_secret_access_key: '',
-                    retention_days: recorder.retention_days || 90
+                    s3_secret_access_key: ''
                 };
             } else {
                 this.recorderForm = { ...DEFAULT_RECORDER, id: '' };
@@ -744,8 +740,7 @@ document.addEventListener('alpine:init', () => {
                 rotation_mode: this.recorderForm.rotation_mode,
                 s3_endpoint: this.recorderForm.s3_endpoint.trim(),
                 s3_bucket: bucket,
-                s3_access_key_id: accessKey,
-                retention_days: this.recorderForm.retention_days
+                s3_access_key_id: accessKey
             };
 
             if (secretKey) {

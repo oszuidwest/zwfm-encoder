@@ -137,7 +137,6 @@ type Recorder struct {
 	S3AccessKeyID     string       `json:"s3_access_key_id,omitempty"`     // S3 access key ID
 	S3SecretAccessKey string       `json:"s3_secret_access_key,omitempty"` // S3 secret access key
 	RotationMode      RotationMode `json:"rotation_mode"`                  // hourly or ondemand
-	RetentionDays     int          `json:"retention_days,omitempty"`       // S3 lifecycle retention
 	CreatedAt         int64        `json:"created_at"`                     // Unix timestamp of creation
 }
 
