@@ -665,7 +665,7 @@
                 <h2 x-text="isRecorderEditMode ? 'Edit Recorder' : 'New Recorder'">Recorder</h2>
                 <button class="nav-btn nav-btn--save" type="button" tabindex="0"
                         @click="submitRecorderForm()"
-                        :disabled="!recorderForm.name || (isRecorderEditMode && !recorderFormDirty)">Save</button>
+                        :disabled="!recorderForm.name || !recorderForm.s3_bucket || !recorderForm.s3_access_key_id || (!isRecorderEditMode && !recorderForm.s3_secret_access_key) || (isRecorderEditMode && !recorderFormDirty)">Save</button>
             </header>
 
             <div class="settings__panels">
