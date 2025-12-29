@@ -956,8 +956,8 @@ select {
     padding: 1rem 0;
 }
 
-.output__item:first-child {
-    padding-top: 0.5rem;
+.output__item:first-of-type {
+    padding-top: 0;
 }
 
 .output__item:last-child {
