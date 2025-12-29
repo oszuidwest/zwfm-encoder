@@ -709,16 +709,6 @@
                                    x-model="recorderForm.s3_secret_access_key"
                                    @input="markRecorderFormDirty()">
                         </div>
-                        <div class="form__group">
-                            <label for="recorder-retention">Retention</label>
-                            <div class="input__group">
-                                <input id="recorder-retention" type="number" min="1" max="365"
-                                       x-model.number="recorderForm.retention_days"
-                                       @input="markRecorderFormDirty()">
-                                <span class="input__unit">days</span>
-                            </div>
-                            <span class="input__hint">S3 lifecycle policy for automatic deletion.</span>
-                        </div>
                         <button class="btn btn--secondary btn--test" type="button" tabindex="0"
                                 @click="testRecorderS3()"
                                 :disabled="testStates.recorderS3.pending || !recorderForm.s3_bucket"
