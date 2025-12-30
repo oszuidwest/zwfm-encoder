@@ -175,7 +175,7 @@ func (e *Encoder) Start() error {
 	e.state = types.StateStarting
 	e.stopChan = make(chan struct{})
 	e.retryCount = 0
-	e.backoff.Reset(types.InitialRetryDelay)
+	e.backoff.Reset()
 	e.silenceDetect.Reset()
 	e.silenceNotifier.Reset()
 	e.peakHolder.Reset()
@@ -331,7 +331,7 @@ func (e *Encoder) runSourceLoop() {
 
 			if runDuration >= types.SuccessThreshold {
 				e.retryCount = 0
-				e.backoff.Reset(types.InitialRetryDelay)
+				e.backoff.Reset()
 			} else {
 				e.retryCount++
 			}
@@ -348,7 +348,7 @@ func (e *Encoder) runSourceLoop() {
 			}
 		} else {
 			e.retryCount = 0
-			e.backoff.Reset(types.InitialRetryDelay)
+			e.backoff.Reset()
 		}
 
 		if e.state == types.StateStopping || e.state == types.StateStopped {

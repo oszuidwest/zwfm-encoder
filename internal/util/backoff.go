@@ -41,10 +41,9 @@ func (b *Backoff) Current() time.Duration {
 	return b.current
 }
 
-// Reset sets the backoff back to the given initial delay.
-func (b *Backoff) Reset(initial time.Duration) {
+// Reset sets the backoff back to the initial delay.
+func (b *Backoff) Reset() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.current = initial
-	b.initial = initial
+	b.current = b.initial
 }
