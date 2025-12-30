@@ -230,27 +230,6 @@ func (c *Config) UpdateOutput(output *types.Output) error {
 	return c.saveLocked()
 }
 
-// WebPort returns the web server port.
-func (c *Config) WebPort() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.Web.Port
-}
-
-// WebUser returns the web authentication username.
-func (c *Config) WebUser() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.Web.Username
-}
-
-// WebPassword returns the web authentication password.
-func (c *Config) WebPassword() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.Web.Password
-}
-
 // AudioInput returns the configured audio input device.
 func (c *Config) AudioInput() string {
 	c.mu.RLock()
@@ -266,26 +245,12 @@ func (c *Config) SetAudioInput(input string) error {
 	return c.saveLocked()
 }
 
-// SilenceThreshold returns the configured silence threshold in decibels.
-func (c *Config) SilenceThreshold() float64 {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return cmp.Or(c.SilenceDetection.ThresholdDB, DefaultSilenceThreshold)
-}
-
 // SetSilenceThreshold updates the silence detection threshold and saves the configuration.
 func (c *Config) SetSilenceThreshold(threshold float64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.SilenceDetection.ThresholdDB = threshold
 	return c.saveLocked()
-}
-
-// SilenceDuration returns the silence duration before alerting.
-func (c *Config) SilenceDuration() float64 {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return cmp.Or(c.SilenceDetection.DurationSeconds, DefaultSilenceDuration)
 }
 
 // SetSilenceDuration updates the silence duration and saves the configuration.
@@ -296,26 +261,12 @@ func (c *Config) SetSilenceDuration(seconds float64) error {
 	return c.saveLocked()
 }
 
-// SilenceRecovery returns the audio duration before considering silence recovered.
-func (c *Config) SilenceRecovery() float64 {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return cmp.Or(c.SilenceDetection.RecoverySeconds, DefaultSilenceRecovery)
-}
-
 // SetSilenceRecovery updates the silence recovery time and saves the configuration.
 func (c *Config) SetSilenceRecovery(seconds float64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.SilenceDetection.RecoverySeconds = seconds
 	return c.saveLocked()
-}
-
-// WebhookURL returns the configured webhook URL for notifications.
-func (c *Config) WebhookURL() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.Notifications.WebhookURL
 }
 
 // SetWebhookURL updates the webhook URL and saves the configuration.
@@ -339,48 +290,6 @@ func (c *Config) SetLogPath(path string) error {
 	defer c.mu.Unlock()
 	c.Notifications.LogPath = path
 	return c.saveLocked()
-}
-
-// EmailSMTPHost returns the configured SMTP host.
-func (c *Config) EmailSMTPHost() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.Notifications.Email.Host
-}
-
-// EmailSMTPPort returns the configured SMTP port.
-func (c *Config) EmailSMTPPort() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return cmp.Or(c.Notifications.Email.Port, DefaultEmailSMTPPort)
-}
-
-// EmailFromName returns the configured email sender display name.
-func (c *Config) EmailFromName() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return cmp.Or(c.Notifications.Email.FromName, DefaultEmailFromName)
-}
-
-// EmailUsername returns the configured SMTP username.
-func (c *Config) EmailUsername() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.Notifications.Email.Username
-}
-
-// EmailPassword returns the configured SMTP password.
-func (c *Config) EmailPassword() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.Notifications.Email.Password
-}
-
-// EmailRecipients returns the configured email recipients.
-func (c *Config) EmailRecipients() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.Notifications.Email.Recipients
 }
 
 // SetEmailConfig updates all email configuration fields and saves.

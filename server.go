@@ -152,8 +152,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 // SetupRoutes returns an [http.Handler] configured with all application routes.
 func (s *Server) SetupRoutes() http.Handler {
 	mux := http.NewServeMux()
-	cfg := s.config.Snapshot()
-	auth := s.sessions.AuthMiddleware(cfg.WebUser, cfg.WebPassword)
+	auth := s.sessions.AuthMiddleware()
 
 	// Public routes (no auth required)
 	mux.HandleFunc("/login", s.handleLogin)

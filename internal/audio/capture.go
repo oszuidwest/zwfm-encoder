@@ -10,13 +10,6 @@ type CaptureConfig struct {
 	// Command is the executable name (e.g., "arecord", "ffmpeg").
 	Command string
 
-	// InputFormat is the FFmpeg input format (e.g., "avfoundation", "dshow").
-	// Empty for non-FFmpeg backends like arecord.
-	InputFormat string
-
-	// DevicePrefix is prepended to device IDs (e.g., "audio=" for DirectShow).
-	DevicePrefix string
-
 	// DefaultDevice is used when no device is configured.
 	DefaultDevice string
 

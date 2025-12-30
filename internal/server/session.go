@@ -104,7 +104,7 @@ func (sm *SessionManager) Delete(token string) {
 
 // AuthMiddleware returns middleware that requires a valid session cookie.
 // Unauthenticated requests are redirected to /login.
-func (sm *SessionManager) AuthMiddleware(username, password string) func(http.HandlerFunc) http.HandlerFunc {
+func (sm *SessionManager) AuthMiddleware() func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			if cookie, err := r.Cookie(sessionCookieName); err == nil {

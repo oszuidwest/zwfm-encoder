@@ -11,8 +11,6 @@ import (
 func getPlatformConfig() CaptureConfig {
 	return CaptureConfig{
 		Command:       "ffmpeg",
-		InputFormat:   "avfoundation",
-		DevicePrefix:  ":",
 		DefaultDevice: ":0",
 		BuildArgs:     buildDarwinArgs,
 	}

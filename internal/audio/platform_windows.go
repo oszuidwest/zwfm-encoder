@@ -12,8 +12,6 @@ import (
 func getPlatformConfig() CaptureConfig {
 	return CaptureConfig{
 		Command:       "ffmpeg",
-		InputFormat:   "dshow",
-		DevicePrefix:  "audio=",
 		DefaultDevice: "", // Auto-detect, no safe default on Windows
 		BuildArgs:     buildWindowsArgs,
 	}

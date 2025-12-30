@@ -11,8 +11,6 @@ import (
 func getPlatformConfig() CaptureConfig {
 	return CaptureConfig{
 		Command:       "arecord",
-		InputFormat:   "",
-		DevicePrefix:  "",
 		DefaultDevice: "default:CARD=sndrpihifiberry",
 		BuildArgs:     buildLinuxArgs,
 	}
