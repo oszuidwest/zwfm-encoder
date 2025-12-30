@@ -203,7 +203,8 @@
 /* Disabled state - applies to buttons and interactive elements */
 .btn:disabled,
 .btn--test:disabled,
-.nav-btn:disabled {
+.nav-btn:disabled,
+.card__add-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
 }

@@ -15,6 +15,7 @@ func getPlatformConfig() CaptureConfig {
 		InputFormat:   "dshow",
 		DevicePrefix:  "audio=",
 		DefaultDevice: "", // Auto-detect, no safe default on Windows
+		UsesFFmpeg:    true,
 		BuildArgs:     buildWindowsArgs,
 	}
 }
@@ -23,7 +24,7 @@ func buildWindowsArgs(device string) []string {
 	return buildFFmpegCaptureArgs("dshow", device)
 }
 
-func (cfg CaptureConfig) ListDevices() []types.AudioDevice {
+func (cfg *CaptureConfig) ListDevices() []types.AudioDevice {
 	return parseDeviceList(DeviceListConfig{
 		Command:          []string{"ffmpeg", "-f", "dshow", "-list_devices", "true", "-i", "dummy"},
 		AudioStartMarker: "DirectShow audio devices",

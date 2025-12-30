@@ -30,8 +30,9 @@ type OutputContext interface {
 
 // Manager manages multiple output FFmpeg processes.
 type Manager struct {
-	processes map[string]*Process
-	mu        sync.RWMutex
+	ffmpegPath string
+	processes  map[string]*Process
+	mu         sync.RWMutex
 }
 
 // Process tracks an individual output FFmpeg process.
@@ -47,10 +48,11 @@ type Process struct {
 	backoff     *util.Backoff
 }
 
-// NewManager creates a new output manager.
-func NewManager() *Manager {
+// NewManager creates a new output manager with the specified FFmpeg binary path.
+func NewManager(ffmpegPath string) *Manager {
 	return &Manager{
-		processes: make(map[string]*Process),
+		ffmpegPath: ffmpegPath,
+		processes:  make(map[string]*Process),
 	}
 }
 
@@ -80,7 +82,7 @@ func (m *Manager) Start(output *types.Output) error {
 	slog.Info("starting output", "output_id", output.ID, "host", output.Host, "port", output.Port)
 
 	ctx, cancelCause := context.WithCancelCause(context.Background())
-	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	cmd := exec.CommandContext(ctx, m.ffmpegPath, args...)
 
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {

@@ -14,6 +14,7 @@ func getPlatformConfig() CaptureConfig {
 		InputFormat:   "avfoundation",
 		DevicePrefix:  ":",
 		DefaultDevice: ":0",
+		UsesFFmpeg:    true,
 		BuildArgs:     buildDarwinArgs,
 	}
 }
@@ -22,7 +23,7 @@ func buildDarwinArgs(device string) []string {
 	return buildFFmpegCaptureArgs("avfoundation", device)
 }
 
-func (cfg CaptureConfig) ListDevices() []types.AudioDevice {
+func (cfg *CaptureConfig) ListDevices() []types.AudioDevice {
 	return parseDeviceList(DeviceListConfig{
 		Command:          []string{"ffmpeg", "-f", "avfoundation", "-list_devices", "true", "-i", ""},
 		AudioStartMarker: "AVFoundation audio devices:",
