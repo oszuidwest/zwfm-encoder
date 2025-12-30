@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
@@ -61,7 +60,8 @@ func NewCommandHandler(cfg *config.Config, encoder EncoderController, ffmpegAvai
 }
 
 // Handle processes a WebSocket command and performs the requested action.
-func (h *CommandHandler) Handle(cmd WSCommand, conn *websocket.Conn, triggerStatusUpdate func()) {
+// The send channel is used for thread-safe communication back to the client.
+func (h *CommandHandler) Handle(cmd WSCommand, send chan<- interface{}, triggerStatusUpdate func()) {
 	switch cmd.Type {
 	case "add_output":
 		h.handleAddOutput(cmd)
@@ -72,9 +72,9 @@ func (h *CommandHandler) Handle(cmd WSCommand, conn *websocket.Conn, triggerStat
 	case "update_settings":
 		h.handleUpdateSettings(cmd)
 	case "test_webhook", "test_log", "test_email":
-		h.handleTest(conn, cmd.Type)
+		h.handleTest(send, cmd.Type)
 	case "view_silence_log":
-		h.handleViewSilenceLog(conn)
+		h.handleViewSilenceLog(send)
 	default:
 		slog.Warn("unknown WebSocket command type", "type", cmd.Type)
 	}
@@ -383,7 +383,7 @@ func (h *CommandHandler) runTest(testType string) error {
 
 // handleTest executes a notification test and sends the result to the client.
 // testCmd should be in format "test_<type>" (e.g., "test_email", "test_webhook").
-func (h *CommandHandler) handleTest(conn *websocket.Conn, testCmd string) {
+func (h *CommandHandler) handleTest(send chan<- interface{}, testCmd string) {
 	testType := strings.TrimPrefix(testCmd, "test_")
 
 	go func() {
@@ -407,14 +407,17 @@ func (h *CommandHandler) handleTest(conn *websocket.Conn, testCmd string) {
 			slog.Info("test succeeded", "command", testCmd)
 		}
 
-		if wsErr := conn.WriteJSON(result); wsErr != nil {
-			slog.Error("failed to send test response", "command", testCmd, "error", wsErr)
+		// Send via channel (non-blocking to prevent goroutine leak if channel is closed)
+		select {
+		case send <- result:
+		default:
+			slog.Warn("failed to send test response: channel full or closed", "command", testCmd)
 		}
 	}()
 }
 
 // handleViewSilenceLog reads and returns the silence log file contents.
-func (h *CommandHandler) handleViewSilenceLog(conn *websocket.Conn) {
+func (h *CommandHandler) handleViewSilenceLog(send chan<- interface{}) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -431,23 +434,22 @@ func (h *CommandHandler) handleViewSilenceLog(conn *websocket.Conn) {
 		if logPath == "" {
 			result.Success = false
 			result.Error = "Log file path not configured"
-			if wsErr := conn.WriteJSON(result); wsErr != nil {
-				slog.Error("failed to send silence log response", "error", wsErr)
-			}
-			return
-		}
-
-		entries, err := readSilenceLog(logPath, MaxLogEntries)
-		if err != nil {
-			result.Success = false
-			result.Error = err.Error()
 		} else {
-			result.Entries = entries
-			result.Path = logPath
+			entries, err := readSilenceLog(logPath, MaxLogEntries)
+			if err != nil {
+				result.Success = false
+				result.Error = err.Error()
+			} else {
+				result.Entries = entries
+				result.Path = logPath
+			}
 		}
 
-		if wsErr := conn.WriteJSON(result); wsErr != nil {
-			slog.Error("failed to send silence log response", "error", wsErr)
+		// Send via channel (non-blocking to prevent goroutine leak if channel is closed)
+		select {
+		case send <- result:
+		default:
+			slog.Warn("failed to send silence log response: channel full or closed")
 		}
 	}()
 }

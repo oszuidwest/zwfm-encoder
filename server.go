@@ -13,7 +13,6 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
 	"github.com/oszuidwest/zwfm-encoder/internal/server"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
-	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 var loginTmpl = template.Must(template.New("login").Parse(loginHTML))
@@ -63,92 +62,134 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		slog.Error("WebSocket upgrade failed", "error", err)
 		return
 	}
-	defer util.SafeCloseFunc(conn, "WebSocket connection")()
 
-	statusUpdate := make(chan bool, 1)
-	done := make(chan bool)
+	// Create buffered send channel for thread-safe writes.
+	// Only the writer goroutine writes to the connection, preventing race conditions.
+	send := make(chan interface{}, 16)
+	done := make(chan struct{})
+	statusUpdate := make(chan struct{}, 1)
 
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("panic in WebSocket reader", "panic", r)
-			}
-			close(done)
-		}()
+	// Writer goroutine - sole writer to the connection
+	go s.runWebSocketWriter(conn, send)
 
-		for {
-			var cmd server.WSCommand
-			if err := conn.ReadJSON(&cmd); err != nil {
-				return
-			}
-			s.commands.Handle(cmd, conn, func() {
-				select {
-				case statusUpdate <- true:
-				default:
-				}
-			})
+	// Reader goroutine - handles incoming commands
+	go s.runWebSocketReader(conn, send, done, statusUpdate)
+
+	s.runWebSocketEventLoop(send, done, statusUpdate)
+}
+
+// runWebSocketWriter writes messages from the send channel to the connection.
+func (s *Server) runWebSocketWriter(conn server.WebSocketConn, send <-chan interface{}) {
+	defer func() {
+		if err := conn.Close(); err != nil {
+			slog.Debug("WebSocket close error", "error", err)
 		}
 	}()
+	for msg := range send {
+		if err := conn.WriteJSON(msg); err != nil {
+			return
+		}
+	}
+}
 
+// runWebSocketReader reads commands from the connection and dispatches them.
+func (s *Server) runWebSocketReader(conn server.WebSocketConn, send chan<- interface{}, done, statusUpdate chan<- struct{}) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("panic in WebSocket reader", "panic", r)
+		}
+		close(done)
+	}()
+
+	for {
+		var cmd server.WSCommand
+		if err := conn.ReadJSON(&cmd); err != nil {
+			return
+		}
+		s.commands.Handle(cmd, send, func() {
+			select {
+			case statusUpdate <- struct{}{}:
+			default:
+			}
+		})
+	}
+}
+
+// runWebSocketEventLoop handles periodic status and level updates.
+func (s *Server) runWebSocketEventLoop(send chan interface{}, done, statusUpdate <-chan struct{}) {
 	levelsTicker := time.NewTicker(100 * time.Millisecond) // 10 fps for VU meter
 	statusTicker := time.NewTicker(3 * time.Second)
 	defer levelsTicker.Stop()
 	defer statusTicker.Stop()
 
-	sendStatus := func() error {
-		cfg := s.config.Snapshot()
-		status := s.encoder.Status()
-		status.OutputCount = len(cfg.Outputs)
-
-		return conn.WriteJSON(types.WSStatusResponse{
-			Type:             "status",
-			FFmpegAvailable:  s.ffmpegAvailable,
-			Encoder:          status,
-			Outputs:          cfg.Outputs,
-			OutputStatus:     s.encoder.AllOutputStatuses(cfg.Outputs),
-			Devices:          audio.ListDevices(),
-			SilenceThreshold: cfg.SilenceThreshold,
-			SilenceDuration:  cfg.SilenceDuration,
-			SilenceRecovery:  cfg.SilenceRecovery,
-			SilenceWebhook:   cfg.WebhookURL,
-			SilenceLogPath:   cfg.LogPath,
-			EmailSMTPHost:    cfg.EmailSMTPHost,
-			EmailSMTPPort:    cfg.EmailSMTPPort,
-			EmailFromName:    cfg.EmailFromName,
-			EmailUsername:    cfg.EmailUsername,
-			EmailRecipients:  cfg.EmailRecipients,
-			Settings: types.WSSettings{
-				AudioInput: cfg.AudioInput,
-				Platform:   runtime.GOOS,
-			},
-			Version: s.version.Info(),
-		})
+	// trySend attempts to send a message, returning false if done is closed
+	trySend := func(msg interface{}) bool {
+		select {
+		case send <- msg:
+			return true
+		case <-done:
+			return false
+		}
 	}
 
-	if err := sendStatus(); err != nil {
+	// Send initial status
+	if !trySend(s.buildWSStatus()) {
+		close(send)
 		return
 	}
 
 	for {
 		select {
 		case <-done:
+			close(send)
 			return
 		case <-statusUpdate:
-			if err := sendStatus(); err != nil {
+			if !trySend(s.buildWSStatus()) {
+				close(send)
 				return
 			}
 		case <-levelsTicker.C:
-			if err := conn.WriteJSON(types.WSLevelsResponse{
-				Type:   "levels",
-				Levels: s.encoder.AudioLevels(),
-			}); err != nil {
+			if !trySend(types.WSLevelsResponse{Type: "levels", Levels: s.encoder.AudioLevels()}) {
+				close(send)
 				return
 			}
 		case <-statusTicker.C:
-			if err := sendStatus(); err != nil {
+			if !trySend(s.buildWSStatus()) {
+				close(send)
 				return
 			}
 		}
+	}
+}
+
+// buildWSStatus creates a WebSocket status response with current state.
+func (s *Server) buildWSStatus() types.WSStatusResponse {
+	cfg := s.config.Snapshot()
+	status := s.encoder.Status()
+	status.OutputCount = len(cfg.Outputs)
+
+	return types.WSStatusResponse{
+		Type:             "status",
+		FFmpegAvailable:  s.ffmpegAvailable,
+		Encoder:          status,
+		Outputs:          cfg.Outputs,
+		OutputStatus:     s.encoder.AllOutputStatuses(cfg.Outputs),
+		Devices:          audio.ListDevices(),
+		SilenceThreshold: cfg.SilenceThreshold,
+		SilenceDuration:  cfg.SilenceDuration,
+		SilenceRecovery:  cfg.SilenceRecovery,
+		SilenceWebhook:   cfg.WebhookURL,
+		SilenceLogPath:   cfg.LogPath,
+		EmailSMTPHost:    cfg.EmailSMTPHost,
+		EmailSMTPPort:    cfg.EmailSMTPPort,
+		EmailFromName:    cfg.EmailFromName,
+		EmailUsername:    cfg.EmailUsername,
+		EmailRecipients:  cfg.EmailRecipients,
+		Settings: types.WSSettings{
+			AudioInput: cfg.AudioInput,
+			Platform:   runtime.GOOS,
+		},
+		Version: s.version.Info(),
 	}
 }
 
