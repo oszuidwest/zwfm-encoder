@@ -18,13 +18,13 @@ import (
 
 // Configuration defaults.
 const (
-	DefaultWebPort          = 8080
-	DefaultWebUsername      = "admin"
-	DefaultWebPassword      = "encoder"
-	DefaultSilenceThreshold = -40.0
-	DefaultSilenceDuration  = 15.0
-	DefaultSilenceRecovery  = 5.0
-	DefaultEmailSMTPPort    = 587
+	DefaultWebPort           = 8080
+	DefaultWebUsername       = "admin"
+	DefaultWebPassword       = "encoder"
+	DefaultSilenceThreshold  = -40.0
+	DefaultSilenceDuration   = 15.0
+	DefaultSilenceRecovery   = 5.0
+	DefaultEmailSMTPPort     = 587
 	DefaultStationName       = "ZuidWest FM"
 	DefaultStationColorLight = "#E6007E"
 	DefaultStationColorDark  = "#E6007E"
