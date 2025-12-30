@@ -267,7 +267,7 @@ func (m *Manager) ResetRetry(outputID string) {
 	if proc, exists := m.processes[outputID]; exists {
 		proc.retryCount = 0
 		if proc.backoff != nil {
-			proc.backoff.Reset(types.InitialRetryDelay)
+			proc.backoff.Reset()
 		}
 	}
 }

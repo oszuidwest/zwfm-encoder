@@ -101,7 +101,6 @@ func (n *SilenceNotifier) sendSilenceWebhook(cfg config.Snapshot, duration float
 	util.LogNotifyResult(
 		func() error { return SendSilenceWebhook(cfg.WebhookURL, duration, cfg.SilenceThreshold) },
 		"Silence webhook",
-		true,
 	)
 }
 
@@ -110,7 +109,6 @@ func (n *SilenceNotifier) sendRecoveryWebhook(cfg config.Snapshot, duration floa
 	util.LogNotifyResult(
 		func() error { return SendRecoveryWebhook(cfg.WebhookURL, duration) },
 		"Recovery webhook",
-		true,
 	)
 }
 
@@ -134,7 +132,6 @@ func (n *SilenceNotifier) sendSilenceEmail(cfg config.Snapshot, duration float64
 	util.LogNotifyResult(
 		func() error { return SendSilenceAlert(emailCfg, duration, cfg.SilenceThreshold) },
 		"Silence email",
-		true,
 	)
 }
 
@@ -144,7 +141,6 @@ func (n *SilenceNotifier) sendRecoveryEmail(cfg config.Snapshot, duration float6
 	util.LogNotifyResult(
 		func() error { return SendRecoveryAlert(emailCfg, duration) },
 		"Recovery email",
-		true,
 	)
 }
 
@@ -153,7 +149,6 @@ func (n *SilenceNotifier) logSilenceStart(cfg config.Snapshot) {
 	util.LogNotifyResult(
 		func() error { return LogSilenceStart(cfg.LogPath, cfg.SilenceThreshold) },
 		"Silence log",
-		true,
 	)
 }
 
@@ -162,6 +157,5 @@ func (n *SilenceNotifier) logSilenceEnd(cfg config.Snapshot, duration float64) {
 	util.LogNotifyResult(
 		func() error { return LogSilenceEnd(cfg.LogPath, duration, cfg.SilenceThreshold) },
 		"Recovery log",
-		true,
 	)
 }
