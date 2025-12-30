@@ -93,13 +93,13 @@ func CalculateLevels(data *LevelData) Levels {
 	}
 }
 
-// ResetLevelData resets accumulators for the next measurement period.
-func ResetLevelData(data *LevelData) {
-	data.SampleCount = 0
-	data.SumSquaresL = 0
-	data.SumSquaresR = 0
-	data.PeakL = 0
-	data.PeakR = 0
-	data.ClipCountL = 0
-	data.ClipCountR = 0
+// Reset resets accumulators for the next measurement period.
+func (d *LevelData) Reset() {
+	d.SampleCount = 0
+	d.SumSquaresL = 0
+	d.SumSquaresR = 0
+	d.PeakL = 0
+	d.PeakR = 0
+	d.ClipCountL = 0
+	d.ClipCountR = 0
 }

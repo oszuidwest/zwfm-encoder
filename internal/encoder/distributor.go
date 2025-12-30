@@ -64,6 +64,6 @@ func (d *Distributor) ProcessSamples(buf []byte, n int) {
 			})
 		}
 
-		audio.ResetLevelData(d.levelData)
+		d.levelData.Reset()
 	}
 }
