@@ -90,20 +90,36 @@ Configuration is stored in `/etc/encoder/config.json` on production systems. For
 
 ```json
 {
-  "web_port": 8080,
-  "web_user": "admin",
-  "web_password": "encoder",
-  "audio_input": "default:CARD=sndrpihifiberry",
-  "silence_threshold": -40,
-  "silence_duration": 15,
-  "silence_recovery": 5,
-  "silence_webhook": "https://example.com/alert",
-  "silence_log_path": "/var/log/encoder/silence.jsonl",
-  "email_smtp_host": "smtp.example.com",
-  "email_smtp_port": 587,
-  "email_username": "alerts@example.com",
-  "email_password": "secret",
-  "email_recipients": "admin@example.com, tech@example.com",
+  "station": {
+    "name": "ZuidWest FM",
+    "color_light": "#E6007E",
+    "color_dark": "#E6007E"
+  },
+  "web": {
+    "port": 8080,
+    "username": "admin",
+    "password": "encoder"
+  },
+  "audio": {
+    "input": "default:CARD=sndrpihifiberry"
+  },
+  "silence_detection": {
+    "threshold_db": -40,
+    "duration_seconds": 15,
+    "recovery_seconds": 5
+  },
+  "notifications": {
+    "webhook_url": "https://example.com/alert",
+    "log_path": "/var/log/encoder/silence.jsonl",
+    "email": {
+      "host": "smtp.example.com",
+      "port": 587,
+      "from_name": "ZuidWest FM Encoder",
+      "username": "alerts@example.com",
+      "password": "secret",
+      "recipients": "admin@example.com, tech@example.com"
+    }
+  },
   "outputs": [
     {
       "id": "output-1",
@@ -117,6 +133,72 @@ Configuration is stored in `/etc/encoder/config.json` on production systems. For
   ]
 }
 ```
+
+### Configuration Reference
+
+#### General
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `ffmpeg_path` | *(auto)* | Path to FFmpeg binary (uses PATH if not set) |
+
+#### Station (Branding)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `station.name` | ZuidWest FM | Station name in header, title, and browser tab (1–30 characters) |
+| `station.color_light` | #E6007E | Accent color for light mode (#RRGGBB) |
+| `station.color_dark` | #E6007E | Accent color for dark mode (#RRGGBB) |
+
+Choose accent colors that contrast well with the interface background in each mode.
+
+#### Web Server
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `web.port` | 8080 | HTTP server port |
+| `web.username` | admin | Login username |
+| `web.password` | encoder | Login password |
+
+#### Audio
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `audio.input` | — | ALSA device identifier (e.g., `default:CARD=sndrpihifiberry`) |
+
+#### Silence Detection
+
+| Setting | Default | Range | Description |
+|---------|---------|-------|-------------|
+| `silence_detection.threshold_db` | -40 | -60 to 0 | Level below which audio is considered silent |
+| `silence_detection.duration_seconds` | 15 | 1–300 | Seconds of silence before alerting |
+| `silence_detection.recovery_seconds` | 5 | 1–60 | Seconds of audio before recovery alert |
+
+#### Notifications
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `notifications.webhook_url` | — | URL for POST requests on silence events |
+| `notifications.log_path` | — | Path to JSON Lines log file |
+| `notifications.email.host` | — | SMTP server hostname |
+| `notifications.email.port` | 587 | SMTP server port |
+| `notifications.email.from_name` | *(station name)* | Sender display name |
+| `notifications.email.username` | — | SMTP authentication username |
+| `notifications.email.password` | — | SMTP authentication password |
+| `notifications.email.recipients` | — | Comma-separated email addresses |
+
+#### Outputs
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `outputs[].id` | *(auto)* | Unique output identifier |
+| `outputs[].enabled` | true | Whether output is active |
+| `outputs[].host` | — | SRT server hostname |
+| `outputs[].port` | — | SRT server port |
+| `outputs[].streamid` | — | SRT stream identifier |
+| `outputs[].password` | — | SRT encryption passphrase |
+| `outputs[].codec` | wav | Codec: `mp3`, `mp2`, `ogg`, or `wav` |
+| `outputs[].max_retries` | 99 | Reconnection attempts before giving up |
 
 ## Architecture
 

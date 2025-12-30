@@ -41,9 +41,9 @@
 <body x-data="encoderApp()">
     <!-- Connection overlay - blocks UI when WebSocket disconnected -->
     <div class="connection-overlay" x-show="encoder.state === 'connecting'" x-cloak>
-        <div class="connection-overlay__content">
-            <div class="connection-overlay__spinner"></div>
-            <span class="connection-overlay__text">Connecting...</span>
+        <div class="content">
+            <div class="spinner"></div>
+            <span class="text">Connecting...</span>
         </div>
     </div>
 
@@ -54,20 +54,21 @@
          x-show="banner.visible"
          x-transition:enter.duration.200ms
          x-transition:leave.duration.150ms
-         :class="'alert-banner--' + banner.type"
+         :data-variant="banner.type"
          x-cloak>
-        <span class="alert-banner__message" x-text="banner.message"></span>
+        <span class="message" x-text="banner.message"></span>
     </div>
 
     <!-- FFmpeg not available banner - persistent, non-dismissable -->
-    <div class="alert-banner alert-banner--danger"
+    <div class="alert-banner"
+         data-variant="danger"
          role="alert"
          aria-live="assertive"
          x-show="!ffmpegAvailable"
          x-transition:enter.duration.200ms
          x-transition:leave.duration.150ms
          x-cloak>
-        <span class="alert-banner__message">FFmpeg not found. Install FFmpeg and restart the application.</span>
+        <span class="message">FFmpeg not found. Install FFmpeg and restart the application.</span>
     </div>
 
     <main class="container">
@@ -84,11 +85,11 @@
              - Output list with individual status indicators -->
         <div id="dashboard-view" x-show="view === 'dashboard'" x-transition:enter.duration.200ms x-cloak>
             <header class="header">
-                <div class="header__brand">
-                    <span class="header__logo" x-html="icons.appLogo"></span>
-                    <h1 class="header__title">{{.StationName}}</h1>
+                <div class="brand">
+                    <span class="logo" x-html="icons.appLogo"></span>
+                    <h1 class="title">{{.StationName}}</h1>
                 </div>
-                <div class="header__actions">
+                <div class="actions">
                     <button class="icon-btn" type="button" tabindex="0" title="Settings" aria-label="Settings" @click="showSettings()">
                         <span x-html="icons.settings"></span>
                     </button>
@@ -105,24 +106,26 @@
         </div>
 
         <section class="card">
-            <div class="card__header card__header--brand">
+            <div class="header" data-theme="brand">
                 <h2>Audio Source</h2>
                 <span class="badge">Input</span>
             </div>
-            <div class="card__body">
-                <div class="form__group">
-                    <label for="audio-input">Input Device</label>
-                    <select id="audio-input" x-model="settings.audioInput" @change="send('update_settings', null, { audio_input: settings.audioInput })">
-                        <template x-if="devices.length === 0">
-                            <option value="">No devices found</option>
-                        </template>
-                        <template x-if="devices.length > 0 && !settings.audioInput">
-                            <option value="" disabled selected>Select audio input...</option>
-                        </template>
-                        <template x-for="device in devices" :key="device.id">
-                            <option :value="device.id" x-text="device.name"></option>
-                        </template>
-                    </select>
+            <div class="body">
+                <div class="form">
+                    <div class="group">
+                        <label for="audio-input">Input Device</label>
+                        <select id="audio-input" x-model="settings.audioInput" @change="send('update_settings', null, { audio_input: settings.audioInput })">
+                            <template x-if="devices.length === 0">
+                                <option value="">No devices found</option>
+                            </template>
+                            <template x-if="devices.length > 0 && !settings.audioInput">
+                                <option value="" disabled selected>Select audio input...</option>
+                            </template>
+                            <template x-for="device in devices" :key="device.id">
+                                <option :value="device.id" x-text="device.name"></option>
+                            </template>
+                        </select>
+                    </div>
                 </div>
 
                 <!-- === VU Meter Component ===
@@ -134,34 +137,34 @@
                      - Scale: Reference marks at -60, -48, -24, -12, -6, 0 dB
                      Updates ~4 times per second -->
                 <div class="vu">
-                    <div class="vu__header">
-                        <button class="vu__mode-btn" type="button" tabindex="0" @click="toggleVuMode()" x-text="vuMode === 'peak' ? 'Peak' : 'RMS'"></button>
+                    <div class="meter-header">
+                        <button class="mode-btn" type="button" tabindex="0" @click="toggleVuMode()" x-text="vuMode === 'peak' ? 'Peak' : 'RMS'"></button>
                         <!-- Status indicators - visual feedback for audio state
                              Silence: Yellow dot when audio below threshold
                              Clip: Red flash when audio exceeds 0dB -->
-                        <div class="vu__indicators">
-                            <span class="vu__indicator" aria-label="Silence indicator"><span class="vu__indicator-dot" :class="getSilenceClass()"></span>Silence</span>
-                            <span class="vu__indicator" aria-label="Clip indicator"><span class="vu__indicator-dot" :class="{ 'vu__indicator-dot--clip-active': clipActive }"></span>Clip</span>
+                        <div class="indicators">
+                            <span class="indicator" aria-label="Silence indicator"><span class="dot" :data-state="getSilenceState()"></span>Silence</span>
+                            <span class="indicator" aria-label="Clip indicator"><span class="dot" :data-state="clipActive ? 'clip' : null"></span>Clip</span>
                         </div>
                     </div>
                     <template x-for="ch in vuChannels" :key="ch.label">
-                        <div class="vu__channel">
-                            <span class="vu__label" x-text="ch.label"></span>
-                            <div class="vu__track">
-                                <div class="vu__gradient"></div>
-                                <div class="vu__cover" :style="{ width: `${100 - dbToPercent(vuMode === 'peak' ? levels[ch.peak] : levels[ch.level])}%` }"></div>
-                                <div class="vu__peak" :style="{ left: `${dbToPercent(levels[ch.peak])}%` }" :class="{ 'vu__peak--visible': vuMode === 'peak' && dbToPercent(levels[ch.peak]) > 0, 'vu__peak--danger': dbToPercent(levels[ch.peak]) >= 90 }"></div>
+                        <div class="channel">
+                            <span class="label" x-text="ch.label"></span>
+                            <div class="track">
+                                <div class="gradient"></div>
+                                <div class="cover" :style="{ width: `${100 - dbToPercent(vuMode === 'peak' ? levels[ch.peak] : levels[ch.level])}%` }"></div>
+                                <div class="peak" :style="{ left: `${dbToPercent(levels[ch.peak])}%` }" :data-visible="vuMode === 'peak' && dbToPercent(levels[ch.peak]) > 0 ? true : null" :data-danger="dbToPercent(levels[ch.peak]) >= 90 ? true : null"></div>
                             </div>
-                            <span class="vu__db" x-text="`${(vuMode === 'peak' ? levels[ch.peak] : levels[ch.level]).toFixed(1)} dB`"></span>
+                            <span class="db" x-text="`${(vuMode === 'peak' ? levels[ch.peak] : levels[ch.level]).toFixed(1)} dB`"></span>
                         </div>
                     </template>
-                    <div class="vu__scale">
-                        <span class="vu__mark--60">-60</span>
-                        <span class="vu__mark--48">-48</span>
-                        <span class="vu__mark--24">-24</span>
-                        <span class="vu__mark--12">-12</span>
-                        <span class="vu__mark--6">-6</span>
-                        <span class="vu__mark--0">0</span>
+                    <div class="scale">
+                        <span class="mark" data-db="-60">-60</span>
+                        <span class="mark" data-db="-48">-48</span>
+                        <span class="mark" data-db="-24">-24</span>
+                        <span class="mark" data-db="-12">-12</span>
+                        <span class="mark" data-db="-6">-6</span>
+                        <span class="mark" data-db="0">0</span>
                     </div>
                 </div>
 
@@ -197,11 +200,11 @@
              - Red: Failed (shows error)
              - Gray: Encoder not running -->
         <section class="card">
-            <div class="card__header card__header--slate">
+            <div class="header" data-theme="slate">
                 <h2>Outputs</h2>
-                <div class="card__actions">
+                <div class="actions">
                     <span class="badge" x-text="outputs.length"></span>
-                    <button class="card__add-btn" type="button" tabindex="0" aria-label="Add output"
+                    <button class="add-btn" type="button" tabindex="0" aria-label="Add output"
                                             :disabled="!ffmpegAvailable"
                                             :title="!ffmpegAvailable ? 'FFmpeg not available' : ''"
                                             @click="showOutputForm()">
@@ -210,24 +213,26 @@
                     </button>
                 </div>
             </div>
-            <div class="card__body">
-                <div class="outputs-list">
+            <div class="body">
+                <div class="outputs">
                     <template x-for="output in outputs" :key="output.id">
-                        <div class="list-item output__item" :class="{ 'output__item--deleting': deletingOutputs[output.id] === output.created_at }">
-                            <div class="output__row" :data-output-id="output.id">
-                                <span class="output__dot" :class="getOutputStateClass(output)"></span>
-                                <span class="output__host" x-text="`${output.host}:${output.port}`"></span>
-                                <button class="icon-btn icon-btn--edit" type="button" tabindex="0" title="Edit" aria-label="Edit output"
+                        <div class="item"
+                             x-data="{ get d() { return getOutputDisplayData(output) } }"
+                             :data-deleting="deletingOutputs[output.id] === output.created_at ? true : null">
+                            <div class="row" :data-output-id="output.id">
+                                <span class="dot" :class="d.stateClass"></span>
+                                <span class="host" x-text="`${output.host}:${output.port}`"></span>
+                                <button class="icon-btn" data-variant="edit" type="button" tabindex="0" title="Edit" aria-label="Edit output"
                                         @click="showOutputForm(output.id)">
                                     <span class="icon-container" x-html="icons.edit"></span>
                                 </button>
                             </div>
-                            <div class="output__details">
-                                <span class="output__codec" x-text="output.codec.toUpperCase()"></span>
-                                <span class="output__streamid" x-text="`#${output.streamid}`"></span>
-                                <span class="output__status" :class="getOutputStateClass(output)" x-text="getOutputStatusText(output)"></span>
+                            <div class="details">
+                                <span class="codec" x-text="output.codec.toUpperCase()"></span>
+                                <span class="streamid" x-text="`#${output.streamid}`"></span>
+                                <span class="status" :class="d.stateClass" x-text="d.statusText"></span>
                             </div>
-                            <p class="output__error" x-show="shouldShowError(output)" x-text="outputStatuses[output.id]?.last_error"></p>
+                            <p class="error" x-show="d.showError" x-text="d.lastError"></p>
                         </div>
                     </template>
                 </div>
@@ -245,62 +250,64 @@
              - Cancel restores original values, Save persists all changes
              - Test buttons disabled when unsaved changes exist
              - Settings not overwritten by status updates while editing -->
-        <div id="settings-view" class="settings-view" x-show="view === 'settings'" x-transition:enter.duration.200ms x-cloak>
-            <header class="modal__nav">
+        <div id="settings-view" class="settings" x-show="view === 'settings'" x-transition:enter.duration.200ms x-cloak>
+            <header class="nav">
                 <button class="nav-btn" type="button" tabindex="0" @click="cancelSettings()">Cancel</button>
                 <h2>Settings</h2>
-                <button class="nav-btn nav-btn--save" type="button" tabindex="0" @click="saveSettings()" :disabled="!settingsDirty">Save</button>
+                <button class="nav-btn" data-variant="save" type="button" tabindex="0" @click="saveSettings()" :disabled="!settingsDirty">Save</button>
             </header>
 
             <!-- Settings tab navigation - segmented control style
                  Tab switching is UI-only (no persistence)
                  Sliding indicator animates between tabs -->
-            <div class="settings__tabs" role="tablist">
+            <div class="tabs" role="tablist">
                 <template x-for="tab in settingsTabs" :key="tab.id">
-                    <button class="settings__tab" type="button" role="tab" :id="'tab-' + tab.id" :aria-selected="settingsTab === tab.id" :aria-controls="'panel-' + tab.id" :tabindex="settingsTab === tab.id ? 0 : -1" @click="showTab(tab.id)" :class="{ 'settings__tab--active': settingsTab === tab.id }">
+                    <button class="tab" type="button" role="tab" :id="'tab-' + tab.id" :aria-selected="settingsTab === tab.id" :aria-controls="'panel-' + tab.id" :tabindex="settingsTab === tab.id ? 0 : -1" @click="showTab(tab.id)">
                         <span x-html="icons[tab.icon]"></span>
                         <span x-text="tab.label"></span>
                     </button>
                 </template>
             </div>
 
-            <div class="settings__panels" id="settings-panels">
+            <div class="panels" id="settings-panels">
                 <!-- Audio Panel - Silence detection configuration
                      - Threshold: dB level below which audio is considered silent (-60 to 0)
                      - Duration: Seconds of silence before triggering alerts (1-3600)
                      - Recovery: Seconds of audio before clearing silence state (1-60) -->
-                <div class="settings__panel" role="tabpanel" id="panel-audio" aria-labelledby="tab-audio" x-show="settingsTab === 'audio'">
-                    <div class="settings__section">
-                        <div class="settings__section-header">
+                <div class="panel" role="tabpanel" id="panel-audio" aria-labelledby="tab-audio" x-show="settingsTab === 'audio'">
+                    <div class="section">
+                        <div class="section-header">
                             <span x-html="icons.audio"></span>
                             <h3>Silence Detection</h3>
                         </div>
-                        <p class="settings__section-desc">Alert when audio drops below threshold for extended periods.</p>
-                        <div class="form__group">
-                            <label for="silence-threshold">Threshold</label>
-                            <div class="input__group">
-                                <input id="silence-threshold" type="number" max="0" min="-60" step="1" x-model.number="settings.silenceThreshold" @input="markSettingsDirty()">
-                                <span class="input__unit">dB</span>
+                        <p class="section-desc">Alert when audio drops below threshold for extended periods.</p>
+                        <div class="form">
+                            <div class="group">
+                                <label for="silence-threshold">Threshold</label>
+                                <div class="input-group">
+                                    <input id="silence-threshold" type="number" max="0" min="-60" step="1" x-model.number="settings.silenceThreshold" @input="markSettingsDirty()">
+                                    <span class="input-unit">dB</span>
+                                </div>
+                                <span class="input-hint">Audio below this level is considered silence.</span>
                             </div>
-                            <span class="input__hint">Audio below this level is considered silence.</span>
-                        </div>
-                        <div class="form__row">
-                            <div class="form__group">
-                                <label for="silence-duration">Silence Duration</label>
-                                <div class="input__group">
-                                    <input id="silence-duration" type="number" max="300" min="1" step="1" x-model.number="settings.silenceDuration" @input="markSettingsDirty()">
-                                    <span class="input__unit">sec</span>
+                            <div class="row">
+                                <div class="group">
+                                    <label for="silence-duration">Silence Duration</label>
+                                    <div class="input-group">
+                                        <input id="silence-duration" type="number" max="300" min="1" step="1" x-model.number="settings.silenceDuration" @input="markSettingsDirty()">
+                                        <span class="input-unit">sec</span>
+                                    </div>
+                                </div>
+                                <div class="group">
+                                    <label for="silence-recovery">Recovery Time</label>
+                                    <div class="input-group">
+                                        <input id="silence-recovery" type="number" max="60" min="1" step="1" x-model.number="settings.silenceRecovery" @input="markSettingsDirty()">
+                                        <span class="input-unit">sec</span>
+                                    </div>
                                 </div>
                             </div>
-                            <div class="form__group">
-                                <label for="silence-recovery">Recovery Time</label>
-                                <div class="input__group">
-                                    <input id="silence-recovery" type="number" max="60" min="1" step="1" x-model.number="settings.silenceRecovery" @input="markSettingsDirty()">
-                                    <span class="input__unit">sec</span>
-                                </div>
-                            </div>
+                            <span class="input-hint">Silence triggers alerts. Recovery clears after audio returns.</span>
                         </div>
-                        <span class="input__hint">Silence triggers alerts. Recovery clears after audio returns.</span>
                     </div>
                 </div>
 
@@ -309,135 +316,147 @@
                      - Webhook: HTTP POST to URL on silence start/end
                      - File Log: Append JSON lines to local file
                      - Email: SMTP notifications with configurable server -->
-                <div class="settings__panel" role="tabpanel" id="panel-notifications" aria-labelledby="tab-notifications" x-show="settingsTab === 'notifications'">
-                    <div class="settings__section">
-                        <div class="settings__section-header">
+                <div class="panel" role="tabpanel" id="panel-notifications" aria-labelledby="tab-notifications" x-show="settingsTab === 'notifications'">
+                    <div class="section">
+                        <div class="section-header">
                             <span x-html="icons.link"></span>
                             <h3>Webhook</h3>
                         </div>
-                        <p class="settings__section-desc">POST request sent when silence is detected.</p>
-                        <div class="form__group">
-                            <label for="silence-webhook">Webhook URL</label>
-                            <input id="silence-webhook" type="url" placeholder="https://hooks.example.com/..." x-model="settings.silenceWebhook" @input="markSettingsDirty()">
+                        <p class="section-desc">POST request sent when silence is detected.</p>
+                        <div class="form">
+                            <div class="group">
+                                <label for="silence-webhook">Webhook URL</label>
+                                <input id="silence-webhook" type="url" placeholder="https://hooks.example.com/..." x-model="settings.silenceWebhook" @input="markSettingsDirty()">
+                            </div>
                         </div>
-                        <button class="btn btn--secondary btn--test" type="button" tabindex="0" @click="sendTest('webhook')" :disabled="testStates.webhook.pending || settingsDirty" x-text="testStates.webhook.text">Test</button>
+                        <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('webhook')" :disabled="testStates.webhook.pending || settingsDirty" x-text="testStates.webhook.text">Test</button>
                     </div>
-                    <div class="settings__section">
-                        <div class="settings__section-header">
+                    <div class="section">
+                        <div class="section-header">
                             <span x-html="icons.file"></span>
                             <h3>File Log</h3>
                         </div>
-                        <p class="settings__section-desc">Log silence events to a JSON Lines file.</p>
-                        <div class="form__group">
-                            <label for="silence-log-path">Log File Path</label>
-                            <input id="silence-log-path" type="text" placeholder="/var/log/encoder/silence.jsonl" x-model="settings.silenceLogPath" @input="markSettingsDirty()">
-                            <span class="input__hint">Leave empty to disable file logging.</span>
+                        <p class="section-desc">Log silence events to a JSON Lines file.</p>
+                        <div class="form">
+                            <div class="group">
+                                <label for="silence-log-path">Log File Path</label>
+                                <input id="silence-log-path" type="text" placeholder="/var/log/encoder/silence.jsonl" x-model="settings.silenceLogPath" @input="markSettingsDirty()">
+                                <span class="input-hint">Leave empty to disable file logging.</span>
+                            </div>
                         </div>
                         <div class="btn-group">
-                            <button class="btn btn--secondary btn--test" type="button" tabindex="0" @click="sendTest('log')" :disabled="testStates.log.pending || settingsDirty" x-text="testStates.log.text">Test</button>
-                            <button class="btn btn--secondary btn--test" type="button" tabindex="0" @click="viewSilenceLog()" :disabled="!settings.silenceLogPath || settingsDirty">View Log</button>
+                            <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('log')" :disabled="testStates.log.pending || settingsDirty" x-text="testStates.log.text">Test</button>
+                            <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="viewSilenceLog()" :disabled="!settings.silenceLogPath || settingsDirty">View Log</button>
                         </div>
                     </div>
-                    <div class="settings__section">
-                        <div class="settings__section-header">
+                    <div class="section">
+                        <div class="section-header">
                             <span x-html="icons.email"></span>
                             <h3>Email Notifications</h3>
                         </div>
-                        <p class="settings__section-desc">Email notifications when silence is detected.</p>
-                        <div class="form__row">
-                            <div class="form__group">
-                                <label for="email-smtp-host">SMTP Host</label>
-                                <input id="email-smtp-host" type="text" placeholder="smtp.example.com" x-model="settings.email.host" @input="markSettingsDirty()">
+                        <p class="section-desc">Email notifications when silence is detected.</p>
+                        <div class="form">
+                            <div class="row">
+                                <div class="group">
+                                    <label for="email-smtp-host">SMTP Host</label>
+                                    <input id="email-smtp-host" type="text" placeholder="smtp.example.com" x-model="settings.email.host" @input="markSettingsDirty()">
+                                </div>
+                                <div class="group">
+                                    <label for="email-smtp-port">Port</label>
+                                    <input id="email-smtp-port" type="number" max="65535" min="1" x-model.number="settings.email.port" @input="markSettingsDirty()">
+                                </div>
                             </div>
-                            <div class="form__group">
-                                <label for="email-smtp-port">Port</label>
-                                <input id="email-smtp-port" type="number" max="65535" min="1" x-model.number="settings.email.port" @input="markSettingsDirty()">
+                            <div class="row">
+                                <div class="group">
+                                    <label for="email-from-name">Sender Name</label>
+                                    <input id="email-from-name" type="text" placeholder="{{.StationName}}" x-model="settings.email.fromName" @input="markSettingsDirty()">
+                                </div>
+                                <div class="group">
+                                    <label for="email-username">Username</label>
+                                    <input id="email-username" type="email" placeholder="alerts@example.com" x-model="settings.email.username" @input="markSettingsDirty()">
+                                </div>
+                            </div>
+                            <div class="group">
+                                <label for="email-password">Password</label>
+                                <input id="email-password" type="password" placeholder="SMTP password" x-model="settings.email.password" @input="markSettingsDirty()">
+                                <span class="input-hint">Leave empty to keep existing password</span>
+                            </div>
+                            <div class="group">
+                                <label for="email-recipients">Recipients</label>
+                                <input id="email-recipients" type="text" placeholder="admin@example.com, tech@example.com" x-model="settings.email.recipients" @input="markSettingsDirty()">
+                                <span class="input-hint">Comma-separated email addresses.</span>
                             </div>
                         </div>
-                        <div class="form__row">
-                            <div class="form__group">
-                                <label for="email-from-name">Sender Name</label>
-                                <input id="email-from-name" type="text" placeholder="{{.StationName}}" x-model="settings.email.fromName" @input="markSettingsDirty()">
-                            </div>
-                            <div class="form__group">
-                                <label for="email-username">Username</label>
-                                <input id="email-username" type="email" placeholder="alerts@example.com" x-model="settings.email.username" @input="markSettingsDirty()">
-                            </div>
-                        </div>
-                        <div class="form__group">
-                            <label for="email-password">Password</label>
-                            <input id="email-password" type="password" placeholder="SMTP password" x-model="settings.email.password" @input="markSettingsDirty()">
-                            <span class="input__hint">Leave empty to keep existing password</span>
-                        </div>
-                        <div class="form__group">
-                            <label for="email-recipients">Recipients</label>
-                            <input id="email-recipients" type="text" placeholder="admin@example.com, tech@example.com" x-model="settings.email.recipients" @input="markSettingsDirty()">
-                            <span class="input__hint">Comma-separated email addresses.</span>
-                        </div>
-                        <button class="btn btn--secondary btn--test" type="button" tabindex="0" @click="sendTest('email')" :disabled="testStates.email.pending || settingsDirty" x-text="testStates.email.text">Test</button>
+                        <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('email')" :disabled="testStates.email.pending || settingsDirty" x-text="testStates.email.text">Test</button>
                     </div>
                 </div>
 
                 <!-- About Panel - Version info and attribution
                      Shows: Version, commit hash, build date, update availability
                      Includes: MIT license text, audio plug logo SVG -->
-                <div class="settings__panel" role="tabpanel" id="panel-about" aria-labelledby="tab-about" x-show="settingsTab === 'about'">
-                    <div class="settings__section about__section">
-                        <div class="about__logo">
-                            <span x-html="icons.appLogo"></span>
-                            <h2>{{.StationName}}</h2>
-                        </div>
-                        <div class="about__info">
-                            <dl class="about__list">
-                                <dt>Version</dt>
-                                <dd id="about-version" x-text="`${version.current || 'dev'} (${(version.commit || 'unknown').slice(0, 7)})`">-</dd>
-                                <dt>Built</dt>
-                                <dd id="about-build" x-text="version.build_time || 'unknown'">-</dd>
-                                <dt>Platform</dt>
-                                <dd id="about-platform" x-text="settings.platform || '-'">-</dd>
-                                <dt>Uptime</dt>
-                                <dd id="about-uptime" x-text="encoder.uptime || '-'">-</dd>
-                            </dl>
-                        </div>
-                        <div class="about__links">
-                            <a rel="noopener" href="https://github.com/oszuidwest/zwfm-encoder" title="View source code on GitHub" target="_blank">
-                                <span class="icon-container" x-html="icons.github"></span>
-                                GitHub
-                            </a>
-                            <a rel="noopener" href="https://github.com/oszuidwest/zwfm-encoder/issues" title="Report bugs or request features" target="_blank">
-                                <span class="icon-container" x-html="icons.bug"></span>
-                                Report Issue
-                            </a>
-                            <a rel="noopener" href="https://github.com/oszuidwest/zwfm-encoder/releases" title="View release history and downloads" target="_blank">
-                                <span class="icon-container" x-html="icons.download"></span>
-                                Releases
-                            </a>
+                <div class="panel" role="tabpanel" id="panel-about" aria-labelledby="tab-about" x-show="settingsTab === 'about'">
+                    <div class="about">
+                        <div class="section">
+                            <div class="logo">
+                                <span x-html="icons.appLogo"></span>
+                                <h2>{{.StationName}}</h2>
+                            </div>
+                            <div class="info">
+                                <dl class="list">
+                                    <dt>Version</dt>
+                                    <dd id="about-version" x-text="`${version.current || 'dev'} (${(version.commit || 'unknown').slice(0, 7)})`">-</dd>
+                                    <dt>Built</dt>
+                                    <dd id="about-build" x-text="version.build_time || 'unknown'">-</dd>
+                                    <dt>Platform</dt>
+                                    <dd id="about-platform" x-text="settings.platform || '-'">-</dd>
+                                    <dt>Uptime</dt>
+                                    <dd id="about-uptime" x-text="encoder.uptime || '-'">-</dd>
+                                </dl>
+                            </div>
+                            <div class="links">
+                                <a rel="noopener" href="https://github.com/oszuidwest/zwfm-encoder" title="View source code on GitHub" target="_blank">
+                                    <span class="icon-container" x-html="icons.github"></span>
+                                    GitHub
+                                </a>
+                                <a rel="noopener" href="https://github.com/oszuidwest/zwfm-encoder/issues" title="Report bugs or request features" target="_blank">
+                                    <span class="icon-container" x-html="icons.bug"></span>
+                                    Report Issue
+                                </a>
+                                <a rel="noopener" href="https://github.com/oszuidwest/zwfm-encoder/releases" title="View release history and downloads" target="_blank">
+                                    <span class="icon-container" x-html="icons.download"></span>
+                                    Releases
+                                </a>
+                            </div>
                         </div>
                     </div>
-                    <div class="settings__section">
-                        <div class="settings__section-header">
+                    <div class="section">
+                        <div class="section-header">
                             <span x-html="icons.license"></span>
                             <h3>License</h3>
                         </div>
-                        <div class="about__text">
-                            <p><strong>MIT License</strong></p>
-                            <p>Copyright (c) {{.Year}} Streekomroep ZuidWest</p>
-                            <p>Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:</p>
-                            <p>The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.</p>
-                            <p>THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.</p>
+                        <div class="about">
+                            <div class="text">
+                                <p><strong>MIT License</strong></p>
+                                <p>Copyright (c) {{.Year}} Streekomroep ZuidWest</p>
+                                <p>Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:</p>
+                                <p>The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.</p>
+                                <p>THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.</p>
+                            </div>
                         </div>
                     </div>
-                    <div class="settings__section">
-                        <div class="settings__section-header">
+                    <div class="section">
+                        <div class="section-header">
                             <span x-html="icons.heart"></span>
                             <h3>Acknowledgements</h3>
                         </div>
-                        <p class="settings__section-desc">This project is built with the following open source software:</p>
-                        <div class="about__text">
-                            <p><a href="https://alpinejs.dev" target="_blank" rel="noopener" title="Visit Alpine.js website"><strong>Alpine.js</strong></a> — MIT License<br>Lightweight JavaScript framework for reactive UI</p>
-                            <p><a href="https://heroicons.com" target="_blank" rel="noopener" title="Visit Heroicons website"><strong>Heroicons</strong></a> — MIT License<br>Beautiful hand-crafted SVG icons by Tailwind Labs</p>
-                            <p><a href="https://ffmpeg.org" target="_blank" rel="noopener" title="Visit FFmpeg website"><strong>FFmpeg</strong></a> — LGPL/GPL License<br>Audio encoding and SRT streaming</p>
-                            <p><a href="https://github.com/gorilla/websocket" target="_blank" rel="noopener" title="View Gorilla WebSocket on GitHub"><strong>Gorilla WebSocket</strong></a> — BSD License<br>WebSocket implementation for Go</p>
+                        <p class="section-desc">This project is built with the following open source software:</p>
+                        <div class="about">
+                            <div class="text">
+                                <p><a href="https://alpinejs.dev" target="_blank" rel="noopener" title="Visit Alpine.js website"><strong>Alpine.js</strong></a> — MIT License<br>Lightweight JavaScript framework for reactive UI</p>
+                                <p><a href="https://heroicons.com" target="_blank" rel="noopener" title="Visit Heroicons website"><strong>Heroicons</strong></a> — MIT License<br>Beautiful hand-crafted SVG icons by Tailwind Labs</p>
+                                <p><a href="https://ffmpeg.org" target="_blank" rel="noopener" title="Visit FFmpeg website"><strong>FFmpeg</strong></a> — LGPL/GPL License<br>Audio encoding and SRT streaming</p>
+                                <p><a href="https://github.com/gorilla/websocket" target="_blank" rel="noopener" title="View Gorilla WebSocket on GitHub"><strong>Gorilla WebSocket</strong></a> — BSD License<br>WebSocket implementation for Go</p>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -447,90 +466,92 @@
         <!-- === Output Form View ===
              Unified form for creating and editing stream outputs.
              Mode detection: isEditMode checks if outputForm.id is set -->
-        <div id="output-form-view" x-show="view === 'output-form'" x-transition:enter.duration.200ms x-cloak>
-            <header class="modal__nav">
+        <div id="output-form-view" class="settings" x-show="view === 'output-form'" x-transition:enter.duration.200ms x-cloak>
+            <header class="nav">
                 <button class="nav-btn" type="button" tabindex="0" @click="showDashboard()">Cancel</button>
                 <h2 x-text="isEditMode ? 'Edit Output' : 'New Output'">Output</h2>
-                <button class="nav-btn nav-btn--save" type="button" tabindex="0"
+                <button class="nav-btn" data-variant="save" type="button" tabindex="0"
                         @click="submitOutputForm()"
                         :disabled="!outputForm.host || (isEditMode && !outputFormDirty)">Save</button>
             </header>
 
-            <div class="settings__panels">
-                <div class="settings__panel">
+            <div class="panels">
+                <div class="panel">
                     <!-- Server Connection Section -->
-                    <div class="settings__section">
-                        <div class="settings__section-header">
+                    <div class="section">
+                        <div class="section-header">
                             <span x-html="icons.server"></span>
                             <h3>Server Connection</h3>
                         </div>
-                        <p class="settings__section-desc">Configure the SRT server to stream audio to.</p>
-                        <div class="form__group">
-                            <label for="output-host">Host</label>
-                            <input id="output-host" type="text" placeholder="stream.example.com"
-                                   x-model="outputForm.host" @input="markOutputFormDirty()">
-                        </div>
-                        <div class="form__row">
-                            <div class="form__group">
-                                <label for="output-port">Port</label>
-                                <input id="output-port" type="number"
-                                       x-model.number="outputForm.port" @input="markOutputFormDirty()">
+                        <p class="section-desc">Configure the SRT server to stream audio to.</p>
+                        <div class="form">
+                            <div class="group">
+                                <label for="output-host">Host</label>
+                                <input id="output-host" type="text" placeholder="stream.example.com"
+                                       x-model="outputForm.host" @input="markOutputFormDirty()">
                             </div>
-                            <div class="form__group">
-                                <label for="output-streamid">Stream ID</label>
-                                <input id="output-streamid" type="text" placeholder="studio"
-                                       x-model="outputForm.streamid" @input="markOutputFormDirty()">
+                            <div class="row">
+                                <div class="group">
+                                    <label for="output-port">Port</label>
+                                    <input id="output-port" type="number"
+                                           x-model.number="outputForm.port" @input="markOutputFormDirty()">
+                                </div>
+                                <div class="group">
+                                    <label for="output-streamid">Stream ID</label>
+                                    <input id="output-streamid" type="text" placeholder="studio"
+                                           x-model="outputForm.streamid" @input="markOutputFormDirty()">
+                                </div>
                             </div>
-                        </div>
-                        <div class="form__group">
-                            <label for="output-password">Password</label>
-                            <input id="output-password" type="password"
-                                   :placeholder="isEditMode ? 'Leave empty to keep' : 'Optional'"
-                                   x-model="outputForm.password" @input="markOutputFormDirty()">
+                            <div class="group">
+                                <label for="output-password">Password</label>
+                                <input id="output-password" type="password"
+                                       :placeholder="isEditMode ? 'Leave empty to keep' : 'Optional'"
+                                       x-model="outputForm.password" @input="markOutputFormDirty()">
+                            </div>
                         </div>
                     </div>
 
                     <!-- Encoding Section -->
-                    <div class="settings__section">
-                        <div class="settings__section-header">
+                    <div class="section">
+                        <div class="section-header">
                             <span x-html="icons.settings"></span>
                             <h3>Encoding</h3>
                         </div>
-                        <p class="settings__section-desc">Audio encoding format and retry settings.</p>
-                        <div class="form__row">
-                            <div class="form__group">
-                                <label for="output-codec">Codec</label>
-                                <select id="output-codec" x-model="outputForm.codec" @change="markOutputFormDirty()">
-                                    <option value="mp3">MP3 (320 kbit/s)</option>
-                                    <option value="mp2">MP2 (384 kbit/s)</option>
-                                    <option value="ogg">Ogg Vorbis (~500 kbit/s)</option>
-                                    <option value="wav">WAV (uncompressed)</option>
-                                </select>
-                            </div>
-                            <div class="form__group">
-                                <label for="output-retries">Max Retries</label>
-                                <input id="output-retries" type="number" max="9999" min="1"
-                                       x-model.number="outputForm.max_retries" @input="markOutputFormDirty()">
+                        <p class="section-desc">Audio encoding format and retry settings.</p>
+                        <div class="form">
+                            <div class="row">
+                                <div class="group">
+                                    <label for="output-codec">Codec</label>
+                                    <select id="output-codec" x-model="outputForm.codec" @change="markOutputFormDirty()">
+                                        <option value="mp3">MP3 (320 kbit/s)</option>
+                                        <option value="mp2">MP2 (384 kbit/s)</option>
+                                        <option value="ogg">Ogg Vorbis (~500 kbit/s)</option>
+                                        <option value="wav">WAV (uncompressed)</option>
+                                    </select>
+                                </div>
+                                <div class="group">
+                                    <label for="output-retries">Max Retries</label>
+                                    <input id="output-retries" type="number" max="9999" min="1"
+                                           x-model.number="outputForm.max_retries" @input="markOutputFormDirty()">
+                                </div>
                             </div>
                         </div>
                     </div>
 
                     <!-- Output Status Section - Only in edit mode (yellow/warning) -->
-                    <div class="settings__section settings__section--warning" x-show="isEditMode" x-cloak>
-                        <div class="settings__section-header">
+                    <div class="section" data-variant="warning" x-show="isEditMode" x-cloak>
+                        <div class="section-header">
                             <span x-html="icons.power"></span>
                             <h3>Output Status</h3>
                         </div>
-                        <p class="settings__section-desc">Disabling stops the stream to this server. Changes apply on save.</p>
+                        <p class="section-desc">Disabling stops the stream to this server. Changes apply on save.</p>
                         <div class="segmented" role="group" aria-label="Output status">
-                            <button type="button" class="segmented__btn"
-                                    :class="{ 'segmented__btn--active': !outputForm.enabled }"
+                            <button type="button" class="segmented-btn"
                                     :aria-pressed="!outputForm.enabled"
                                     @click="outputForm.enabled = false; markOutputFormDirty()">
                                 Disabled
                             </button>
-                            <button type="button" class="segmented__btn"
-                                    :class="{ 'segmented__btn--active': outputForm.enabled }"
+                            <button type="button" class="segmented-btn"
                                     :aria-pressed="outputForm.enabled"
                                     @click="outputForm.enabled = true; markOutputFormDirty()">
                                 Enabled
@@ -539,13 +560,13 @@
                     </div>
 
                     <!-- Danger Zone Section - Only in edit mode -->
-                    <div class="settings__section settings__section--danger" x-show="isEditMode" x-cloak>
-                        <div class="settings__section-header">
+                    <div class="section" data-variant="danger" x-show="isEditMode" x-cloak>
+                        <div class="section-header">
                             <span x-html="icons.warning"></span>
                             <h3>Danger Zone</h3>
                         </div>
-                        <p class="settings__section-desc">Permanently delete this output configuration.</p>
-                        <button class="btn btn--danger btn--block" type="button" tabindex="0"
+                        <p class="section-desc">Permanently delete this output configuration.</p>
+                        <button class="btn" data-variant="danger" data-block type="button" tabindex="0"
                                 @click="deleteOutput(outputForm.id, true)">
                             Delete Output
                         </button>
@@ -557,56 +578,58 @@
         <!-- === Silence Log Modal ===
              Broadcast console style log viewer displaying silence events.
              Dark theme with LED indicators and monospace data presentation. -->
-        <div class="modal__overlay" x-show="silenceLogModal.visible" x-cloak @click.self="closeSilenceLog()" x-transition:enter.duration.200ms>
-            <div class="modal__content" role="dialog" aria-modal="true" aria-labelledby="silence-log-title">
-                <header class="modal__header">
-                    <h2 id="silence-log-title">Silence Log</h2>
-                    <button class="icon-btn icon-btn--close" type="button" tabindex="0" aria-label="Close" @click="closeSilenceLog()">
-                        <span x-html="icons.close"></span>
-                    </button>
-                </header>
-                <div class="modal__body">
-                    <div class="empty-state log__loading" x-show="silenceLogModal.loading">
-                        Loading events...
-                    </div>
-                    <div class="empty-state empty-state--error log__error" x-show="!silenceLogModal.loading && silenceLogModal.error">
-                        <span x-html="icons.warning"></span>
-                        <span x-text="silenceLogModal.error"></span>
-                    </div>
-                    <div class="empty-state log__empty" x-show="!silenceLogModal.loading && !silenceLogModal.error && silenceLogModal.entries.length === 0">
-                        No events recorded
-                    </div>
-                    <div class="log__entries" x-show="!silenceLogModal.loading && !silenceLogModal.error && silenceLogModal.entries.length > 0">
-                        <template x-for="entry in silenceLogModal.entries" :key="entry.timestamp">
-                            <div class="list-item list-item--hover log__entry" :class="formatLogEntry(entry).eventClass">
-                                <div class="log__entry-content">
-                                    <span class="log__event" x-text="formatLogEntry(entry).event"></span>
-                                    <div class="log__entry-details">
-                                        <span>Threshold: <strong x-text="formatLogEntry(entry).threshold"></strong></span>
+        <div class="modal" x-show="silenceLogModal.visible" x-cloak>
+            <div class="overlay" @click.self="closeSilenceLog()" x-transition:enter.duration.200ms>
+                <div class="content" role="dialog" aria-modal="true" aria-labelledby="silence-log-title">
+                    <header class="header">
+                        <h2 id="silence-log-title">Silence Log</h2>
+                        <button class="icon-btn" data-variant="close" type="button" tabindex="0" aria-label="Close" @click="closeSilenceLog()">
+                            <span x-html="icons.close"></span>
+                        </button>
+                    </header>
+                    <div class="body log">
+                        <div class="loading" x-show="silenceLogModal.loading">
+                            Loading events...
+                        </div>
+                        <div class="error" x-show="!silenceLogModal.loading && silenceLogModal.error">
+                            <span x-html="icons.warning"></span>
+                            <span x-text="silenceLogModal.error"></span>
+                        </div>
+                        <div class="empty" x-show="!silenceLogModal.loading && !silenceLogModal.error && silenceLogModal.entries.length === 0">
+                            No events recorded
+                        </div>
+                        <div class="entries" x-show="!silenceLogModal.loading && !silenceLogModal.error && silenceLogModal.entries.length > 0">
+                            <template x-for="entry in silenceLogModal.entries" :key="entry.timestamp">
+                                <div class="entry" :data-event="formatLogEntry(entry).eventType">
+                                    <div class="entry-content">
+                                        <span class="event" x-text="formatLogEntry(entry).event"></span>
+                                        <div class="entry-details">
+                                            <span>Threshold: <strong x-text="formatLogEntry(entry).threshold"></strong></span>
+                                        </div>
                                     </div>
+                                    <span class="time" x-text="formatLogEntry(entry).time"></span>
                                 </div>
-                                <span class="log__time" x-text="formatLogEntry(entry).time"></span>
-                            </div>
-                        </template>
+                            </template>
+                        </div>
                     </div>
+                    <footer class="footer">
+                        <span class="path" x-show="silenceLogModal.path" x-text="silenceLogModal.path"></span>
+                        <button class="btn" data-variant="secondary" type="button" tabindex="0" @click="refreshSilenceLog()" :disabled="silenceLogModal.loading">Refresh</button>
+                    </footer>
                 </div>
-                <footer class="modal__footer">
-                    <span class="log__path" x-show="silenceLogModal.path" x-text="silenceLogModal.path"></span>
-                    <button class="btn btn--secondary" type="button" tabindex="0" @click="refreshSilenceLog()" :disabled="silenceLogModal.loading">Refresh</button>
-                </footer>
             </div>
         </div>
 
         <footer class="footer">
-            <div class="footer__links">
+            <div class="links">
                 <a rel="noopener" href="https://github.com/oszuidwest/zwfm-encoder" title="View source on GitHub" target="_blank">
                     <span class="icon-container" x-html="icons.github"></span>
                     GitHub
                 </a>
-                <span class="footer__sep">|</span>
-                <span>Version <span class="footer__version">{{.Version}}</span></span>
+                <span class="sep">|</span>
+                <span>Version <span class="version">{{.Version}}</span></span>
             </div>
-            <div class="footer__copyright">© {{.Year}} Streekomroep ZuidWest • MIT License</div>
+            <div class="copyright">© {{.Year}} Streekomroep ZuidWest • MIT License</div>
         </footer>
     </main>
 

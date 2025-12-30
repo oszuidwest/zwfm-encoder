@@ -35,7 +35,8 @@ const DefaultEmailFromName = DefaultStationName
 
 // Validation patterns.
 var (
-	stationNamePattern  = regexp.MustCompile(`^[a-zA-Z0-9 ]{1,30}$`)
+	// Station name: any printable characters except control chars (blocks CRLF injection in emails)
+	stationNamePattern  = regexp.MustCompile(`^[^\x00-\x1F\x7F]+$`)
 	stationColorPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 )
 
@@ -135,8 +136,9 @@ func (c *Config) Load() error {
 
 // validateStation validates station configuration.
 func (c *Config) validateStation() error {
-	if !stationNamePattern.MatchString(c.Station.Name) {
-		return fmt.Errorf("invalid station name %q: must be 1-30 alphanumeric characters or spaces", c.Station.Name)
+	name := c.Station.Name
+	if name == "" || len(name) > 30 || !stationNamePattern.MatchString(name) {
+		return fmt.Errorf("invalid station name %q: must be 1-30 printable characters", name)
 	}
 	if !stationColorPattern.MatchString(c.Station.ColorLight) {
 		return fmt.Errorf("invalid station color_light %q: must be hex format (#RRGGBB)", c.Station.ColorLight)
