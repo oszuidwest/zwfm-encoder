@@ -37,6 +37,7 @@ var (
 // Encoder manages audio capture and distribution to multiple streaming outputs.
 type Encoder struct {
 	config          *config.Config
+	ffmpegPath      string
 	outputManager   *output.Manager
 	sourceCmd       *exec.Cmd
 	sourceCancel    context.CancelFunc
@@ -55,11 +56,12 @@ type Encoder struct {
 	peakHolder      *audio.PeakHolder
 }
 
-// New creates a new Encoder with the given configuration.
-func New(cfg *config.Config) *Encoder {
+// New creates a new Encoder with the given configuration and FFmpeg binary path.
+func New(cfg *config.Config, ffmpegPath string) *Encoder {
 	return &Encoder{
 		config:          cfg,
-		outputManager:   output.NewManager(),
+		ffmpegPath:      ffmpegPath,
+		outputManager:   output.NewManager(ffmpegPath),
 		state:           types.StateStopped,
 		backoff:         util.NewBackoff(types.InitialRetryDelay, types.MaxRetryDelay),
 		silenceDetect:   audio.NewSilenceDetector(),
@@ -371,7 +373,7 @@ func (e *Encoder) runSourceLoop() {
 // runSource executes the audio capture process.
 func (e *Encoder) runSource() (string, error) {
 	audioInput := e.config.Snapshot().AudioInput
-	cmdName, args, err := audio.BuildCaptureCommand(audioInput)
+	cmdName, args, err := audio.BuildCaptureCommand(audioInput, e.ffmpegPath)
 	if err != nil {
 		return "", err
 	}

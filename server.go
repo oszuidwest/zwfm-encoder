@@ -44,7 +44,7 @@ type Server struct {
 // NewServer returns a new Server configured with the provided config and encoder.
 func NewServer(cfg *config.Config, enc *encoder.Encoder, ffmpegAvailable bool) *Server {
 	sessions := server.NewSessionManager()
-	commands := server.NewCommandHandler(cfg, enc)
+	commands := server.NewCommandHandler(cfg, enc, ffmpegAvailable)
 
 	return &Server{
 		config:          cfg,
@@ -101,9 +101,9 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		status.OutputCount = len(cfg.Outputs)
 
 		return conn.WriteJSON(types.WSStatusResponse{
-			Type:            "status",
-			FFmpegAvailable: s.ffmpegAvailable,
-			Encoder:         status,
+			Type:             "status",
+			FFmpegAvailable:  s.ffmpegAvailable,
+			Encoder:          status,
 			Outputs:          cfg.Outputs,
 			OutputStatus:     s.encoder.AllOutputStatuses(cfg.Outputs),
 			Devices:          audio.ListDevices(),

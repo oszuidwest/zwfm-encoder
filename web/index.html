@@ -70,7 +70,10 @@
     <!-- FFmpeg not available banner - persistent, non-dismissable -->
     <div class="alert-banner alert-banner--danger"
          role="alert"
+         aria-live="assertive"
          x-show="!ffmpegAvailable"
+         x-transition:enter.duration.200ms
+         x-transition:leave.duration.150ms
          x-cloak>
         <span class="alert-banner__message">FFmpeg not found. Install FFmpeg and restart the application.</span>
     </div>

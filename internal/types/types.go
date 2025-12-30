@@ -155,9 +155,9 @@ type AudioMetrics struct {
 
 // WSStatusResponse is sent to clients with full encoder and output status.
 type WSStatusResponse struct {
-	Type            string                  `json:"type"`              // Message type identifier
-	FFmpegAvailable bool                    `json:"ffmpeg_available"`  // FFmpeg binary is available
-	Encoder         EncoderStatus           `json:"encoder"`           // Encoder status
+	Type             string                  `json:"type"`              // Message type identifier
+	FFmpegAvailable  bool                    `json:"ffmpeg_available"`  // FFmpeg binary is available
+	Encoder          EncoderStatus           `json:"encoder"`           // Encoder status
 	Outputs          []Output                `json:"outputs"`           // Output configurations
 	OutputStatus     map[string]OutputStatus `json:"output_status"`     // Runtime output status
 	Devices          []AudioDevice           `json:"devices"`           // Available audio devices

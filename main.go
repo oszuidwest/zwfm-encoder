@@ -53,13 +53,13 @@ func main() {
 	ffmpegPath := util.ResolveFFmpegPath(cfg.GetFFmpegPath())
 	ffmpegAvailable := ffmpegPath != ""
 	if !ffmpegAvailable {
-		slog.Error("FFmpeg not found - encoding features will be disabled",
+		slog.Warn("FFmpeg not found - running in degraded mode",
 			"configured_path", cfg.GetFFmpegPath())
 	} else {
 		slog.Info("FFmpeg found", "path", ffmpegPath)
 	}
 
-	enc := encoder.New(cfg)
+	enc := encoder.New(cfg, ffmpegPath)
 
 	srv := NewServer(cfg, enc, ffmpegAvailable)
 

@@ -46,15 +46,17 @@ type EncoderController interface {
 
 // CommandHandler processes WebSocket commands.
 type CommandHandler struct {
-	cfg     *config.Config
-	encoder EncoderController
+	cfg             *config.Config
+	encoder         EncoderController
+	ffmpegAvailable bool
 }
 
 // NewCommandHandler creates a new command handler.
-func NewCommandHandler(cfg *config.Config, encoder EncoderController) *CommandHandler {
+func NewCommandHandler(cfg *config.Config, encoder EncoderController, ffmpegAvailable bool) *CommandHandler {
 	return &CommandHandler{
-		cfg:     cfg,
-		encoder: encoder,
+		cfg:             cfg,
+		encoder:         encoder,
+		ffmpegAvailable: ffmpegAvailable,
 	}
 }
 
@@ -108,6 +110,10 @@ func validateOutput(output *types.Output) error {
 }
 
 func (h *CommandHandler) handleAddOutput(cmd WSCommand) {
+	if !h.ffmpegAvailable {
+		slog.Warn("add_output: FFmpeg not available, cannot add output")
+		return
+	}
 	var output types.Output
 	if err := json.Unmarshal(cmd.Data, &output); err != nil {
 		slog.Warn("add_output: invalid JSON data", "error", err)
@@ -276,6 +282,11 @@ func (h *CommandHandler) handleAudioInputChange(input string) {
 	slog.Info("update_settings: changing audio input", "input", input)
 	if err := h.cfg.SetAudioInput(input); err != nil {
 		slog.Error("update_settings: failed to save audio input", "error", err)
+		return
+	}
+	// Don't start/restart encoder if FFmpeg is not available
+	if !h.ffmpegAvailable {
+		slog.Warn("update_settings: FFmpeg not available, encoder will not start")
 		return
 	}
 	go func() {

@@ -20,6 +20,9 @@ type CaptureConfig struct {
 	// DefaultDevice is used when no device is configured.
 	DefaultDevice string
 
+	// UsesFFmpeg indicates if this platform uses FFmpeg for capture.
+	UsesFFmpeg bool
+
 	// BuildArgs returns the command arguments for audio capture.
 	// The device parameter is the audio input device identifier.
 	BuildArgs func(device string) []string
@@ -27,7 +30,8 @@ type CaptureConfig struct {
 
 // BuildCaptureCommand returns the command and arguments for audio capture.
 // If device is empty, it attempts to use the default or auto-detect.
-func BuildCaptureCommand(device string) (cmd string, args []string, err error) {
+// The ffmpegPath parameter is used on platforms that use FFmpeg for capture.
+func BuildCaptureCommand(device, ffmpegPath string) (cmd string, args []string, err error) {
 	cfg := getPlatformConfig()
 
 	if device == "" {
@@ -43,5 +47,11 @@ func BuildCaptureCommand(device string) (cmd string, args []string, err error) {
 		device = devices[0].ID
 	}
 
-	return cfg.Command, cfg.BuildArgs(device), nil
+	// Use provided ffmpegPath on platforms that use FFmpeg for capture
+	command := cfg.Command
+	if cfg.UsesFFmpeg && ffmpegPath != "" {
+		command = ffmpegPath
+	}
+
+	return command, cfg.BuildArgs(device), nil
 }
