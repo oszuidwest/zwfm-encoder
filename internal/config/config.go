@@ -55,6 +55,7 @@ type NotificationsConfig struct {
 
 // Config holds all application configuration. It is safe for concurrent use.
 type Config struct {
+	FFmpegPath       string                 `json:"ffmpeg_path,omitempty"` // Path to FFmpeg binary (empty = use PATH)
 	Web              WebConfig              `json:"web"`
 	Audio            AudioConfig            `json:"audio"`
 	SilenceDetection SilenceDetectionConfig `json:"silence_detection,omitempty"`
@@ -258,6 +259,13 @@ func (c *Config) AudioInput() string {
 	return c.Audio.Input
 }
 
+// GetFFmpegPath returns the configured FFmpeg binary path.
+func (c *Config) GetFFmpegPath() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.FFmpegPath
+}
+
 // SetAudioInput updates the audio input device and saves the configuration.
 func (c *Config) SetAudioInput(input string) error {
 	c.mu.Lock()
@@ -398,6 +406,9 @@ func (c *Config) SetEmailConfig(host string, port int, fromName, username, passw
 
 // Snapshot is a point-in-time copy of configuration values.
 type Snapshot struct {
+	// FFmpeg
+	FFmpegPath string
+
 	// Web
 	WebPort     int
 	WebUser     string
@@ -433,6 +444,9 @@ func (c *Config) Snapshot() Snapshot {
 	defer c.mu.RUnlock()
 
 	return Snapshot{
+		// FFmpeg
+		FFmpegPath: c.FFmpegPath,
+
 		// Web
 		WebPort:     c.Web.Port,
 		WebUser:     c.Web.Username,

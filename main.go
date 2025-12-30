@@ -49,13 +49,27 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Check FFmpeg availability
+	ffmpegPath := util.ResolveFFmpegPath(cfg.GetFFmpegPath())
+	ffmpegAvailable := ffmpegPath != ""
+	if !ffmpegAvailable {
+		slog.Error("FFmpeg not found - encoding features will be disabled",
+			"configured_path", cfg.GetFFmpegPath())
+	} else {
+		slog.Info("FFmpeg found", "path", ffmpegPath)
+	}
+
 	enc := encoder.New(cfg)
 
-	srv := NewServer(cfg, enc)
+	srv := NewServer(cfg, enc, ffmpegAvailable)
 
-	slog.Info("starting encoder")
-	if err := enc.Start(); err != nil {
-		slog.Error("failed to start encoder", "error", err)
+	if ffmpegAvailable {
+		slog.Info("starting encoder")
+		if err := enc.Start(); err != nil {
+			slog.Error("failed to start encoder", "error", err)
+		}
+	} else {
+		slog.Warn("encoder not started - FFmpeg not available")
 	}
 
 	// Start web server.

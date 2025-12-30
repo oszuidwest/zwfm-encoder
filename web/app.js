@@ -153,6 +153,8 @@ document.addEventListener('alpine:init', () => {
 
         version: { current: '', latest: '', updateAvail: false, commit: '', build_time: '' },
 
+        ffmpegAvailable: true, // Assume available until we get status
+
         // Notification test state (unified object for all test types)
         testStates: {
             webhook: { pending: false, text: 'Test' },
@@ -392,6 +394,9 @@ document.addEventListener('alpine:init', () => {
          * @param {Object} msg - Status message with state, outputs, devices, settings
          */
         handleStatus(msg) {
+            // FFmpeg availability
+            this.ffmpegAvailable = msg.ffmpeg_available ?? true;
+
             this.encoder.state = msg.encoder.state;
             this.encoder.uptime = msg.encoder.uptime || '';
             this.encoder.sourceRetryCount = msg.encoder.source_retry_count || 0;

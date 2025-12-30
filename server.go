@@ -33,24 +33,26 @@ type indexData struct {
 
 // Server is an HTTP server that provides the web interface for the audio encoder.
 type Server struct {
-	config   *config.Config
-	encoder  *encoder.Encoder
-	sessions *server.SessionManager
-	commands *server.CommandHandler
-	version  *VersionChecker
+	config          *config.Config
+	encoder         *encoder.Encoder
+	sessions        *server.SessionManager
+	commands        *server.CommandHandler
+	version         *VersionChecker
+	ffmpegAvailable bool
 }
 
 // NewServer returns a new Server configured with the provided config and encoder.
-func NewServer(cfg *config.Config, enc *encoder.Encoder) *Server {
+func NewServer(cfg *config.Config, enc *encoder.Encoder, ffmpegAvailable bool) *Server {
 	sessions := server.NewSessionManager()
 	commands := server.NewCommandHandler(cfg, enc)
 
 	return &Server{
-		config:   cfg,
-		encoder:  enc,
-		sessions: sessions,
-		commands: commands,
-		version:  NewVersionChecker(),
+		config:          cfg,
+		encoder:         enc,
+		sessions:        sessions,
+		commands:        commands,
+		version:         NewVersionChecker(),
+		ffmpegAvailable: ffmpegAvailable,
 	}
 }
 
@@ -99,8 +101,9 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		status.OutputCount = len(cfg.Outputs)
 
 		return conn.WriteJSON(types.WSStatusResponse{
-			Type:             "status",
-			Encoder:          status,
+			Type:            "status",
+			FFmpegAvailable: s.ffmpegAvailable,
+			Encoder:         status,
 			Outputs:          cfg.Outputs,
 			OutputStatus:     s.encoder.AllOutputStatuses(cfg.Outputs),
 			Devices:          audio.ListDevices(),

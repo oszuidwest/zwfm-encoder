@@ -67,6 +67,14 @@
         <span class="alert-banner__message" x-text="banner.message"></span>
     </div>
 
+    <!-- FFmpeg not available banner - persistent, non-dismissable -->
+    <div class="alert-banner alert-banner--danger"
+         role="alert"
+         x-show="!ffmpegAvailable"
+         x-cloak>
+        <span class="alert-banner__message">FFmpeg not found. Install FFmpeg and restart the application.</span>
+    </div>
+
     <main class="container">
         <noscript>
             <p class="noscript-message">This application requires JavaScript to function.</p>
@@ -198,7 +206,10 @@
                 <h2>Outputs</h2>
                 <div class="card__actions">
                     <span class="badge" x-text="outputs.length"></span>
-                    <button class="card__add-btn" type="button" tabindex="0" aria-label="Add output" @click="showOutputForm()">
+                    <button class="card__add-btn" type="button" tabindex="0" aria-label="Add output"
+                                            :disabled="!ffmpegAvailable"
+                                            :title="!ffmpegAvailable ? 'FFmpeg not available' : ''"
+                                            @click="showOutputForm()">
                         <span class="icon-container" x-html="icons.plus"></span>
                         Add
                     </button>
