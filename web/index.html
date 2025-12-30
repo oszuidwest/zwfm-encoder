@@ -30,11 +30,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="format-detection" content="telephone=no">
-    <meta name="description" content="Web interface for Raspberry Pi audio encoder - stream audio to SRT servers">
-    <title>ZuidWest FM Encoder</title>
+    <meta name="description" content="{{.StationName}} - Audio Encoder">
+    <title>{{.StationName}}</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="canonical" href="/">
     <link rel="stylesheet" href="/style.css">
+    <style>{{.PrimaryCSS}}</style>
     <script src="/alpine.min.js" defer="defer"></script>
 </head>
 <body x-data="encoderApp()">
@@ -94,7 +95,7 @@
             <header class="header">
                 <div class="header__brand">
                     <span class="header__logo" x-html="icons.appLogo"></span>
-                    <h1 class="header__title">ZuidWest FM Encoder</h1>
+                    <h1 class="header__title">{{.StationName}}</h1>
                 </div>
                 <div class="header__actions">
                     <button class="icon-btn" type="button" tabindex="0" title="Settings" aria-label="Settings" @click="showSettings()">
@@ -365,7 +366,7 @@
                         <div class="form__row">
                             <div class="form__group">
                                 <label for="email-from-name">Sender Name</label>
-                                <input id="email-from-name" type="text" placeholder="ZuidWest FM Encoder" x-model="settings.email.fromName" @input="markSettingsDirty()">
+                                <input id="email-from-name" type="text" placeholder="{{.StationName}}" x-model="settings.email.fromName" @input="markSettingsDirty()">
                             </div>
                             <div class="form__group">
                                 <label for="email-username">Username</label>
@@ -393,7 +394,7 @@
                     <div class="settings__section about__section">
                         <div class="about__logo">
                             <span x-html="icons.appLogo"></span>
-                            <h2>ZuidWest FM Encoder</h2>
+                            <h2>{{.StationName}}</h2>
                         </div>
                         <div class="about__info">
                             <dl class="about__list">

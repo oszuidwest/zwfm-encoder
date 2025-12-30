@@ -130,7 +130,7 @@ func BuildEmailConfig(cfg config.Snapshot) *EmailConfig {
 func (n *SilenceNotifier) sendSilenceEmail(cfg config.Snapshot, duration float64) {
 	emailCfg := BuildEmailConfig(cfg)
 	util.LogNotifyResult(
-		func() error { return SendSilenceAlert(emailCfg, duration, cfg.SilenceThreshold) },
+		func() error { return SendSilenceAlert(emailCfg, cfg.StationName, duration, cfg.SilenceThreshold) },
 		"Silence email",
 	)
 }
@@ -139,7 +139,7 @@ func (n *SilenceNotifier) sendSilenceEmail(cfg config.Snapshot, duration float64
 func (n *SilenceNotifier) sendRecoveryEmail(cfg config.Snapshot, duration float64) {
 	emailCfg := BuildEmailConfig(cfg)
 	util.LogNotifyResult(
-		func() error { return SendRecoveryAlert(emailCfg, duration) },
+		func() error { return SendRecoveryAlert(emailCfg, cfg.StationName, duration) },
 		"Recovery email",
 	)
 }

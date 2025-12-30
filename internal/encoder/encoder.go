@@ -293,12 +293,14 @@ func (e *Encoder) StopOutput(outputID string) error {
 
 // TriggerTestEmail sends a test email to verify configuration.
 func (e *Encoder) TriggerTestEmail() error {
-	return notify.SendTestEmail(notify.BuildEmailConfig(e.config.Snapshot()))
+	cfg := e.config.Snapshot()
+	return notify.SendTestEmail(notify.BuildEmailConfig(cfg), cfg.StationName)
 }
 
 // TriggerTestWebhook sends a test webhook to verify configuration.
 func (e *Encoder) TriggerTestWebhook() error {
-	return notify.SendTestWebhook(e.config.Snapshot().WebhookURL)
+	cfg := e.config.Snapshot()
+	return notify.SendTestWebhook(cfg.WebhookURL, cfg.StationName)
 }
 
 // TriggerTestLog writes a test entry to verify log file configuration.

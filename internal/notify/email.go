@@ -14,12 +14,12 @@ import (
 type EmailConfig = types.EmailConfig
 
 // SendSilenceAlert sends an email notification for critical silence.
-func SendSilenceAlert(cfg *EmailConfig, duration, threshold float64) error {
+func SendSilenceAlert(cfg *EmailConfig, stationName string, duration, threshold float64) error {
 	if !util.IsConfigured(cfg.Host, cfg.Username, cfg.Recipients) {
 		return nil // Silently skip if not configured
 	}
 
-	subject := "[ALERT] Silence Detected - " + AppName
+	subject := "[ALERT] Silence Detected - " + stationName
 	body := fmt.Sprintf(
 		"Silence detected on the audio encoder.\n\n"+
 			"Duration:  %.1f seconds\n"+
@@ -33,12 +33,12 @@ func SendSilenceAlert(cfg *EmailConfig, duration, threshold float64) error {
 }
 
 // SendRecoveryAlert sends an email notification when audio recovers from silence.
-func SendRecoveryAlert(cfg *EmailConfig, silenceDuration float64) error {
+func SendRecoveryAlert(cfg *EmailConfig, stationName string, silenceDuration float64) error {
 	if !util.IsConfigured(cfg.Host, cfg.Username, cfg.Recipients) {
 		return nil // Silently skip if not configured
 	}
 
-	subject := "[OK] Audio Recovered - " + AppName
+	subject := "[OK] Audio Recovered - " + stationName
 	body := fmt.Sprintf(
 		"Audio recovered on the encoder.\n\n"+
 			"Silence lasted: %.1f seconds\n"+
@@ -50,7 +50,7 @@ func SendRecoveryAlert(cfg *EmailConfig, silenceDuration float64) error {
 }
 
 // SendTestEmail sends a test email to verify SMTP configuration.
-func SendTestEmail(cfg *EmailConfig) error {
+func SendTestEmail(cfg *EmailConfig, stationName string) error {
 	if cfg.Host == "" {
 		return fmt.Errorf("SMTP host not configured")
 	}
@@ -61,7 +61,7 @@ func SendTestEmail(cfg *EmailConfig) error {
 		return fmt.Errorf("email recipients not configured")
 	}
 
-	subject := "[TEST] " + AppName
+	subject := "[TEST] " + stationName
 	body := fmt.Sprintf(
 		"Test email from the audio encoder.\n\n"+
 			"Time: %s\n\n"+

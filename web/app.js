@@ -70,7 +70,7 @@ const SETTINGS_MAP = [
     { msgKey: 'silence_log_path', path: 'silenceLogPath', default: '' },
     { msgKey: 'email_smtp_host', path: 'email.host', default: '' },
     { msgKey: 'email_smtp_port', path: 'email.port', default: 587 },
-    { msgKey: 'email_from_name', path: 'email.fromName', default: 'ZuidWest FM Encoder' },
+    { msgKey: 'email_from_name', path: 'email.fromName', default: '' },
     { msgKey: 'email_username', path: 'email.username', default: '' },
     { msgKey: 'email_recipients', path: 'email.recipients', default: '' }
 ];
@@ -145,7 +145,7 @@ document.addEventListener('alpine:init', () => {
             silenceRecovery: 5,
             silenceWebhook: '',
             silenceLogPath: '',
-            email: { host: '', port: 587, fromName: 'ZuidWest FM Encoder', username: '', password: '', recipients: '' },
+            email: { host: '', port: 587, fromName: '', username: '', password: '', recipients: '' },
             platform: ''
         },
         originalSettings: null,

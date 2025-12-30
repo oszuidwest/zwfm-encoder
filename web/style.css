@@ -6,9 +6,7 @@
    ============================================================================= */
 
 :root {
-    /* Brand */
-    --brand: #e6007e;
-    --brand-hover: #cc006f;
+    /* Brand colors are injected via template - see {{.PrimaryCSS}} in HTML */
 
     /* Semantic state colors */
     --success: #22c55e;
@@ -97,8 +95,8 @@
     /* Small text (11px) - used for monospace labels */
     --text-xs: 0.6875rem;
 
-    /* Focus ring - used for accessible focus indicators */
-    --focus-ring: rgb(230 0 126 / 40%);
+    /* Focus ring - uses brand color with transparency via color-mix */
+    --focus-ring: color-mix(in srgb, var(--brand) 40%, transparent);
 
 }
 

@@ -33,7 +33,7 @@
   "space-tab-mixed-disabled": true,
   "spec-char-escape": true,
   "src-not-empty": true,
-  "style-disabled": true,
+  "style-disabled": false,
   "tag-no-obsolete": true,
   "tag-pair": true,
   "tagname-lowercase": true,
