@@ -3,70 +3,66 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Sign in to ZuidWest FM Encoder">
-    <title>Sign in - ZuidWest FM Encoder</title>
+    <meta name="description" content="Sign in to {{.StationName}}">
+    <title>{{.StationName}}</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="canonical" href="/login">
     <link rel="stylesheet" href="/style.css">
-    <script>
-        (function() {
-            const mq = window.matchMedia('(prefers-color-scheme: dark)');
-            if (mq.matches) document.documentElement.classList.add('dark');
-            mq.addEventListener('change', e => document.documentElement.classList.toggle('dark', e.matches));
-        })();
-    </script>
+    <style>{{.PrimaryCSS}}</style>
 </head>
-<body class="page page--login">
+<body class="page" data-variant="login">
     <main class="container">
         <noscript>
             <p class="noscript-message">This application requires JavaScript to function.</p>
         </noscript>
-        <section class="card card--login">
-            <div class="card__body">
-                <div class="login__header">
-                    <span id="login-logo" class="login__logo"></span>
-                    <h1 class="login__title">ZuidWest FM Encoder</h1>
-                    <p class="login__subtitle">Sign in to continue</p>
-                </div>
+        <section class="card" data-variant="login">
+            <div class="body">
+                <div class="login">
+                    <div class="branding">
+                        <span id="login-logo" class="logo"></span>
+                        <h1 class="title">{{.StationName}}</h1>
+                        <p class="subtitle">Sign in to continue</p>
+                    </div>
 
-                {{if .Error}}
-                <div class="alert alert--danger" role="alert" tabindex="-1" id="login-error">
-                    <span id="warning-icon" class="icon-container" aria-hidden="true"></span>
-                    <div>
-                        <strong>Sign in failed</strong>
-                        <p>Please check your username and password.</p>
+                    {{if .Error}}
+                    <div class="alert" data-variant="danger" role="alert" tabindex="-1" id="login-error">
+                        <span id="warning-icon" class="icon-container" aria-hidden="true"></span>
+                        <div>
+                            <strong>Sign in failed</strong>
+                            <p>Please check your username and password.</p>
+                        </div>
                     </div>
-                </div>
-                {{end}}
+                    {{end}}
 
-                <form method="POST" action="/login">
-                    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-                    <div class="form__group">
-                        <label for="username">Username</label>
-                        <input type="text" id="username" name="username" placeholder="Username" autocomplete="username" required autofocus>
-                    </div>
-                    <div class="form__group form__group--password">
-                        <label for="password">Password</label>
-                        <input type="password" id="password" name="password" placeholder="Password" autocomplete="current-password" required>
-                        <button type="button" class="icon-btn form__toggle" id="password-toggle" aria-label="Show Password">
-                            <span id="eye-icon"></span>
-                        </button>
-                    </div>
-                    <button type="submit" class="btn btn--primary btn--block">Sign in</button>
-                </form>
+                    <form method="POST" action="/login" class="form">
+                        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                        <div class="group">
+                            <label for="username">Username</label>
+                            <input type="text" id="username" name="username" placeholder="Username" autocomplete="username" required autofocus>
+                        </div>
+                        <div class="group" data-type="password">
+                            <label for="password">Password</label>
+                            <input type="password" id="password" name="password" placeholder="Password" autocomplete="current-password" required>
+                            <button type="button" class="icon-btn toggle" id="password-toggle" aria-label="Show Password">
+                                <span id="eye-icon"></span>
+                            </button>
+                        </div>
+                        <button type="submit" class="btn" data-variant="primary" data-block>Sign in</button>
+                    </form>
+                </div>
             </div>
         </section>
 
         <footer class="footer">
-            <div class="footer__links">
+            <div class="links">
                 <a rel="noopener" href="https://github.com/oszuidwest/zwfm-encoder" title="View source on GitHub" target="_blank">
                     <span id="github-icon" class="icon-container"></span>
                     GitHub
                 </a>
-                <span class="footer__sep">|</span>
-                <span>Version <span class="footer__version">{{.Version}}</span></span>
+                <span class="sep">|</span>
+                <span>Version <span class="version">{{.Version}}</span></span>
             </div>
-            <div class="footer__copyright">© {{.Year}} Streekomroep ZuidWest • MIT License</div>
+            <div class="copyright">© {{.Year}} Streekomroep ZuidWest • MIT License</div>
         </footer>
     </main>
 

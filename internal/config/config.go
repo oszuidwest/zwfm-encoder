@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sync"
 	"time"
@@ -17,14 +18,26 @@ import (
 
 // Configuration defaults.
 const (
-	DefaultWebPort          = 8080
-	DefaultWebUsername      = "admin"
-	DefaultWebPassword      = "encoder"
-	DefaultSilenceThreshold = -40.0
-	DefaultSilenceDuration  = 15.0
-	DefaultSilenceRecovery  = 5.0
-	DefaultEmailSMTPPort    = 587
-	DefaultEmailFromName    = "ZuidWest FM Encoder"
+	DefaultWebPort           = 8080
+	DefaultWebUsername       = "admin"
+	DefaultWebPassword       = "encoder"
+	DefaultSilenceThreshold  = -40.0
+	DefaultSilenceDuration   = 15.0
+	DefaultSilenceRecovery   = 5.0
+	DefaultEmailSMTPPort     = 587
+	DefaultStationName       = "ZuidWest FM"
+	DefaultStationColorLight = "#E6007E"
+	DefaultStationColorDark  = "#E6007E"
+)
+
+// Default email from name placeholder.
+const DefaultEmailFromName = DefaultStationName
+
+// Validation patterns.
+var (
+	// Station name: any printable characters except control chars (blocks CRLF injection in emails)
+	stationNamePattern  = regexp.MustCompile(`^[^\x00-\x1F\x7F]+$`)
+	stationColorPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 )
 
 // WebConfig is the web server configuration.
@@ -53,9 +66,17 @@ type NotificationsConfig struct {
 	Email      types.EmailConfig `json:"email,omitempty"`
 }
 
+// StationConfig is the station branding configuration.
+type StationConfig struct {
+	Name       string `json:"name"`
+	ColorLight string `json:"color_light"`
+	ColorDark  string `json:"color_dark"`
+}
+
 // Config holds all application configuration. It is safe for concurrent use.
 type Config struct {
 	FFmpegPath       string                 `json:"ffmpeg_path,omitempty"` // Path to FFmpeg binary (empty = use PATH)
+	Station          StationConfig          `json:"station"`
 	Web              WebConfig              `json:"web"`
 	Audio            AudioConfig            `json:"audio"`
 	SilenceDetection SilenceDetectionConfig `json:"silence_detection,omitempty"`
@@ -69,6 +90,11 @@ type Config struct {
 // New creates a new Config with default values.
 func New(filePath string) *Config {
 	return &Config{
+		Station: StationConfig{
+			Name:       DefaultStationName,
+			ColorLight: DefaultStationColorLight,
+			ColorDark:  DefaultStationColorDark,
+		},
 		Web: WebConfig{
 			Port:     DefaultWebPort,
 			Username: DefaultWebUsername,
@@ -100,11 +126,40 @@ func (c *Config) Load() error {
 	}
 
 	c.applyDefaults()
+
+	if err := c.validateStation(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateStation validates station configuration.
+func (c *Config) validateStation() error {
+	name := c.Station.Name
+	if name == "" || len(name) > 30 || !stationNamePattern.MatchString(name) {
+		return fmt.Errorf("invalid station name %q: must be 1-30 printable characters", name)
+	}
+	if !stationColorPattern.MatchString(c.Station.ColorLight) {
+		return fmt.Errorf("invalid station color_light %q: must be hex format (#RRGGBB)", c.Station.ColorLight)
+	}
+	if !stationColorPattern.MatchString(c.Station.ColorDark) {
+		return fmt.Errorf("invalid station color_dark %q: must be hex format (#RRGGBB)", c.Station.ColorDark)
+	}
 	return nil
 }
 
 // applyDefaults sets default values for zero-value fields.
 func (c *Config) applyDefaults() {
+	if c.Station.Name == "" {
+		c.Station.Name = DefaultStationName
+	}
+	if c.Station.ColorLight == "" {
+		c.Station.ColorLight = DefaultStationColorLight
+	}
+	if c.Station.ColorDark == "" {
+		c.Station.ColorDark = DefaultStationColorDark
+	}
 	if c.Web.Port == 0 {
 		c.Web.Port = DefaultWebPort
 	}
@@ -315,6 +370,11 @@ func (c *Config) SetEmailConfig(host string, port int, fromName, username, passw
 
 // Snapshot is a point-in-time copy of configuration values.
 type Snapshot struct {
+	// Station branding
+	StationName       string
+	StationColorLight string
+	StationColorDark  string
+
 	// FFmpeg
 	FFmpegPath string
 
@@ -353,6 +413,11 @@ func (c *Config) Snapshot() Snapshot {
 	defer c.mu.RUnlock()
 
 	return Snapshot{
+		// Station branding
+		StationName:       c.Station.Name,
+		StationColorLight: c.Station.ColorLight,
+		StationColorDark:  c.Station.ColorDark,
+
 		// FFmpeg
 		FFmpegPath: c.FFmpegPath,
 
@@ -376,7 +441,7 @@ func (c *Config) Snapshot() Snapshot {
 		// Email (with defaults)
 		EmailSMTPHost:   c.Notifications.Email.Host,
 		EmailSMTPPort:   cmp.Or(c.Notifications.Email.Port, DefaultEmailSMTPPort),
-		EmailFromName:   cmp.Or(c.Notifications.Email.FromName, DefaultEmailFromName),
+		EmailFromName:   cmp.Or(c.Notifications.Email.FromName, c.Station.Name),
 		EmailUsername:   c.Notifications.Email.Username,
 		EmailPassword:   c.Notifications.Email.Password,
 		EmailRecipients: c.Notifications.Email.Recipients,

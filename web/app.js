@@ -61,44 +61,14 @@ const DEFAULT_LEVELS = {
     silence_level: null
 };
 
-// Settings field mapping for WebSocket status sync
-const SETTINGS_MAP = [
-    { msgKey: 'silence_threshold', path: 'silenceThreshold', default: -40 },
-    { msgKey: 'silence_duration', path: 'silenceDuration', default: 15 },
-    { msgKey: 'silence_recovery', path: 'silenceRecovery', default: 5 },
-    { msgKey: 'silence_webhook', path: 'silenceWebhook', default: '' },
-    { msgKey: 'silence_log_path', path: 'silenceLogPath', default: '' },
-    { msgKey: 'email_smtp_host', path: 'email.host', default: '' },
-    { msgKey: 'email_smtp_port', path: 'email.port', default: 587 },
-    { msgKey: 'email_from_name', path: 'email.fromName', default: 'ZuidWest FM Encoder' },
-    { msgKey: 'email_username', path: 'email.username', default: '' },
-    { msgKey: 'email_recipients', path: 'email.recipients', default: '' }
-];
-
 /**
- * Sets a nested property value using dot-notation path.
+ * Creates a deep clone of an object using JSON serialization.
+ * Safe for plain objects without functions, undefined, or circular refs.
  *
- * @param {Object} obj - Target object to modify
- * @param {string} path - Dot-notation path (e.g., 'email.host')
- * @param {*} value - Value to set
+ * @param {Object} obj - Object to clone
+ * @returns {Object} Deep copy of the object
  */
-function setNestedValue(obj, path, value) {
-    const keys = path.split('.');
-    let current = obj;
-    for (let i = 0; i < keys.length - 1; i++) {
-        if (!Object.hasOwn(current, keys[i])) {
-            console.warn(`setNestedValue: invalid path '${path}' - key '${keys[i]}' not found`);
-            return;
-        }
-        current = current[keys[i]];
-    }
-    const finalKey = keys[keys.length - 1];
-    if (!Object.hasOwn(current, finalKey)) {
-        console.warn(`setNestedValue: invalid path '${path}' - final key '${finalKey}' not found`);
-        return;
-    }
-    current[finalKey] = value;
-}
+const deepClone = (obj) => JSON.parse(JSON.stringify(obj));
 
 document.addEventListener('alpine:init', () => {
     Alpine.data('encoderApp', () => ({
@@ -145,7 +115,7 @@ document.addEventListener('alpine:init', () => {
             silenceRecovery: 5,
             silenceWebhook: '',
             silenceLogPath: '',
-            email: { host: '', port: 587, fromName: 'ZuidWest FM Encoder', username: '', password: '', recipients: '' },
+            email: { host: '', port: 587, fromName: '', username: '', password: '', recipients: '' },
             platform: ''
         },
         originalSettings: null,
@@ -325,20 +295,20 @@ document.addEventListener('alpine:init', () => {
          * @param {Object} levels - Audio levels (left, right, peak_left, peak_right, silence_level)
          */
         handleLevels(levels) {
-            const prevSilenceClass = this.getSilenceClass();
+            const prevSilenceState = this.getSilenceState();
             this.levels = levels;
-            const newSilenceClass = this.getSilenceClass();
+            const newSilenceState = this.getSilenceState();
 
-            if (newSilenceClass !== prevSilenceClass) {
-                this.handleSilenceTransition(prevSilenceClass, newSilenceClass);
+            if (newSilenceState !== prevSilenceState) {
+                this.handleSilenceTransition(prevSilenceState, newSilenceState);
             }
 
             // Update banner message with current duration if silence banner is showing
             if (this.banner.visible && this.banner.type !== 'info' && levels.silence_duration) {
                 const duration = this.formatDuration(levels.silence_duration);
-                if (newSilenceClass === 'critical') {
+                if (newSilenceState === 'critical') {
                     this.banner.message = `Critical silence: ${duration}`;
-                } else if (newSilenceClass === 'warning') {
+                } else if (newSilenceState === 'warning') {
                     this.banner.message = `Silence detected: ${duration}`;
                 }
             }
@@ -353,8 +323,8 @@ document.addEventListener('alpine:init', () => {
 
         /**
          * Handles silence state transitions and shows appropriate banners.
-         * @param {string} prev - Previous silence class
-         * @param {string} next - New silence class
+         * @param {string} prev - Previous silence state
+         * @param {string} next - New silence state
          */
         handleSilenceTransition(prev, next) {
             const duration = this.formatDuration(this.levels.silence_duration || 0);
@@ -369,20 +339,20 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
-         * Returns escalating CSS class based on silence duration.
+         * Returns silence state for data-state attribute.
          * Thresholds are based on configured silenceDuration:
-         * - --silence-active: silenceDuration (alert triggered)
-         * - --silence-warning: silenceDuration * 2
-         * - --silence-critical: silenceDuration * 4
-         * @returns {string} BEM modifier class: '' | 'vu__indicator-dot--silence-active' | etc.
+         * - active: silenceDuration (alert triggered)
+         * - warning: silenceDuration * 2
+         * - critical: silenceDuration * 4
+         * @returns {string} Silence state: '' | 'active' | 'warning' | 'critical'
          */
-        getSilenceClass() {
+        getSilenceState() {
             if (!this.levels.silence_level) return '';
             const duration = this.levels.silence_duration || 0;
             const threshold = this.settings.silenceDuration || 15;
-            if (duration >= threshold * 4) return 'vu__indicator-dot--silence-critical';
-            if (duration >= threshold * 2) return 'vu__indicator-dot--silence-warning';
-            return 'vu__indicator-dot--silence-active';
+            if (duration >= threshold * 4) return 'critical';
+            if (duration >= threshold * 2) return 'warning';
+            return 'active';
         },
 
         /**
@@ -420,20 +390,20 @@ document.addEventListener('alpine:init', () => {
                 const isNowConnected = newStatus.stable;
 
                 if (wasNotConnected && isNowConnected) {
-                    // Trigger animation by temporarily adding class
+                    // Trigger animation by temporarily setting data attribute
                     this.$nextTick(() => {
-                        const dotElement = document.querySelector(`[data-output-id="${id}"] .output__dot`);
+                        const dotElement = document.querySelector(`[data-output-id="${id}"] .dot`);
                         if (dotElement) {
-                            dotElement.classList.add('output__dot--just-connected');
+                            dotElement.dataset.connected = 'true';
                             setTimeout(() => {
-                                dotElement.classList.remove('output__dot--just-connected');
+                                delete dotElement.dataset.connected;
                             }, 400);
                         }
                     });
                 }
             }
 
-            this.previousOutputStatuses = JSON.parse(JSON.stringify(newOutputStatuses));
+            this.previousOutputStatuses = deepClone(newOutputStatuses);
             this.outputStatuses = newOutputStatuses;
 
             for (const id in this.deletingOutputs) {
@@ -454,15 +424,21 @@ document.addEventListener('alpine:init', () => {
                 if (msg.settings?.audio_input) {
                     this.settings.audioInput = msg.settings.audio_input;
                 }
-                // Sync remaining settings from status message
-                for (const field of SETTINGS_MAP) {
-                    if (msg[field.msgKey] !== undefined) {
-                        setNestedValue(this.settings, field.path, msg[field.msgKey] || field.default);
-                    }
-                }
                 if (msg.settings?.platform !== undefined) {
                     this.settings.platform = msg.settings.platform;
                 }
+                // Silence detection settings
+                this.settings.silenceThreshold = msg.silence_threshold ?? -40;
+                this.settings.silenceDuration = msg.silence_duration ?? 15;
+                this.settings.silenceRecovery = msg.silence_recovery ?? 5;
+                this.settings.silenceWebhook = msg.silence_webhook ?? '';
+                this.settings.silenceLogPath = msg.silence_log_path ?? '';
+                // Email settings
+                this.settings.email.host = msg.email_smtp_host ?? '';
+                this.settings.email.port = msg.email_smtp_port ?? 587;
+                this.settings.email.fromName = msg.email_from_name ?? '';
+                this.settings.email.username = msg.email_username ?? '';
+                this.settings.email.recipients = msg.email_recipients ?? '';
             }
 
             if (msg.version) {
@@ -513,11 +489,11 @@ document.addEventListener('alpine:init', () => {
                 'output-form': 'output-form-view'
             };
             const viewId = viewIds[this.view] || 'settings-view';
-            const saveBtn = document.querySelector(`#${viewId} .nav-btn--save`);
+            const saveBtn = document.querySelector(`#${viewId} .nav-btn[data-action="save"]`);
             if (saveBtn) {
-                saveBtn.classList.add('nav-btn--saved');
+                saveBtn.dataset.saved = 'true';
                 setTimeout(() => {
-                    saveBtn.classList.remove('nav-btn--saved');
+                    delete saveBtn.dataset.saved;
                     this.showDashboard();
                 }, 600);
             } else {
@@ -530,7 +506,7 @@ document.addEventListener('alpine:init', () => {
          * Snapshot enables cancel/restore functionality.
          */
         showSettings() {
-            this.originalSettings = JSON.parse(JSON.stringify(this.settings));
+            this.originalSettings = deepClone(this.settings);
             this.settingsDirty = false;
             this.view = 'settings';
         },
@@ -549,7 +525,7 @@ document.addEventListener('alpine:init', () => {
          */
         cancelSettings() {
             if (this.originalSettings) {
-                this.settings = JSON.parse(JSON.stringify(this.originalSettings));
+                this.settings = deepClone(this.originalSettings);
             }
             this.showDashboard();
         },
@@ -704,55 +680,6 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
-         * Gets output status and deletion state.
-         * @deprecated Use getOutputDisplayData() for better performance
-         *
-         * @param {Object} output - Output object with id and created_at
-         * @returns {Object} Object with status and isDeleting properties
-         */
-        getOutputStatus(output) {
-            return {
-                status: this.outputStatuses[output.id] || {},
-                isDeleting: this.deletingOutputs[output.id] === output.created_at
-            };
-        },
-
-        /**
-         * Determines CSS state class for output status indicator.
-         * Priority: deleting > encoder stopped > failed > retrying > connected.
-         * @deprecated Use getOutputDisplayData().stateClass for better performance
-         *
-         * @param {Object} output - Output configuration object
-         * @returns {string} CSS class for state styling
-         */
-        getOutputStateClass(output) {
-            return this.getOutputDisplayData(output).stateClass;
-        },
-
-        /**
-         * Generates human-readable status text for output.
-         * @deprecated Use getOutputDisplayData().statusText for better performance
-         *
-         * @param {Object} output - Output configuration object
-         * @returns {string} Status text (e.g., 'Connected', 'Retry 2/5')
-         */
-        getOutputStatusText(output) {
-            return this.getOutputDisplayData(output).statusText;
-        },
-
-        /**
-         * Determines if error message should be shown for output.
-         * Shows error when output has failed state with error message.
-         * @deprecated Use getOutputDisplayData().showError for better performance
-         *
-         * @param {Object} output - Output configuration object
-         * @returns {boolean} True if error should be displayed
-         */
-        shouldShowError(output) {
-            return this.getOutputDisplayData(output).showError;
-        },
-
-        /**
          * Toggles VU meter display mode between peak and RMS.
          */
         toggleVuMode() {
@@ -875,7 +802,7 @@ document.addEventListener('alpine:init', () => {
             return {
                 time: date.toLocaleString(),
                 event: eventText,
-                eventClass: isStart ? 'log__entry--silence' : isEnd ? 'log__entry--recovery' : 'log__entry--test',
+                eventType: isStart ? 'silence' : isEnd ? 'recovery' : 'test',
                 // Only show threshold, duration is now in the event name for ended events
                 threshold: `${entry.threshold_db.toFixed(0)} dB`
             };

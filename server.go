@@ -13,21 +13,27 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
 	"github.com/oszuidwest/zwfm-encoder/internal/server"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 var loginTmpl = template.Must(template.New("login").Parse(loginHTML))
 var indexTmpl = template.Must(template.New("index").Parse(indexHTML))
+var faviconTmpl = template.Must(template.New("favicon").Parse(faviconSVG))
 
 type loginData struct {
-	Error     bool
-	CSRFToken string
-	Version   string
-	Year      int
+	Error       bool
+	CSRFToken   string
+	Version     string
+	Year        int
+	StationName string
+	PrimaryCSS  template.CSS
 }
 
 type indexData struct {
-	Version string
-	Year    int
+	Version     string
+	Year        int
+	StationName string
+	PrimaryCSS  template.CSS
 }
 
 // Server is an HTTP server that provides the web interface for the audio encoder.
@@ -205,7 +211,7 @@ func (s *Server) SetupRoutes() http.Handler {
 	// Public static assets (needed for login page styling)
 	mux.HandleFunc("/style.css", s.handlePublicStatic)
 	mux.HandleFunc("/icons.js", s.handlePublicStatic)
-	mux.HandleFunc("/favicon.svg", s.handlePublicStatic)
+	mux.HandleFunc("/favicon.svg", s.handleFavicon)
 
 	// Protected routes
 	mux.HandleFunc("/ws", auth(s.handleWebSocket))
@@ -231,6 +237,15 @@ func (s *Server) handlePublicStatic(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleFavicon serves the favicon with the configured station color.
+func (s *Server) handleFavicon(w http.ResponseWriter, r *http.Request) {
+	cfg := s.config.Snapshot()
+	w.Header().Set("Content-Type", "image/svg+xml")
+	if err := faviconTmpl.Execute(w, struct{ Color string }{Color: cfg.StationColorLight}); err != nil {
+		slog.Error("failed to render favicon", "error", err)
+	}
+}
+
 // serveStaticFile serves a static file by path and reports whether it was found.
 func serveStaticFile(w http.ResponseWriter, path string) bool {
 	file, ok := staticFiles[path]
@@ -253,10 +268,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	cfg := s.config.Snapshot()
 	data := loginData{
-		Version:   Version,
-		Year:      time.Now().Year(),
-		CSRFToken: s.sessions.CreateCSRFToken(),
+		Version:     Version,
+		Year:        time.Now().Year(),
+		CSRFToken:   s.sessions.CreateCSRFToken(),
+		StationName: cfg.StationName,
+		PrimaryCSS:  template.CSS(util.GenerateBrandCSS(cfg.StationColorLight, cfg.StationColorDark)),
 	}
 
 	if r.Method == http.MethodPost {
@@ -268,7 +286,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 		username := r.FormValue("username")
 		password := r.FormValue("password")
-		cfg := s.config.Snapshot()
 
 		if s.sessions.Login(w, r, username, password, cfg.WebUser, cfg.WebPassword) {
 			http.Redirect(w, r, "/", http.StatusFound)
@@ -320,11 +337,7 @@ var staticFiles = map[string]staticFile{
 		content:     alpineJS,
 		name:        "alpine.min.js",
 	},
-	"/favicon.svg": {
-		contentType: "image/svg+xml",
-		content:     faviconSVG,
-		name:        "favicon.svg",
-	},
+	// favicon.svg is served dynamically via handleFavicon
 }
 
 // handleStatic handles requests for embedded static web interface files.
@@ -336,10 +349,13 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 
 	// Serve index.html with dynamic placeholders.
 	if path == "/index.html" {
+		cfg := s.config.Snapshot()
 		w.Header().Set("Content-Type", "text/html")
 		if err := indexTmpl.Execute(w, indexData{
-			Version: Version,
-			Year:    time.Now().Year(),
+			Version:     Version,
+			Year:        time.Now().Year(),
+			StationName: cfg.StationName,
+			PrimaryCSS:  template.CSS(util.GenerateBrandCSS(cfg.StationColorLight, cfg.StationColorDark)),
 		}); err != nil {
 			slog.Error("failed to write index.html", "error", err)
 		}
