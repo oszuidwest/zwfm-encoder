@@ -9,13 +9,6 @@
     <link rel="canonical" href="/login">
     <link rel="stylesheet" href="/style.css">
     <style>{{.PrimaryCSS}}</style>
-    <script>
-        (function() {
-            const mq = window.matchMedia('(prefers-color-scheme: dark)');
-            if (mq.matches) document.documentElement.classList.add('dark');
-            mq.addEventListener('change', e => document.documentElement.classList.toggle('dark', e.matches));
-        })();
-    </script>
 </head>
 <body class="page page--login">
     <main class="container">

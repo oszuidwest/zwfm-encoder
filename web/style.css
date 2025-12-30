@@ -100,23 +100,25 @@
 
 }
 
-/* Dark theme overrides */
-.dark {
-    --surface-page: var(--neutral-900);
-    --surface-card: var(--neutral-800);
-    --surface-elevated: var(--neutral-950);
-    --surface-input: var(--neutral-700);
-    --text-primary: var(--neutral-50);
-    --text-secondary: var(--neutral-400);
-    --border-default: var(--neutral-700);
-    --border-strong: var(--neutral-600);
-    --vu-bg: var(--neutral-950);
-    --vu-peak: var(--neutral-300);
-    --warning-text: #fbbf24;
-    --warning-bg: rgb(250 204 21 / 15%);
-    --warning-border: #facc15;
-    --warning-icon: #fbbf24;
-    --stopped: var(--neutral-500);
+/* Dark theme overrides (system preference) */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --surface-page: var(--neutral-900);
+        --surface-card: var(--neutral-800);
+        --surface-elevated: var(--neutral-950);
+        --surface-input: var(--neutral-700);
+        --text-primary: var(--neutral-50);
+        --text-secondary: var(--neutral-400);
+        --border-default: var(--neutral-700);
+        --border-strong: var(--neutral-600);
+        --vu-bg: var(--neutral-950);
+        --vu-peak: var(--neutral-300);
+        --warning-text: #fbbf24;
+        --warning-bg: rgb(250 204 21 / 15%);
+        --warning-border: #facc15;
+        --warning-icon: #fbbf24;
+        --stopped: var(--neutral-500);
+    }
 }
 
 /* =============================================================================
@@ -563,9 +565,11 @@ select {
     cursor: pointer;
 }
 
-.dark select {
-    /* Lighter arrow color for dark mode (neutral-400) */
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239ca3af' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+@media (prefers-color-scheme: dark) {
+    select {
+        /* Lighter arrow color for dark mode (neutral-400) */
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239ca3af' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+    }
 }
 
 .input__group {
@@ -1234,8 +1238,10 @@ select {
     position: relative;
 }
 
-.dark .settings__tabs {
-    background: var(--neutral-700);
+@media (prefers-color-scheme: dark) {
+    .settings__tabs {
+        background: var(--neutral-700);
+    }
 }
 
 /* Sliding tab indicator - animated background behind active tab
@@ -1289,8 +1295,10 @@ select {
     -webkit-tap-highlight-color: transparent;
 }
 
-.dark .settings__tab {
-    color: var(--neutral-300);
+@media (prefers-color-scheme: dark) {
+    .settings__tab {
+        color: var(--neutral-300);
+    }
 }
 
 .settings__tab svg {
@@ -1307,14 +1315,14 @@ select {
     color: var(--neutral-800);
 }
 
-.dark .settings__tab:hover {
-    color: var(--neutral-100);
+@media (prefers-color-scheme: dark) {
+    .settings__tab:hover {
+        color: var(--neutral-100);
+    }
 }
 
 .settings__tab--active,
-.dark .settings__tab--active,
-.settings__tab--active:hover,
-.dark .settings__tab--active:hover {
+.settings__tab--active:hover {
     color: var(--brand);
     font-weight: 600;
 }
@@ -1697,8 +1705,10 @@ select {
     color: var(--warning-text);
 }
 
-.dark .log__entry--silence .log__event {
-    color: var(--warning);
+@media (prefers-color-scheme: dark) {
+    .log__entry--silence .log__event {
+        color: var(--warning);
+    }
 }
 
 .log__entry--recovery .log__event {

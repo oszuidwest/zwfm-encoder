@@ -241,7 +241,7 @@ func (s *Server) handlePublicStatic(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleFavicon(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
 	w.Header().Set("Content-Type", "image/svg+xml")
-	if err := faviconTmpl.Execute(w, struct{ Color string }{Color: cfg.StationColor}); err != nil {
+	if err := faviconTmpl.Execute(w, struct{ Color string }{Color: cfg.StationColorLight}); err != nil {
 		slog.Error("failed to render favicon", "error", err)
 	}
 }
@@ -274,7 +274,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Year:        time.Now().Year(),
 		CSRFToken:   s.sessions.CreateCSRFToken(),
 		StationName: cfg.StationName,
-		PrimaryCSS:  template.CSS(util.GenerateBrandCSS(cfg.StationColor)),
+		PrimaryCSS:  template.CSS(util.GenerateBrandCSS(cfg.StationColorLight, cfg.StationColorDark)),
 	}
 
 	if r.Method == http.MethodPost {
@@ -355,7 +355,7 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 			Version:     Version,
 			Year:        time.Now().Year(),
 			StationName: cfg.StationName,
-			PrimaryCSS:  template.CSS(util.GenerateBrandCSS(cfg.StationColor)),
+			PrimaryCSS:  template.CSS(util.GenerateBrandCSS(cfg.StationColorLight, cfg.StationColorDark)),
 		}); err != nil {
 			slog.Error("failed to write index.html", "error", err)
 		}

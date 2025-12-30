@@ -25,8 +25,9 @@ const (
 	DefaultSilenceDuration  = 15.0
 	DefaultSilenceRecovery  = 5.0
 	DefaultEmailSMTPPort    = 587
-	DefaultStationName      = "ZuidWest FM"
-	DefaultStationColor     = "#E6007E"
+	DefaultStationName       = "ZuidWest FM"
+	DefaultStationColorLight = "#E6007E"
+	DefaultStationColorDark  = "#E6007E"
 )
 
 // Default email from name placeholder.
@@ -66,8 +67,9 @@ type NotificationsConfig struct {
 
 // StationConfig is the station branding configuration.
 type StationConfig struct {
-	Name  string `json:"name"`
-	Color string `json:"color"`
+	Name       string `json:"name"`
+	ColorLight string `json:"color_light"`
+	ColorDark  string `json:"color_dark"`
 }
 
 // Config holds all application configuration. It is safe for concurrent use.
@@ -88,8 +90,9 @@ type Config struct {
 func New(filePath string) *Config {
 	return &Config{
 		Station: StationConfig{
-			Name:  DefaultStationName,
-			Color: DefaultStationColor,
+			Name:       DefaultStationName,
+			ColorLight: DefaultStationColorLight,
+			ColorDark:  DefaultStationColorDark,
 		},
 		Web: WebConfig{
 			Port:     DefaultWebPort,
@@ -135,8 +138,11 @@ func (c *Config) validateStation() error {
 	if !stationNamePattern.MatchString(c.Station.Name) {
 		return fmt.Errorf("invalid station name %q: must be 1-30 alphanumeric characters or spaces", c.Station.Name)
 	}
-	if !stationColorPattern.MatchString(c.Station.Color) {
-		return fmt.Errorf("invalid station color %q: must be hex format (#RRGGBB)", c.Station.Color)
+	if !stationColorPattern.MatchString(c.Station.ColorLight) {
+		return fmt.Errorf("invalid station color_light %q: must be hex format (#RRGGBB)", c.Station.ColorLight)
+	}
+	if !stationColorPattern.MatchString(c.Station.ColorDark) {
+		return fmt.Errorf("invalid station color_dark %q: must be hex format (#RRGGBB)", c.Station.ColorDark)
 	}
 	return nil
 }
@@ -146,8 +152,11 @@ func (c *Config) applyDefaults() {
 	if c.Station.Name == "" {
 		c.Station.Name = DefaultStationName
 	}
-	if c.Station.Color == "" {
-		c.Station.Color = DefaultStationColor
+	if c.Station.ColorLight == "" {
+		c.Station.ColorLight = DefaultStationColorLight
+	}
+	if c.Station.ColorDark == "" {
+		c.Station.ColorDark = DefaultStationColorDark
 	}
 	if c.Web.Port == 0 {
 		c.Web.Port = DefaultWebPort
@@ -360,8 +369,9 @@ func (c *Config) SetEmailConfig(host string, port int, fromName, username, passw
 // Snapshot is a point-in-time copy of configuration values.
 type Snapshot struct {
 	// Station branding
-	StationName  string
-	StationColor string
+	StationName       string
+	StationColorLight string
+	StationColorDark  string
 
 	// FFmpeg
 	FFmpegPath string
@@ -402,8 +412,9 @@ func (c *Config) Snapshot() Snapshot {
 
 	return Snapshot{
 		// Station branding
-		StationName:  c.Station.Name,
-		StationColor: c.Station.Color,
+		StationName:       c.Station.Name,
+		StationColorLight: c.Station.ColorLight,
+		StationColorDark:  c.Station.ColorDark,
 
 		// FFmpeg
 		FFmpegPath: c.FFmpegPath,
