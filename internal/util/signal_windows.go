@@ -3,12 +3,9 @@
 package util
 
 import (
-	"errors"
+	"io"
 	"os"
 )
-
-// ErrGracefulNotSupported indicates graceful shutdown is not supported.
-var ErrGracefulNotSupported = errors.New("graceful signal not supported on Windows")
 
 // ShutdownSignals returns the signals to listen for graceful shutdown.
 func ShutdownSignals() []os.Signal {
@@ -16,8 +13,20 @@ func ShutdownSignals() []os.Signal {
 }
 
 // GracefulSignal attempts graceful process termination.
+// On Windows, this is a no-op since we use stdin-based shutdown for FFmpeg.
 func GracefulSignal(p *os.Process) error {
-	// Return error so exec.Cmd will wait WaitDelay, then kill.
-	// This is safer than immediate kill - gives stdin EOF time to work.
-	return ErrGracefulNotSupported
+	// On Windows, we rely on StopFFmpegViaStdin instead.
+	// Return nil to avoid adding errors to the shutdown sequence.
+	return nil
+}
+
+// StopFFmpegViaStdin sends 'q' command to FFmpeg's stdin for graceful shutdown.
+// This is the preferred method on Windows where SIGINT is not supported.
+func StopFFmpegViaStdin(stdin io.WriteCloser) error {
+	if stdin == nil {
+		return nil
+	}
+	// Send 'q' to trigger FFmpeg's quit command
+	_, _ = stdin.Write([]byte("q"))
+	return stdin.Close()
 }

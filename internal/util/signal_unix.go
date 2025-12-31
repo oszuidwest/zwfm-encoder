@@ -3,6 +3,7 @@
 package util
 
 import (
+	"io"
 	"os"
 	"syscall"
 )
@@ -15,4 +16,15 @@ func ShutdownSignals() []os.Signal {
 // GracefulSignal attempts graceful process termination.
 func GracefulSignal(p *os.Process) error {
 	return p.Signal(syscall.SIGINT)
+}
+
+// StopFFmpegViaStdin is a no-op on Unix since we use SIGINT.
+// Provided for API compatibility with Windows.
+func StopFFmpegViaStdin(stdin io.WriteCloser) error {
+	// On Unix, FFmpeg is stopped via SIGINT, not stdin.
+	// Just close stdin if provided.
+	if stdin != nil {
+		return stdin.Close()
+	}
+	return nil
 }

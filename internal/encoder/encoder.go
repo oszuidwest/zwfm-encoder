@@ -52,6 +52,7 @@ type Encoder struct {
 	eventLogger         *eventlog.Logger
 	sourceCmd           *exec.Cmd
 	sourceCancel        context.CancelFunc
+	sourceStdin         io.WriteCloser
 	sourceStdout        io.ReadCloser
 	state               types.EncoderState
 	stopChan            chan struct{}
@@ -308,6 +309,7 @@ func (e *Encoder) Stop() error {
 	// Get references while holding lock
 	sourceProcess := e.sourceCmd
 	sourceCancel := e.sourceCancel
+	sourceStdin := e.sourceStdin
 	e.mu.Unlock()
 
 	// Collect all shutdown errors
@@ -323,7 +325,8 @@ func (e *Encoder) Stop() error {
 		errs = append(errs, fmt.Errorf("stop recording: %w", err))
 	}
 
-	// Send graceful termination signal to source.
+	// Graceful shutdown: use stdin 'q' command (Windows) or SIGINT (Unix).
+	_ = util.StopFFmpegViaStdin(sourceStdin)
 	if sourceProcess != nil && sourceProcess.Process != nil {
 		if err := util.GracefulSignal(sourceProcess.Process); err != nil {
 			slog.Warn("failed to send signal to source", "error", err)
@@ -366,6 +369,7 @@ func (e *Encoder) Stop() error {
 	e.state = types.StateStopped
 	e.sourceCmd = nil
 	e.sourceCancel = nil
+	e.sourceStdin = nil
 	e.mu.Unlock()
 
 	return errors.Join(errs...)
@@ -545,6 +549,13 @@ func (e *Encoder) runSource() (string, error) {
 	}
 	cmd.WaitDelay = types.ShutdownTimeout
 
+	// Create stdin pipe for graceful shutdown (especially needed on Windows).
+	stdinPipe, err := cmd.StdinPipe()
+	if err != nil {
+		cancel()
+		return "", err
+	}
+
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		cancel()
@@ -559,6 +570,7 @@ func (e *Encoder) runSource() (string, error) {
 		defer e.mu.Unlock()
 		e.sourceCmd = cmd
 		e.sourceCancel = cancel
+		e.sourceStdin = stdinPipe
 		e.sourceStdout = stdoutPipe
 		e.state = types.StateRunning
 		e.startTime = time.Now()
@@ -583,6 +595,7 @@ func (e *Encoder) runSource() (string, error) {
 		defer e.mu.Unlock()
 		e.sourceCmd = nil
 		e.sourceCancel = nil
+		e.sourceStdin = nil
 		e.sourceStdout = nil
 	}()
 
