@@ -590,9 +590,9 @@
 @layer components {
 
     /* =========================================================================
-       Header Component
+       App Header Component
        ========================================================================= */
-    @scope (.header) {
+    @scope (.app-header) {
         :scope {
             display: flex;
             align-items: center;
@@ -735,6 +735,7 @@
             background: var(--vu-bg);
             border-radius: var(--radius-lg);
             padding: 0.75rem;
+            margin-top: 1rem;
         }
 
         .meter-header {
@@ -1428,6 +1429,10 @@
        About Component
        ========================================================================= */
     @scope (.about) {
+        :scope:has(> .section) {
+            margin-bottom: 1rem;
+        }
+
         .section {
             text-align: center;
         }
