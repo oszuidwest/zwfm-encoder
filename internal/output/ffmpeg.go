@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 
+	"github.com/oszuidwest/zwfm-encoder/internal/ffmpeg"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
@@ -14,13 +15,9 @@ func BuildFFmpegArgs(output *types.Output) []string {
 	format := output.Format()
 	srtURL := BuildSRTURL(output)
 
-	args := []string{
-		"-f", "s16le",
-		"-ar", fmt.Sprintf("%d", types.SampleRate),
-		"-ac", fmt.Sprintf("%d", types.Channels),
-		"-hide_banner", "-loglevel", "warning",
-		"-i", "pipe:0", "-codec:a",
-	}
+	// Start with base input args, add output-specific flags
+	args := ffmpeg.BaseInputArgs()
+	args = append(args, "-hide_banner", "-loglevel", "warning", "-codec:a")
 	args = append(args, codecArgs...)
 	args = append(args, "-f", format, srtURL)
 	return args

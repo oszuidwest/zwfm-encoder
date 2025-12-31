@@ -14,6 +14,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/oszuidwest/zwfm-encoder/internal/ffmpeg"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
@@ -307,15 +308,8 @@ func (r *GenericRecorder) startEncoderLocked() error {
 	// Update filename with correct extension
 	r.currentFile = r.currentFile[:len(r.currentFile)-len(filepath.Ext(r.currentFile))] + "." + ext
 
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Build FFmpeg command
-	args := []string{
-		"-f", "s16le",
-		"-ar", fmt.Sprintf("%d", types.SampleRate),
-		"-ac", fmt.Sprintf("%d", types.Channels),
-		"-i", "pipe:0",
-	}
+	// Build FFmpeg command args
+	args := ffmpeg.BaseInputArgs()
 	args = append(args, "-c:a")
 	args = append(args, codecArgs...)
 	args = append(args,
@@ -326,30 +320,17 @@ func (r *GenericRecorder) startEncoderLocked() error {
 		r.currentFile,
 	)
 
-	cmd := exec.CommandContext(ctx, r.ffmpegPath, args...)
-
-	stdinPipe, err := cmd.StdinPipe()
+	// Start FFmpeg process
+	proc, err := ffmpeg.StartProcess(r.ffmpegPath, args)
 	if err != nil {
-		cancel()
-		return fmt.Errorf("create stdin pipe: %w", err)
+		return err
 	}
 
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	r.cmd = cmd
-	r.ctx = ctx
-	r.cancel = cancel
-	r.stdin = stdinPipe
-	r.stderr = &stderr
-
-	if err := cmd.Start(); err != nil {
-		cancel()
-		if closeErr := stdinPipe.Close(); closeErr != nil {
-			slog.Warn("failed to close stdin pipe", "id", r.id, "error", closeErr)
-		}
-		return fmt.Errorf("start ffmpeg: %w", err)
-	}
+	r.cmd = proc.Cmd
+	r.ctx = proc.Ctx
+	r.cancel = proc.Cancel
+	r.stdin = proc.Stdin
+	r.stderr = proc.Stderr
 
 	slog.Info("recorder encoding started", "id", r.id, "file", filepath.Base(r.currentFile), "codec", r.config.Codec)
 	return nil
