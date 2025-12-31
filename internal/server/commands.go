@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
+	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
 	"github.com/oszuidwest/zwfm-encoder/internal/recording"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
@@ -31,36 +32,18 @@ type WSCommand struct {
 	Data json.RawMessage `json:"data,omitempty"`
 }
 
-// EncoderController provides encoder control operations.
-type EncoderController interface {
-	State() types.EncoderState
-	Start() error
-	Stop() error
-	Restart() error
-	StartOutput(outputID string) error
-	StopOutput(outputID string) error
-	TriggerTestWebhook() error
-	TriggerTestLog() error
-	TriggerTestEmail() error
-	AddRecorder(cfg *types.Recorder) error
-	RemoveRecorder(id string) error
-	UpdateRecorder(cfg *types.Recorder) error
-	StartRecorder(id string) error
-	StopRecorder(id string) error
-}
-
 // CommandHandler processes WebSocket commands.
 type CommandHandler struct {
 	cfg             *config.Config
-	encoder         EncoderController
+	encoder         *encoder.Encoder
 	ffmpegAvailable bool
 }
 
 // NewCommandHandler creates a new command handler.
-func NewCommandHandler(cfg *config.Config, encoder EncoderController, ffmpegAvailable bool) *CommandHandler {
+func NewCommandHandler(cfg *config.Config, enc *encoder.Encoder, ffmpegAvailable bool) *CommandHandler {
 	return &CommandHandler{
 		cfg:             cfg,
-		encoder:         encoder,
+		encoder:         enc,
 		ffmpegAvailable: ffmpegAvailable,
 	}
 }
@@ -510,6 +493,31 @@ func readSilenceLog(logPath string, maxEntries int) ([]types.SilenceLogEntry, er
 	return entries, nil
 }
 
+// validateLocalPath checks that LocalPath is set and creates the directory.
+func validateLocalPath(recorder *types.Recorder) error {
+	if recorder.LocalPath == "" {
+		return fmt.Errorf("local_path is required")
+	}
+	if err := os.MkdirAll(recorder.LocalPath, 0o755); err != nil {
+		return fmt.Errorf("cannot create local_path directory: %w", err)
+	}
+	return nil
+}
+
+// validateS3Fields checks that required S3 fields are set.
+func validateS3Fields(recorder *types.Recorder) error {
+	if recorder.S3Bucket == "" {
+		return fmt.Errorf("s3_bucket is required")
+	}
+	if recorder.S3AccessKeyID == "" {
+		return fmt.Errorf("s3_access_key_id is required")
+	}
+	if recorder.S3SecretAccessKey == "" {
+		return fmt.Errorf("s3_secret_access_key is required")
+	}
+	return nil
+}
+
 // validateRecorder validates a recorder configuration.
 func validateRecorder(recorder *types.Recorder) error {
 	if err := util.ValidateRequired("name", recorder.Name); err != nil {
@@ -524,41 +532,22 @@ func validateRecorder(recorder *types.Recorder) error {
 	// Validate storage mode and required fields
 	switch recorder.StorageMode {
 	case types.StorageLocal:
-		if recorder.LocalPath == "" {
-			return fmt.Errorf("local_path is required for local storage mode")
+		if err := validateLocalPath(recorder); err != nil {
+			return err
 		}
 	case types.StorageS3:
-		if recorder.S3Bucket == "" {
-			return fmt.Errorf("s3_bucket is required for S3 storage mode")
-		}
-		if recorder.S3AccessKeyID == "" {
-			return fmt.Errorf("s3_access_key_id is required for S3 storage mode")
-		}
-		if recorder.S3SecretAccessKey == "" {
-			return fmt.Errorf("s3_secret_access_key is required for S3 storage mode")
+		if err := validateS3Fields(recorder); err != nil {
+			return err
 		}
 	case types.StorageBoth:
-		if recorder.LocalPath == "" {
-			return fmt.Errorf("local_path is required for both storage mode")
+		if err := validateLocalPath(recorder); err != nil {
+			return err
 		}
-		if recorder.S3Bucket == "" {
-			return fmt.Errorf("s3_bucket is required for both storage mode")
-		}
-		if recorder.S3AccessKeyID == "" {
-			return fmt.Errorf("s3_access_key_id is required for both storage mode")
-		}
-		if recorder.S3SecretAccessKey == "" {
-			return fmt.Errorf("s3_secret_access_key is required for both storage mode")
+		if err := validateS3Fields(recorder); err != nil {
+			return err
 		}
 	default:
 		return fmt.Errorf("invalid storage_mode: must be 'local', 's3', or 'both'")
-	}
-
-	// Create local directory if specified
-	if recorder.LocalPath != "" {
-		if err := os.MkdirAll(recorder.LocalPath, 0o755); err != nil {
-			return fmt.Errorf("cannot create local_path directory: %w", err)
-		}
 	}
 
 	// Apply defaults

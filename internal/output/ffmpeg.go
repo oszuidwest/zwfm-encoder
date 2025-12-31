@@ -15,7 +15,9 @@ func BuildFFmpegArgs(output *types.Output) []string {
 	srtURL := BuildSRTURL(output)
 
 	args := []string{
-		"-f", "s16le", "-ar", "48000", "-ac", "2",
+		"-f", "s16le",
+		"-ar", fmt.Sprintf("%d", types.SampleRate),
+		"-ac", fmt.Sprintf("%d", types.Channels),
 		"-hide_banner", "-loglevel", "warning",
 		"-i", "pipe:0", "-codec:a",
 	}

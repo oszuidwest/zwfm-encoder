@@ -404,6 +404,7 @@ func (c *Config) AudioInput() string {
 }
 
 // GetFFmpegPath returns the configured FFmpeg binary path.
+// Note: "Get" prefix used to avoid collision with FFmpegPath field.
 func (c *Config) GetFFmpegPath() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -591,21 +592,11 @@ func (s *Snapshot) HasLogPath() bool {
 }
 
 // GetRecordingAPIKey returns the API key for recording REST endpoints.
+// Note: "Get" prefix used to avoid collision with RecordingAPIKey field.
 func (c *Config) GetRecordingAPIKey() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.RecordingAPIKey
-}
-
-// RecordingAPIKeyPreview returns the last 4 characters of the API key for display.
-func (c *Config) RecordingAPIKeyPreview() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	key := c.RecordingAPIKey
-	if len(key) <= 4 {
-		return key
-	}
-	return "••••••••" + key[len(key)-4:]
 }
 
 // SetRecordingAPIKey updates the API key and saves the configuration.

@@ -188,24 +188,34 @@ func (m *Manager) StopAll() error {
 }
 
 // WriteAudio writes audio data to a specific output.
+// I/O is performed outside the lock to prevent blocking other operations.
 func (m *Manager) WriteAudio(outputID string, data []byte) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
+	// Get stdin reference under read lock
+	m.mu.RLock()
 	proc, exists := m.processes[outputID]
 	if !exists || !proc.running || proc.stdin == nil {
+		m.mu.RUnlock()
 		return nil
 	}
+	stdin := proc.stdin
+	m.mu.RUnlock()
 
-	if _, err := proc.stdin.Write(data); err != nil {
-		slog.Warn("output write failed, marking as stopped", "error", err)
-		proc.running = false
-		if proc.stdin != nil {
-			if closeErr := proc.stdin.Close(); closeErr != nil {
-				slog.Warn("failed to close stdin", "error", closeErr)
+	// Write outside lock to prevent blocking
+	if _, err := stdin.Write(data); err != nil {
+		// Update state under write lock on error
+		m.mu.Lock()
+		// Re-check proc still exists and hasn't been modified
+		if proc, exists := m.processes[outputID]; exists && proc.running {
+			slog.Warn("output write failed, marking as stopped", "output_id", outputID, "error", err)
+			proc.running = false
+			if proc.stdin != nil {
+				if closeErr := proc.stdin.Close(); closeErr != nil {
+					slog.Warn("failed to close stdin", "error", closeErr)
+				}
+				proc.stdin = nil
 			}
-			proc.stdin = nil
 		}
+		m.mu.Unlock()
 		return fmt.Errorf("write audio: %w", err)
 	}
 	return nil

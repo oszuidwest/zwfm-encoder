@@ -16,6 +16,7 @@ type Manager struct {
 	recorders          map[string]*GenericRecorder
 	apiKey             string
 	tempDir            string
+	ffmpegPath         string
 	maxDurationMinutes int  // Global max duration for on-demand recorders
 	running            bool // Whether encoder is running (recorders should be active)
 
@@ -23,8 +24,9 @@ type Manager struct {
 }
 
 // NewManager creates a new recording manager.
+// ffmpegPath is the path to the FFmpeg binary.
 // maxDurationMinutes is the global max duration for on-demand recorders.
-func NewManager(apiKey, tempDir string, maxDurationMinutes int) (*Manager, error) {
+func NewManager(ffmpegPath, apiKey, tempDir string, maxDurationMinutes int) (*Manager, error) {
 	if tempDir == "" {
 		tempDir = DefaultTempDir
 	}
@@ -38,6 +40,7 @@ func NewManager(apiKey, tempDir string, maxDurationMinutes int) (*Manager, error
 		recorders:          make(map[string]*GenericRecorder),
 		apiKey:             apiKey,
 		tempDir:            tempDir,
+		ffmpegPath:         ffmpegPath,
 		maxDurationMinutes: maxDurationMinutes,
 		cleanupStopCh:      make(chan struct{}),
 	}, nil
@@ -52,7 +55,7 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 		return fmt.Errorf("recorder already exists: %s", cfg.ID)
 	}
 
-	recorder, err := NewGenericRecorder(cfg, m.tempDir, m.maxDurationMinutes)
+	recorder, err := NewGenericRecorder(cfg, m.ffmpegPath, m.tempDir, m.maxDurationMinutes)
 	if err != nil {
 		return fmt.Errorf("create recorder: %w", err)
 	}
@@ -230,20 +233,6 @@ func (m *Manager) AllStatuses() map[string]types.RecorderStatus {
 	return statuses
 }
 
-// Recorder returns a specific recorder, or nil if not found.
-func (m *Manager) Recorder(id string) *GenericRecorder {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.recorders[id]
-}
-
-// RecorderCount returns the number of configured recorders.
-func (m *Manager) RecorderCount() int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return len(m.recorders)
-}
-
 // APIKey returns the configured API key.
 func (m *Manager) APIKey() string {
 	m.mu.RLock()
@@ -256,11 +245,4 @@ func (m *Manager) SetAPIKey(key string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.apiKey = key
-}
-
-// IsRunning returns whether the manager is in running state.
-func (m *Manager) IsRunning() bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.running
 }

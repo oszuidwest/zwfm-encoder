@@ -25,6 +25,7 @@ type GenericRecorder struct {
 
 	id                 string
 	config             types.Recorder
+	ffmpegPath         string
 	maxDurationMinutes int // For on-demand mode (from global config)
 
 	tempDir   string
@@ -39,19 +40,16 @@ type GenericRecorder struct {
 	stderr *bytes.Buffer
 
 	// Current recording
-	currentFile  string
-	startTime    time.Time
-	bytesWritten int64
+	currentFile string
+	startTime   time.Time
 
 	// S3 client
 	s3Client *s3.Client
 
 	// Upload queue
-	uploadQueue    chan uploadRequest
-	uploadWg       sync.WaitGroup
-	uploadStopCh   chan struct{}
-	lastUploadTime *time.Time
-	lastUploadErr  string
+	uploadQueue  chan uploadRequest
+	uploadWg     sync.WaitGroup
+	uploadStopCh chan struct{}
 
 	// Rotation timer (hourly mode)
 	rotationTimer *time.Timer
@@ -68,11 +66,13 @@ type uploadRequest struct {
 }
 
 // NewGenericRecorder creates a new recorder with the given configuration.
+// ffmpegPath is the path to the FFmpeg binary.
 // maxDurationMinutes is the global max duration for on-demand recorders.
-func NewGenericRecorder(cfg *types.Recorder, tempDir string, maxDurationMinutes int) (*GenericRecorder, error) {
+func NewGenericRecorder(cfg *types.Recorder, ffmpegPath, tempDir string, maxDurationMinutes int) (*GenericRecorder, error) {
 	r := &GenericRecorder{
 		id:                 cfg.ID,
 		config:             *cfg,
+		ffmpegPath:         ffmpegPath,
 		maxDurationMinutes: maxDurationMinutes,
 		tempDir:            tempDir,
 		state:              StateIdle,
@@ -214,17 +214,12 @@ func (r *GenericRecorder) WriteAudio(pcm []byte) error {
 		return nil
 	}
 
-	n, err := stdin.Write(pcm)
-	if err != nil {
+	if _, err := stdin.Write(pcm); err != nil {
 		r.mu.Lock()
 		r.lastError = err.Error()
 		r.mu.Unlock()
 		return err
 	}
-
-	r.mu.Lock()
-	r.bytesWritten += int64(n)
-	r.mu.Unlock()
 
 	return nil
 }
@@ -317,8 +312,8 @@ func (r *GenericRecorder) startEncoderLocked() error {
 	// Build FFmpeg command
 	args := []string{
 		"-f", "s16le",
-		"-ar", fmt.Sprintf("%d", SampleRate),
-		"-ac", fmt.Sprintf("%d", Channels),
+		"-ar", fmt.Sprintf("%d", types.SampleRate),
+		"-ac", fmt.Sprintf("%d", types.Channels),
 		"-i", "pipe:0",
 	}
 	args = append(args, "-c:a")
@@ -331,7 +326,7 @@ func (r *GenericRecorder) startEncoderLocked() error {
 		r.currentFile,
 	)
 
-	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	cmd := exec.CommandContext(ctx, r.ffmpegPath, args...)
 
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
@@ -347,7 +342,6 @@ func (r *GenericRecorder) startEncoderLocked() error {
 	r.cancel = cancel
 	r.stdin = stdinPipe
 	r.stderr = &stderr
-	r.bytesWritten = 0
 
 	if err := cmd.Start(); err != nil {
 		cancel()
@@ -513,19 +507,13 @@ func (r *GenericRecorder) uploadFile(req uploadRequest) {
 	})
 
 	if err != nil {
-		r.mu.Lock()
-		r.lastUploadErr = err.Error()
-		r.mu.Unlock()
 		slog.Error("upload failed", "id", r.id, "s3_key", req.s3Key, "error", err)
 		return
 	}
 
-	now := time.Now()
-	r.mu.Lock()
-	r.lastUploadTime = &now
-	r.lastUploadErr = ""
+	r.mu.RLock()
 	storageMode := r.config.StorageMode
-	r.mu.Unlock()
+	r.mu.RUnlock()
 
 	slog.Info("upload completed", "id", r.id, "s3_key", req.s3Key)
 
@@ -639,11 +627,6 @@ func (r *GenericRecorder) isS3Configured() bool {
 // createS3Client creates an S3 client for this recorder.
 func (r *GenericRecorder) createS3Client() (*s3.Client, error) {
 	return createS3Client(RecorderToS3Config(&r.config))
-}
-
-// TestS3 tests the S3 connection for this recorder.
-func (r *GenericRecorder) TestS3() error {
-	return TestS3Connection(RecorderToS3Config(&r.config))
 }
 
 // sanitizeFilename removes or replaces characters that are invalid in filenames.

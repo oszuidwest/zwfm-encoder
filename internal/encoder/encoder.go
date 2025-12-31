@@ -87,7 +87,7 @@ func (e *Encoder) InitRecording() error {
 		return nil
 	}
 
-	mgr, err := recording.NewManager(apiKey, "", snap.RecordingMaxDurationMinutes)
+	mgr, err := recording.NewManager(e.ffmpegPath, apiKey, "", snap.RecordingMaxDurationMinutes)
 	if err != nil {
 		return fmt.Errorf("create recording manager: %w", err)
 	}
@@ -101,13 +101,6 @@ func (e *Encoder) InitRecording() error {
 
 	e.recordingManager = mgr
 	return nil
-}
-
-// RecordingManager returns the recording manager, or nil if not initialized.
-func (e *Encoder) RecordingManager() *recording.Manager {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.recordingManager
 }
 
 // AllRecorderStatuses returns status for all configured recorders.

@@ -1,12 +1,17 @@
 package audio
 
-import "time"
+import (
+	"sync"
+	"time"
+)
 
 // PeakHoldDuration is how long peaks are held before decay.
 const PeakHoldDuration = 1500 * time.Millisecond
 
 // PeakHolder tracks peak-hold state for VU meters.
+// It is safe for concurrent use.
 type PeakHolder struct {
+	mu            sync.Mutex
 	heldPeakL     float64
 	heldPeakR     float64
 	peakHoldTimeL time.Time
@@ -23,6 +28,8 @@ func NewPeakHolder() *PeakHolder {
 
 // Update refreshes held peak values based on current peaks and elapsed time.
 func (p *PeakHolder) Update(peakL, peakR float64, now time.Time) (heldL, heldR float64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if peakL >= p.heldPeakL || now.Sub(p.peakHoldTimeL) > PeakHoldDuration {
 		p.heldPeakL = peakL
 		p.peakHoldTimeL = now
@@ -36,6 +43,8 @@ func (p *PeakHolder) Update(peakL, peakR float64, now time.Time) (heldL, heldR f
 
 // Reset clears held peak values to minimum levels.
 func (p *PeakHolder) Reset() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.heldPeakL = MinDB
 	p.heldPeakR = MinDB
 	p.peakHoldTimeL = time.Time{}

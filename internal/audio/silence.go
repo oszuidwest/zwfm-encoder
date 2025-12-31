@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"sync"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
@@ -27,7 +28,9 @@ type SilenceEvent struct {
 }
 
 // SilenceDetector tracks audio silence state and generates detection events.
+// It is safe for concurrent use.
 type SilenceDetector struct {
+	mu              sync.Mutex
 	silenceStart    time.Time // when current silence period started
 	recoveryStart   time.Time // when audio returned after silence
 	inSilence       bool      // currently in confirmed silence state
@@ -41,6 +44,9 @@ func NewSilenceDetector() *SilenceDetector {
 
 // Update checks audio levels and returns a SilenceEvent describing what happened.
 func (d *SilenceDetector) Update(dbL, dbR float64, cfg SilenceConfig, now time.Time) SilenceEvent {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	audioIsSilent := dbL < cfg.Threshold && dbR < cfg.Threshold
 
 	event := SilenceEvent{}
@@ -103,6 +109,8 @@ func (d *SilenceDetector) Update(dbL, dbR float64, cfg SilenceConfig, now time.T
 
 // Reset clears the silence detection state.
 func (d *SilenceDetector) Reset() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	d.silenceStart = time.Time{}
 	d.recoveryStart = time.Time{}
 	d.inSilence = false

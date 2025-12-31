@@ -37,6 +37,14 @@ const (
 	PollInterval = 50 * time.Millisecond
 )
 
+// Audio format constants for PCM capture and encoding.
+const (
+	// SampleRate is the audio sample rate in Hz.
+	SampleRate = 48000
+	// Channels is the number of audio channels (stereo).
+	Channels = 2
+)
+
 // Output represents a single SRT output destination.
 type Output struct {
 	ID         string `json:"id"`                    // Unique identifier
@@ -87,20 +95,30 @@ var CodecPresets = map[string]CodecPreset{
 // DefaultCodec is used when an unknown codec is specified.
 const DefaultCodec = "wav"
 
-// CodecArgs returns FFmpeg codec arguments for this output's codec.
-func (o *Output) CodecArgs() []string {
-	if preset, ok := CodecPresets[o.Codec]; ok {
+// CodecArgsFor returns FFmpeg codec arguments for the given codec name.
+func CodecArgsFor(codec string) []string {
+	if preset, ok := CodecPresets[codec]; ok {
 		return preset.Args
 	}
 	return CodecPresets[DefaultCodec].Args
 }
 
-// Format returns the FFmpeg output format for this output's codec.
-func (o *Output) Format() string {
-	if preset, ok := CodecPresets[o.Codec]; ok {
+// FormatFor returns the FFmpeg output format for the given codec name.
+func FormatFor(codec string) string {
+	if preset, ok := CodecPresets[codec]; ok {
 		return preset.Format
 	}
 	return CodecPresets[DefaultCodec].Format
+}
+
+// CodecArgs returns FFmpeg codec arguments for this output's codec.
+func (o *Output) CodecArgs() []string {
+	return CodecArgsFor(o.Codec)
+}
+
+// Format returns the FFmpeg output format for this output's codec.
+func (o *Output) Format() string {
+	return FormatFor(o.Codec)
 }
 
 // OutputStatus contains runtime status for an output.
@@ -169,18 +187,12 @@ func (r *Recorder) IsEnabled() bool {
 
 // CodecArgs returns FFmpeg codec arguments for this recorder's codec.
 func (r *Recorder) CodecArgs() []string {
-	if preset, ok := CodecPresets[r.Codec]; ok {
-		return preset.Args
-	}
-	return CodecPresets[DefaultCodec].Args
+	return CodecArgsFor(r.Codec)
 }
 
 // Format returns the FFmpeg output format for this recorder's codec.
 func (r *Recorder) Format() string {
-	if preset, ok := CodecPresets[r.Codec]; ok {
-		return preset.Format
-	}
-	return CodecPresets[DefaultCodec].Format
+	return FormatFor(r.Codec)
 }
 
 // RecorderStatus contains runtime status for a recorder.

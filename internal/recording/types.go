@@ -38,7 +38,6 @@ const (
 // S3Config holds S3-compatible storage configuration.
 type S3Config struct {
 	Endpoint        string `json:"endpoint,omitempty"`          // Custom S3 endpoint (empty for AWS)
-	Region          string `json:"region,omitempty"`            // AWS region
 	Bucket          string `json:"bucket,omitempty"`            // S3 bucket name
 	AccessKeyID     string `json:"access_key_id,omitempty"`     // AWS access key ID
 	SecretAccessKey string `json:"secret_access_key,omitempty"` // AWS secret access key
@@ -51,14 +50,6 @@ func (c *S3Config) IsConfigured() bool {
 
 // DefaultTempDir is the default temporary directory for recordings.
 const DefaultTempDir = "/tmp/encoder-recordings"
-
-// FFmpeg configuration for audio encoding.
-const (
-	// SampleRate is the audio sample rate.
-	SampleRate = 48000
-	// Channels is the number of audio channels.
-	Channels = 2
-)
 
 // truncateToHour truncates a time to the start of its hour.
 func truncateToHour(t time.Time) time.Time {
