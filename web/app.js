@@ -541,9 +541,9 @@ document.addEventListener('alpine:init', () => {
                 const oldStatus = this.previousOutputStatuses[id] || {};
                 const newStatus = newOutputStatuses[id] || {};
 
-                // Check if status just became stable (connected)
-                const wasNotConnected = !oldStatus.stable;
-                const isNowConnected = newStatus.stable;
+                // Check if status just became connected
+                const wasNotConnected = oldStatus.state !== 'connected';
+                const isNowConnected = newStatus.state === 'connected';
 
                 if (wasNotConnected && isNowConnected) {
                     // Trigger animation via reactive state instead of DOM manipulation
@@ -1037,28 +1037,52 @@ document.addEventListener('alpine:init', () => {
                 };
             }
 
-            // Compute state class
-            let stateClass;
-            if (isDeleting) stateClass = 'state-warning';
-            else if (status.stable) stateClass = 'state-success';
-            else if (status.given_up) stateClass = 'state-danger';
-            else if (status.retry_count > 0) stateClass = 'state-warning';
-            else if (status.running) stateClass = 'state-warning';
-            else if (!this.encoderRunning) stateClass = 'state-stopped';
-            else stateClass = 'state-warning';
+            // Handle deleting state
+            if (isDeleting) {
+                return {
+                    stateClass: 'state-warning',
+                    statusText: 'Deleting...',
+                    showError: false,
+                    lastError: ''
+                };
+            }
 
-            // Compute status text
-            let statusText;
-            if (isDeleting) statusText = 'Deleting...';
-            else if (status.stable) statusText = 'Connected';
-            else if (status.given_up) statusText = 'Failed';
-            else if (status.retry_count > 0) statusText = `Retry ${status.retry_count}/${status.max_retries}`;
-            else if (status.running) statusText = 'Connecting...';
-            else if (!this.encoderRunning) statusText = 'Offline';
-            else statusText = 'Connecting...';
+            // State-based rendering (consistent with recorder states)
+            let stateClass = 'state-stopped';
+            let statusText = 'Offline';
 
-            // Compute error visibility
-            const showError = !isDeleting && (status.given_up || status.retry_count > 0) && status.last_error;
+            switch (status.state) {
+                case 'connected':
+                    stateClass = 'state-success';
+                    statusText = 'Connected';
+                    break;
+                case 'starting':
+                    stateClass = 'state-warning';
+                    statusText = 'Connecting...';
+                    break;
+                case 'stopping':
+                    stateClass = 'state-warning';
+                    statusText = 'Stopping...';
+                    break;
+                case 'error':
+                    stateClass = 'state-warning';
+                    statusText = status.retry_count > 0
+                        ? `Retry ${status.retry_count}/${status.max_retries}`
+                        : 'Error';
+                    break;
+                case 'given_up':
+                    stateClass = 'state-danger';
+                    statusText = 'Failed';
+                    break;
+                default:
+                    // Handles 'stopped' and any unknown states
+                    stateClass = 'state-stopped';
+                    statusText = 'Offline';
+                    break;
+            }
+
+            // Show error for error and given_up states
+            const showError = (status.state === 'error' || status.state === 'given_up') && status.last_error;
 
             return {
                 stateClass,

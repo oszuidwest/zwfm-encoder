@@ -205,6 +205,9 @@ func (e *Encoder) Start() error {
 		return ErrAlreadyRunning
 	}
 
+	// Reset any outputs that were in given_up state from previous run
+	e.outputManager.ResetAllGivenUp()
+
 	e.state = types.StateStarting
 	e.stopChan = make(chan struct{})
 	e.retryCount = 0
@@ -327,6 +330,12 @@ func (e *Encoder) StartOutput(outputID string) error {
 // StopOutput stops an output by ID.
 func (e *Encoder) StopOutput(outputID string) error {
 	return e.outputManager.Stop(outputID)
+}
+
+// ClearOutputErrorState clears error/given_up state for an output.
+// Called when output config is updated to allow retry.
+func (e *Encoder) ClearOutputErrorState(outputID string) {
+	e.outputManager.ClearErrorState(outputID)
 }
 
 // TriggerTestEmail sends a test email to verify configuration.

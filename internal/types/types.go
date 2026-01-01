@@ -123,13 +123,11 @@ func (o *Output) Format() string {
 
 // OutputStatus contains runtime status for an output.
 type OutputStatus struct {
-	Running    bool   `json:"running"`              // FFmpeg process is running
-	Stable     bool   `json:"stable,omitzero"`      // Connection is stable
+	State      string `json:"state"`                // stopped, starting, connected, error, stopping, given_up
 	Disabled   bool   `json:"disabled,omitzero"`    // Output is disabled in config
 	LastError  string `json:"last_error,omitzero"`  // Most recent error
 	RetryCount int    `json:"retry_count,omitzero"` // Current retry attempt
 	MaxRetries int    `json:"max_retries"`          // Maximum retry attempts
-	GivenUp    bool   `json:"given_up,omitzero"`    // Max retries exhausted
 }
 
 // RotationMode determines how recordings are split into files.

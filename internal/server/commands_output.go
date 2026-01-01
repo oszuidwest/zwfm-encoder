@@ -133,6 +133,9 @@ func (h *CommandHandler) handleUpdateOutput(cmd WSCommand) {
 	}
 	slog.Info("update_output: updated output", "output_id", updated.ID, "host", updated.Host, "port", updated.Port)
 
+	// Clear any error/given_up state so output can retry with new config
+	h.encoder.ClearOutputErrorState(updated.ID)
+
 	// Handle output state changes when encoder is running
 	if h.encoder.State() == types.StateRunning {
 		switch {

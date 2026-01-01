@@ -43,16 +43,17 @@ type Manager struct {
 // Concurrency: stdinMu protects stdin from concurrent access.
 // This prevents a race where WriteAudio() writes while Stop() closes stdin.
 type Process struct {
-	cmd         *exec.Cmd
-	ctx         context.Context
-	cancelCause context.CancelCauseFunc
-	stdin       io.WriteCloser
-	stdinMu     sync.Mutex // Protects stdin I/O (Write + Close)
-	running     bool
-	lastError   string
-	startTime   time.Time
-	retryCount  int
-	backoff     *util.Backoff
+	cmd           *exec.Cmd
+	ctx           context.Context
+	cancelCause   context.CancelCauseFunc
+	stdin         io.WriteCloser
+	stdinMu       sync.Mutex // Protects stdin I/O (Write + Close)
+	state         OutputState
+	lastError     string
+	startTime     time.Time
+	retryCount    int
+	backoff       *util.Backoff
+	startingTimer *time.Timer // Timer for starting timeout (30s)
 }
 
 // NewManager creates a new output manager with the specified FFmpeg binary path.
@@ -63,14 +64,27 @@ func NewManager(ffmpegPath string) *Manager {
 	}
 }
 
-// Start starts an output FFmpeg process.
+// Start starts an output FFmpeg process asynchronously.
+// Returns immediately after setting state to "starting".
+// The actual FFmpeg startup happens in a background goroutine.
 func (m *Manager) Start(output *types.Output) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	existing, exists := m.processes[output.ID]
-	if exists && existing.running {
-		return nil // Already running
+	if exists {
+		switch existing.state {
+		case StateStarting, StateConnected:
+			return nil // Already running or starting
+		case StateGivenUp:
+			// Reset given_up state on new start attempt
+			existing.state = StateStopped
+			existing.retryCount = 0
+			if existing.backoff != nil {
+				existing.backoff.Reset()
+			}
+			existing.lastError = ""
+		}
 	}
 
 	// Preserve retry state from existing entry, or create fresh
@@ -84,9 +98,28 @@ func (m *Manager) Start(output *types.Output) error {
 		backoff = util.NewBackoff(types.InitialRetryDelay, types.MaxRetryDelay)
 	}
 
+	// Create process entry with starting state
+	proc := &Process{
+		state:      StateStarting,
+		lastError:  "",
+		startTime:  time.Now(),
+		retryCount: retryCount,
+		backoff:    backoff,
+	}
+
+	m.processes[output.ID] = proc
+
+	// Start FFmpeg in background goroutine
+	go m.startAsync(output.ID, output)
+
+	return nil
+}
+
+// startAsync performs the actual FFmpeg startup in a background goroutine.
+func (m *Manager) startAsync(outputID string, output *types.Output) {
 	args := BuildFFmpegArgs(output)
 
-	slog.Info("starting output", "output_id", output.ID, "host", output.Host, "port", output.Port)
+	slog.Info("starting output", "output_id", outputID, "host", output.Host, "port", output.Port)
 
 	ctx, cancelCause := context.WithCancelCause(context.Background())
 	cmd := exec.CommandContext(ctx, m.ffmpegPath, args...)
@@ -94,35 +127,125 @@ func (m *Manager) Start(output *types.Output) error {
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
 		cancelCause(errors.New("failed to create stdin pipe"))
-		return fmt.Errorf("stdin pipe: %w", err)
+		m.transitionToError(outputID, fmt.Sprintf("stdin pipe: %v", err))
+		return
 	}
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
-	proc := &Process{
-		cmd:         cmd,
-		ctx:         ctx,
-		cancelCause: cancelCause,
-		stdin:       stdinPipe,
-		running:     true,
-		startTime:   time.Now(),
-		retryCount:  retryCount,
-		backoff:     backoff,
+	// Update process with cmd and stdin
+	m.mu.Lock()
+	proc, exists := m.processes[outputID]
+	if !exists || proc.state != StateStarting {
+		m.mu.Unlock()
+		cancelCause(errors.New("output state changed during startup"))
+		_ = stdinPipe.Close()
+		return
 	}
 
-	m.processes[output.ID] = proc
+	proc.cmd = cmd
+	proc.ctx = ctx
+	proc.cancelCause = cancelCause
+	proc.stdin = stdinPipe
+	m.mu.Unlock()
 
 	if err := cmd.Start(); err != nil {
 		cancelCause(fmt.Errorf("failed to start: %w", err))
-		if closeErr := stdinPipe.Close(); closeErr != nil {
-			slog.Warn("failed to close stdin pipe", "error", closeErr)
-		}
-		delete(m.processes, output.ID)
-		return fmt.Errorf("start ffmpeg: %w", err)
+		_ = stdinPipe.Close()
+		m.transitionToError(outputID, fmt.Sprintf("start ffmpeg: %v", err))
+		return
 	}
 
-	return nil
+	// Start the starting timeout timer (30 seconds)
+	m.mu.Lock()
+	if proc, exists := m.processes[outputID]; exists && proc.state == StateStarting {
+		proc.startingTimer = time.AfterFunc(StartingTimeout, func() {
+			m.handleStartingTimeout(outputID)
+		})
+	}
+	m.mu.Unlock()
+}
+
+// transitionToError moves an output to error state.
+func (m *Manager) transitionToError(outputID, errMsg string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	proc, exists := m.processes[outputID]
+	if !exists {
+		return
+	}
+
+	proc.state = StateError
+	proc.lastError = errMsg
+
+	// Stop the starting timer if running
+	if proc.startingTimer != nil {
+		proc.startingTimer.Stop()
+		proc.startingTimer = nil
+	}
+
+	slog.Error("output error", "output_id", outputID, "error", errMsg)
+}
+
+// handleStartingTimeout is called when starting state exceeds 30 seconds.
+func (m *Manager) handleStartingTimeout(outputID string) {
+	m.mu.Lock()
+	proc, exists := m.processes[outputID]
+	if !exists || proc.state != StateStarting {
+		m.mu.Unlock()
+		return
+	}
+	m.mu.Unlock()
+
+	slog.Warn("output starting timeout exceeded", "output_id", outputID, "timeout", StartingTimeout)
+	m.transitionToError(outputID, "connection timeout after 30s")
+}
+
+// transitionToConnected moves an output from starting to connected state.
+func (m *Manager) transitionToConnected(outputID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	proc, exists := m.processes[outputID]
+	if !exists || proc.state != StateStarting {
+		return
+	}
+
+	proc.state = StateConnected
+
+	// Stop and clear the starting timer
+	if proc.startingTimer != nil {
+		proc.startingTimer.Stop()
+		proc.startingTimer = nil
+	}
+
+	// Reset retry count on successful stable connection
+	proc.retryCount = 0
+	if proc.backoff != nil {
+		proc.backoff.Reset()
+	}
+	proc.lastError = ""
+
+	slog.Info("output connected", "output_id", outputID)
+}
+
+// checkAndTransitionToConnected checks if output should transition to connected.
+func (m *Manager) checkAndTransitionToConnected(outputID string) {
+	m.mu.RLock()
+	proc, exists := m.processes[outputID]
+	if !exists || proc.state != StateStarting {
+		m.mu.RUnlock()
+		return
+	}
+	startTime := proc.startTime
+	m.mu.RUnlock()
+
+	// Check if stable threshold reached (10 seconds)
+	if time.Since(startTime) >= types.StableThreshold {
+		m.transitionToConnected(outputID)
+	}
 }
 
 // Stop stops an output process.
@@ -134,14 +257,21 @@ func (m *Manager) Stop(outputID string) error {
 		return nil
 	}
 
-	if !proc.running {
+	// Already stopped or stopping
+	if proc.state == StateStopped || proc.state == StateStopping {
 		delete(m.processes, outputID)
 		m.mu.Unlock()
 		return nil
 	}
 
-	proc.running = false
-	process := proc.cmd.Process
+	// Stop the starting timer if running
+	if proc.startingTimer != nil {
+		proc.startingTimer.Stop()
+		proc.startingTimer = nil
+	}
+
+	proc.state = StateStopping
+	process := proc.cmd
 	cancelCause := proc.cancelCause
 	m.mu.Unlock()
 
@@ -163,8 +293,8 @@ func (m *Manager) Stop(outputID string) error {
 	if cancelCause != nil {
 		cancelCause(errStoppedByUser)
 	}
-	if process != nil {
-		_ = util.GracefulSignal(process)
+	if process != nil && process.Process != nil {
+		_ = util.GracefulSignal(process.Process)
 	}
 
 	// Wait briefly for graceful exit
@@ -204,7 +334,8 @@ func (m *Manager) WriteAudio(outputID string, data []byte) error {
 	// Get process under read lock
 	m.mu.RLock()
 	proc, exists := m.processes[outputID]
-	if !exists || !proc.running {
+	// Only write to outputs in starting or connected state
+	if !exists || (proc.state != StateStarting && proc.state != StateConnected) {
 		m.mu.RUnlock()
 		return nil
 	}
@@ -223,10 +354,11 @@ func (m *Manager) WriteAudio(outputID string, data []byte) error {
 	if err != nil {
 		// Update state under write lock on error
 		m.mu.Lock()
-		// Re-check proc still exists and hasn't been modified
-		if proc, exists := m.processes[outputID]; exists && proc.running {
-			slog.Warn("output write failed, marking as stopped", "output_id", outputID, "error", err)
-			proc.running = false
+		// Re-check proc still exists and is still in an active state
+		if proc, exists := m.processes[outputID]; exists && (proc.state == StateStarting || proc.state == StateConnected) {
+			slog.Warn("output write failed, transitioning to error", "output_id", outputID, "error", err)
+			proc.state = StateError
+			proc.lastError = err.Error()
 			proc.stdinMu.Lock()
 			if proc.stdin != nil {
 				if closeErr := proc.stdin.Close(); closeErr != nil {
@@ -251,12 +383,10 @@ func (m *Manager) AllStatuses(getMaxRetries func(string) int) map[string]types.O
 	for id, proc := range m.processes {
 		maxRetries := getMaxRetries(id)
 		statuses[id] = types.OutputStatus{
-			Running:    proc.running,
-			Stable:     proc.running && time.Since(proc.startTime) >= types.StableThreshold,
+			State:      string(proc.state),
 			LastError:  proc.lastError,
 			RetryCount: proc.retryCount,
 			MaxRetries: maxRetries,
-			GivenUp:    proc.retryCount > maxRetries,
 		}
 	}
 	return statuses
@@ -303,13 +433,70 @@ func (m *Manager) ResetRetry(outputID string) {
 	}
 }
 
-// MarkStopped marks an output as not running.
+// MarkStopped marks an output as stopped (used after process exits).
 func (m *Manager) MarkStopped(outputID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if proc, exists := m.processes[outputID]; exists {
-		proc.running = false
+		// Only transition to error if not already in a terminal state
+		if proc.state == StateStarting || proc.state == StateConnected {
+			proc.state = StateError
+		}
 	}
+}
+
+// ClearErrorState clears error or given_up state for an output.
+// Called when output config is updated.
+func (m *Manager) ClearErrorState(outputID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	proc, exists := m.processes[outputID]
+	if !exists {
+		return
+	}
+
+	if proc.state == StateError || proc.state == StateGivenUp {
+		proc.state = StateStopped
+		proc.lastError = ""
+		proc.retryCount = 0
+		if proc.backoff != nil {
+			proc.backoff.Reset()
+		}
+		slog.Info("output error state cleared", "output_id", outputID)
+	}
+}
+
+// ResetAllGivenUp resets given_up state for all outputs.
+// Called when encoder restarts.
+func (m *Manager) ResetAllGivenUp() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for id, proc := range m.processes {
+		if proc.state == StateGivenUp {
+			proc.state = StateStopped
+			proc.retryCount = 0
+			if proc.backoff != nil {
+				proc.backoff.Reset()
+			}
+			slog.Info("output given_up state reset", "output_id", id)
+		}
+	}
+}
+
+// transitionToGivenUp moves an output to given_up state.
+func (m *Manager) transitionToGivenUp(outputID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	proc, exists := m.processes[outputID]
+	if !exists {
+		return
+	}
+
+	proc.state = StateGivenUp
+	slog.Info("output given up after max retries", "output_id", outputID, "retry_count", proc.retryCount)
 }
 
 // Remove removes an output from tracking.
@@ -377,9 +564,25 @@ func (m *Manager) shouldContinueRetry(outputID string, ctx OutputContext) (shoul
 	if !out.IsEnabled() {
 		return false, "output disabled"
 	}
-	retryCount := m.RetryCount(outputID)
+
+	m.mu.RLock()
+	proc, exists := m.processes[outputID]
+	if !exists {
+		m.mu.RUnlock()
+		return false, "process removed"
+	}
+	retryCount := proc.retryCount
+	state := proc.state
+	m.mu.RUnlock()
+
+	// Don't retry if already given up
+	if state == StateGivenUp {
+		return false, "max retries exceeded"
+	}
+
 	maxRetries := out.MaxRetriesOrDefault()
 	if retryCount > maxRetries {
+		m.transitionToGivenUp(outputID)
 		return false, "max retries exceeded"
 	}
 	return true, ""
@@ -387,6 +590,10 @@ func (m *Manager) shouldContinueRetry(outputID string, ctx OutputContext) (shoul
 
 // MonitorAndRetry monitors an output process and handles automatic retry on failure.
 func (m *Manager) MonitorAndRetry(outputID string, ctx OutputContext, stopChan <-chan struct{}) {
+	// Ticker for periodic state checks (starting → connected transition)
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-stopChan:
@@ -400,18 +607,37 @@ func (m *Manager) MonitorAndRetry(outputID string, ctx OutputContext, stopChan <
 			return
 		}
 
+		// Run cmd.Wait() in a goroutine so we can also check state transitions
+		waitDone := make(chan error, 1)
 		startTime := time.Now()
-		err := cmd.Wait()
-		runDuration := time.Since(startTime)
+		go func() {
+			waitDone <- cmd.Wait()
+		}()
 
-		m.MarkStopped(outputID)
-		m.handleProcessExit(outputID, cmd, procCtx, backoff, err, runDuration)
+		// Wait for process exit while periodically checking state
+	waitLoop:
+		for {
+			select {
+			case <-stopChan:
+				m.Remove(outputID)
+				return
+			case <-ticker.C:
+				// Check for starting → connected transition
+				m.checkAndTransitionToConnected(outputID)
+			case err := <-waitDone:
+				runDuration := time.Since(startTime)
+				m.MarkStopped(outputID)
+				m.handleProcessExit(outputID, cmd, procCtx, backoff, err, runDuration)
+				break waitLoop
+			}
+		}
 
 		shouldRetry, reason := m.shouldContinueRetry(outputID, ctx)
 		if !shouldRetry {
 			if reason != "" {
 				slog.Info("output monitoring stopped", "output_id", outputID, "reason", reason)
 			}
+			// Don't remove if given up - keep for status display
 			if reason != "max retries exceeded" {
 				m.Remove(outputID)
 			}
