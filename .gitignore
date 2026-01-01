@@ -1,6 +1,10 @@
 .DS_Store
 /encoder
 config.json
-CLAUDE.md
 /node_modules
 *.exe
+
+# Markdown files (only README and LICENSE on GitHub)
+*.md
+!README.md
+!LICENSE.md
