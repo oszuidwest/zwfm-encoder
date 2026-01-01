@@ -26,10 +26,14 @@ type RecordingState string
 const (
 	// StateIdle indicates no active recording.
 	StateIdle RecordingState = "idle"
+	// StateStarting indicates the recorder is validating paths and preparing to start.
+	StateStarting RecordingState = "starting"
 	// StateRecording indicates recording is in progress.
 	StateRecording RecordingState = "recording"
 	// StateFinalizing indicates file is being closed and prepared for upload.
 	StateFinalizing RecordingState = "finalizing"
+	// StateError indicates the recorder failed and requires attention.
+	StateError RecordingState = "error"
 )
 
 // S3Config holds S3-compatible storage configuration.

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
@@ -20,7 +21,8 @@ type Manager struct {
 	maxDurationMinutes int  // Global max duration for on-demand recorders
 	running            bool // Whether encoder is running (recorders should be active)
 
-	cleanupStopCh chan struct{} // Stop signal for cleanup scheduler
+	cleanupStopCh     chan struct{} // Stop signal for cleanup scheduler
+	hourlyRetryStopCh chan struct{} // Stop signal for hourly retry scheduler
 }
 
 // NewManager creates a new recording manager.
@@ -43,6 +45,7 @@ func NewManager(ffmpegPath, apiKey, tempDir string, maxDurationMinutes int) (*Ma
 		ffmpegPath:         ffmpegPath,
 		maxDurationMinutes: maxDurationMinutes,
 		cleanupStopCh:      make(chan struct{}),
+		hourlyRetryStopCh:  make(chan struct{}),
 	}, nil
 }
 
@@ -176,6 +179,9 @@ func (m *Manager) Start() error {
 	// Start cleanup scheduler
 	m.startCleanupScheduler()
 
+	// Start hourly retry scheduler for failed recorders
+	m.startHourlyRetryScheduler()
+
 	slog.Info("recording manager started", "recorders", len(m.recorders))
 	return nil
 }
@@ -190,6 +196,10 @@ func (m *Manager) Stop() error {
 	// Stop cleanup scheduler
 	close(m.cleanupStopCh)
 	m.cleanupStopCh = make(chan struct{}) // Reset for potential restart
+
+	// Stop hourly retry scheduler
+	close(m.hourlyRetryStopCh)
+	m.hourlyRetryStopCh = make(chan struct{}) // Reset for potential restart
 
 	var lastErr error
 	for id, recorder := range m.recorders {
@@ -245,4 +255,40 @@ func (m *Manager) SetAPIKey(key string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.apiKey = key
+}
+
+// startHourlyRetryScheduler starts a goroutine that retries failed hourly recorders at hour boundaries.
+func (m *Manager) startHourlyRetryScheduler() {
+	go func() {
+		for {
+			duration := timeUntilNextHour(time.Now())
+			select {
+			case <-m.hourlyRetryStopCh:
+				return
+			case <-time.After(duration):
+				m.retryFailedHourlyRecorders()
+			}
+		}
+	}()
+}
+
+// retryFailedHourlyRecorders attempts to restart any hourly recorders that are in error state.
+func (m *Manager) retryFailedHourlyRecorders() {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, recorder := range m.recorders {
+		cfg := recorder.Config()
+		if cfg.RotationMode == types.RotationHourly && cfg.IsEnabled() {
+			status := recorder.Status()
+			if status.State == string(StateError) {
+				slog.Info("retrying failed hourly recorder at hour boundary", "id", cfg.ID, "name", cfg.Name)
+				go func(r *GenericRecorder) {
+					if err := r.Start(); err != nil {
+						slog.Warn("failed to retry hourly recorder", "id", r.ID(), "error", err)
+					}
+				}(recorder)
+			}
+		}
+	}
 }

@@ -959,6 +959,8 @@ document.addEventListener('alpine:init', () => {
             if (!status) return 'state-stopped';
             switch (status.state) {
                 case 'recording': return 'state-success';
+                case 'starting': return 'state-warning';
+                case 'finalizing': return 'state-warning';
                 case 'error': return 'state-danger';
                 case 'idle': return 'state-stopped';
                 default: return 'state-stopped';
@@ -976,6 +978,8 @@ document.addEventListener('alpine:init', () => {
             if (!status) return 'Idle';
             switch (status.state) {
                 case 'recording': return 'Recording';
+                case 'starting': return 'Starting...';
+                case 'finalizing': return 'Finalizing...';
                 case 'error': return status.error || 'Error';
                 case 'idle': return 'Idle';
                 default: return status.state || 'Unknown';
@@ -1003,6 +1007,12 @@ document.addEventListener('alpine:init', () => {
             } else if (status.state === 'recording') {
                 stateClass = 'state-success';
                 statusText = 'Recording';
+            } else if (status.state === 'starting') {
+                stateClass = 'state-warning';
+                statusText = 'Starting...';
+            } else if (status.state === 'finalizing') {
+                stateClass = 'state-warning';
+                statusText = 'Finalizing...';
             } else if (status.state === 'error') {
                 stateClass = 'state-danger';
                 statusText = status.error || 'Error';

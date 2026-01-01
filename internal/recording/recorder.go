@@ -124,35 +124,74 @@ func (r *GenericRecorder) IsCurrentFile(path string) bool {
 	return r.currentFile == path
 }
 
-// Start begins recording.
+// Start begins recording asynchronously.
+// Returns immediately after setting state to "starting".
+// The actual validation and FFmpeg startup happen in a background goroutine.
 func (r *GenericRecorder) Start() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.state == StateRecording {
+	if r.state == StateRecording || r.state == StateStarting {
 		return ErrAlreadyRecording
 	}
 
-	// Create output directory based on storage mode
-	var outputDir string
-	if r.config.StorageMode == types.StorageS3 {
-		// S3-only: use temp directory
-		outputDir = filepath.Join(r.tempDir, "recorders", r.id)
-	} else {
-		// Local or Both: use configured LocalPath
-		// Security: validate path to prevent path traversal (defense in depth)
-		if err := util.ValidatePath("local_path", r.config.LocalPath); err != nil {
-			return fmt.Errorf("invalid local_path: %w", err)
+	// Clear any previous error and set starting state
+	r.lastError = ""
+	r.state = StateStarting
+
+	// Start async validation and startup
+	go r.startAsync()
+
+	return nil
+}
+
+// startAsync performs path validation and starts the FFmpeg encoder.
+// Called as a goroutine from Start().
+func (r *GenericRecorder) startAsync() {
+	// Read config values we need for validation
+	r.mu.RLock()
+	storageMode := r.config.StorageMode
+	localPath := r.config.LocalPath
+	id := r.id
+	tempDir := r.tempDir
+	r.mu.RUnlock()
+
+	// Validate and prepare output directory based on storage mode
+	if storageMode == types.StorageS3 {
+		// S3-only: create temp directory (should always be writable)
+		if err := os.MkdirAll(filepath.Join(tempDir, "recorders", id), 0o755); err != nil {
+			r.setError(fmt.Sprintf("failed to create temp directory: %v", err))
+			return
 		}
-		outputDir = r.config.LocalPath
+	} else {
+		// Local or Both: validate path and check writability
+		// CheckPathWritable also creates the directory if needed
+		if err := util.ValidatePath("local_path", localPath); err != nil {
+			r.setError(fmt.Sprintf("invalid local_path: %v", err))
+			return
+		}
+		if err := util.CheckPathWritable(localPath); err != nil {
+			r.setError("local path is not writable")
+			return
+		}
 	}
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
-		return fmt.Errorf("create output directory: %w", err)
+
+	// Now lock and start the encoder
+	r.mu.Lock()
+
+	// Re-check state in case Stop() was called during validation
+	if r.state != StateStarting {
+		r.mu.Unlock()
+		return
 	}
 
 	// Start FFmpeg encoder
 	if err := r.startEncoderLocked(); err != nil {
-		return err
+		r.state = StateError
+		r.lastError = err.Error()
+		r.mu.Unlock()
+		slog.Error("recorder failed to start encoder", "id", r.id, "error", err)
+		return
 	}
 
 	// Start upload worker (after encoder to prevent goroutine leak on failure)
@@ -167,10 +206,18 @@ func (r *GenericRecorder) Start() error {
 	}
 
 	r.state = StateRecording
-	r.lastError = ""
 
 	slog.Info("recorder started", "id", r.id, "name", r.config.Name, "mode", r.config.RotationMode)
-	return nil
+	r.mu.Unlock()
+}
+
+// setError transitions the recorder to error state with a message.
+func (r *GenericRecorder) setError(msg string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.state = StateError
+	r.lastError = msg
+	slog.Error("recorder error", "id", r.id, "error", msg)
 }
 
 // Stop gracefully stops recording.
@@ -179,6 +226,14 @@ func (r *GenericRecorder) Stop() error {
 	r.mu.Lock()
 
 	if r.state == StateIdle || r.state == StateFinalizing {
+		r.mu.Unlock()
+		return nil
+	}
+
+	// If in error or starting state, just reset to idle
+	if r.state == StateError || r.state == StateStarting {
+		r.state = StateIdle
+		r.lastError = ""
 		r.mu.Unlock()
 		return nil
 	}
@@ -274,9 +329,16 @@ func (r *GenericRecorder) IsRecording() bool {
 
 // UpdateConfig updates the recorder configuration.
 // If S3 config changed, the client is recreated.
+// Clears error state since config was modified.
 func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	// Clear error state on config update (user may have fixed the issue)
+	if r.state == StateError {
+		r.state = StateIdle
+		r.lastError = ""
+	}
 
 	oldS3 := r.config.S3Bucket + r.config.S3Endpoint + r.config.S3AccessKeyID
 	newS3 := cfg.S3Bucket + cfg.S3Endpoint + cfg.S3AccessKeyID

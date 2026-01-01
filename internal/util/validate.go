@@ -2,8 +2,11 @@ package util
 
 import (
 	"fmt"
+	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // ValidationError represents a field validation failure.
@@ -94,6 +97,49 @@ func ValidatePath(field, path string) *ValidationError {
 	// (filepath.Clean converts "a/../b" to "b", but we already rejected "..")
 	if strings.Contains(cleaned, "..") {
 		return &ValidationError{Field: field, Message: "invalid path"}
+	}
+
+	return nil
+}
+
+// CheckPathWritable verifies that a directory path is writable.
+// It creates the directory if it doesn't exist, then attempts to create,
+// write to, and delete a test file. Returns an error if any operation fails.
+func CheckPathWritable(path string) error {
+	// Create directory if it doesn't exist
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		slog.Error("path writability check failed", "path", path, "error", err, "step", "mkdir")
+		return fmt.Errorf("path is not writable")
+	}
+
+	// Create test file with unique name using nanosecond timestamp
+	testFile := filepath.Join(path, fmt.Sprintf(".encoder-write-test-%d", time.Now().UnixNano()))
+
+	f, err := os.Create(testFile)
+	if err != nil {
+		slog.Error("path writability check failed", "path", path, "error", err, "step", "create")
+		return fmt.Errorf("path is not writable")
+	}
+
+	// Write 1KB of data to verify actual write capability
+	data := make([]byte, 1024)
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(testFile) // Best effort cleanup
+		slog.Error("path writability check failed", "path", path, "error", err, "step", "write")
+		return fmt.Errorf("path is not writable")
+	}
+
+	if err := f.Close(); err != nil {
+		_ = os.Remove(testFile) // Best effort cleanup
+		slog.Error("path writability check failed", "path", path, "error", err, "step", "close")
+		return fmt.Errorf("path is not writable")
+	}
+
+	// Cleanup must succeed for the check to pass
+	if err := os.Remove(testFile); err != nil {
+		slog.Error("path writability check failed", "path", path, "error", err, "step", "remove")
+		return fmt.Errorf("path is not writable")
 	}
 
 	return nil

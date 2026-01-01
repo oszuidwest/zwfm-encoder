@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/recording"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
@@ -12,14 +11,15 @@ import (
 )
 
 // validateLocalPath checks that LocalPath is set, validates it for security,
-// and creates the directory.
+// and verifies it is writable.
 func validateLocalPath(recorder *types.Recorder) error {
 	// Security: validate path to prevent path traversal attacks
 	if err := util.ValidatePath("local_path", recorder.LocalPath); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(recorder.LocalPath, 0o755); err != nil {
-		return fmt.Errorf("cannot create local_path directory: %w", err)
+	// Verify path is writable (also creates directory if needed)
+	if err := util.CheckPathWritable(recorder.LocalPath); err != nil {
+		return err
 	}
 	return nil
 }
