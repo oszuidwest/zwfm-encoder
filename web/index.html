@@ -453,23 +453,21 @@
                             <h3>API Key</h3>
                         </div>
                         <p class="section-desc">Authentication key for REST API endpoints (/api/recordings/start, /api/recordings/stop).</p>
-                        <div class="group">
-                            <label for="api-key">API Key</label>
-                            <div class="api-key__container">
+                        <div class="form">
+                            <div class="group">
+                                <label for="api-key">API Key</label>
                                 <input id="api-key" type="text" readonly
                                        :value="settings.recordingApiKey ? settings.recordingApiKey : 'Not configured'"
-                                       class="api-key__input">
-                                <button class="icon-btn" type="button" tabindex="0" title="Copy to clipboard"
-                                        @click="copyApiKey()"
-                                        x-show="settings.recordingApiKey">
-                                    <span class="icon-container" x-html="icons.clipboard"></span>
-                                </button>
-                                <button class="icon-btn" type="button" tabindex="0" title="Regenerate API key"
-                                        @click="regenerateApiKey()">
-                                    <span class="icon-container" x-html="icons.refresh"></span>
-                                </button>
+                                       :class="{ 'font-mono': settings.recordingApiKey }">
+                                <span class="input-hint" x-show="!settings.recordingApiKey">No API key configured. Click Regenerate to create one.</span>
                             </div>
-                            <span class="input-hint" x-show="!settings.recordingApiKey">No API key configured. Click the refresh button to create one.</span>
+                        </div>
+                        <div class="btn-group">
+                            <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0"
+                                    @click="copyApiKey()"
+                                    :disabled="!settings.recordingApiKey">Copy</button>
+                            <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0"
+                                    @click="regenerateApiKey()">Regenerate</button>
                         </div>
                     </div>
 

@@ -250,31 +250,6 @@
         cursor: pointer;
     }
 
-    /* API Key Container */
-    .api-key__container {
-        display: flex;
-        gap: 0.5rem;
-        align-items: stretch;
-    }
-
-    .api-key__container input {
-        flex: 1;
-        font-family: var(--font-mono);
-        font-size: 0.875rem;
-    }
-
-    .api-key__container .icon-btn {
-        flex-shrink: 0;
-        padding: 0.5rem;
-        background: var(--surface-elevated);
-        color: var(--text-secondary);
-    }
-
-    .api-key__container .icon-btn:hover {
-        background: var(--surface-hover);
-        color: var(--brand);
-    }
-
     /* Animations */
     @keyframes pulse {
         0%, 100% { opacity: 1; }
