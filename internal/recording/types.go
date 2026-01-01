@@ -10,9 +10,6 @@ import (
 
 // Sentinel errors for recording operations.
 var (
-	// ErrRecordingDisabled is returned when recording is disabled in configuration.
-	ErrRecordingDisabled = errors.New("recording is disabled")
-
 	// ErrHourlyRecorderNotControllable is returned when trying to start/stop an hourly recorder via API.
 	ErrHourlyRecorderNotControllable = errors.New("hourly recorders cannot be started/stopped via API")
 
