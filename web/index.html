@@ -835,11 +835,11 @@
              Broadcast console style log viewer displaying silence events.
              Dark theme with LED indicators and monospace data presentation. -->
         <div class="modal" x-show="silenceLogModal.visible" x-cloak>
-            <div class="overlay" @click.self="closeSilenceLog()" x-transition:enter.duration.200ms>
+            <div class="overlay" @click.self="handleSilenceLogClose()" x-transition:enter.duration.200ms>
                 <div class="content" role="dialog" aria-modal="true" aria-labelledby="silence-log-title">
                     <header class="header">
                         <h2 id="silence-log-title">Silence Log</h2>
-                        <button class="icon-btn" data-variant="close" type="button" tabindex="0" aria-label="Close" @click="closeSilenceLog()">
+                        <button class="icon-btn" data-variant="close" type="button" tabindex="0" aria-label="Close" @click="handleSilenceLogClose()">
                             <span x-html="icons.close"></span>
                         </button>
                     </header>
@@ -870,7 +870,7 @@
                     </div>
                     <footer class="footer">
                         <span class="path" x-show="silenceLogModal.path" x-text="silenceLogModal.path"></span>
-                        <button class="btn" data-variant="secondary" type="button" tabindex="0" @click="refreshSilenceLog()" :disabled="silenceLogModal.loading">Refresh</button>
+                        <button class="btn" data-variant="secondary" type="button" tabindex="0" @click="handleSilenceLogRefresh()" :disabled="silenceLogModal.loading">Refresh</button>
                     </footer>
                 </div>
             </div>

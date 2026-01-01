@@ -96,7 +96,7 @@ document.addEventListener('alpine:init', () => {
 
         settingsTabs: [
             { id: 'audio', label: 'Audio', icon: 'audio' },
-            { id: 'notifications', label: 'Notifications', icon: 'bell' },
+            { id: 'notifications', label: 'Notifications', icon: 'email' },
             { id: 'recording', label: 'Recording', icon: 'microphone' },
             { id: 'about', label: 'About', icon: 'info' }
         ],
@@ -223,7 +223,7 @@ document.addEventListener('alpine:init', () => {
             // Escape: Close views/modals
             if (event.key === 'Escape') {
                 if (this.silenceLogModal.visible) {
-                    this.closeSilenceLog();
+                    this.handleSilenceLogClose();
                     event.preventDefault();
                 } else if (this.view === 'settings') {
                     this.cancelSettings();
@@ -1060,11 +1060,11 @@ document.addEventListener('alpine:init', () => {
             this.send('view_silence_log', null, null);
         },
 
-        closeSilenceLog() {
+        handleSilenceLogClose() {
             this.silenceLogModal.visible = false;
         },
 
-        refreshSilenceLog() {
+        handleSilenceLogRefresh() {
             this.silenceLogModal.loading = true;
             this.send('view_silence_log', null, null);
         },
