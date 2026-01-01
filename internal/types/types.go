@@ -29,6 +29,8 @@ const (
 	ProcessStarting ProcessState = "starting"
 	// ProcessRunning indicates the process is active.
 	ProcessRunning ProcessState = "running"
+	// ProcessRotating indicates file rotation is in progress (recorders only).
+	ProcessRotating ProcessState = "rotating"
 	// ProcessStopping indicates the process is shutting down.
 	ProcessStopping ProcessState = "stopping"
 	// ProcessError indicates the process failed.

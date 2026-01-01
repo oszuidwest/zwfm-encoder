@@ -105,7 +105,7 @@ func (m *Manager) Start(output *types.Output) error {
 		ctx:         ctx,
 		cancelCause: cancelCause,
 		stdin:       stdinPipe,
-		state:       types.ProcessRunning,
+		state:       types.ProcessStarting,
 		startTime:   time.Now(),
 		retryCount:  retryCount,
 		backoff:     backoff,
@@ -118,10 +118,12 @@ func (m *Manager) Start(output *types.Output) error {
 		if closeErr := stdinPipe.Close(); closeErr != nil {
 			slog.Warn("failed to close stdin pipe", "error", closeErr)
 		}
-		delete(m.processes, output.ID)
+		proc.state = types.ProcessError
+		proc.lastError = err.Error()
 		return fmt.Errorf("start ffmpeg: %w", err)
 	}
 
+	proc.state = types.ProcessRunning
 	return nil
 }
 
@@ -134,7 +136,7 @@ func (m *Manager) Stop(outputID string) error {
 		return nil
 	}
 
-	if proc.state != types.ProcessRunning {
+	if proc.state != types.ProcessRunning && proc.state != types.ProcessStarting {
 		delete(m.processes, outputID)
 		m.mu.Unlock()
 		return nil
@@ -301,13 +303,20 @@ func (m *Manager) SetError(outputID, errMsg string) {
 func (m *Manager) ClearError(outputID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if proc, exists := m.processes[outputID]; exists && proc.state == types.ProcessError {
-		proc.lastError = ""
-		proc.state = types.ProcessStopped
-		proc.retryCount = 0
-		if proc.backoff != nil {
-			proc.backoff.Reset()
-		}
+	proc, exists := m.processes[outputID]
+	if !exists {
+		slog.Warn("clear_output_error: output not found", "output_id", outputID)
+		return
+	}
+	if proc.state != types.ProcessError {
+		slog.Warn("clear_output_error: output not in error state", "output_id", outputID, "state", proc.state)
+		return
+	}
+	proc.lastError = ""
+	proc.state = types.ProcessStopped
+	proc.retryCount = 0
+	if proc.backoff != nil {
+		proc.backoff.Reset()
 	}
 }
 

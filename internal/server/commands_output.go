@@ -36,14 +36,16 @@ func validateOutput(output *types.Output) error {
 	return nil
 }
 
-func (h *CommandHandler) handleAddOutput(cmd WSCommand) {
+func (h *CommandHandler) handleAddOutput(cmd WSCommand, send chan<- interface{}) {
 	if !h.ffmpegAvailable {
 		slog.Warn("add_output: FFmpeg not available, cannot add output")
+		sendOutputResult(send, "add", "", false, "FFmpeg not available")
 		return
 	}
 	var output types.Output
 	if err := json.Unmarshal(cmd.Data, &output); err != nil {
 		slog.Warn("add_output: invalid JSON data", "error", err)
+		sendOutputResult(send, "add", "", false, err.Error())
 		return
 	}
 
@@ -52,15 +54,18 @@ func (h *CommandHandler) handleAddOutput(cmd WSCommand) {
 
 	if err := validateOutput(&output); err != nil {
 		slog.Warn("add_output: validation failed", "error", err)
+		sendOutputResult(send, "add", "", false, err.Error())
 		return
 	}
 	// Limit number of outputs to prevent resource exhaustion
 	if len(h.cfg.ConfiguredOutputs()) >= MaxOutputs {
 		slog.Warn("add_output: maximum outputs reached", "max", MaxOutputs)
+		sendOutputResult(send, "add", "", false, "maximum outputs reached")
 		return
 	}
 	if err := h.cfg.AddOutput(&output); err != nil {
 		slog.Error("add_output: failed to add", "error", err)
+		sendOutputResult(send, "add", "", false, err.Error())
 		return
 	}
 	slog.Info("add_output: added output", "host", output.Host, "port", output.Port)
@@ -72,11 +77,13 @@ func (h *CommandHandler) handleAddOutput(cmd WSCommand) {
 			}
 		}
 	}
+	sendOutputResult(send, "add", output.ID, true, "")
 }
 
-func (h *CommandHandler) handleDeleteOutput(cmd WSCommand) {
+func (h *CommandHandler) handleDeleteOutput(cmd WSCommand, send chan<- interface{}) {
 	if cmd.ID == "" {
 		slog.Warn("delete_output: no ID provided")
+		sendOutputResult(send, "delete", "", false, "no ID provided")
 		return
 	}
 	slog.Info("delete_output: deleting", "output_id", cmd.ID)
@@ -85,8 +92,10 @@ func (h *CommandHandler) handleDeleteOutput(cmd WSCommand) {
 	}
 	if err := h.cfg.RemoveOutput(cmd.ID); err != nil {
 		slog.Error("delete_output: failed to remove from config", "error", err)
+		sendOutputResult(send, "delete", cmd.ID, false, err.Error())
 	} else {
 		slog.Info("delete_output: removed from config", "output_id", cmd.ID)
+		sendOutputResult(send, "delete", cmd.ID, true, "")
 	}
 }
 
@@ -99,24 +108,28 @@ func outputNeedsRestart(existing, updated *types.Output) bool {
 		existing.Codec != updated.Codec
 }
 
-func (h *CommandHandler) handleUpdateOutput(cmd WSCommand) {
+func (h *CommandHandler) handleUpdateOutput(cmd WSCommand, send chan<- interface{}) {
 	if cmd.ID == "" {
 		slog.Warn("update_output: no ID provided")
+		sendOutputResult(send, "update", "", false, "no ID provided")
 		return
 	}
 	existing := h.cfg.Output(cmd.ID)
 	if existing == nil {
 		slog.Warn("update_output: output not found", "output_id", cmd.ID)
+		sendOutputResult(send, "update", cmd.ID, false, "output not found")
 		return
 	}
 
 	var updated types.Output
 	if err := json.Unmarshal(cmd.Data, &updated); err != nil {
 		slog.Warn("update_output: invalid JSON data", "error", err)
+		sendOutputResult(send, "update", cmd.ID, false, err.Error())
 		return
 	}
 	if err := validateOutput(&updated); err != nil {
 		slog.Warn("update_output: validation failed", "error", err)
+		sendOutputResult(send, "update", cmd.ID, false, err.Error())
 		return
 	}
 
@@ -133,6 +146,7 @@ func (h *CommandHandler) handleUpdateOutput(cmd WSCommand) {
 
 	if err := h.cfg.UpdateOutput(&updated); err != nil {
 		slog.Error("update_output: failed to update", "error", err)
+		sendOutputResult(send, "update", cmd.ID, false, err.Error())
 		return
 	}
 	slog.Info("update_output: updated output", "output_id", updated.ID, "host", updated.Host, "port", updated.Port)
@@ -158,6 +172,7 @@ func (h *CommandHandler) handleUpdateOutput(cmd WSCommand) {
 			h.restartOutput(updated.ID)
 		}
 	}
+	sendOutputResult(send, "update", updated.ID, true, "")
 }
 
 // restartOutput stops and restarts an output after a brief delay.
@@ -181,11 +196,36 @@ func (h *CommandHandler) restartOutput(outputID string) {
 	}()
 }
 
-func (h *CommandHandler) handleClearOutputError(cmd WSCommand) {
+func (h *CommandHandler) handleClearOutputError(cmd WSCommand, send chan<- interface{}) {
 	if cmd.ID == "" {
 		slog.Warn("clear_output_error: no ID provided")
+		sendOutputResult(send, "clear_error", "", false, "no ID provided")
 		return
 	}
 	slog.Info("clear_output_error: clearing error", "output_id", cmd.ID)
 	h.encoder.ClearOutputError(cmd.ID)
+	sendOutputResult(send, "clear_error", cmd.ID, true, "")
+}
+
+// sendOutputResult sends an output operation result to the client.
+func sendOutputResult(send chan<- interface{}, action, id string, success bool, errMsg string) {
+	result := struct {
+		Type    string `json:"type"`
+		Action  string `json:"action"`
+		ID      string `json:"id,omitempty"`
+		Success bool   `json:"success"`
+		Error   string `json:"error,omitempty"`
+	}{
+		Type:    "output_result",
+		Action:  action,
+		ID:      id,
+		Success: success,
+		Error:   errMsg,
+	}
+
+	select {
+	case send <- result:
+	default:
+		slog.Warn("failed to send output result: channel full", "action", action)
+	}
 }

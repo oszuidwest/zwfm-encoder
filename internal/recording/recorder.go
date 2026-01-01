@@ -238,6 +238,7 @@ func (r *GenericRecorder) Stop() error {
 		return nil
 	}
 
+	// ProcessRunning or ProcessRotating - proceed with full stop sequence
 	r.state = types.ProcessStopping
 
 	// Stop timers
@@ -279,7 +280,8 @@ func (r *GenericRecorder) WriteAudio(pcm []byte) error {
 	state := r.state
 	r.mu.RUnlock()
 
-	if state != types.ProcessRunning {
+	// Accept both Running and Rotating - rotation closes stdin when ready
+	if state != types.ProcessRunning && state != types.ProcessRotating {
 		return nil
 	}
 
@@ -314,7 +316,7 @@ func (r *GenericRecorder) Status() types.ProcessStatus {
 	}
 
 	var uptimeMs int64
-	if r.state == types.ProcessRunning && !r.startTime.IsZero() {
+	if (r.state == types.ProcessRunning || r.state == types.ProcessRotating) && !r.startTime.IsZero() {
 		uptimeMs = time.Since(r.startTime).Milliseconds()
 	}
 
@@ -443,8 +445,12 @@ func (r *GenericRecorder) startEncoderLocked() error {
 
 // stopEncoderAndUpload stops the current encoder and queues the file for upload.
 func (r *GenericRecorder) stopEncoderAndUpload() {
+	// Cache values under lock to prevent race conditions
 	r.mu.Lock()
 	currentFile := r.currentFile
+	cmd := r.cmd
+	cancel := r.cancel
+	stderr := r.stderr
 	r.mu.Unlock()
 
 	// Close stdin under stdinMu to prevent race with WriteAudio
@@ -460,40 +466,45 @@ func (r *GenericRecorder) stopEncoderAndUpload() {
 	}
 
 	// Wait for FFmpeg to finish with 2-stage timeout
-	if r.cmd != nil {
-		done := make(chan error, 1)
-		go func() {
-			done <- r.cmd.Wait()
-		}()
+	if cmd == nil {
+		slog.Error("stopEncoderAndUpload: cmd is nil", "id", r.id)
+		return
+	}
 
-		select {
-		case err := <-done:
-			if err != nil {
-				r.mu.Lock()
-				if r.stderr != nil {
-					errMsg := util.ExtractLastError(r.stderr.String())
-					if errMsg != "" {
-						r.lastError = errMsg
-					}
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			r.mu.Lock()
+			if stderr != nil {
+				errMsg := util.ExtractLastError(stderr.String())
+				if errMsg != "" {
+					r.lastError = errMsg
 				}
-				r.mu.Unlock()
 			}
-		case <-time.After(10000 * time.Millisecond):
-			// Stage 1: Cancel context (sends SIGTERM)
-			slog.Warn("recorder ffmpeg did not stop in time, canceling context", "id", r.id)
-			r.cancel()
+			r.mu.Unlock()
+		}
+	case <-time.After(10000 * time.Millisecond):
+		// Stage 1: Cancel context (sends SIGTERM)
+		slog.Warn("recorder ffmpeg did not stop in time, canceling context", "id", r.id)
+		if cancel != nil {
+			cancel()
+		}
 
-			// Stage 2: Wait for graceful shutdown or force kill
-			select {
-			case <-done:
-				// Process stopped after cancel
-			case <-time.After(2000 * time.Millisecond):
-				// Force kill if still running
-				if r.cmd.Process != nil {
-					slog.Error("recorder ffmpeg force killed", "id", r.id)
-					_ = r.cmd.Process.Kill()
-					<-done // Wait for process to exit after kill
-				}
+		// Stage 2: Wait for graceful shutdown or force kill
+		select {
+		case <-done:
+			// Process stopped after cancel
+		case <-time.After(2000 * time.Millisecond):
+			// Force kill if still running
+			if cmd.Process != nil {
+				slog.Error("recorder ffmpeg force killed", "id", r.id)
+				_ = cmd.Process.Kill()
+				<-done // Wait for process to exit after kill
 			}
 		}
 	}
@@ -519,6 +530,8 @@ func (r *GenericRecorder) rotateFile() {
 		return
 	}
 
+	// Set rotating state before releasing lock to prevent Stop() interference
+	r.state = types.ProcessRotating
 	slog.Info("recorder rotating file at hour boundary", "id", r.id)
 	r.mu.Unlock()
 
@@ -527,7 +540,8 @@ func (r *GenericRecorder) rotateFile() {
 
 	r.mu.Lock()
 	// Re-check state after reacquiring lock - Stop() may have been called
-	if r.state != types.ProcessRunning {
+	if r.state != types.ProcessRotating {
+		// State changed (likely Stop() was called) - don't continue rotation
 		r.mu.Unlock()
 		return
 	}
@@ -543,6 +557,7 @@ func (r *GenericRecorder) rotateFile() {
 
 	// Schedule next rotation
 	r.scheduleRotationLocked()
+	r.state = types.ProcessRunning
 	r.mu.Unlock()
 }
 

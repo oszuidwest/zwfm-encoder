@@ -396,6 +396,8 @@ document.addEventListener('alpine:init', () => {
                     this.handleRecorderS3TestResult(msg);
                 } else if (msg.type === 'recorder_result') {
                     this.handleRecorderResult(msg);
+                } else if (msg.type === 'output_result') {
+                    this.handleOutputResult(msg);
                 }
             };
 
@@ -979,6 +981,7 @@ document.addEventListener('alpine:init', () => {
                 case 'disabled': return 'Disabled';
                 case 'starting': return 'Starting...';
                 case 'running': return 'Recording';
+                case 'rotating': return 'Rotating...';
                 case 'stopping': return 'Finalizing...';
                 case 'error': return status.error || 'Error';
                 case 'stopped': return 'Idle';
@@ -1015,6 +1018,10 @@ document.addEventListener('alpine:init', () => {
                         stateClass = 'state-success';
                         statusText = 'Recording';
                         break;
+                    case 'rotating':
+                        stateClass = 'state-warning';
+                        statusText = 'Rotating...';
+                        break;
                     case 'stopping':
                         stateClass = 'state-warning';
                         statusText = 'Finalizing...';
@@ -1034,7 +1041,7 @@ document.addEventListener('alpine:init', () => {
                 stateClass,
                 statusText,
                 uptimeMs: status.uptime_ms || 0,
-                isRecording: status.state === 'running'
+                isRecording: status.state === 'running' || status.state === 'rotating'
             };
         },
 
@@ -1168,6 +1175,24 @@ document.addEventListener('alpine:init', () => {
             if (msg.action === 'add' || msg.action === 'update') {
                 this.view = 'dashboard';
                 this.recorderFormDirty = false;
+            }
+        },
+
+        /**
+         * Handles output operation results (add, update, delete, clear_error).
+         * @param {Object} msg - Result with action, success, error
+         */
+        handleOutputResult(msg) {
+            if (!msg.success) {
+                const actionText = msg.action.replace('_', ' ');
+                this.showBanner(`Output ${actionText} failed: ${msg.error || 'Unknown error'}`, 'danger', false);
+                return;
+            }
+
+            // On successful add/update from output form, go back to dashboard
+            if (this.view === 'output-form' && (msg.action === 'add' || msg.action === 'update')) {
+                this.view = 'dashboard';
+                this.outputFormDirty = false;
             }
         },
 

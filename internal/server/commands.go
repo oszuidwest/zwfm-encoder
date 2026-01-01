@@ -45,13 +45,13 @@ func NewCommandHandler(cfg *config.Config, enc *encoder.Encoder, ffmpegAvailable
 func (h *CommandHandler) Handle(cmd WSCommand, send chan<- interface{}, triggerStatusUpdate func()) {
 	switch cmd.Type {
 	case "add_output":
-		h.handleAddOutput(cmd)
+		h.handleAddOutput(cmd, send)
 	case "delete_output":
-		h.handleDeleteOutput(cmd)
+		h.handleDeleteOutput(cmd, send)
 	case "update_output":
-		h.handleUpdateOutput(cmd)
+		h.handleUpdateOutput(cmd, send)
 	case "clear_output_error":
-		h.handleClearOutputError(cmd)
+		h.handleClearOutputError(cmd, send)
 	case "update_settings":
 		h.handleUpdateSettings(cmd)
 	case "test_webhook", "test_log", "test_email":
