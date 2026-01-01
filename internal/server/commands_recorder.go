@@ -90,6 +90,9 @@ func (h *CommandHandler) handleAddRecorder(cmd WSCommand, send chan<- interface{
 		return
 	}
 
+	// Force system-generated ID to prevent path traversal attacks
+	recorder.ID = ""
+
 	if err := validateRecorder(&recorder); err != nil {
 		slog.Warn("add_recorder: validation failed", "error", err)
 		sendRecorderResult(send, "add", "", false, err.Error())
