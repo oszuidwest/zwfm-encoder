@@ -250,6 +250,23 @@
         cursor: pointer;
     }
 
+    /* API Key Container */
+    .api-key__container {
+        display: flex;
+        gap: 0.5rem;
+        align-items: stretch;
+    }
+
+    .api-key__input {
+        flex: 1;
+        font-family: var(--font-mono);
+        font-size: 0.875rem;
+    }
+
+    .api-key__copy {
+        flex-shrink: 0;
+    }
+
     /* Animations */
     @keyframes pulse {
         0%, 100% { opacity: 1; }

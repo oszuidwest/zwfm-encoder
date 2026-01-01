@@ -62,6 +62,7 @@ type GenericRecorder struct {
 	uploadQueue  chan uploadRequest
 	uploadWg     sync.WaitGroup
 	uploadStopCh chan struct{}
+	stopOnce     sync.Once // Prevents double-close of uploadStopCh
 
 	// Rotation timer (hourly mode)
 	rotationTimer *time.Timer
@@ -169,10 +170,11 @@ func (r *GenericRecorder) Start() error {
 }
 
 // Stop gracefully stops recording.
+// Safe to call multiple times - uses sync.Once to prevent double-close panic.
 func (r *GenericRecorder) Stop() error {
 	r.mu.Lock()
 
-	if r.state == StateIdle {
+	if r.state == StateIdle || r.state == StateFinalizing {
 		r.mu.Unlock()
 		return nil
 	}
@@ -194,14 +196,17 @@ func (r *GenericRecorder) Stop() error {
 	// Stop encoder and finalize file
 	r.stopEncoderAndUpload()
 
-	// Stop upload worker
-	close(r.uploadStopCh)
+	// Stop upload worker - use Once to prevent double-close panic
+	r.stopOnce.Do(func() {
+		close(r.uploadStopCh)
+	})
 	r.uploadWg.Wait()
 
 	r.mu.Lock()
 	r.state = StateIdle
 	r.uploadStopCh = make(chan struct{})          // Reset for next start
 	r.uploadQueue = make(chan uploadRequest, 100) // Reset for next start
+	r.stopOnce = sync.Once{}                      // Reset Once for next start
 	r.mu.Unlock()
 
 	slog.Info("recorder stopped", "id", r.id, "name", r.config.Name)
@@ -435,6 +440,12 @@ func (r *GenericRecorder) rotateFile() {
 	r.stopEncoderAndUpload()
 
 	r.mu.Lock()
+	// Re-check state after reacquiring lock - Stop() may have been called
+	if r.state != StateRecording {
+		r.mu.Unlock()
+		return
+	}
+
 	// Start new encoder
 	if err := r.startEncoderLocked(); err != nil {
 		slog.Error("failed to start new recording file", "id", r.id, "error", err)

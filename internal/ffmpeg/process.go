@@ -63,15 +63,3 @@ func StartProcess(ffmpegPath string, args []string) (*Process, error) {
 		Stderr: &stderr,
 	}, nil
 }
-
-// Close gracefully closes the process by closing stdin and canceling the context.
-func (p *Process) Close() {
-	if p.Stdin != nil {
-		if err := p.Stdin.Close(); err != nil {
-			slog.Warn("failed to close stdin", "error", err)
-		}
-	}
-	if p.Cancel != nil {
-		p.Cancel()
-	}
-}
