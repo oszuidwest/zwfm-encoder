@@ -93,6 +93,7 @@ func (h *CommandHandler) handleUpdateSettings(cmd WSCommand) {
 		EmailUsername    *string  `json:"email_username"`
 		EmailPassword    *string  `json:"email_password"`
 		EmailRecipients  *string  `json:"email_recipients"`
+		RecordingAPIKey  *string  `json:"recording_api_key"`
 	}
 	if err := json.Unmarshal(cmd.Data, &settings); err != nil {
 		slog.Warn("update_settings: invalid JSON data", "error", err)
@@ -139,6 +140,13 @@ func (h *CommandHandler) handleUpdateSettings(cmd WSCommand) {
 		slog.Info("update_settings: updating email configuration")
 		if err := h.cfg.SetEmailConfig(host, port, fromName, username, password, recipients); err != nil {
 			slog.Error("update_settings: failed to save email config", "error", err)
+		}
+	}
+	// Handle API key update
+	if settings.RecordingAPIKey != nil {
+		slog.Info("update_settings: updating recording API key")
+		if err := h.cfg.SetRecordingAPIKey(*settings.RecordingAPIKey); err != nil {
+			slog.Error("update_settings: failed to save API key", "error", err)
 		}
 	}
 }

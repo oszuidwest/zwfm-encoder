@@ -34,6 +34,19 @@ const DB_RANGE = 60;              // dB range (0 to -60)
 const CLIP_TIMEOUT_MS = 1500;     // Peak hold / clip indicator timeout
 const WS_RECONNECT_MS = 1000;     // WebSocket reconnection delay
 const EMAIL_FEEDBACK_MS = 2000;   // Email test result display duration
+const API_KEY_LENGTH = 32;        // Length of generated API keys
+const API_KEY_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+
+/**
+ * Generates a cryptographically secure API key.
+ * Uses Web Crypto API for secure random generation.
+ * @returns {string} 32-character alphanumeric key
+ */
+const generateApiKey = () => {
+    const array = new Uint8Array(API_KEY_LENGTH);
+    crypto.getRandomValues(array);
+    return Array.from(array, byte => API_KEY_CHARS[byte % API_KEY_CHARS.length]).join('');
+};
 
 /**
  * Formats milliseconds to human-readable smart units.
@@ -157,7 +170,6 @@ document.addEventListener('alpine:init', () => {
         deletingRecorders: {},
         recorderForm: { ...DEFAULT_RECORDER, id: '' },
         recorderFormDirty: false,
-        recordingApiKey: '',
 
         devices: [],
         levels: { ...DEFAULT_LEVELS },
@@ -173,6 +185,7 @@ document.addEventListener('alpine:init', () => {
             silenceWebhook: '',
             silenceLogPath: '',
             email: { host: '', port: 587, fromName: '', username: '', password: '', recipients: '' },
+            recordingApiKey: '',
             platform: ''
         },
         originalSettings: null,
@@ -383,8 +396,6 @@ document.addEventListener('alpine:init', () => {
                     this.handleRecorderS3TestResult(msg);
                 } else if (msg.type === 'recorder_result') {
                     this.handleRecorderResult(msg);
-                } else if (msg.type === 'api_key_regenerated') {
-                    this.handleApiKeyRegenerated(msg);
                 }
             };
 
@@ -553,14 +564,13 @@ document.addEventListener('alpine:init', () => {
                 }
             }
 
-            // Devices
-            if (msg.devices) {
-                this.devices = msg.devices;
-            }
-
-            // Only update settings from status when not on settings view to prevent
-            // overwriting user input while editing
+            // Only update settings and devices from status when not on settings view
+            // to prevent overwriting user input while editing
             if (this.view !== 'settings') {
+                // Devices (frozen while in settings to keep dropdown stable)
+                if (msg.devices) {
+                    this.devices = msg.devices;
+                }
                 if (msg.settings?.audio_input) {
                     this.settings.audioInput = msg.settings.audio_input;
                 }
@@ -593,7 +603,10 @@ document.addEventListener('alpine:init', () => {
             // Sync recorders and statuses
             this.recorders = msg.recorders || [];
             this.recorderStatuses = msg.recorder_statuses || {};
-            this.recordingApiKey = msg.recording_api_key || '';
+            // Only sync API key when not in settings view
+            if (this.view !== 'settings') {
+                this.settings.recordingApiKey = msg.recording_api_key || '';
+            }
 
             // Clean up deleting recorders that are no longer in the list
             for (const id in this.deletingRecorders) {
@@ -704,6 +717,10 @@ document.addEventListener('alpine:init', () => {
             // Only include password if it was changed
             if (this.settings.email.password) {
                 update.email_password = this.settings.email.password;
+            }
+            // Only include API key if it changed from original
+            if (this.settings.recordingApiKey !== this.originalSettings?.recordingApiKey) {
+                update.recording_api_key = this.settings.recordingApiKey;
             }
             this.send('update_settings', null, update);
             this.saveAndClose();
@@ -1116,19 +1133,13 @@ document.addEventListener('alpine:init', () => {
 
         /**
          * Regenerates the API key for recording endpoints.
+         * Generates key client-side and marks settings dirty.
+         * Key is persisted when user clicks Save.
          */
         regenerateApiKey() {
-            if (!confirm('Regenerate API key? Existing integrations will need to be updated.')) return;
-            this.send('regenerate_api_key', null, null);
-        },
-
-        /**
-         * Handles API key regeneration response.
-         * @param {Object} msg - Response with api_key
-         */
-        handleApiKeyRegenerated(msg) {
-            this.recordingApiKey = msg.api_key;
-            this.showBanner('API key regenerated successfully', 'info', false);
+            if (!confirm('Regenerate API key? Click Save to apply. Existing integrations will need to be updated.')) return;
+            this.settings.recordingApiKey = generateApiKey();
+            this.markSettingsDirty();
         },
 
         /**
@@ -1136,7 +1147,7 @@ document.addEventListener('alpine:init', () => {
          */
         async copyApiKey() {
             try {
-                await navigator.clipboard.writeText(this.recordingApiKey);
+                await navigator.clipboard.writeText(this.settings.recordingApiKey);
                 this.showBanner('API key copied to clipboard', 'info', false);
             } catch {
                 this.showBanner('Failed to copy to clipboard', 'danger', false);
