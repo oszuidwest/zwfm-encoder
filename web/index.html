@@ -459,15 +459,18 @@
                                 <input id="api-key" type="text" readonly
                                        :value="settings.recordingApiKey ? settings.recordingApiKey : 'Not configured'"
                                        class="api-key__input">
-                                <button class="icon-btn api-key__copy" type="button" tabindex="0" title="Copy to clipboard"
+                                <button class="icon-btn" type="button" tabindex="0" title="Copy to clipboard"
                                         @click="copyApiKey()"
                                         x-show="settings.recordingApiKey">
                                     <span class="icon-container" x-html="icons.clipboard"></span>
                                 </button>
+                                <button class="icon-btn" type="button" tabindex="0" title="Regenerate API key"
+                                        @click="regenerateApiKey()">
+                                    <span class="icon-container" x-html="icons.refresh"></span>
+                                </button>
                             </div>
-                            <span class="input-hint" x-show="!settings.recordingApiKey">No API key configured. Click Regenerate to create one.</span>
+                            <span class="input-hint" x-show="!settings.recordingApiKey">No API key configured. Click the refresh button to create one.</span>
                         </div>
-                        <button class="btn" data-variant="secondary" type="button" tabindex="0" @click="regenerateApiKey()">Regenerate</button>
                     </div>
 
                     <!-- Info Section -->
