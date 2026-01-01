@@ -37,8 +37,8 @@ const (
 type VersionChecker struct {
 	mu     sync.RWMutex
 	latest string
-	etag   string           // For conditional requests (304 Not Modified)
-	stopCh chan struct{}    // Close to signal goroutine to stop
+	etag   string        // For conditional requests (304 Not Modified)
+	stopCh chan struct{} // Close to signal goroutine to stop
 }
 
 // NewVersionChecker creates and starts a version checker.

@@ -197,9 +197,9 @@ func (r *Recorder) Format() string {
 
 // RecorderStatus contains runtime status for a recorder.
 type RecorderStatus struct {
-	State      string `json:"state"`                  // idle, recording, finalizing, error
-	DurationMs int64  `json:"duration_ms,omitzero"`   // Current recording duration in milliseconds
-	Error      string `json:"error,omitempty"`        // Error message if state is error
+	State      string `json:"state"`                // idle, recording, finalizing, error
+	DurationMs int64  `json:"duration_ms,omitzero"` // Current recording duration in milliseconds
+	Error      string `json:"error,omitempty"`      // Error message if state is error
 }
 
 // EncoderStatus contains a summary of the encoder's current operational state.
@@ -243,27 +243,27 @@ type AudioMetrics struct {
 
 // WSStatusResponse is sent to clients with full encoder and output status.
 type WSStatusResponse struct {
-	Type             string                    `json:"type"`              // Message type identifier
-	FFmpegAvailable  bool                      `json:"ffmpeg_available"`  // FFmpeg binary is available
-	Encoder          EncoderStatus             `json:"encoder"`           // Encoder status
-	Outputs          []Output                  `json:"outputs"`           // Output configurations
-	OutputStatus     map[string]OutputStatus   `json:"output_status"`     // Runtime output status
-	Recorders        []Recorder                `json:"recorders"`         // Recorder configurations
-	RecorderStatuses map[string]RecorderStatus `json:"recorder_statuses"` // Runtime recorder status
-	RecordingAPIKey  string                    `json:"recording_api_key"` // API key for recording control
-	Devices            []AudioDevice             `json:"devices"`              // Available audio devices
-	SilenceThreshold   float64                   `json:"silence_threshold"`    // Silence threshold in dB
-	SilenceDurationMs  int64                     `json:"silence_duration_ms"`  // Silence duration in milliseconds
-	SilenceRecoveryMs  int64                     `json:"silence_recovery_ms"`  // Recovery duration in milliseconds
-	SilenceWebhook     string                    `json:"silence_webhook"`      // Webhook URL for alerts
-	SilenceLogPath   string                    `json:"silence_log_path"`  // Log file path
-	EmailSMTPHost    string                    `json:"email_smtp_host"`   // SMTP server hostname
-	EmailSMTPPort    int                       `json:"email_smtp_port"`   // SMTP server port
-	EmailFromName    string                    `json:"email_from_name"`   // Sender display name
-	EmailUsername    string                    `json:"email_username"`    // SMTP username
-	EmailRecipients  string                    `json:"email_recipients"`  // Comma-separated recipients
-	Settings         WSSettings                `json:"settings"`          // Current settings
-	Version          VersionInfo               `json:"version"`           // Version information
+	Type              string                    `json:"type"`                // Message type identifier
+	FFmpegAvailable   bool                      `json:"ffmpeg_available"`    // FFmpeg binary is available
+	Encoder           EncoderStatus             `json:"encoder"`             // Encoder status
+	Outputs           []Output                  `json:"outputs"`             // Output configurations
+	OutputStatus      map[string]OutputStatus   `json:"output_status"`       // Runtime output status
+	Recorders         []Recorder                `json:"recorders"`           // Recorder configurations
+	RecorderStatuses  map[string]RecorderStatus `json:"recorder_statuses"`   // Runtime recorder status
+	RecordingAPIKey   string                    `json:"recording_api_key"`   // API key for recording control
+	Devices           []AudioDevice             `json:"devices"`             // Available audio devices
+	SilenceThreshold  float64                   `json:"silence_threshold"`   // Silence threshold in dB
+	SilenceDurationMs int64                     `json:"silence_duration_ms"` // Silence duration in milliseconds
+	SilenceRecoveryMs int64                     `json:"silence_recovery_ms"` // Recovery duration in milliseconds
+	SilenceWebhook    string                    `json:"silence_webhook"`     // Webhook URL for alerts
+	SilenceLogPath    string                    `json:"silence_log_path"`    // Log file path
+	EmailSMTPHost     string                    `json:"email_smtp_host"`     // SMTP server hostname
+	EmailSMTPPort     int                       `json:"email_smtp_port"`     // SMTP server port
+	EmailFromName     string                    `json:"email_from_name"`     // Sender display name
+	EmailUsername     string                    `json:"email_username"`      // SMTP username
+	EmailRecipients   string                    `json:"email_recipients"`    // Comma-separated recipients
+	Settings          WSSettings                `json:"settings"`            // Current settings
+	Version           VersionInfo               `json:"version"`             // Version information
 }
 
 // WSSettings contains the settings sub-object in status responses.
