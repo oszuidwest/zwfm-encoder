@@ -86,6 +86,9 @@ func main() {
 
 	slog.Info("shutting down")
 
+	// Stop version checker goroutine
+	srv.version.Stop()
+
 	// Shut down HTTP server.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5000*time.Millisecond)
 	defer cancel()

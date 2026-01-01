@@ -29,18 +29,25 @@ type OutputContext interface {
 }
 
 // Manager manages multiple output FFmpeg processes.
+//
+// Concurrency: Uses mu (RWMutex) to protect the processes map.
+// Each Process has its own stdinMu to protect I/O operations.
 type Manager struct {
 	ffmpegPath string
 	processes  map[string]*Process
-	mu         sync.RWMutex
+	mu         sync.RWMutex // Protects processes map
 }
 
 // Process tracks an individual output FFmpeg process.
+//
+// Concurrency: stdinMu protects stdin from concurrent access.
+// This prevents a race where WriteAudio() writes while Stop() closes stdin.
 type Process struct {
 	cmd         *exec.Cmd
 	ctx         context.Context
 	cancelCause context.CancelCauseFunc
 	stdin       io.WriteCloser
+	stdinMu     sync.Mutex // Protects stdin I/O (Write + Close)
 	running     bool
 	lastError   string
 	startTime   time.Time
@@ -134,13 +141,17 @@ func (m *Manager) Stop(outputID string) error {
 	}
 
 	proc.running = false
-	stdin := proc.stdin
 	process := proc.cmd.Process
 	cancelCause := proc.cancelCause
-	proc.stdin = nil
 	m.mu.Unlock()
 
 	slog.Info("stopping output", "output_id", outputID)
+
+	// Close stdin under stdinMu to prevent race with WriteAudio
+	proc.stdinMu.Lock()
+	stdin := proc.stdin
+	proc.stdin = nil
+	proc.stdinMu.Unlock()
 
 	if stdin != nil {
 		if err := stdin.Close(); err != nil {
@@ -188,32 +199,42 @@ func (m *Manager) StopAll() error {
 }
 
 // WriteAudio writes audio data to a specific output.
-// I/O is performed outside the lock to prevent blocking other operations.
+// Uses proc.stdinMu to prevent race with concurrent stdin.Close() in Stop.
 func (m *Manager) WriteAudio(outputID string, data []byte) error {
-	// Get stdin reference under read lock
+	// Get process under read lock
 	m.mu.RLock()
 	proc, exists := m.processes[outputID]
-	if !exists || !proc.running || proc.stdin == nil {
+	if !exists || !proc.running {
 		m.mu.RUnlock()
 		return nil
 	}
-	stdin := proc.stdin
 	m.mu.RUnlock()
 
-	// Write outside lock to prevent blocking
-	if _, err := stdin.Write(data); err != nil {
+	// Lock stdinMu to prevent race with Stop closing stdin
+	proc.stdinMu.Lock()
+	stdin := proc.stdin
+	if stdin == nil {
+		proc.stdinMu.Unlock()
+		return nil
+	}
+	_, err := stdin.Write(data)
+	proc.stdinMu.Unlock()
+
+	if err != nil {
 		// Update state under write lock on error
 		m.mu.Lock()
 		// Re-check proc still exists and hasn't been modified
 		if proc, exists := m.processes[outputID]; exists && proc.running {
 			slog.Warn("output write failed, marking as stopped", "output_id", outputID, "error", err)
 			proc.running = false
+			proc.stdinMu.Lock()
 			if proc.stdin != nil {
 				if closeErr := proc.stdin.Close(); closeErr != nil {
 					slog.Warn("failed to close stdin", "error", closeErr)
 				}
 				proc.stdin = nil
 			}
+			proc.stdinMu.Unlock()
 		}
 		m.mu.Unlock()
 		return fmt.Errorf("write audio: %w", err)

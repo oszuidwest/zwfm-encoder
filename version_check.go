@@ -24,17 +24,35 @@ const (
 )
 
 // VersionChecker is a background service that checks GitHub for new releases.
+//
+// Concurrency: The run() goroutine uses stopCh to know when to exit.
+// This is the standard Go pattern for stoppable goroutines:
+//
+//	select {
+//	case <-stopCh:  // Exit signal received
+//	    return
+//	case <-ticker.C:  // Normal operation
+//	    doWork()
+//	}
 type VersionChecker struct {
 	mu     sync.RWMutex
 	latest string
-	etag   string // For conditional requests (304 Not Modified)
+	etag   string           // For conditional requests (304 Not Modified)
+	stopCh chan struct{}    // Close to signal goroutine to stop
 }
 
 // NewVersionChecker creates and starts a version checker.
 func NewVersionChecker() *VersionChecker {
-	vc := &VersionChecker{}
+	vc := &VersionChecker{
+		stopCh: make(chan struct{}),
+	}
 	go vc.run()
 	return vc
+}
+
+// Stop gracefully stops the version checker goroutine.
+func (vc *VersionChecker) Stop() {
+	close(vc.stopCh)
 }
 
 // run executes the periodic version check loop.
@@ -45,14 +63,24 @@ func (vc *VersionChecker) run() {
 		}
 	}()
 
-	time.Sleep(versionCheckDelay)
-	vc.checkWithRetry()
+	// Initial delay before first check
+	select {
+	case <-time.After(versionCheckDelay):
+		vc.checkWithRetry()
+	case <-vc.stopCh:
+		return
+	}
 
 	ticker := time.NewTicker(versionCheckInterval)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		vc.checkWithRetry()
+	for {
+		select {
+		case <-ticker.C:
+			vc.checkWithRetry()
+		case <-vc.stopCh:
+			return
+		}
 	}
 }
 
