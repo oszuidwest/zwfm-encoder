@@ -1,6 +1,10 @@
 package util
 
-import "fmt"
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+)
 
 // ValidationError represents a field validation failure.
 type ValidationError struct {
@@ -67,4 +71,30 @@ func IsConfigured(values ...string) bool {
 		}
 	}
 	return true
+}
+
+// ValidatePath validates a file path for security.
+// It cleans the path and rejects path traversal attempts (.. components).
+// Returns nil if the path is valid.
+func ValidatePath(field, path string) *ValidationError {
+	if path == "" {
+		return &ValidationError{Field: field, Message: fmt.Sprintf("%s is required", field)}
+	}
+
+	// Reject path traversal attempts before cleaning
+	// This catches both explicit "../" and encoded variants
+	if strings.Contains(path, "..") {
+		return &ValidationError{Field: field, Message: "path cannot contain '..'"}
+	}
+
+	// Clean the path to normalize it
+	cleaned := filepath.Clean(path)
+
+	// After cleaning, verify no traversal components remain
+	// (filepath.Clean converts "a/../b" to "b", but we already rejected "..")
+	if strings.Contains(cleaned, "..") {
+		return &ValidationError{Field: field, Message: "invalid path"}
+	}
+
+	return nil
 }

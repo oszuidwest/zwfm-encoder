@@ -11,10 +11,12 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// validateLocalPath checks that LocalPath is set and creates the directory.
+// validateLocalPath checks that LocalPath is set, validates it for security,
+// and creates the directory.
 func validateLocalPath(recorder *types.Recorder) error {
-	if recorder.LocalPath == "" {
-		return fmt.Errorf("local_path is required")
+	// Security: validate path to prevent path traversal attacks
+	if err := util.ValidatePath("local_path", recorder.LocalPath); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(recorder.LocalPath, 0o755); err != nil {
 		return fmt.Errorf("cannot create local_path directory: %w", err)

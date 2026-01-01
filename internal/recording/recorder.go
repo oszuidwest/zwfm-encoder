@@ -140,6 +140,10 @@ func (r *GenericRecorder) Start() error {
 		outputDir = filepath.Join(r.tempDir, "recorders", r.id)
 	} else {
 		// Local or Both: use configured LocalPath
+		// Security: validate path to prevent path traversal (defense in depth)
+		if err := util.ValidatePath("local_path", r.config.LocalPath); err != nil {
+			return fmt.Errorf("invalid local_path: %w", err)
+		}
 		outputDir = r.config.LocalPath
 	}
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
