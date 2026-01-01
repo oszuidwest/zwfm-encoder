@@ -20,22 +20,6 @@ var (
 	ErrNotRecording = errors.New("recorder is not recording")
 )
 
-// RecordingState tracks the state of a recording.
-type RecordingState string
-
-const (
-	// StateIdle indicates no active recording.
-	StateIdle RecordingState = "idle"
-	// StateStarting indicates the recorder is validating paths and preparing to start.
-	StateStarting RecordingState = "starting"
-	// StateRecording indicates recording is in progress.
-	StateRecording RecordingState = "recording"
-	// StateFinalizing indicates file is being closed and prepared for upload.
-	StateFinalizing RecordingState = "finalizing"
-	// StateError indicates the recorder failed and requires attention.
-	StateError RecordingState = "error"
-)
-
 // S3Config holds S3-compatible storage configuration.
 type S3Config struct {
 	Endpoint        string `json:"endpoint,omitempty"`          // Custom S3 endpoint (empty for AWS)

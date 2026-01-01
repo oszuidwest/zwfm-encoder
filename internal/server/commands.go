@@ -50,6 +50,8 @@ func (h *CommandHandler) Handle(cmd WSCommand, send chan<- interface{}, triggerS
 		h.handleDeleteOutput(cmd)
 	case "update_output":
 		h.handleUpdateOutput(cmd)
+	case "clear_output_error":
+		h.handleClearOutputError(cmd)
 	case "update_settings":
 		h.handleUpdateSettings(cmd)
 	case "test_webhook", "test_log", "test_email":
@@ -66,6 +68,8 @@ func (h *CommandHandler) Handle(cmd WSCommand, send chan<- interface{}, triggerS
 		h.handleStartRecorder(cmd, send)
 	case "stop_recorder":
 		h.handleStopRecorder(cmd, send)
+	case "clear_recorder_error":
+		h.handleClearRecorderError(cmd, send)
 	case "test_recorder_s3":
 		h.handleTestRecorderS3(cmd, send)
 	case "regenerate_api_key":

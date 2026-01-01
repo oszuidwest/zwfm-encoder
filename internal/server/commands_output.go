@@ -180,3 +180,12 @@ func (h *CommandHandler) restartOutput(outputID string) {
 		}
 	}()
 }
+
+func (h *CommandHandler) handleClearOutputError(cmd WSCommand) {
+	if cmd.ID == "" {
+		slog.Warn("clear_output_error: no ID provided")
+		return
+	}
+	slog.Info("clear_output_error: clearing error", "output_id", cmd.ID)
+	h.encoder.ClearOutputError(cmd.ID)
+}

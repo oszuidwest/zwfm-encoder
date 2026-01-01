@@ -48,7 +48,7 @@ type Process struct {
 	cancelCause context.CancelCauseFunc
 	stdin       io.WriteCloser
 	stdinMu     sync.Mutex // Protects stdin I/O (Write + Close)
-	running     bool
+	state       types.ProcessState
 	lastError   string
 	startTime   time.Time
 	retryCount  int
@@ -69,7 +69,7 @@ func (m *Manager) Start(output *types.Output) error {
 	defer m.mu.Unlock()
 
 	existing, exists := m.processes[output.ID]
-	if exists && existing.running {
+	if exists && existing.state == types.ProcessRunning {
 		return nil // Already running
 	}
 
@@ -105,7 +105,7 @@ func (m *Manager) Start(output *types.Output) error {
 		ctx:         ctx,
 		cancelCause: cancelCause,
 		stdin:       stdinPipe,
-		running:     true,
+		state:       types.ProcessRunning,
 		startTime:   time.Now(),
 		retryCount:  retryCount,
 		backoff:     backoff,
@@ -134,13 +134,13 @@ func (m *Manager) Stop(outputID string) error {
 		return nil
 	}
 
-	if !proc.running {
+	if proc.state != types.ProcessRunning {
 		delete(m.processes, outputID)
 		m.mu.Unlock()
 		return nil
 	}
 
-	proc.running = false
+	proc.state = types.ProcessStopping
 	process := proc.cmd.Process
 	cancelCause := proc.cancelCause
 	m.mu.Unlock()
@@ -204,7 +204,7 @@ func (m *Manager) WriteAudio(outputID string, data []byte) error {
 	// Get process under read lock
 	m.mu.RLock()
 	proc, exists := m.processes[outputID]
-	if !exists || !proc.running {
+	if !exists || proc.state != types.ProcessRunning {
 		m.mu.RUnlock()
 		return nil
 	}
@@ -224,9 +224,9 @@ func (m *Manager) WriteAudio(outputID string, data []byte) error {
 		// Update state under write lock on error
 		m.mu.Lock()
 		// Re-check proc still exists and hasn't been modified
-		if proc, exists := m.processes[outputID]; exists && proc.running {
-			slog.Warn("output write failed, marking as stopped", "output_id", outputID, "error", err)
-			proc.running = false
+		if proc, exists := m.processes[outputID]; exists && proc.state == types.ProcessRunning {
+			slog.Warn("output write failed, marking as error", "output_id", outputID, "error", err)
+			proc.state = types.ProcessError
 			proc.stdinMu.Lock()
 			if proc.stdin != nil {
 				if closeErr := proc.stdin.Close(); closeErr != nil {
@@ -243,20 +243,34 @@ func (m *Manager) WriteAudio(outputID string, data []byte) error {
 }
 
 // AllStatuses returns status for all tracked outputs.
-func (m *Manager) AllStatuses(getMaxRetries func(string) int) map[string]types.OutputStatus {
+func (m *Manager) AllStatuses(getMaxRetries func(string) int) map[string]types.ProcessStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	statuses := make(map[string]types.OutputStatus)
+	statuses := make(map[string]types.ProcessStatus)
 	for id, proc := range m.processes {
 		maxRetries := getMaxRetries(id)
-		statuses[id] = types.OutputStatus{
-			Running:    proc.running,
-			Stable:     proc.running && time.Since(proc.startTime) >= types.StableThreshold,
-			LastError:  proc.lastError,
+		isRunning := proc.state == types.ProcessRunning
+
+		var pid int
+		if proc.cmd != nil && proc.cmd.Process != nil {
+			pid = proc.cmd.Process.Pid
+		}
+
+		var uptimeMs int64
+		if isRunning && !proc.startTime.IsZero() {
+			uptimeMs = time.Since(proc.startTime).Milliseconds()
+		}
+
+		statuses[id] = types.ProcessStatus{
+			State:      proc.state,
+			Stable:     isRunning && time.Since(proc.startTime) >= types.StableThreshold,
+			Exhausted:  proc.retryCount > maxRetries,
 			RetryCount: proc.retryCount,
 			MaxRetries: maxRetries,
-			GivenUp:    proc.retryCount > maxRetries,
+			UptimeMs:   uptimeMs,
+			PID:        pid,
+			Error:      proc.lastError,
 		}
 	}
 	return statuses
@@ -273,12 +287,27 @@ func (m *Manager) Process(outputID string) (cmd *exec.Cmd, ctx context.Context, 
 	return proc.cmd, proc.ctx, proc.retryCount, proc.backoff, true
 }
 
-// SetError sets the last error for an output.
+// SetError sets the last error for an output and transitions to error state.
 func (m *Manager) SetError(outputID, errMsg string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if proc, exists := m.processes[outputID]; exists {
 		proc.lastError = errMsg
+		proc.state = types.ProcessError
+	}
+}
+
+// ClearError clears the error and transitions to stopped state.
+func (m *Manager) ClearError(outputID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if proc, exists := m.processes[outputID]; exists && proc.state == types.ProcessError {
+		proc.lastError = ""
+		proc.state = types.ProcessStopped
+		proc.retryCount = 0
+		if proc.backoff != nil {
+			proc.backoff.Reset()
+		}
 	}
 }
 
@@ -308,7 +337,7 @@ func (m *Manager) MarkStopped(outputID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if proc, exists := m.processes[outputID]; exists {
-		proc.running = false
+		proc.state = types.ProcessStopped
 	}
 }
 

@@ -159,6 +159,19 @@ func (m *Manager) StopRecorder(id string) error {
 	return recorder.Stop()
 }
 
+// ClearRecorderError clears the error state for a recorder.
+func (m *Manager) ClearRecorderError(id string) error {
+	m.mu.RLock()
+	recorder, exists := m.recorders[id]
+	m.mu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("recorder not found: %s", id)
+	}
+
+	return recorder.ClearError()
+}
+
 // Start marks the manager as running and starts auto-start recorders.
 func (m *Manager) Start() error {
 	m.mu.Lock()
@@ -232,11 +245,11 @@ func (m *Manager) WriteAudio(pcm []byte) error {
 }
 
 // AllStatuses returns status for all recorders.
-func (m *Manager) AllStatuses() map[string]types.RecorderStatus {
+func (m *Manager) AllStatuses() map[string]types.ProcessStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	statuses := make(map[string]types.RecorderStatus, len(m.recorders))
+	statuses := make(map[string]types.ProcessStatus, len(m.recorders))
 	for id, recorder := range m.recorders {
 		statuses[id] = recorder.Status()
 	}
@@ -281,7 +294,7 @@ func (m *Manager) retryFailedHourlyRecorders() {
 		cfg := recorder.Config()
 		if cfg.RotationMode == types.RotationHourly && cfg.IsEnabled() {
 			status := recorder.Status()
-			if status.State == string(StateError) {
+			if status.State == types.ProcessError {
 				slog.Info("retrying failed hourly recorder at hour boundary", "id", cfg.ID, "name", cfg.Name)
 				go func(r *GenericRecorder) {
 					if err := r.Start(); err != nil {

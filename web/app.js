@@ -973,15 +973,15 @@ document.addEventListener('alpine:init', () => {
          * @returns {string} Status text
          */
         getRecorderStatusText(recorder) {
-            if (recorder.enabled === false) return 'Disabled';
             const status = this.recorderStatuses[recorder.id];
             if (!status) return 'Idle';
             switch (status.state) {
-                case 'recording': return 'Recording';
+                case 'disabled': return 'Disabled';
                 case 'starting': return 'Starting...';
-                case 'finalizing': return 'Finalizing...';
+                case 'running': return 'Recording';
+                case 'stopping': return 'Finalizing...';
                 case 'error': return status.error || 'Error';
-                case 'idle': return 'Idle';
+                case 'stopped': return 'Idle';
                 default: return status.state || 'Unknown';
             }
         },
@@ -1001,28 +1001,40 @@ document.addEventListener('alpine:init', () => {
             if (isDeleting) {
                 stateClass = 'state-warning';
                 statusText = 'Deleting...';
-            } else if (recorder.enabled === false) {
-                stateClass = 'state-stopped';
-                statusText = 'Disabled';
-            } else if (status.state === 'recording') {
-                stateClass = 'state-success';
-                statusText = 'Recording';
-            } else if (status.state === 'starting') {
-                stateClass = 'state-warning';
-                statusText = 'Starting...';
-            } else if (status.state === 'finalizing') {
-                stateClass = 'state-warning';
-                statusText = 'Finalizing...';
-            } else if (status.state === 'error') {
-                stateClass = 'state-danger';
-                statusText = status.error || 'Error';
+            } else {
+                switch (status.state) {
+                    case 'disabled':
+                        stateClass = 'state-stopped';
+                        statusText = 'Disabled';
+                        break;
+                    case 'starting':
+                        stateClass = 'state-warning';
+                        statusText = 'Starting...';
+                        break;
+                    case 'running':
+                        stateClass = 'state-success';
+                        statusText = 'Recording';
+                        break;
+                    case 'stopping':
+                        stateClass = 'state-warning';
+                        statusText = 'Finalizing...';
+                        break;
+                    case 'error':
+                        stateClass = 'state-danger';
+                        statusText = status.error || 'Error';
+                        break;
+                    default:
+                        stateClass = 'state-stopped';
+                        statusText = 'Idle';
+                        break;
+                }
             }
 
             return {
                 stateClass,
                 statusText,
-                durationMs: status.duration_ms || 0,
-                isRecording: status.state === 'recording'
+                uptimeMs: status.uptime_ms || 0,
+                isRecording: status.state === 'running'
             };
         },
 
@@ -1037,44 +1049,62 @@ document.addEventListener('alpine:init', () => {
             const status = this.outputStatuses[output.id] || {};
             const isDeleting = this.deletingOutputs[output.id] === output.created_at;
 
-            // Handle disabled outputs first (explicit from backend)
-            if (status.disabled) {
-                return {
-                    stateClass: 'state-stopped',
-                    statusText: 'Disabled',
-                    showError: false,
-                    lastError: ''
-                };
+            let stateClass = 'state-stopped';
+            let statusText = 'Offline';
+
+            if (isDeleting) {
+                stateClass = 'state-warning';
+                statusText = 'Deleting...';
+            } else {
+                switch (status.state) {
+                    case 'disabled':
+                        stateClass = 'state-stopped';
+                        statusText = 'Disabled';
+                        break;
+                    case 'starting':
+                        stateClass = 'state-warning';
+                        statusText = 'Connecting...';
+                        break;
+                    case 'running':
+                        if (status.stable) {
+                            stateClass = 'state-success';
+                            statusText = 'Connected';
+                        } else {
+                            stateClass = 'state-warning';
+                            statusText = 'Connecting...';
+                        }
+                        break;
+                    case 'stopping':
+                        stateClass = 'state-warning';
+                        statusText = 'Stopping...';
+                        break;
+                    case 'error':
+                        if (status.exhausted) {
+                            stateClass = 'state-danger';
+                            statusText = 'Failed';
+                        } else if (status.retry_count > 0) {
+                            stateClass = 'state-warning';
+                            statusText = `Retry ${status.retry_count}/${status.max_retries}`;
+                        } else {
+                            stateClass = 'state-danger';
+                            statusText = 'Error';
+                        }
+                        break;
+                    default:
+                        stateClass = 'state-stopped';
+                        statusText = 'Offline';
+                        break;
+                }
             }
 
-            // Compute state class
-            let stateClass;
-            if (isDeleting) stateClass = 'state-warning';
-            else if (status.stable) stateClass = 'state-success';
-            else if (status.given_up) stateClass = 'state-danger';
-            else if (status.retry_count > 0) stateClass = 'state-warning';
-            else if (status.running) stateClass = 'state-warning';
-            else if (!this.encoderRunning) stateClass = 'state-stopped';
-            else stateClass = 'state-warning';
-
-            // Compute status text
-            let statusText;
-            if (isDeleting) statusText = 'Deleting...';
-            else if (status.stable) statusText = 'Connected';
-            else if (status.given_up) statusText = 'Failed';
-            else if (status.retry_count > 0) statusText = `Retry ${status.retry_count}/${status.max_retries}`;
-            else if (status.running) statusText = 'Connecting...';
-            else if (!this.encoderRunning) statusText = 'Offline';
-            else statusText = 'Connecting...';
-
             // Compute error visibility
-            const showError = !isDeleting && (status.given_up || status.retry_count > 0) && status.last_error;
+            const showError = !isDeleting && status.state === 'error' && status.error;
 
             return {
                 stateClass,
                 statusText,
                 showError,
-                lastError: status.last_error || ''
+                lastError: status.error || ''
             };
         },
 

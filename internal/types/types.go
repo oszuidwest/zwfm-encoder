@@ -17,6 +17,36 @@ const (
 	StateStopping EncoderState = "stopping"
 )
 
+// ProcessState represents the state of any managed process (output or recorder).
+type ProcessState string
+
+const (
+	// ProcessStopped indicates the process is not running.
+	ProcessStopped ProcessState = "stopped"
+	// ProcessDisabled indicates the process is explicitly disabled.
+	ProcessDisabled ProcessState = "disabled"
+	// ProcessStarting indicates the process is initializing.
+	ProcessStarting ProcessState = "starting"
+	// ProcessRunning indicates the process is active.
+	ProcessRunning ProcessState = "running"
+	// ProcessStopping indicates the process is shutting down.
+	ProcessStopping ProcessState = "stopping"
+	// ProcessError indicates the process failed.
+	ProcessError ProcessState = "error"
+)
+
+// ProcessStatus contains runtime status for any managed process (output or recorder).
+type ProcessStatus struct {
+	State      ProcessState `json:"state"`                 // Current process state
+	Stable     bool         `json:"stable,omitempty"`      // Outputs: running ≥10s
+	Exhausted  bool         `json:"exhausted,omitempty"`   // Outputs: max retries reached
+	RetryCount int          `json:"retry_count,omitempty"` // Outputs: current retry attempt
+	MaxRetries int          `json:"max_retries,omitempty"` // Outputs: max allowed retries
+	UptimeMs   int64        `json:"uptime_ms,omitempty"`   // Time since process started
+	PID        int          `json:"pid,omitempty"`         // Process ID for debugging
+	Error      string       `json:"error,omitempty"`       // Error message
+}
+
 const (
 	// InitialRetryDelay is the starting delay between retry attempts.
 	InitialRetryDelay = 3000 * time.Millisecond
@@ -121,17 +151,6 @@ func (o *Output) Format() string {
 	return FormatFor(o.Codec)
 }
 
-// OutputStatus contains runtime status for an output.
-type OutputStatus struct {
-	Running    bool   `json:"running"`              // FFmpeg process is running
-	Stable     bool   `json:"stable,omitzero"`      // Connection is stable
-	Disabled   bool   `json:"disabled,omitzero"`    // Output is disabled in config
-	LastError  string `json:"last_error,omitzero"`  // Most recent error
-	RetryCount int    `json:"retry_count,omitzero"` // Current retry attempt
-	MaxRetries int    `json:"max_retries"`          // Maximum retry attempts
-	GivenUp    bool   `json:"given_up,omitzero"`    // Max retries exhausted
-}
-
 // RotationMode determines how recordings are split into files.
 type RotationMode string
 
@@ -195,13 +214,6 @@ func (r *Recorder) Format() string {
 	return FormatFor(r.Codec)
 }
 
-// RecorderStatus contains runtime status for a recorder.
-type RecorderStatus struct {
-	State      string `json:"state"`                // idle, recording, finalizing, error
-	DurationMs int64  `json:"duration_ms,omitzero"` // Current recording duration in milliseconds
-	Error      string `json:"error,omitempty"`      // Error message if state is error
-}
-
 // EncoderStatus contains a summary of the encoder's current operational state.
 type EncoderStatus struct {
 	State            EncoderState `json:"state"`                       // Current encoder state
@@ -243,27 +255,27 @@ type AudioMetrics struct {
 
 // WSStatusResponse is sent to clients with full encoder and output status.
 type WSStatusResponse struct {
-	Type              string                    `json:"type"`                // Message type identifier
-	FFmpegAvailable   bool                      `json:"ffmpeg_available"`    // FFmpeg binary is available
-	Encoder           EncoderStatus             `json:"encoder"`             // Encoder status
-	Outputs           []Output                  `json:"outputs"`             // Output configurations
-	OutputStatus      map[string]OutputStatus   `json:"output_status"`       // Runtime output status
-	Recorders         []Recorder                `json:"recorders"`           // Recorder configurations
-	RecorderStatuses  map[string]RecorderStatus `json:"recorder_statuses"`   // Runtime recorder status
-	RecordingAPIKey   string                    `json:"recording_api_key"`   // API key for recording control
-	Devices           []AudioDevice             `json:"devices"`             // Available audio devices
-	SilenceThreshold  float64                   `json:"silence_threshold"`   // Silence threshold in dB
-	SilenceDurationMs int64                     `json:"silence_duration_ms"` // Silence duration in milliseconds
-	SilenceRecoveryMs int64                     `json:"silence_recovery_ms"` // Recovery duration in milliseconds
-	SilenceWebhook    string                    `json:"silence_webhook"`     // Webhook URL for alerts
-	SilenceLogPath    string                    `json:"silence_log_path"`    // Log file path
-	EmailSMTPHost     string                    `json:"email_smtp_host"`     // SMTP server hostname
-	EmailSMTPPort     int                       `json:"email_smtp_port"`     // SMTP server port
-	EmailFromName     string                    `json:"email_from_name"`     // Sender display name
-	EmailUsername     string                    `json:"email_username"`      // SMTP username
-	EmailRecipients   string                    `json:"email_recipients"`    // Comma-separated recipients
-	Settings          WSSettings                `json:"settings"`            // Current settings
-	Version           VersionInfo               `json:"version"`             // Version information
+	Type              string                   `json:"type"`                // Message type identifier
+	FFmpegAvailable   bool                     `json:"ffmpeg_available"`    // FFmpeg binary is available
+	Encoder           EncoderStatus            `json:"encoder"`             // Encoder status
+	Outputs           []Output                 `json:"outputs"`             // Output configurations
+	OutputStatus      map[string]ProcessStatus `json:"output_status"`       // Runtime output status
+	Recorders         []Recorder               `json:"recorders"`           // Recorder configurations
+	RecorderStatuses  map[string]ProcessStatus `json:"recorder_statuses"`   // Runtime recorder status
+	RecordingAPIKey   string                   `json:"recording_api_key"`   // API key for recording control
+	Devices           []AudioDevice            `json:"devices"`             // Available audio devices
+	SilenceThreshold  float64                  `json:"silence_threshold"`   // Silence threshold in dB
+	SilenceDurationMs int64                    `json:"silence_duration_ms"` // Silence duration in milliseconds
+	SilenceRecoveryMs int64                    `json:"silence_recovery_ms"` // Recovery duration in milliseconds
+	SilenceWebhook    string                   `json:"silence_webhook"`     // Webhook URL for alerts
+	SilenceLogPath    string                   `json:"silence_log_path"`    // Log file path
+	EmailSMTPHost     string                   `json:"email_smtp_host"`     // SMTP server hostname
+	EmailSMTPPort     int                      `json:"email_smtp_port"`     // SMTP server port
+	EmailFromName     string                   `json:"email_from_name"`     // Sender display name
+	EmailUsername     string                   `json:"email_username"`      // SMTP username
+	EmailRecipients   string                   `json:"email_recipients"`    // Comma-separated recipients
+	Settings          WSSettings               `json:"settings"`            // Current settings
+	Version           VersionInfo              `json:"version"`             // Version information
 }
 
 // WSSettings contains the settings sub-object in status responses.

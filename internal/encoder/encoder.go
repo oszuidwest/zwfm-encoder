@@ -99,7 +99,7 @@ func (e *Encoder) InitRecording() error {
 }
 
 // AllRecorderStatuses returns status for all configured recorders.
-func (e *Encoder) AllRecorderStatuses() map[string]types.RecorderStatus {
+func (e *Encoder) AllRecorderStatuses() map[string]types.ProcessStatus {
 	return e.recordingManager.AllStatuses()
 }
 
@@ -155,9 +155,9 @@ func (e *Encoder) Status() types.EncoderStatus {
 }
 
 // AllOutputStatuses returns status for all configured outputs.
-// This includes disabled outputs (with Disabled: true) and outputs without
+// This includes disabled outputs (with State: ProcessDisabled) and outputs without
 // active processes, ensuring the frontend always has complete status data.
-func (e *Encoder) AllOutputStatuses(outputs []types.Output) map[string]types.OutputStatus {
+func (e *Encoder) AllOutputStatuses(outputs []types.Output) map[string]types.ProcessStatus {
 	// Get statuses for outputs with active processes
 	processStatuses := e.outputManager.AllStatuses(func(id string) int {
 		if o := e.config.Output(id); o != nil {
@@ -167,24 +167,25 @@ func (e *Encoder) AllOutputStatuses(outputs []types.Output) map[string]types.Out
 	})
 
 	// Build complete status map for all configured outputs
-	result := make(map[string]types.OutputStatus, len(outputs))
+	result := make(map[string]types.ProcessStatus, len(outputs))
 	for _, out := range outputs {
 		if status, exists := processStatuses[out.ID]; exists {
 			// Output has active process - use its status
 			// Also reflect disabled state if output was disabled while running
 			if !out.IsEnabled() {
-				status.Disabled = true
+				status.State = types.ProcessDisabled
 			}
 			result[out.ID] = status
 		} else if !out.IsEnabled() {
 			// Output is disabled - mark explicitly
-			result[out.ID] = types.OutputStatus{
-				Disabled:   true,
+			result[out.ID] = types.ProcessStatus{
+				State:      types.ProcessDisabled,
 				MaxRetries: out.MaxRetriesOrDefault(),
 			}
 		} else {
 			// Output is enabled but has no process (encoder not running)
-			result[out.ID] = types.OutputStatus{
+			result[out.ID] = types.ProcessStatus{
+				State:      types.ProcessStopped,
 				MaxRetries: out.MaxRetriesOrDefault(),
 			}
 		}
@@ -327,6 +328,11 @@ func (e *Encoder) StartOutput(outputID string) error {
 // StopOutput stops an output by ID.
 func (e *Encoder) StopOutput(outputID string) error {
 	return e.outputManager.Stop(outputID)
+}
+
+// ClearOutputError clears the error state for an output.
+func (e *Encoder) ClearOutputError(outputID string) {
+	e.outputManager.ClearError(outputID)
 }
 
 // TriggerTestEmail sends a test email to verify configuration.
@@ -614,4 +620,9 @@ func (e *Encoder) StartRecorder(id string) error {
 // StopRecorder stops a specific recorder.
 func (e *Encoder) StopRecorder(id string) error {
 	return e.recordingManager.StopRecorder(id)
+}
+
+// ClearRecorderError clears the error state for a recorder.
+func (e *Encoder) ClearRecorderError(id string) error {
+	return e.recordingManager.ClearRecorderError(id)
 }

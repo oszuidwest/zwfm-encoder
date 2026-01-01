@@ -36,7 +36,7 @@ type GenericRecorder struct {
 	maxDurationMinutes int // For on-demand mode (from global config)
 
 	tempDir   string
-	state     RecordingState
+	state     types.ProcessState
 	lastError string
 
 	// FFmpeg process
@@ -81,7 +81,7 @@ func NewGenericRecorder(cfg *types.Recorder, ffmpegPath, tempDir string, maxDura
 		ffmpegPath:         ffmpegPath,
 		maxDurationMinutes: maxDurationMinutes,
 		tempDir:            tempDir,
-		state:              StateIdle,
+		state:              types.ProcessStopped,
 		uploadQueue:        make(chan uploadRequest, 100),
 		uploadStopCh:       make(chan struct{}),
 	}
@@ -131,13 +131,13 @@ func (r *GenericRecorder) Start() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.state == StateRecording || r.state == StateStarting {
+	if r.state == types.ProcessRunning || r.state == types.ProcessStarting {
 		return ErrAlreadyRecording
 	}
 
 	// Clear any previous error and set starting state
 	r.lastError = ""
-	r.state = StateStarting
+	r.state = types.ProcessStarting
 
 	// Start async validation and startup
 	go r.startAsync()
@@ -180,14 +180,14 @@ func (r *GenericRecorder) startAsync() {
 	r.mu.Lock()
 
 	// Re-check state in case Stop() was called during validation
-	if r.state != StateStarting {
+	if r.state != types.ProcessStarting {
 		r.mu.Unlock()
 		return
 	}
 
 	// Start FFmpeg encoder
 	if err := r.startEncoderLocked(); err != nil {
-		r.state = StateError
+		r.state = types.ProcessError
 		r.lastError = err.Error()
 		r.mu.Unlock()
 		slog.Error("recorder failed to start encoder", "id", r.id, "error", err)
@@ -205,7 +205,7 @@ func (r *GenericRecorder) startAsync() {
 		r.scheduleDurationLimitLocked()
 	}
 
-	r.state = StateRecording
+	r.state = types.ProcessRunning
 
 	slog.Info("recorder started", "id", r.id, "name", r.config.Name, "mode", r.config.RotationMode)
 	r.mu.Unlock()
@@ -215,7 +215,7 @@ func (r *GenericRecorder) startAsync() {
 func (r *GenericRecorder) setError(msg string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.state = StateError
+	r.state = types.ProcessError
 	r.lastError = msg
 	slog.Error("recorder error", "id", r.id, "error", msg)
 }
@@ -225,20 +225,20 @@ func (r *GenericRecorder) setError(msg string) {
 func (r *GenericRecorder) Stop() error {
 	r.mu.Lock()
 
-	if r.state == StateIdle || r.state == StateFinalizing {
+	if r.state == types.ProcessStopped || r.state == types.ProcessStopping {
 		r.mu.Unlock()
 		return nil
 	}
 
-	// If in error or starting state, just reset to idle
-	if r.state == StateError || r.state == StateStarting {
-		r.state = StateIdle
+	// If in error or starting state, just reset to stopped
+	if r.state == types.ProcessError || r.state == types.ProcessStarting {
+		r.state = types.ProcessStopped
 		r.lastError = ""
 		r.mu.Unlock()
 		return nil
 	}
 
-	r.state = StateFinalizing
+	r.state = types.ProcessStopping
 
 	// Stop timers
 	if r.rotationTimer != nil {
@@ -262,7 +262,7 @@ func (r *GenericRecorder) Stop() error {
 	r.uploadWg.Wait()
 
 	r.mu.Lock()
-	r.state = StateIdle
+	r.state = types.ProcessStopped
 	r.uploadStopCh = make(chan struct{})          // Reset for next start
 	r.uploadQueue = make(chan uploadRequest, 100) // Reset for next start
 	r.stopOnce = sync.Once{}                      // Reset Once for next start
@@ -279,7 +279,7 @@ func (r *GenericRecorder) WriteAudio(pcm []byte) error {
 	state := r.state
 	r.mu.RUnlock()
 
-	if state != StateRecording {
+	if state != types.ProcessRunning {
 		return nil
 	}
 
@@ -304,27 +304,47 @@ func (r *GenericRecorder) WriteAudio(pcm []byte) error {
 }
 
 // Status returns the current recorder status.
-func (r *GenericRecorder) Status() types.RecorderStatus {
+func (r *GenericRecorder) Status() types.ProcessStatus {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	status := types.RecorderStatus{
-		State: string(r.state),
-		Error: r.lastError,
+	var pid int
+	if r.cmd != nil && r.cmd.Process != nil {
+		pid = r.cmd.Process.Pid
 	}
 
-	if r.state == StateRecording && !r.startTime.IsZero() {
-		status.DurationMs = time.Since(r.startTime).Milliseconds()
+	var uptimeMs int64
+	if r.state == types.ProcessRunning && !r.startTime.IsZero() {
+		uptimeMs = time.Since(r.startTime).Milliseconds()
 	}
 
-	return status
+	return types.ProcessStatus{
+		State:    r.state,
+		UptimeMs: uptimeMs,
+		PID:      pid,
+		Error:    r.lastError,
+	}
 }
 
 // IsRecording returns true if currently recording.
 func (r *GenericRecorder) IsRecording() bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.state == StateRecording
+	return r.state == types.ProcessRunning
+}
+
+// ClearError clears the error state for the recorder.
+func (r *GenericRecorder) ClearError() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.state != types.ProcessError {
+		return nil // Not in error state, nothing to clear
+	}
+
+	r.state = types.ProcessStopped
+	r.lastError = ""
+	return nil
 }
 
 // UpdateConfig updates the recorder configuration.
@@ -335,8 +355,8 @@ func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 	defer r.mu.Unlock()
 
 	// Clear error state on config update (user may have fixed the issue)
-	if r.state == StateError {
-		r.state = StateIdle
+	if r.state == types.ProcessError {
+		r.state = types.ProcessStopped
 		r.lastError = ""
 	}
 
@@ -494,7 +514,7 @@ func (r *GenericRecorder) scheduleRotationLocked() {
 func (r *GenericRecorder) rotateFile() {
 	r.mu.Lock()
 
-	if r.state != StateRecording {
+	if r.state != types.ProcessRunning {
 		r.mu.Unlock()
 		return
 	}
@@ -507,7 +527,7 @@ func (r *GenericRecorder) rotateFile() {
 
 	r.mu.Lock()
 	// Re-check state after reacquiring lock - Stop() may have been called
-	if r.state != StateRecording {
+	if r.state != types.ProcessRunning {
 		r.mu.Unlock()
 		return
 	}
@@ -515,7 +535,7 @@ func (r *GenericRecorder) rotateFile() {
 	// Start new encoder
 	if err := r.startEncoderLocked(); err != nil {
 		slog.Error("failed to start new recording file after rotation", "id", r.id, "error", err)
-		r.state = StateError
+		r.state = types.ProcessError
 		r.lastError = err.Error()
 		r.mu.Unlock()
 		return // Don't schedule next rotation - hourly retry will pick this up

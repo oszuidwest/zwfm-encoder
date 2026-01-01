@@ -208,6 +208,24 @@ func (h *CommandHandler) handleStopRecorder(cmd WSCommand, send chan<- interface
 	sendRecorderResult(send, "stop", cmd.ID, true, "")
 }
 
+// handleClearRecorderError clears the error state for a recorder.
+func (h *CommandHandler) handleClearRecorderError(cmd WSCommand, send chan<- interface{}) {
+	if cmd.ID == "" {
+		slog.Warn("clear_recorder_error: no ID provided")
+		sendRecorderResult(send, "clear_error", "", false, "no ID provided")
+		return
+	}
+
+	if err := h.encoder.ClearRecorderError(cmd.ID); err != nil {
+		slog.Error("clear_recorder_error: failed to clear", "error", err)
+		sendRecorderResult(send, "clear_error", cmd.ID, false, err.Error())
+		return
+	}
+
+	slog.Info("clear_recorder_error: cleared error", "id", cmd.ID)
+	sendRecorderResult(send, "clear_error", cmd.ID, true, "")
+}
+
 // handleTestRecorderS3 tests S3 connectivity for a recorder.
 func (h *CommandHandler) handleTestRecorderS3(cmd WSCommand, send chan<- interface{}) {
 	var data struct {
