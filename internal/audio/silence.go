@@ -9,32 +9,32 @@ import (
 
 // SilenceConfig holds the configurable thresholds for silence detection.
 type SilenceConfig struct {
-	Threshold float64 // dB level below which audio is considered silent
-	Duration  float64 // seconds of silence before triggering
-	Recovery  float64 // seconds of audio before considering recovered
+	Threshold  float64 // dB level below which audio is considered silent
+	DurationMs int64   // milliseconds of silence before triggering
+	RecoveryMs int64   // milliseconds of audio before considering recovered
 }
 
 // SilenceEvent represents the result of a silence detection update.
 type SilenceEvent struct {
 	// Current state
-	InSilence bool               // Currently in confirmed silence state
-	Duration  float64            // Current silence duration (0 if not silent)
-	Level     types.SilenceLevel // "active" when in silence, "" otherwise
+	InSilence  bool               // Currently in confirmed silence state
+	DurationMs int64              // Current silence duration in ms (0 if not silent)
+	Level      types.SilenceLevel // "active" when in silence, "" otherwise
 
 	// State transitions (for triggering notifications)
-	JustEntered   bool    // True on the frame when silence is first confirmed
-	JustRecovered bool    // True on the frame when recovery completes
-	TotalDuration float64 // Total silence duration (only set when JustRecovered)
+	JustEntered     bool  // True on the frame when silence is first confirmed
+	JustRecovered   bool  // True on the frame when recovery completes
+	TotalDurationMs int64 // Total silence duration in ms (only set when JustRecovered)
 }
 
 // SilenceDetector tracks audio silence state and generates detection events.
 // It is safe for concurrent use.
 type SilenceDetector struct {
-	mu              sync.Mutex
-	silenceStart    time.Time // when current silence period started
-	recoveryStart   time.Time // when audio returned after silence
-	inSilence       bool      // currently in confirmed silence state
-	silenceDuration float64   // tracks duration for recovery reporting
+	mu                sync.Mutex
+	silenceStart      time.Time // when current silence period started
+	recoveryStart     time.Time // when audio returned after silence
+	inSilence         bool      // currently in confirmed silence state
+	silenceDurationMs int64     // tracks duration in ms for recovery reporting
 }
 
 // NewSilenceDetector creates a new silence detector.
@@ -58,19 +58,19 @@ func (d *SilenceDetector) Update(dbL, dbR float64, cfg SilenceConfig, now time.T
 			d.silenceStart = now
 		}
 
-		silenceDuration := now.Sub(d.silenceStart).Seconds()
-		d.silenceDuration = silenceDuration
+		silenceDurationMs := now.Sub(d.silenceStart).Milliseconds()
+		d.silenceDurationMs = silenceDurationMs
 
 		if d.inSilence {
 			// Already in confirmed silence state
 			event.InSilence = true
-			event.Duration = silenceDuration
+			event.DurationMs = silenceDurationMs
 			event.Level = types.SilenceLevelActive
-		} else if silenceDuration >= cfg.Duration {
+		} else if silenceDurationMs >= cfg.DurationMs {
 			// Just crossed the duration threshold - enter silence state
 			d.inSilence = true
 			event.InSilence = true
-			event.Duration = silenceDuration
+			event.DurationMs = silenceDurationMs
 			event.Level = types.SilenceLevelActive
 			event.JustEntered = true
 		}
@@ -86,14 +86,14 @@ func (d *SilenceDetector) Update(dbL, dbR float64, cfg SilenceConfig, now time.T
 				d.recoveryStart = now
 			}
 
-			recoveryDuration := now.Sub(d.recoveryStart).Seconds()
+			recoveryDurationMs := now.Sub(d.recoveryStart).Milliseconds()
 
-			if recoveryDuration >= cfg.Recovery {
+			if recoveryDurationMs >= cfg.RecoveryMs {
 				event.JustRecovered = true
-				event.TotalDuration = d.silenceDuration
+				event.TotalDurationMs = d.silenceDurationMs
 
 				d.inSilence = false
-				d.silenceDuration = 0
+				d.silenceDurationMs = 0
 				d.silenceStart = time.Time{}
 				d.recoveryStart = time.Time{}
 			} else {
@@ -114,5 +114,5 @@ func (d *SilenceDetector) Reset() {
 	d.silenceStart = time.Time{}
 	d.recoveryStart = time.Time{}
 	d.inSilence = false
-	d.silenceDuration = 0
+	d.silenceDurationMs = 0
 }

@@ -36,6 +36,40 @@ const WS_RECONNECT_MS = 1000;     // WebSocket reconnection delay
 const EMAIL_FEEDBACK_MS = 2000;   // Email test result display duration
 
 /**
+ * Formats milliseconds to human-readable smart units.
+ * - <1000ms: shows as "XXXms"
+ * - <60000ms: shows as "Xs" or "X.Xs"
+ * - >=60000ms: shows as "Xm Ys"
+ *
+ * @param {number} ms - Duration in milliseconds
+ * @returns {string} Formatted duration
+ */
+const formatSmartDuration = (ms) => {
+    if (ms < 1000) return `${Math.round(ms)}ms`;
+    if (ms < 60000) {
+        const sec = ms / 1000;
+        return sec < 10 ? `${sec.toFixed(1)}s` : `${Math.round(sec)}s`;
+    }
+    const mins = Math.floor(ms / 60000);
+    const secs = Math.round((ms % 60000) / 1000);
+    return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
+};
+
+/**
+ * Converts milliseconds to seconds for UI display/input.
+ * @param {number} ms - Duration in milliseconds
+ * @returns {number} Duration in seconds
+ */
+const msToSeconds = (ms) => ms / 1000;
+
+/**
+ * Converts seconds to milliseconds for storage.
+ * @param {number} sec - Duration in seconds
+ * @returns {number} Duration in milliseconds
+ */
+const secondsToMs = (sec) => Math.round(sec * 1000);
+
+/**
  * Converts decibel value to percentage for VU meter display.
  * Maps -60dB to 0% and 0dB to 100%.
  *
@@ -116,6 +150,7 @@ document.addEventListener('alpine:init', () => {
         outputStatuses: {},
         previousOutputStatuses: {},
         deletingOutputs: {},
+        connectingAnimations: {},  // Track output connection animations reactively
 
         recorders: [],
         recorderStatuses: {},
@@ -147,9 +182,6 @@ document.addEventListener('alpine:init', () => {
 
         ffmpegAvailable: true, // Assume available until we get status
 
-        // Recording status (null when recording not configured)
-        recording: null,
-
         // Notification test state (unified object for all test types)
         testStates: {
             webhook: { pending: false, text: 'Test' },
@@ -174,6 +206,8 @@ document.addEventListener('alpine:init', () => {
         },
 
         ws: null,
+        _keydownHandler: null,
+        _bannerTimeout: null,
 
         // Computed properties
         /**
@@ -197,6 +231,27 @@ document.addEventListener('alpine:init', () => {
             return this.recorderForm.id !== '';
         },
 
+        /**
+         * Validates recorder form and returns true if form can be saved.
+         * Checks required fields based on storage mode.
+         * @returns {boolean} True if form is valid and can be submitted
+         */
+        get canSaveRecorder() {
+            if (!this.recorderForm.name?.trim()) return false;
+            if (this.isRecorderEditMode && !this.recorderFormDirty) return false;
+
+            const needsLocal = ['local', 'both'].includes(this.recorderForm.storage_mode);
+            const needsS3 = ['s3', 'both'].includes(this.recorderForm.storage_mode);
+
+            if (needsLocal && !this.recorderForm.local_path?.trim()) return false;
+            if (needsS3) {
+                if (!this.recorderForm.s3_bucket?.trim()) return false;
+                if (!this.recorderForm.s3_access_key_id?.trim()) return false;
+                if (!this.isRecorderEditMode && !this.recorderForm.s3_secret_access_key) return false;
+            }
+            return true;
+        },
+
         // Lifecycle
         /**
          * Alpine.js lifecycle hook - initializes WebSocket connection.
@@ -204,8 +259,32 @@ document.addEventListener('alpine:init', () => {
          */
         init() {
             this.connectWebSocket();
-            // Global keyboard handlers
-            document.addEventListener('keydown', (e) => this.handleGlobalKeydown(e));
+            // Global keyboard handlers - store reference for cleanup
+            this._keydownHandler = (e) => this.handleGlobalKeydown(e);
+            document.addEventListener('keydown', this._keydownHandler);
+        },
+
+        /**
+         * Alpine.js lifecycle hook - cleanup on component destruction.
+         * Removes event listeners and closes WebSocket to prevent memory leaks.
+         */
+        destroy() {
+            if (this._keydownHandler) {
+                document.removeEventListener('keydown', this._keydownHandler);
+                this._keydownHandler = null;
+            }
+            if (this._bannerTimeout) {
+                clearTimeout(this._bannerTimeout);
+                this._bannerTimeout = null;
+            }
+            if (this.clipTimeout) {
+                clearTimeout(this.clipTimeout);
+                this.clipTimeout = null;
+            }
+            if (this.ws) {
+                this.ws.close();
+                this.ws = null;
+            }
         },
 
         /**
@@ -261,13 +340,18 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
-         * Navigates to adjacent tab in settings.
+         * Navigates to adjacent tab in settings and focuses the tab button.
          * @param {number} direction - 1 for next, -1 for previous
          */
         navigateTab(direction) {
             const currentIndex = this.settingsTabs.findIndex(t => t.id === this.settingsTab);
             const newIndex = (currentIndex + direction + this.settingsTabs.length) % this.settingsTabs.length;
-            this.showTab(this.settingsTabs[newIndex].id);
+            const newTabId = this.settingsTabs[newIndex].id;
+            this.showTab(newTabId);
+            // Focus the new tab button for continued keyboard navigation
+            this.$nextTick(() => {
+                document.getElementById(`tab-${newTabId}`)?.focus();
+            });
         },
 
         /**
@@ -280,7 +364,13 @@ document.addEventListener('alpine:init', () => {
             this.ws = new WebSocket(`${protocol}//${location.host}/ws`);
 
             this.ws.onmessage = (e) => {
-                const msg = JSON.parse(e.data);
+                let msg;
+                try {
+                    msg = JSON.parse(e.data);
+                } catch {
+                    console.error('Invalid WebSocket message:', e.data);
+                    return;
+                }
                 if (msg.type === 'levels') {
                     this.handleLevels(msg.levels);
                 } else if (msg.type === 'status') {
@@ -340,8 +430,8 @@ document.addEventListener('alpine:init', () => {
             }
 
             // Update banner message with current duration if silence banner is showing
-            if (this.banner.visible && this.banner.type !== 'info' && levels.silence_duration) {
-                const duration = this.formatDuration(levels.silence_duration);
+            if (this.banner.visible && this.banner.type !== 'info' && levels.silence_duration_ms) {
+                const duration = formatSmartDuration(levels.silence_duration_ms);
                 if (newSilenceState === 'critical') {
                     this.banner.message = `Critical silence: ${duration}`;
                 } else if (newSilenceState === 'warning') {
@@ -363,7 +453,7 @@ document.addEventListener('alpine:init', () => {
          * @param {string} next - New silence state
          */
         handleSilenceTransition(prev, next) {
-            const duration = this.formatDuration(this.levels.silence_duration || 0);
+            const duration = formatSmartDuration(this.levels.silence_duration_ms || 0);
             if (next === 'warning' && prev === 'active') {
                 this.showBanner(`Silence detected: ${duration}`, 'warning', false);
             } else if (next === 'critical') {
@@ -384,11 +474,30 @@ document.addEventListener('alpine:init', () => {
          */
         getSilenceState() {
             if (!this.levels.silence_level) return '';
-            const duration = this.levels.silence_duration || 0;
-            const threshold = this.settings.silenceDuration || 15;
-            if (duration >= threshold * 4) return 'critical';
-            if (duration >= threshold * 2) return 'warning';
+            const durationMs = this.levels.silence_duration_ms || 0;
+            const thresholdMs = secondsToMs(this.settings.silenceDuration || 15);
+            if (durationMs >= thresholdMs * 4) return 'critical';
+            if (durationMs >= thresholdMs * 2) return 'warning';
             return 'active';
+        },
+
+        /**
+         * Returns CSS class for silence indicator dot.
+         * @returns {string} State class for dot styling
+         */
+        getSilenceStateClass() {
+            const state = this.getSilenceState();
+            if (state === 'critical') return 'state-danger';
+            if (state === 'warning' || state === 'active') return 'state-warning';
+            return '';
+        },
+
+        /**
+         * Returns CSS class for clip indicator dot.
+         * @returns {string} State class for dot styling
+         */
+        getClipStateClass() {
+            return this.clipActive ? 'state-danger' : '';
         },
 
         /**
@@ -426,16 +535,11 @@ document.addEventListener('alpine:init', () => {
                 const isNowConnected = newStatus.stable;
 
                 if (wasNotConnected && isNowConnected) {
-                    // Trigger animation by temporarily setting data attribute
-                    this.$nextTick(() => {
-                        const dotElement = document.querySelector(`[data-output-id="${id}"] .dot`);
-                        if (dotElement) {
-                            dotElement.dataset.connected = 'true';
-                            setTimeout(() => {
-                                delete dotElement.dataset.connected;
-                            }, 400);
-                        }
-                    });
+                    // Trigger animation via reactive state instead of DOM manipulation
+                    this.connectingAnimations[id] = true;
+                    setTimeout(() => {
+                        delete this.connectingAnimations[id];
+                    }, 400);
                 }
             }
 
@@ -463,10 +567,10 @@ document.addEventListener('alpine:init', () => {
                 if (msg.settings?.platform !== undefined) {
                     this.settings.platform = msg.settings.platform;
                 }
-                // Silence detection settings
+                // Silence detection settings (convert ms to seconds for UI)
                 this.settings.silenceThreshold = msg.silence_threshold ?? -40;
-                this.settings.silenceDuration = msg.silence_duration ?? 15;
-                this.settings.silenceRecovery = msg.silence_recovery ?? 5;
+                this.settings.silenceDuration = msToSeconds(msg.silence_duration_ms ?? 15000);
+                this.settings.silenceRecovery = msToSeconds(msg.silence_recovery_ms ?? 5000);
                 this.settings.silenceWebhook = msg.silence_webhook ?? '';
                 this.settings.silenceLogPath = msg.silence_log_path ?? '';
                 // Email settings
@@ -627,11 +731,19 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
-         * Switches active settings tab.
-         * @param {string} tabId - Tab identifier (audio, notifications, about)
+         * Switches active settings tab and manages focus.
+         * @param {string} tabId - Tab identifier (audio, notifications, recording, about)
+         * @param {boolean} focusPanel - If true, focus first input in panel
          */
-        showTab(tabId) {
+        showTab(tabId, focusPanel = false) {
             this.settingsTab = tabId;
+            if (focusPanel) {
+                this.$nextTick(() => {
+                    const panel = document.getElementById(`panel-${tabId}`);
+                    const focusable = panel?.querySelector('input, select, button, [tabindex="0"]');
+                    focusable?.focus();
+                });
+            }
         },
 
         // Output management
@@ -882,7 +994,7 @@ document.addEventListener('alpine:init', () => {
             return {
                 stateClass,
                 statusText,
-                duration: status.duration_seconds || 0,
+                durationMs: status.duration_ms || 0,
                 isRecording: status.state === 'recording'
             };
         },
@@ -1071,18 +1183,28 @@ document.addEventListener('alpine:init', () => {
 
         /**
          * Shows an alert banner notification.
+         * Clears any existing auto-hide timeout to prevent race conditions.
          * @param {string} message - Message to display
          * @param {string} type - Banner type: 'info', 'warning', 'danger'
          * @param {boolean} persistent - If true, banner stays until dismissed
          */
         showBanner(message, type = 'info', persistent = false) {
+            // Clear existing timeout to prevent premature hiding of new banner
+            if (this._bannerTimeout) {
+                clearTimeout(this._bannerTimeout);
+                this._bannerTimeout = null;
+            }
             this.banner = { visible: true, message, type, persistent };
             if (!persistent) {
-                setTimeout(() => this.hideBanner(), 10000);
+                this._bannerTimeout = setTimeout(() => this.hideBanner(), 10000);
             }
         },
 
         hideBanner() {
+            if (this._bannerTimeout) {
+                clearTimeout(this._bannerTimeout);
+                this._bannerTimeout = null;
+            }
             this.banner.visible = false;
         },
 
@@ -1102,7 +1224,7 @@ document.addEventListener('alpine:init', () => {
          * Formats a silence log entry for display.
          * For "ended" events, duration is the key metric (total silence time).
          * For "started" events, duration is just detection delay (not shown).
-         * @param {Object} entry - Log entry with timestamp, event, duration_sec, threshold_db
+         * @param {Object} entry - Log entry with timestamp, event, duration_ms, threshold_db
          * @returns {Object} Formatted entry with human-readable values
          */
         formatLogEntry(entry) {
@@ -1114,7 +1236,7 @@ document.addEventListener('alpine:init', () => {
             // For ended events, show duration prominently in the event name
             let eventText = 'Unknown event';
             if (isEnd) {
-                const dur = entry.duration_sec > 0 ? this.formatDuration(entry.duration_sec) : '';
+                const dur = entry.duration_ms > 0 ? formatSmartDuration(entry.duration_ms) : '';
                 eventText = dur ? `Silence ended: ${dur}` : 'Silence ended';
             } else if (isStart) {
                 eventText = 'Silence detected';
@@ -1122,56 +1244,19 @@ document.addEventListener('alpine:init', () => {
                 eventText = 'Test entry';
             }
 
+            // Map event type to state class
+            let stateClass = 'state-stopped';
+            if (isStart) stateClass = 'state-warning';
+            else if (isEnd) stateClass = 'state-success';
+
             return {
                 time: date.toLocaleString(),
                 event: eventText,
                 eventType: isStart ? 'silence' : isEnd ? 'recovery' : 'test',
+                stateClass,
                 // Only show threshold, duration is now in the event name for ended events
                 threshold: `${entry.threshold_db.toFixed(0)} dB`
             };
-        },
-
-        // Recording status helper functions
-
-        /**
-         * Returns CSS class for recording state indicator dot.
-         * @param {string} state - Recording state (recording, idle, disabled, error)
-         * @returns {string} CSS class for state dot
-         */
-        getRecordingStateClass(state) {
-            switch (state) {
-                case 'recording': return 'recording__dot--active';
-                case 'idle': return 'recording__dot--idle';
-                case 'disabled': return 'recording__dot--disabled';
-                case 'error': return 'recording__dot--error';
-                default: return 'recording__dot--idle';
-            }
-        },
-
-        /**
-         * Formats recording state for display.
-         * @param {string} state - Recording state
-         * @returns {string} Human-readable state text
-         */
-        formatRecordingState(state) {
-            switch (state) {
-                case 'recording': return 'Recording';
-                case 'idle': return 'Idle';
-                case 'disabled': return 'Disabled';
-                case 'error': return 'Error';
-                default: return state || 'Unknown';
-            }
-        },
-
-        /**
-         * Formats a Unix timestamp or ISO string for display.
-         * @param {number|string} timestamp - Unix timestamp (ms) or ISO string
-         * @returns {string} Formatted time string
-         */
-        formatTime(timestamp) {
-            if (!timestamp) return '';
-            const date = typeof timestamp === 'number' ? new Date(timestamp) : new Date(timestamp);
-            return date.toLocaleTimeString();
         }
     }));
 });

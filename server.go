@@ -125,8 +125,8 @@ func (s *Server) runWebSocketReader(conn server.WebSocketConn, send chan<- inter
 
 // runWebSocketEventLoop handles periodic status and level updates.
 func (s *Server) runWebSocketEventLoop(send chan interface{}, done, statusUpdate <-chan struct{}) {
-	levelsTicker := time.NewTicker(100 * time.Millisecond) // 10 fps for VU meter
-	statusTicker := time.NewTicker(3 * time.Second)
+	levelsTicker := time.NewTicker(100 * time.Millisecond)  // 10 fps for VU meter
+	statusTicker := time.NewTicker(3000 * time.Millisecond) // Status updates every 3s
 	defer levelsTicker.Stop()
 	defer statusTicker.Stop()
 
@@ -186,9 +186,9 @@ func (s *Server) buildWSStatus() types.WSStatusResponse {
 		RecorderStatuses: s.encoder.AllRecorderStatuses(),
 		RecordingAPIKey:  cfg.RecordingAPIKey,
 		Devices:          audio.ListDevices(),
-		SilenceThreshold: cfg.SilenceThreshold,
-		SilenceDuration:  cfg.SilenceDuration,
-		SilenceRecovery:  cfg.SilenceRecovery,
+		SilenceThreshold:  cfg.SilenceThreshold,
+		SilenceDurationMs: cfg.SilenceDurationMs,
+		SilenceRecoveryMs: cfg.SilenceRecoveryMs,
 		SilenceWebhook:   cfg.WebhookURL,
 		SilenceLogPath:   cfg.LogPath,
 		EmailSMTPHost:    cfg.EmailSMTPHost,

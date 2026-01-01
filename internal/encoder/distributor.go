@@ -52,15 +52,15 @@ func (d *Distributor) ProcessSamples(buf []byte, n int) {
 
 		if d.callback != nil {
 			d.callback(&types.AudioMetrics{
-				RMSLeft:         levels.RMSLeft,
-				RMSRight:        levels.RMSRight,
-				PeakLeft:        heldPeakL,
-				PeakRight:       heldPeakR,
-				Silence:         silenceEvent.InSilence,
-				SilenceDuration: silenceEvent.Duration,
-				SilenceLevel:    silenceEvent.Level,
-				ClipLeft:        levels.ClipLeft,
-				ClipRight:       levels.ClipRight,
+				RMSLeft:           levels.RMSLeft,
+				RMSRight:          levels.RMSRight,
+				PeakLeft:          heldPeakL,
+				PeakRight:         heldPeakR,
+				Silence:           silenceEvent.InSilence,
+				SilenceDurationMs: silenceEvent.DurationMs,
+				SilenceLevel:      silenceEvent.Level,
+				ClipLeft:          levels.ClipLeft,
+				ClipRight:         levels.ClipRight,
 			})
 		}
 

@@ -14,7 +14,7 @@ import (
 type EmailConfig = types.EmailConfig
 
 // SendSilenceAlert sends an email notification for critical silence.
-func SendSilenceAlert(cfg *EmailConfig, stationName string, duration, threshold float64) error {
+func SendSilenceAlert(cfg *EmailConfig, stationName string, durationMs int64, threshold float64) error {
 	if !util.IsConfigured(cfg.Host, cfg.Username, cfg.Recipients) {
 		return nil // Silently skip if not configured
 	}
@@ -26,14 +26,14 @@ func SendSilenceAlert(cfg *EmailConfig, stationName string, duration, threshold 
 			"Threshold: %.1f dB\n"+
 			"Time:      %s\n\n"+
 			"Please check the audio source.",
-		duration, threshold, util.HumanTime(),
+		float64(durationMs)/1000.0, threshold, util.HumanTime(),
 	)
 
 	return sendEmail(cfg, subject, body)
 }
 
 // SendRecoveryAlert sends an email notification when audio recovers from silence.
-func SendRecoveryAlert(cfg *EmailConfig, stationName string, silenceDuration float64) error {
+func SendRecoveryAlert(cfg *EmailConfig, stationName string, silenceDurationMs int64) error {
 	if !util.IsConfigured(cfg.Host, cfg.Username, cfg.Recipients) {
 		return nil // Silently skip if not configured
 	}
@@ -43,7 +43,7 @@ func SendRecoveryAlert(cfg *EmailConfig, stationName string, silenceDuration flo
 		"Audio recovered on the encoder.\n\n"+
 			"Silence lasted: %.1f seconds\n"+
 			"Time:           %s",
-		silenceDuration, util.HumanTime(),
+		float64(silenceDurationMs)/1000.0, util.HumanTime(),
 	)
 
 	return sendEmail(cfg, subject, body)

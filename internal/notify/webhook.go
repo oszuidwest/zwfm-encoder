@@ -12,29 +12,29 @@ import (
 
 // WebhookPayload represents the JSON structure sent to webhook endpoints.
 type WebhookPayload struct {
-	Event           string  `json:"event"`
-	SilenceDuration float64 `json:"silence_duration,omitempty"`
-	Threshold       float64 `json:"threshold,omitempty"`
-	Message         string  `json:"message,omitempty"`
-	Timestamp       string  `json:"timestamp"`
+	Event             string  `json:"event"`
+	SilenceDurationMs int64   `json:"silence_duration_ms,omitempty"`
+	Threshold         float64 `json:"threshold,omitempty"`
+	Message           string  `json:"message,omitempty"`
+	Timestamp         string  `json:"timestamp"`
 }
 
 // SendSilenceWebhook notifies the configured webhook of critical silence detection.
-func SendSilenceWebhook(webhookURL string, duration, threshold float64) error {
+func SendSilenceWebhook(webhookURL string, durationMs int64, threshold float64) error {
 	return sendWebhook(webhookURL, WebhookPayload{
-		Event:           "silence_detected",
-		SilenceDuration: duration,
-		Threshold:       threshold,
-		Timestamp:       timestampUTC(),
+		Event:             "silence_detected",
+		SilenceDurationMs: durationMs,
+		Threshold:         threshold,
+		Timestamp:         timestampUTC(),
 	})
 }
 
 // SendRecoveryWebhook notifies the configured webhook of audio recovery.
-func SendRecoveryWebhook(webhookURL string, silenceDuration float64) error {
+func SendRecoveryWebhook(webhookURL string, silenceDurationMs int64) error {
 	return sendWebhook(webhookURL, WebhookPayload{
-		Event:           "silence_recovered",
-		SilenceDuration: silenceDuration,
-		Timestamp:       timestampUTC(),
+		Event:             "silence_recovered",
+		SilenceDurationMs: silenceDurationMs,
+		Timestamp:         timestampUTC(),
 	})
 }
 
@@ -62,7 +62,7 @@ func sendWebhook(webhookURL string, payload WebhookPayload) error {
 		return util.WrapError("marshal payload", err)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 10000 * time.Millisecond}
 	resp, err := client.Post(webhookURL, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return util.WrapError("send webhook request", err)

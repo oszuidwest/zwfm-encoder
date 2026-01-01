@@ -19,20 +19,20 @@ const (
 
 const (
 	// InitialRetryDelay is the starting delay between retry attempts.
-	InitialRetryDelay = 3 * time.Second
+	InitialRetryDelay = 3000 * time.Millisecond
 	// MaxRetryDelay is the maximum delay between retry attempts.
-	MaxRetryDelay = 60 * time.Second
+	MaxRetryDelay = 60000 * time.Millisecond
 	// MaxRetries is the maximum number of retry attempts for the audio source.
 	MaxRetries = 10
 	// SuccessThreshold is the duration after which retry count resets.
-	SuccessThreshold = 30 * time.Second
+	SuccessThreshold = 30000 * time.Millisecond
 	// StableThreshold is the duration after which a connection is considered stable.
-	StableThreshold = 10 * time.Second
+	StableThreshold = 10000 * time.Millisecond
 )
 
 const (
 	// ShutdownTimeout is the duration to wait for graceful shutdown.
-	ShutdownTimeout = 3 * time.Second
+	ShutdownTimeout = 3000 * time.Millisecond
 	// PollInterval is the interval for polling process state.
 	PollInterval = 50 * time.Millisecond
 )
@@ -68,7 +68,7 @@ const DefaultMaxRetries = 99
 
 // OutputRestartDelay is the delay between stopping and starting an output during restart.
 // SRT connections with high latency settings need time to fully close on the server side.
-const OutputRestartDelay = 2 * time.Second
+const OutputRestartDelay = 2000 * time.Millisecond
 
 // MaxRetriesOrDefault returns the configured max retries or the default value.
 func (o *Output) MaxRetriesOrDefault() int {
@@ -197,9 +197,9 @@ func (r *Recorder) Format() string {
 
 // RecorderStatus contains runtime status for a recorder.
 type RecorderStatus struct {
-	State    string  `json:"state"`                     // idle, recording, finalizing, error
-	Duration float64 `json:"duration_seconds,omitzero"` // Current recording duration
-	Error    string  `json:"error,omitempty"`           // Error message if state is error
+	State      string `json:"state"`                  // idle, recording, finalizing, error
+	DurationMs int64  `json:"duration_ms,omitzero"`   // Current recording duration in milliseconds
+	Error      string `json:"error,omitempty"`        // Error message if state is error
 }
 
 // EncoderStatus contains a summary of the encoder's current operational state.
@@ -220,15 +220,15 @@ const SilenceLevelActive SilenceLevel = "active"
 
 // AudioLevels contains current audio level measurements.
 type AudioLevels struct {
-	Left            float64      `json:"left"`                      // RMS level in dB
-	Right           float64      `json:"right"`                     // RMS level in dB
-	PeakLeft        float64      `json:"peak_left"`                 // Peak level in dB
-	PeakRight       float64      `json:"peak_right"`                // Peak level in dB
-	Silence         bool         `json:"silence,omitzero"`          // True if audio below threshold
-	SilenceDuration float64      `json:"silence_duration,omitzero"` // Silence duration in seconds
-	SilenceLevel    SilenceLevel `json:"silence_level,omitzero"`    // "active" when in confirmed silence state
-	ClipLeft        int          `json:"clip_left,omitzero"`        // Clipped samples on left channel
-	ClipRight       int          `json:"clip_right,omitzero"`       // Clipped samples on right channel
+	Left              float64      `json:"left"`                         // RMS level in dB
+	Right             float64      `json:"right"`                        // RMS level in dB
+	PeakLeft          float64      `json:"peak_left"`                    // Peak level in dB
+	PeakRight         float64      `json:"peak_right"`                   // Peak level in dB
+	Silence           bool         `json:"silence,omitzero"`             // True if audio below threshold
+	SilenceDurationMs int64        `json:"silence_duration_ms,omitzero"` // Silence duration in milliseconds
+	SilenceLevel      SilenceLevel `json:"silence_level,omitzero"`       // "active" when in confirmed silence state
+	ClipLeft          int          `json:"clip_left,omitzero"`           // Clipped samples on left channel
+	ClipRight         int          `json:"clip_right,omitzero"`          // Clipped samples on right channel
 }
 
 // AudioMetrics contains audio level metrics for callback processing.
@@ -236,7 +236,7 @@ type AudioMetrics struct {
 	RMSLeft, RMSRight   float64      // RMS levels in dB
 	PeakLeft, PeakRight float64      // Peak levels in dB
 	Silence             bool         // True if audio below threshold
-	SilenceDuration     float64      // Silence duration in seconds
+	SilenceDurationMs   int64        // Silence duration in milliseconds
 	SilenceLevel        SilenceLevel // "active" when in confirmed silence state
 	ClipLeft, ClipRight int          // Clipped sample counts
 }
@@ -251,11 +251,11 @@ type WSStatusResponse struct {
 	Recorders        []Recorder                `json:"recorders"`         // Recorder configurations
 	RecorderStatuses map[string]RecorderStatus `json:"recorder_statuses"` // Runtime recorder status
 	RecordingAPIKey  string                    `json:"recording_api_key"` // API key for recording control
-	Devices          []AudioDevice             `json:"devices"`           // Available audio devices
-	SilenceThreshold float64                   `json:"silence_threshold"` // Silence threshold in dB
-	SilenceDuration  float64                   `json:"silence_duration"`  // Silence duration in seconds
-	SilenceRecovery  float64                   `json:"silence_recovery"`  // Recovery duration in seconds
-	SilenceWebhook   string                    `json:"silence_webhook"`   // Webhook URL for alerts
+	Devices            []AudioDevice             `json:"devices"`              // Available audio devices
+	SilenceThreshold   float64                   `json:"silence_threshold"`    // Silence threshold in dB
+	SilenceDurationMs  int64                     `json:"silence_duration_ms"`  // Silence duration in milliseconds
+	SilenceRecoveryMs  int64                     `json:"silence_recovery_ms"`  // Recovery duration in milliseconds
+	SilenceWebhook     string                    `json:"silence_webhook"`      // Webhook URL for alerts
 	SilenceLogPath   string                    `json:"silence_log_path"`  // Log file path
 	EmailSMTPHost    string                    `json:"email_smtp_host"`   // SMTP server hostname
 	EmailSMTPPort    int                       `json:"email_smtp_port"`   // SMTP server port
@@ -297,10 +297,10 @@ type WSSilenceLogResult struct {
 
 // SilenceLogEntry represents a single entry in the silence log.
 type SilenceLogEntry struct {
-	Timestamp   string  `json:"timestamp"`              // RFC3339 timestamp
-	Event       string  `json:"event"`                  // Event type (silence_start, silence_end)
-	DurationSec float64 `json:"duration_sec,omitempty"` // Silence duration in seconds
-	ThresholdDB float64 `json:"threshold_db"`           // Threshold in dB
+	Timestamp   string  `json:"timestamp"`             // RFC3339 timestamp
+	Event       string  `json:"event"`                 // Event type (silence_start, silence_end)
+	DurationMs  int64   `json:"duration_ms,omitempty"` // Silence duration in milliseconds
+	ThresholdDB float64 `json:"threshold_db"`          // Threshold in dB
 }
 
 // AudioDevice represents an available audio input device.

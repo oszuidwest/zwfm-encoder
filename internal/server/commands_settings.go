@@ -25,6 +25,23 @@ func updateFloatSetting(value *float64, minVal, maxVal float64, name string, set
 	}
 }
 
+// updateSecondsToMsSetting validates a seconds value and stores it as milliseconds.
+func updateSecondsToMsSetting(value *float64, minSec, maxSec float64, name string, setter func(int64) error) {
+	if value == nil {
+		return
+	}
+	v := *value
+	if err := util.ValidateRangeFloat(name, v, minSec, maxSec); err != nil {
+		slog.Warn("update_settings: validation failed", "setting", name, "error", err)
+		return
+	}
+	ms := int64(v * 1000)
+	slog.Info("update_settings: changing setting", "setting", name, "seconds", v, "ms", ms)
+	if err := setter(ms); err != nil {
+		slog.Error("update_settings: failed to save", "error", err)
+	}
+}
+
 // updateStringSetting updates a string setting.
 func updateStringSetting(value *string, name string, setter func(string) error) {
 	if value == nil {
@@ -85,8 +102,8 @@ func (h *CommandHandler) handleUpdateSettings(cmd WSCommand) {
 		h.handleAudioInputChange(settings.AudioInput)
 	}
 	updateFloatSetting(settings.SilenceThreshold, -60, 0, "silence threshold", h.cfg.SetSilenceThreshold)
-	updateFloatSetting(settings.SilenceDuration, 1, 300, "silence duration", h.cfg.SetSilenceDuration)
-	updateFloatSetting(settings.SilenceRecovery, 1, 60, "silence recovery", h.cfg.SetSilenceRecovery)
+	updateSecondsToMsSetting(settings.SilenceDuration, 0.5, 300, "silence duration", h.cfg.SetSilenceDurationMs)
+	updateSecondsToMsSetting(settings.SilenceRecovery, 0.5, 60, "silence recovery", h.cfg.SetSilenceRecoveryMs)
 	updateStringSetting(settings.SilenceWebhook, "webhook URL", h.cfg.SetWebhookURL)
 	updateStringSetting(settings.SilenceLogPath, "log path", h.cfg.SetLogPath)
 	if settings.EmailSMTPHost != nil || settings.EmailSMTPPort != nil ||

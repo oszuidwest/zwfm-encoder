@@ -304,7 +304,7 @@ func (e *Encoder) Restart() error {
 	if err := e.Stop(); err != nil {
 		return fmt.Errorf("stop: %w", err)
 	}
-	time.Sleep(1 * time.Second)
+	time.Sleep(1000 * time.Millisecond)
 	return e.Start()
 }
 
@@ -516,9 +516,9 @@ func (e *Encoder) runDistributor() {
 	// Snapshot silence config once at startup (avoids mutex contention in hot path)
 	cfg := e.config.Snapshot()
 	silenceCfg := audio.SilenceConfig{
-		Threshold: cfg.SilenceThreshold,
-		Duration:  cfg.SilenceDuration,
-		Recovery:  cfg.SilenceRecovery,
+		Threshold:  cfg.SilenceThreshold,
+		DurationMs: cfg.SilenceDurationMs,
+		RecoveryMs: cfg.SilenceRecoveryMs,
 	}
 
 	distributor := NewDistributor(
@@ -571,15 +571,15 @@ func (e *Encoder) runDistributor() {
 // updateAudioLevels updates audio levels from calculated metrics.
 func (e *Encoder) updateAudioLevels(m *types.AudioMetrics) {
 	levels := types.AudioLevels{
-		Left:            m.RMSLeft,
-		Right:           m.RMSRight,
-		PeakLeft:        m.PeakLeft,
-		PeakRight:       m.PeakRight,
-		Silence:         m.Silence,
-		SilenceDuration: m.SilenceDuration,
-		SilenceLevel:    m.SilenceLevel,
-		ClipLeft:        m.ClipLeft,
-		ClipRight:       m.ClipRight,
+		Left:              m.RMSLeft,
+		Right:             m.RMSRight,
+		PeakLeft:          m.PeakLeft,
+		PeakRight:         m.PeakRight,
+		Silence:           m.Silence,
+		SilenceDurationMs: m.SilenceDurationMs,
+		SilenceLevel:      m.SilenceLevel,
+		ClipLeft:          m.ClipLeft,
+		ClipRight:         m.ClipRight,
 	}
 
 	e.mu.Lock()

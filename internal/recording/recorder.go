@@ -236,7 +236,7 @@ func (r *GenericRecorder) Status() types.RecorderStatus {
 	}
 
 	if r.state == StateRecording && !r.startTime.IsZero() {
-		status.Duration = time.Since(r.startTime).Seconds()
+		status.DurationMs = time.Since(r.startTime).Milliseconds()
 	}
 
 	return status
@@ -369,7 +369,7 @@ func (r *GenericRecorder) stopEncoderAndUpload() {
 				}
 				r.mu.Unlock()
 			}
-		case <-time.After(10 * time.Second):
+		case <-time.After(10000 * time.Millisecond):
 			// Stage 1: Cancel context (sends SIGTERM)
 			slog.Warn("recorder ffmpeg did not stop in time, canceling context", "id", r.id)
 			r.cancel()
@@ -378,7 +378,7 @@ func (r *GenericRecorder) stopEncoderAndUpload() {
 			select {
 			case <-done:
 				// Process stopped after cancel
-			case <-time.After(2 * time.Second):
+			case <-time.After(2000 * time.Millisecond):
 				// Force kill if still running
 				if r.cmd.Process != nil {
 					slog.Error("recorder ffmpeg force killed", "id", r.id)

@@ -42,8 +42,7 @@
     <!-- Connection overlay - blocks UI when WebSocket disconnected -->
     <div class="connection-overlay" x-show="encoder.state === 'connecting'" x-cloak>
         <div class="content">
-            <div class="spinner"></div>
-            <span class="text">Connecting...</span>
+            <div class="loading">Connecting...</div>
         </div>
     </div>
 
@@ -91,10 +90,10 @@
                 </div>
                 <div class="actions">
                     <button class="icon-btn" type="button" tabindex="0" title="Settings" aria-label="Settings" @click="showSettings()">
-                        <span x-html="icons.settings"></span>
+                        <span class="icon-container" x-html="icons.settings"></span>
                     </button>
                     <a class="icon-btn" href="/logout" tabindex="0" title="Sign out" aria-label="Sign out">
-                        <span x-html="icons.logout"></span>
+                        <span class="icon-container" x-html="icons.logout"></span>
                     </a>
                 </div>
             </header>
@@ -143,8 +142,8 @@
                              Silence: Yellow dot when audio below threshold
                              Clip: Red flash when audio exceeds 0dB -->
                         <div class="indicators">
-                            <span class="indicator" aria-label="Silence indicator"><span class="dot" :data-state="getSilenceState()"></span>Silence</span>
-                            <span class="indicator" aria-label="Clip indicator"><span class="dot" :data-state="clipActive ? 'clip' : null"></span>Clip</span>
+                            <span class="indicator" aria-label="Silence indicator"><span class="dot" :class="getSilenceStateClass()"></span>Silence</span>
+                            <span class="indicator" aria-label="Clip indicator"><span class="dot" :class="getClipStateClass()"></span>Clip</span>
                         </div>
                     </div>
                     <template x-for="ch in vuChannels" :key="ch.label">
@@ -215,12 +214,15 @@
             </div>
             <div class="body">
                 <div class="outputs">
+                    <template x-if="outputs.length === 0">
+                        <div class="empty-state">No outputs configured</div>
+                    </template>
                     <template x-for="output in outputs" :key="output.id">
                         <div class="item"
                              x-data="{ get d() { return getOutputDisplayData(output) } }"
                              :data-deleting="deletingOutputs[output.id] === output.created_at ? true : null">
                             <div class="row" :data-output-id="output.id">
-                                <span class="dot" :class="d.stateClass"></span>
+                                <span class="dot" :class="d.stateClass" :data-connected="connectingAnimations[output.id] ? 'true' : null"></span>
                                 <span class="host" x-text="`${output.host}:${output.port}`"></span>
                                 <button class="icon-btn" data-variant="edit" type="button" tabindex="0" title="Edit" aria-label="Edit output"
                                         @click="showOutputForm(output.id)">
@@ -232,7 +234,10 @@
                                 <span class="streamid" x-text="`#${output.streamid}`"></span>
                                 <span class="status" :class="d.stateClass" x-text="d.statusText"></span>
                             </div>
-                            <p class="error" x-show="d.showError" x-text="d.lastError"></p>
+                            <div class="alert" role="alert" x-show="d.showError">
+                                <span class="icon-container" x-html="icons.warning"></span>
+                                <span x-text="d.lastError"></span>
+                            </div>
                         </div>
                     </template>
                 </div>
@@ -251,7 +256,10 @@
                 <h2>Recorders</h2>
                 <div class="actions">
                     <span class="badge" x-text="recorders.length" x-show="recorders.length > 0"></span>
-                    <button class="add-btn" type="button" tabindex="0" aria-label="Add recorder" @click="showRecorderForm()">
+                    <button class="add-btn" type="button" tabindex="0" aria-label="Add recorder"
+                            :disabled="!ffmpegAvailable"
+                            :title="!ffmpegAvailable ? 'FFmpeg not available' : ''"
+                            @click="showRecorderForm()">
                         <span class="icon-container" x-html="icons.plus"></span>
                         Add
                     </button>
@@ -306,9 +314,9 @@
                  Sliding indicator animates between tabs -->
             <div class="tabs" role="tablist">
                 <template x-for="tab in settingsTabs" :key="tab.id">
-                    <button class="tab" type="button" role="tab" :id="'tab-' + tab.id" :aria-selected="settingsTab === tab.id" :aria-controls="'panel-' + tab.id" :tabindex="settingsTab === tab.id ? 0 : -1" @click="showTab(tab.id)">
-                        <span x-html="icons[tab.icon]"></span>
-                        <span x-text="tab.label"></span>
+                    <button class="tab" type="button" role="tab" :id="'tab-' + tab.id" :aria-selected="settingsTab === tab.id" :aria-controls="'panel-' + tab.id" :tabindex="settingsTab === tab.id ? 0 : -1" :title="tab.label" @click="showTab(tab.id)">
+                        <span class="icon-container" x-html="icons[tab.icon]"></span>
+                        <span class="label" x-text="tab.label"></span>
                     </button>
                 </template>
             </div>
@@ -321,7 +329,7 @@
                 <div class="panel" role="tabpanel" id="panel-audio" aria-labelledby="tab-audio" x-show="settingsTab === 'audio'">
                     <div class="section">
                         <div class="section-header">
-                            <span x-html="icons.audio"></span>
+                            <span class="icon-container" x-html="icons.audio"></span>
                             <h3>Silence Detection</h3>
                         </div>
                         <p class="section-desc">Alert when audio drops below threshold for extended periods.</p>
@@ -329,28 +337,28 @@
                             <div class="group">
                                 <label for="silence-threshold">Threshold</label>
                                 <div class="input-group">
-                                    <input id="silence-threshold" type="number" max="0" min="-60" step="1" x-model.number="settings.silenceThreshold" @input="markSettingsDirty()">
+                                    <input id="silence-threshold" type="number" max="0" min="-60" step="1" x-model.number="settings.silenceThreshold" @input="markSettingsDirty()" aria-describedby="silence-threshold-hint">
                                     <span class="input-unit">dB</span>
                                 </div>
-                                <span class="input-hint">Audio below this level is considered silence.</span>
+                                <span id="silence-threshold-hint" class="input-hint">Audio below this level is considered silence.</span>
                             </div>
                             <div class="row">
                                 <div class="group">
                                     <label for="silence-duration">Silence Duration</label>
                                     <div class="input-group">
-                                        <input id="silence-duration" type="number" max="300" min="1" step="1" x-model.number="settings.silenceDuration" @input="markSettingsDirty()">
+                                        <input id="silence-duration" type="number" max="300" min="0.5" step="0.5" x-model.number="settings.silenceDuration" @input="markSettingsDirty()" aria-describedby="silence-duration-hint">
                                         <span class="input-unit">sec</span>
                                     </div>
                                 </div>
                                 <div class="group">
                                     <label for="silence-recovery">Recovery Time</label>
                                     <div class="input-group">
-                                        <input id="silence-recovery" type="number" max="60" min="1" step="1" x-model.number="settings.silenceRecovery" @input="markSettingsDirty()">
+                                        <input id="silence-recovery" type="number" max="60" min="0.5" step="0.5" x-model.number="settings.silenceRecovery" @input="markSettingsDirty()" aria-describedby="silence-duration-hint">
                                         <span class="input-unit">sec</span>
                                     </div>
                                 </div>
                             </div>
-                            <span class="input-hint">Silence triggers alerts. Recovery clears after audio returns.</span>
+                            <span id="silence-duration-hint" class="input-hint">Silence triggers alerts. Recovery clears after audio returns.</span>
                         </div>
                     </div>
                 </div>
@@ -363,7 +371,7 @@
                 <div class="panel" role="tabpanel" id="panel-notifications" aria-labelledby="tab-notifications" x-show="settingsTab === 'notifications'">
                     <div class="section">
                         <div class="section-header">
-                            <span x-html="icons.link"></span>
+                            <span class="icon-container" x-html="icons.link"></span>
                             <h3>Webhook</h3>
                         </div>
                         <p class="section-desc">POST request sent when silence is detected.</p>
@@ -377,15 +385,15 @@
                     </div>
                     <div class="section">
                         <div class="section-header">
-                            <span x-html="icons.file"></span>
+                            <span class="icon-container" x-html="icons.file"></span>
                             <h3>File Log</h3>
                         </div>
                         <p class="section-desc">Log silence events to a JSON Lines file.</p>
                         <div class="form">
                             <div class="group">
                                 <label for="silence-log-path">Log File Path</label>
-                                <input id="silence-log-path" type="text" placeholder="/var/log/encoder/silence.jsonl" x-model="settings.silenceLogPath" @input="markSettingsDirty()">
-                                <span class="input-hint">Leave empty to disable file logging.</span>
+                                <input id="silence-log-path" type="text" placeholder="/var/log/encoder/silence.jsonl" x-model="settings.silenceLogPath" @input="markSettingsDirty()" aria-describedby="silence-log-path-hint">
+                                <span id="silence-log-path-hint" class="input-hint">Leave empty to disable file logging.</span>
                             </div>
                         </div>
                         <div class="btn-group">
@@ -395,7 +403,7 @@
                     </div>
                     <div class="section">
                         <div class="section-header">
-                            <span x-html="icons.email"></span>
+                            <span class="icon-container" x-html="icons.email"></span>
                             <h3>Email Notifications</h3>
                         </div>
                         <p class="section-desc">Email notifications when silence is detected.</p>
@@ -422,13 +430,13 @@
                             </div>
                             <div class="group">
                                 <label for="email-password">Password</label>
-                                <input id="email-password" type="password" placeholder="SMTP password" x-model="settings.email.password" @input="markSettingsDirty()">
-                                <span class="input-hint">Leave empty to keep existing password</span>
+                                <input id="email-password" type="password" placeholder="SMTP password" x-model="settings.email.password" @input="markSettingsDirty()" aria-describedby="email-password-hint">
+                                <span id="email-password-hint" class="input-hint">Leave empty to keep existing password</span>
                             </div>
                             <div class="group">
                                 <label for="email-recipients">Recipients</label>
-                                <input id="email-recipients" type="text" placeholder="admin@example.com, tech@example.com" x-model="settings.email.recipients" @input="markSettingsDirty()">
-                                <span class="input-hint">Comma-separated email addresses.</span>
+                                <input id="email-recipients" type="text" placeholder="admin@example.com, tech@example.com" x-model="settings.email.recipients" @input="markSettingsDirty()" aria-describedby="email-recipients-hint">
+                                <span id="email-recipients-hint" class="input-hint">Comma-separated email addresses.</span>
                             </div>
                         </div>
                         <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('email')" :disabled="testStates.email.pending || settingsDirty" x-text="testStates.email.text">Test</button>
@@ -441,7 +449,7 @@
                     <!-- API Key Section -->
                     <div class="section">
                         <div class="section-header">
-                            <span x-html="icons.key"></span>
+                            <span class="icon-container" x-html="icons.key"></span>
                             <h3>API Key</h3>
                         </div>
                         <p class="section-desc">Authentication key for REST API endpoints (/api/recordings/start, /api/recordings/stop).</p>
@@ -454,7 +462,7 @@
                                 <button class="icon-btn api-key__copy" type="button" tabindex="0" title="Copy to clipboard"
                                         @click="copyApiKey()"
                                         x-show="recordingApiKey">
-                                    <span x-html="icons.clipboard"></span>
+                                    <span class="icon-container" x-html="icons.clipboard"></span>
                                 </button>
                             </div>
                             <span class="input-hint" x-show="!recordingApiKey">No API key configured. Click Regenerate to create one.</span>
@@ -465,7 +473,7 @@
                     <!-- Info Section -->
                     <div class="section">
                         <div class="section-header">
-                            <span x-html="icons.info"></span>
+                            <span class="icon-container" x-html="icons.info"></span>
                             <h3>Recorder Configuration</h3>
                         </div>
                         <p class="section-desc">Add and configure recorders from the dashboard. Each recorder can have its own S3 storage, codec, and rotation settings.</p>
@@ -512,7 +520,7 @@
                     </div>
                     <div class="section">
                         <div class="section-header">
-                            <span x-html="icons.license"></span>
+                            <span class="icon-container" x-html="icons.license"></span>
                             <h3>License</h3>
                         </div>
                         <div class="about">
@@ -527,7 +535,7 @@
                     </div>
                     <div class="section">
                         <div class="section-header">
-                            <span x-html="icons.heart"></span>
+                            <span class="icon-container" x-html="icons.heart"></span>
                             <h3>Acknowledgements</h3>
                         </div>
                         <p class="section-desc">This project is built with the following open source software:</p>
@@ -561,7 +569,7 @@
                     <!-- Server Connection Section -->
                     <div class="section">
                         <div class="section-header">
-                            <span x-html="icons.server"></span>
+                            <span class="icon-container" x-html="icons.server"></span>
                             <h3>Server Connection</h3>
                         </div>
                         <p class="section-desc">Configure the SRT server to stream audio to.</p>
@@ -595,7 +603,7 @@
                     <!-- Encoding Section -->
                     <div class="section">
                         <div class="section-header">
-                            <span x-html="icons.settings"></span>
+                            <span class="icon-container" x-html="icons.settings"></span>
                             <h3>Encoding</h3>
                         </div>
                         <p class="section-desc">Audio encoding format and retry settings.</p>
@@ -622,7 +630,7 @@
                     <!-- Output Status Section - Only in edit mode (yellow/warning) -->
                     <div class="section" data-variant="warning" x-show="isEditMode" x-cloak>
                         <div class="section-header">
-                            <span x-html="icons.power"></span>
+                            <span class="icon-container" x-html="icons.power"></span>
                             <h3>Output Status</h3>
                         </div>
                         <p class="section-desc">Disabling stops the stream to this server. Changes apply on save.</p>
@@ -643,7 +651,7 @@
                     <!-- Danger Zone Section - Only in edit mode -->
                     <div class="section" data-variant="danger" x-show="isEditMode" x-cloak>
                         <div class="section-header">
-                            <span x-html="icons.warning"></span>
+                            <span class="icon-container" x-html="icons.warning"></span>
                             <h3>Danger Zone</h3>
                         </div>
                         <p class="section-desc">Permanently delete this output configuration.</p>
@@ -659,13 +667,13 @@
         <!-- === Recorder Form View ===
              Unified form for creating and editing recorders.
              Mode detection: isRecorderEditMode checks if recorderForm.id is set -->
-        <div id="recorder-form-view" x-show="view === 'recorder-form'" x-transition:enter.duration.200ms x-cloak>
+        <div id="recorder-form-view" class="settings" x-show="view === 'recorder-form'" x-transition:enter.duration.200ms x-cloak>
             <header class="nav">
                 <button class="nav-btn" type="button" tabindex="0" @click="showDashboard()">Cancel</button>
                 <h2 x-text="isRecorderEditMode ? 'Edit Recorder' : 'New Recorder'">Recorder</h2>
                 <button class="nav-btn" data-variant="save" type="button" tabindex="0"
                         @click="submitRecorderForm()"
-                        :disabled="!recorderForm.name || ((recorderForm.storage_mode === 'local' || recorderForm.storage_mode === 'both') && !recorderForm.local_path) || ((recorderForm.storage_mode === 's3' || recorderForm.storage_mode === 'both') && (!recorderForm.s3_bucket || !recorderForm.s3_access_key_id || (!isRecorderEditMode && !recorderForm.s3_secret_access_key))) || (isRecorderEditMode && !recorderFormDirty)">Save</button>
+                        :disabled="!canSaveRecorder">Save</button>
             </header>
 
             <div class="panels">
@@ -673,100 +681,112 @@
                     <!-- Recorder Info Section -->
                     <div class="section">
                         <div class="section-header">
-                            <span x-html="icons.microphone"></span>
+                            <span class="icon-container" x-html="icons.microphone"></span>
                             <h3>Recorder Info</h3>
                         </div>
                         <p class="section-desc">Configure the recorder name and behavior.</p>
-                        <div class="group">
-                            <label for="recorder-name">Name</label>
-                            <input id="recorder-name" type="text" placeholder="Main Archive"
-                                   x-model="recorderForm.name" @input="markRecorderFormDirty()">
-                        </div>
-                        <div class="group">
-                            <label for="recorder-rotation">Rotation Mode</label>
-                            <select id="recorder-rotation" x-model="recorderForm.rotation_mode" @change="markRecorderFormDirty()">
-                                <option value="hourly">Hourly (auto-starts with encoder)</option>
-                                <option value="ondemand">On-Demand (API-controlled)</option>
-                            </select>
-                            <span class="input-hint" x-show="recorderForm.rotation_mode === 'hourly'">Rotates at each hour boundary, starts automatically with encoder.</span>
-                            <span class="input-hint" x-show="recorderForm.rotation_mode === 'ondemand'">Start/stop via API calls. Stops at max duration (configured in settings).</span>
-                        </div>
-                        <div class="group">
-                            <label for="recorder-codec">Codec</label>
-                            <select id="recorder-codec" x-model="recorderForm.codec" @change="markRecorderFormDirty()">
-                                <option value="mp3">MP3 (320 kbit/s)</option>
-                                <option value="mp2">MP2 (384 kbit/s)</option>
-                                <option value="ogg">Ogg Vorbis (~500 kbit/s)</option>
-                                <option value="wav">WAV (uncompressed)</option>
-                            </select>
-                        </div>
-                        <div class="group">
-                            <label for="recorder-storage">Storage</label>
-                            <select id="recorder-storage" x-model="recorderForm.storage_mode" @change="markRecorderFormDirty()">
-                                <option value="local">Local only</option>
-                                <option value="s3">S3 only</option>
-                                <option value="both">Local + S3</option>
-                            </select>
-                        </div>
-                        <div class="group">
-                            <label for="recorder-retention">Retention</label>
-                            <div class="input-group">
-                                <input id="recorder-retention" type="number" min="0" max="365"
-                                       x-model.number="recorderForm.retention_days"
-                                       @input="markRecorderFormDirty()">
-                                <span class="input-unit">days</span>
+                        <div class="form">
+                            <div class="group">
+                                <label for="recorder-name">Name</label>
+                                <input id="recorder-name" type="text" placeholder="Main Archive"
+                                       x-model="recorderForm.name" @input="markRecorderFormDirty()">
                             </div>
-                            <span class="input-hint">Files older than this are automatically deleted. Set to 0 to keep forever.</span>
+                            <div class="group">
+                                <label for="recorder-rotation">Rotation Mode</label>
+                                <select id="recorder-rotation" x-model="recorderForm.rotation_mode" @change="markRecorderFormDirty()" aria-describedby="recorder-rotation-hint">
+                                    <option value="hourly">Hourly (auto-starts with encoder)</option>
+                                    <option value="ondemand">On-Demand (API-controlled)</option>
+                                </select>
+                                <span id="recorder-rotation-hint" class="input-hint" x-show="recorderForm.rotation_mode === 'hourly'">Rotates at each hour boundary, starts automatically with encoder.</span>
+                                <span class="input-hint" x-show="recorderForm.rotation_mode === 'ondemand'" aria-hidden="true">Start/stop via API calls. Stops at max duration (configured in settings).</span>
+                            </div>
+                            <div class="row">
+                                <div class="group">
+                                    <label for="recorder-codec">Codec</label>
+                                    <select id="recorder-codec" x-model="recorderForm.codec" @change="markRecorderFormDirty()">
+                                        <option value="mp3">MP3 (320 kbit/s)</option>
+                                        <option value="mp2">MP2 (384 kbit/s)</option>
+                                        <option value="ogg">Ogg Vorbis (~500 kbit/s)</option>
+                                        <option value="wav">WAV (uncompressed)</option>
+                                    </select>
+                                </div>
+                                <div class="group">
+                                    <label for="recorder-storage">Storage</label>
+                                    <select id="recorder-storage" x-model="recorderForm.storage_mode" @change="markRecorderFormDirty()">
+                                        <option value="local">Local only</option>
+                                        <option value="s3">S3 only</option>
+                                        <option value="both">Local + S3</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="group">
+                                <label for="recorder-retention">Retention</label>
+                                <div class="input-group">
+                                    <input id="recorder-retention" type="number" min="0" max="365"
+                                           x-model.number="recorderForm.retention_days"
+                                           @input="markRecorderFormDirty()"
+                                           aria-describedby="recorder-retention-hint">
+                                    <span class="input-unit">days</span>
+                                </div>
+                                <span id="recorder-retention-hint" class="input-hint">Files older than this are automatically deleted. Set to 0 to keep forever.</span>
+                            </div>
                         </div>
                     </div>
 
                     <!-- Local Storage Section -->
                     <div class="section" x-show="recorderForm.storage_mode !== 's3'" x-cloak>
                         <div class="section-header">
-                            <span x-html="icons.folder"></span>
+                            <span class="icon-container" x-html="icons.folder"></span>
                             <h3>Local Storage</h3>
                         </div>
                         <p class="section-desc">Configure local directory for recordings.</p>
-                        <div class="group">
-                            <label for="recorder-local-path">Local Path</label>
-                            <input id="recorder-local-path" type="text" placeholder="/var/recordings/my-recorder"
-                                   x-model="recorderForm.local_path"
-                                   @input="markRecorderFormDirty()">
-                            <span class="input-hint">Directory will be created if it doesn't exist.</span>
+                        <div class="form">
+                            <div class="group">
+                                <label for="recorder-local-path">Local Path</label>
+                                <input id="recorder-local-path" type="text" placeholder="/var/recordings/my-recorder"
+                                       x-model="recorderForm.local_path"
+                                       @input="markRecorderFormDirty()"
+                                       aria-describedby="recorder-local-path-hint">
+                                <span id="recorder-local-path-hint" class="input-hint">Directory will be created if it doesn't exist.</span>
+                            </div>
                         </div>
                     </div>
 
                     <!-- S3 Storage Section -->
                     <div class="section" x-show="recorderForm.storage_mode !== 'local'" x-cloak>
                         <div class="section-header">
-                            <span x-html="icons.cloud"></span>
+                            <span class="icon-container" x-html="icons.cloud"></span>
                             <h3>S3 Storage</h3>
                         </div>
                         <p class="section-desc">Configure S3-compatible storage for recordings.</p>
-                        <div class="group">
-                            <label for="recorder-endpoint">S3 Endpoint</label>
-                            <input id="recorder-endpoint" type="url" placeholder="https://s3.eu-west-1.amazonaws.com"
-                                   x-model="recorderForm.s3_endpoint"
-                                   @input="markRecorderFormDirty()">
-                        </div>
-                        <div class="group">
-                            <label for="recorder-bucket">S3 Bucket</label>
-                            <input id="recorder-bucket" type="text" placeholder="my-recordings"
-                                   x-model="recorderForm.s3_bucket"
-                                   @input="markRecorderFormDirty()">
-                        </div>
-                        <div class="group">
-                            <label for="recorder-access-key">Access Key ID</label>
-                            <input id="recorder-access-key" type="password" placeholder="AKIAIOSFODNN7EXAMPLE"
-                                   x-model="recorderForm.s3_access_key_id"
-                                   @input="markRecorderFormDirty()">
-                        </div>
-                        <div class="group">
-                            <label for="recorder-secret-key">Secret Access Key</label>
-                            <input id="recorder-secret-key" type="password"
-                                   :placeholder="isRecorderEditMode ? 'Leave empty to keep' : 'Enter secret key'"
-                                   x-model="recorderForm.s3_secret_access_key"
-                                   @input="markRecorderFormDirty()">
+                        <div class="form">
+                            <div class="group">
+                                <label for="recorder-endpoint">S3 Endpoint</label>
+                                <input id="recorder-endpoint" type="url" placeholder="https://s3.eu-west-1.amazonaws.com"
+                                       x-model="recorderForm.s3_endpoint"
+                                       @input="markRecorderFormDirty()"
+                                       aria-describedby="recorder-endpoint-hint">
+                                <span id="recorder-endpoint-hint" class="input-hint">Leave empty for AWS S3 default endpoint.</span>
+                            </div>
+                            <div class="group">
+                                <label for="recorder-bucket">S3 Bucket</label>
+                                <input id="recorder-bucket" type="text" placeholder="my-recordings"
+                                       x-model="recorderForm.s3_bucket"
+                                       @input="markRecorderFormDirty()">
+                            </div>
+                            <div class="group">
+                                <label for="recorder-access-key">Access Key ID</label>
+                                <input id="recorder-access-key" type="text" placeholder="AKIAIOSFODNN7EXAMPLE"
+                                       x-model="recorderForm.s3_access_key_id"
+                                       @input="markRecorderFormDirty()">
+                            </div>
+                            <div class="group">
+                                <label for="recorder-secret-key">Secret Access Key</label>
+                                <input id="recorder-secret-key" type="password"
+                                       :placeholder="isRecorderEditMode ? 'Leave empty to keep' : 'Enter secret key'"
+                                       x-model="recorderForm.s3_secret_access_key"
+                                       @input="markRecorderFormDirty()">
+                            </div>
                         </div>
                         <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0"
                                 @click="testRecorderS3()"
@@ -777,19 +797,17 @@
                     <!-- Status Section - Only in edit mode -->
                     <div class="section" data-variant="warning" x-show="isRecorderEditMode" x-cloak>
                         <div class="section-header">
-                            <span x-html="icons.power"></span>
+                            <span class="icon-container" x-html="icons.power"></span>
                             <h3>Recorder Status</h3>
                         </div>
                         <p class="section-desc">Control the recorder state. Changes apply on save.</p>
                         <div class="segmented" role="group" aria-label="Recorder status">
                             <button type="button" class="segmented-btn"
-                                    :class="{ active: !recorderForm.enabled }"
                                     :aria-pressed="!recorderForm.enabled"
                                     @click="recorderForm.enabled = false; markRecorderFormDirty()">
                                 Disabled
                             </button>
                             <button type="button" class="segmented-btn"
-                                    :class="{ active: recorderForm.enabled }"
                                     :aria-pressed="recorderForm.enabled"
                                     @click="recorderForm.enabled = true; markRecorderFormDirty()">
                                 Enabled
@@ -797,28 +815,32 @@
                         </div>
 
                         <!-- Recording Controls - Only when on-demand mode -->
-                        <div class="group" data-spaced x-show="recorderForm.rotation_mode === 'ondemand'">
-                            <label>Recording Control</label>
-                            <template x-if="recorderStatuses[recorderForm.id]?.state === 'recording'">
-                                <button class="btn" data-variant="danger" type="button" tabindex="0"
-                                        @click="stopRecorder(recorderForm.id)">
-                                    Stop Recording
-                                </button>
-                            </template>
-                            <template x-if="recorderStatuses[recorderForm.id]?.state !== 'recording'">
-                                <button class="btn" data-variant="primary" type="button" tabindex="0"
-                                        @click="startRecorder(recorderForm.id)"
-                                        :disabled="!recorderForm.enabled">
-                                    Start Recording
-                                </button>
-                            </template>
-                        </div>
+                        <template x-if="recorderForm.rotation_mode === 'ondemand'">
+                            <div class="form" data-spaced>
+                                <div class="group">
+                                    <label>Recording Control</label>
+                                    <template x-if="recorderStatuses[recorderForm.id]?.state === 'recording'">
+                                        <button class="btn" data-variant="danger" type="button" tabindex="0"
+                                                @click="stopRecorder(recorderForm.id)">
+                                            Stop Recording
+                                        </button>
+                                    </template>
+                                    <template x-if="recorderStatuses[recorderForm.id]?.state !== 'recording'">
+                                        <button class="btn" data-variant="primary" type="button" tabindex="0"
+                                                @click="startRecorder(recorderForm.id)"
+                                                :disabled="!recorderForm.enabled">
+                                            Start Recording
+                                        </button>
+                                    </template>
+                                </div>
+                            </div>
+                        </template>
                     </div>
 
                     <!-- Danger Zone Section - Only in edit mode -->
                     <div class="section" data-variant="danger" x-show="isRecorderEditMode" x-cloak>
                         <div class="section-header">
-                            <span x-html="icons.warning"></span>
+                            <span class="icon-container" x-html="icons.warning"></span>
                             <h3>Danger Zone</h3>
                         </div>
                         <p class="section-desc">Permanently delete this recorder configuration.</p>
@@ -840,30 +862,31 @@
                     <header class="header">
                         <h2 id="silence-log-title">Silence Log</h2>
                         <button class="icon-btn" data-variant="close" type="button" tabindex="0" aria-label="Close" @click="handleSilenceLogClose()">
-                            <span x-html="icons.close"></span>
+                            <span class="icon-container" x-html="icons.close"></span>
                         </button>
                     </header>
                     <div class="body log">
                         <div class="loading" x-show="silenceLogModal.loading">
                             Loading events...
                         </div>
-                        <div class="error" x-show="!silenceLogModal.loading && silenceLogModal.error">
-                            <span x-html="icons.warning"></span>
+                        <div class="alert" role="alert" x-show="!silenceLogModal.loading && silenceLogModal.error">
+                            <span class="icon-container" x-html="icons.warning"></span>
                             <span x-text="silenceLogModal.error"></span>
                         </div>
-                        <div class="empty" x-show="!silenceLogModal.loading && !silenceLogModal.error && silenceLogModal.entries.length === 0">
+                        <div class="empty-state" x-show="!silenceLogModal.loading && !silenceLogModal.error && silenceLogModal.entries.length === 0">
                             No events recorded
                         </div>
-                        <div class="entries" x-show="!silenceLogModal.loading && !silenceLogModal.error && silenceLogModal.entries.length > 0">
+                        <div class="outputs" x-show="!silenceLogModal.loading && !silenceLogModal.error && silenceLogModal.entries.length > 0">
                             <template x-for="entry in silenceLogModal.entries" :key="entry.timestamp">
-                                <div class="entry" :data-event="formatLogEntry(entry).eventType">
-                                    <div class="entry-content">
-                                        <span class="event" x-text="formatLogEntry(entry).event"></span>
-                                        <div class="entry-details">
-                                            <span>Threshold: <strong x-text="formatLogEntry(entry).threshold"></strong></span>
-                                        </div>
+                                <div class="item" x-data="{ e: formatLogEntry(entry) }">
+                                    <div class="row">
+                                        <span class="dot" :class="e.stateClass"></span>
+                                        <span class="host" x-text="e.event"></span>
                                     </div>
-                                    <span class="time" x-text="formatLogEntry(entry).time"></span>
+                                    <div class="details">
+                                        <span class="codec" x-text="e.threshold"></span>
+                                        <span class="status" :class="e.stateClass" x-text="e.time"></span>
+                                    </div>
                                 </div>
                             </template>
                         </div>

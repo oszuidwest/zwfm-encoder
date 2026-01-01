@@ -24,8 +24,8 @@ const (
 	DefaultWebUsername                 = "admin"
 	DefaultWebPassword                 = "encoder"
 	DefaultSilenceThreshold            = -40.0
-	DefaultSilenceDuration             = 15.0
-	DefaultSilenceRecovery             = 5.0
+	DefaultSilenceDurationMs           = 15000 // 15 seconds in milliseconds
+	DefaultSilenceRecoveryMs           = 5000  // 5 seconds in milliseconds
 	DefaultEmailSMTPPort               = 587
 	DefaultStationName                 = "ZuidWest FM"
 	DefaultStationColorLight           = "#E6007E"
@@ -57,9 +57,9 @@ type AudioConfig struct {
 
 // SilenceDetectionConfig is the silence detection configuration.
 type SilenceDetectionConfig struct {
-	ThresholdDB     float64 `json:"threshold_db,omitempty"`
-	DurationSeconds float64 `json:"duration_seconds,omitempty"`
-	RecoverySeconds float64 `json:"recovery_seconds,omitempty"`
+	ThresholdDB float64 `json:"threshold_db,omitempty"`
+	DurationMs  int64   `json:"duration_ms,omitempty"`
+	RecoveryMs  int64   `json:"recovery_ms,omitempty"`
 }
 
 // NotificationsConfig is the notification configuration.
@@ -427,19 +427,19 @@ func (c *Config) SetSilenceThreshold(threshold float64) error {
 	return c.saveLocked()
 }
 
-// SetSilenceDuration updates the silence duration and saves the configuration.
-func (c *Config) SetSilenceDuration(seconds float64) error {
+// SetSilenceDurationMs updates the silence duration and saves the configuration.
+func (c *Config) SetSilenceDurationMs(ms int64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.SilenceDetection.DurationSeconds = seconds
+	c.SilenceDetection.DurationMs = ms
 	return c.saveLocked()
 }
 
-// SetSilenceRecovery updates the silence recovery time and saves the configuration.
-func (c *Config) SetSilenceRecovery(seconds float64) error {
+// SetSilenceRecoveryMs updates the silence recovery time and saves the configuration.
+func (c *Config) SetSilenceRecoveryMs(ms int64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.SilenceDetection.RecoverySeconds = seconds
+	c.SilenceDetection.RecoveryMs = ms
 	return c.saveLocked()
 }
 
@@ -498,9 +498,9 @@ type Snapshot struct {
 	AudioInput string
 
 	// Silence Detection
-	SilenceThreshold float64
-	SilenceDuration  float64
-	SilenceRecovery  float64
+	SilenceThreshold  float64
+	SilenceDurationMs int64
+	SilenceRecoveryMs int64
 
 	// Notifications
 	WebhookURL string
@@ -548,9 +548,9 @@ func (c *Config) Snapshot() Snapshot {
 		AudioInput: c.Audio.Input,
 
 		// Silence Detection (with defaults)
-		SilenceThreshold: cmp.Or(c.SilenceDetection.ThresholdDB, DefaultSilenceThreshold),
-		SilenceDuration:  cmp.Or(c.SilenceDetection.DurationSeconds, DefaultSilenceDuration),
-		SilenceRecovery:  cmp.Or(c.SilenceDetection.RecoverySeconds, DefaultSilenceRecovery),
+		SilenceThreshold:  cmp.Or(c.SilenceDetection.ThresholdDB, DefaultSilenceThreshold),
+		SilenceDurationMs: cmp.Or(c.SilenceDetection.DurationMs, DefaultSilenceDurationMs),
+		SilenceRecoveryMs: cmp.Or(c.SilenceDetection.RecoveryMs, DefaultSilenceRecoveryMs),
 
 		// Notifications
 		WebhookURL: c.Notifications.WebhookURL,
