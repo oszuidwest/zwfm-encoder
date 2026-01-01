@@ -271,9 +271,11 @@
                         <div class="empty-state">No recorders configured</div>
                     </template>
                     <template x-for="recorder in recorders" :key="recorder.id">
-                        <div class="item" :data-deleting="deletingRecorders[recorder.id] === recorder.created_at ? true : null">
+                        <div class="item"
+                             x-data="{ get d() { return getRecorderDisplayData(recorder) } }"
+                             :data-deleting="deletingRecorders[recorder.id] === recorder.created_at ? true : null">
                             <div class="row" :data-recorder-id="recorder.id">
-                                <span class="dot" :class="getRecorderStateClass(recorder)"></span>
+                                <span class="dot" :class="d.stateClass"></span>
                                 <span class="host" x-text="recorder.name"></span>
                                 <button class="icon-btn" data-variant="edit" type="button" tabindex="0" title="Edit" aria-label="Edit recorder"
                                         @click="showRecorderForm(recorder.id)">
@@ -283,7 +285,7 @@
                             <div class="details">
                                 <span class="codec" x-text="recorder.codec.toUpperCase()"></span>
                                 <span class="streamid" x-text="recorder.rotation_mode === 'hourly' ? 'Hourly' : 'On-Demand'"></span>
-                                <span class="status" :class="getRecorderStateClass(recorder)" x-text="getRecorderStatusText(recorder)"></span>
+                                <span class="status" :class="d.stateClass" x-text="d.statusText"></span>
                             </div>
                         </div>
                     </template>

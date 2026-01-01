@@ -514,8 +514,11 @@ func (r *GenericRecorder) rotateFile() {
 
 	// Start new encoder
 	if err := r.startEncoderLocked(); err != nil {
-		slog.Error("failed to start new recording file", "id", r.id, "error", err)
+		slog.Error("failed to start new recording file after rotation", "id", r.id, "error", err)
+		r.state = StateError
 		r.lastError = err.Error()
+		r.mu.Unlock()
+		return // Don't schedule next rotation - hourly retry will pick this up
 	}
 
 	// Schedule next rotation
