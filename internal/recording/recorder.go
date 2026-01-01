@@ -159,8 +159,7 @@ func (r *GenericRecorder) startAsync() {
 	// Validate and prepare output directory based on storage mode
 	if storageMode == types.StorageS3 {
 		// S3-only: create temp directory (should always be writable)
-		// filepath.Base used for defense-in-depth (also satisfies static analysis)
-		if err := os.MkdirAll(filepath.Join(tempDir, "recorders", filepath.Base(id)), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(tempDir, "recorders", id), 0o755); err != nil {
 			r.setError(fmt.Sprintf("failed to create temp directory: %v", err))
 			return
 		}
@@ -376,11 +375,10 @@ func (r *GenericRecorder) startEncoderLocked() error {
 	}
 
 	// Determine output directory based on storage mode
-	// filepath.Base used for defense-in-depth (also satisfies static analysis)
 	var outputDir string
 	if r.config.StorageMode == types.StorageS3 {
 		// S3-only: use temp directory
-		outputDir = filepath.Join(r.tempDir, "recorders", filepath.Base(r.id))
+		outputDir = filepath.Join(r.tempDir, "recorders", r.id)
 	} else {
 		// Local or Both: use configured LocalPath
 		outputDir = r.config.LocalPath
