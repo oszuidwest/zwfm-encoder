@@ -265,9 +265,13 @@ func (c *Config) AddOutput(output *types.Output) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if output.ID == "" {
-		output.ID = fmt.Sprintf("output-%d", len(c.Outputs)+1)
+	// Generate unique ID
+	shortID, err := generateShortID()
+	if err != nil {
+		return fmt.Errorf("failed to generate ID: %w", err)
 	}
+	output.ID = fmt.Sprintf("output-%s", shortID)
+
 	// Codec default is handled by validateOutput in the command handler
 	if output.Enabled == nil {
 		enabled := true
@@ -343,9 +347,13 @@ func (c *Config) AddRecorder(recorder *types.Recorder) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if recorder.ID == "" {
-		recorder.ID = fmt.Sprintf("recorder-%d", len(c.Recorders)+1)
+	// Generate unique ID
+	shortID, err := generateShortID()
+	if err != nil {
+		return fmt.Errorf("failed to generate ID: %w", err)
 	}
+	recorder.ID = fmt.Sprintf("recorder-%s", shortID)
+
 	if recorder.Codec == "" {
 		recorder.Codec = types.DefaultCodec
 	}
@@ -620,4 +628,13 @@ func GenerateAPIKey() (string, error) {
 		result[i] = chars[n.Int64()]
 	}
 	return string(result), nil
+}
+
+// generateShortID generates a random 8-character hex ID for outputs and recorders.
+func generateShortID() (string, error) {
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", b), nil
 }

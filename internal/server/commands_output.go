@@ -46,6 +46,10 @@ func (h *CommandHandler) handleAddOutput(cmd WSCommand) {
 		slog.Warn("add_output: invalid JSON data", "error", err)
 		return
 	}
+
+	// Force system-generated ID to prevent injection attacks
+	output.ID = ""
+
 	if err := validateOutput(&output); err != nil {
 		slog.Warn("add_output: validation failed", "error", err)
 		return
