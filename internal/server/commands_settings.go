@@ -104,6 +104,10 @@ func (h *CommandHandler) handleUpdateSettings(cmd WSCommand) {
 	updateFloatSetting(settings.SilenceThreshold, -60, 0, "silence threshold", h.cfg.SetSilenceThreshold)
 	updateSecondsToMsSetting(settings.SilenceDuration, 0.5, 300, "silence duration", h.cfg.SetSilenceDurationMs)
 	updateSecondsToMsSetting(settings.SilenceRecovery, 0.5, 60, "silence recovery", h.cfg.SetSilenceRecoveryMs)
+	// Notify encoder to apply new silence detection settings immediately
+	if settings.SilenceThreshold != nil || settings.SilenceDuration != nil || settings.SilenceRecovery != nil {
+		h.encoder.UpdateSilenceConfig()
+	}
 	updateStringSetting(settings.SilenceWebhook, "webhook URL", h.cfg.SetWebhookURL)
 	updateStringSetting(settings.SilenceLogPath, "log path", h.cfg.SetLogPath)
 	if settings.GraphTenantID != nil || settings.GraphClientID != nil ||

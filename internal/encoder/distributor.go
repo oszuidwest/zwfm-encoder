@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
+	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/notify"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
@@ -17,18 +18,18 @@ type Distributor struct {
 	silenceDetect   *audio.SilenceDetector
 	silenceNotifier *notify.SilenceNotifier
 	peakHolder      *audio.PeakHolder
-	silenceCfg      audio.SilenceConfig
+	config          *config.Config
 	callback        AudioLevelCallback
 }
 
 // NewDistributor creates a new audio distributor with the given configuration and callback.
-func NewDistributor(silenceDetect *audio.SilenceDetector, silenceNotifier *notify.SilenceNotifier, peakHolder *audio.PeakHolder, silenceCfg audio.SilenceConfig, callback AudioLevelCallback) *Distributor {
+func NewDistributor(silenceDetect *audio.SilenceDetector, silenceNotifier *notify.SilenceNotifier, peakHolder *audio.PeakHolder, cfg *config.Config, callback AudioLevelCallback) *Distributor {
 	return &Distributor{
 		levelData:       &audio.LevelData{},
 		silenceDetect:   silenceDetect,
 		silenceNotifier: silenceNotifier,
 		peakHolder:      peakHolder,
-		silenceCfg:      silenceCfg,
+		config:          cfg,
 		callback:        callback,
 	}
 }
@@ -44,8 +45,14 @@ func (d *Distributor) ProcessSamples(buf []byte, n int) {
 		now := time.Now()
 		heldPeakL, heldPeakR := d.peakHolder.Update(levels.PeakLeft, levels.PeakRight, now)
 
-		// Silence detection (using snapshot from startup)
-		silenceEvent := d.silenceDetect.Update(levels.RMSLeft, levels.RMSRight, d.silenceCfg, now)
+		// Silence detection (fresh config snapshot for dynamic updates)
+		cfg := d.config.Snapshot()
+		silenceCfg := audio.SilenceConfig{
+			Threshold:  cfg.SilenceThreshold,
+			DurationMs: cfg.SilenceDurationMs,
+			RecoveryMs: cfg.SilenceRecoveryMs,
+		}
+		silenceEvent := d.silenceDetect.Update(levels.RMSLeft, levels.RMSRight, silenceCfg, now)
 
 		// Delegate notification handling to the notifier (separation of concerns)
 		d.silenceNotifier.HandleEvent(silenceEvent)

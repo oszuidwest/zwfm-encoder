@@ -368,6 +368,14 @@ func (e *Encoder) UpdateGraphConfig() {
 	}
 }
 
+// UpdateSilenceConfig notifies the encoder that silence detection settings have changed.
+// This resets the silence detector state to ensure the new settings take effect immediately.
+func (e *Encoder) UpdateSilenceConfig() {
+	if e.silenceDetect != nil {
+		e.silenceDetect.Reset()
+	}
+}
+
 // TriggerTestWebhook sends a test webhook to verify configuration.
 func (e *Encoder) TriggerTestWebhook() error {
 	cfg := e.config.Snapshot()
@@ -530,19 +538,11 @@ func (e *Encoder) startEnabledOutputs() {
 func (e *Encoder) runDistributor() {
 	buf := make([]byte, 19200) // ~100ms of audio at 48kHz stereo
 
-	// Snapshot silence config once at startup (avoids mutex contention in hot path)
-	cfg := e.config.Snapshot()
-	silenceCfg := audio.SilenceConfig{
-		Threshold:  cfg.SilenceThreshold,
-		DurationMs: cfg.SilenceDurationMs,
-		RecoveryMs: cfg.SilenceRecoveryMs,
-	}
-
 	distributor := NewDistributor(
 		e.silenceDetect,
 		e.silenceNotifier,
 		e.peakHolder,
-		silenceCfg,
+		e.config,
 		e.updateAudioLevels,
 	)
 
