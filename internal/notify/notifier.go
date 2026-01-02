@@ -176,8 +176,8 @@ func (n *SilenceNotifier) sendRecoveryEmail(cfg config.Snapshot, durationMs int6
 	)
 }
 
-// sendSilenceEmailWithClient sends a silence alert email using the cached Graph client.
-func (n *SilenceNotifier) sendSilenceEmailWithClient(cfg *GraphConfig, stationName string, levelL, levelR, threshold float64) error {
+// sendEmail handles the common email sending infrastructure.
+func (n *SilenceNotifier) sendEmail(cfg *GraphConfig, subject, body string) error {
 	if !IsConfigured(cfg) {
 		return nil
 	}
@@ -186,16 +186,6 @@ func (n *SilenceNotifier) sendSilenceEmailWithClient(cfg *GraphConfig, stationNa
 	if err != nil {
 		return util.WrapError("create Graph client", err)
 	}
-
-	subject := "[ALERT] Silence Detected - " + stationName
-	body := fmt.Sprintf(
-		"Silence detected on the audio encoder.\n\n"+
-			"Level:     L %.1f dB / R %.1f dB\n"+
-			"Threshold: %.1f dB\n"+
-			"Time:      %s\n\n"+
-			"Silence is ongoing. Please check the audio source.",
-		levelL, levelR, threshold, util.HumanTime(),
-	)
 
 	recipients := ParseRecipients(cfg.Recipients)
 	if len(recipients) == 0 {
@@ -209,17 +199,22 @@ func (n *SilenceNotifier) sendSilenceEmailWithClient(cfg *GraphConfig, stationNa
 	return nil
 }
 
+// sendSilenceEmailWithClient sends a silence alert email using the cached Graph client.
+func (n *SilenceNotifier) sendSilenceEmailWithClient(cfg *GraphConfig, stationName string, levelL, levelR, threshold float64) error {
+	subject := "[ALERT] Silence Detected - " + stationName
+	body := fmt.Sprintf(
+		"Silence detected on the audio encoder.\n\n"+
+			"Level:     L %.1f dB / R %.1f dB\n"+
+			"Threshold: %.1f dB\n"+
+			"Time:      %s\n\n"+
+			"Silence is ongoing. Please check the audio source.",
+		levelL, levelR, threshold, util.HumanTime(),
+	)
+	return n.sendEmail(cfg, subject, body)
+}
+
 // sendRecoveryEmailWithClient sends a recovery email using the cached Graph client.
 func (n *SilenceNotifier) sendRecoveryEmailWithClient(cfg *GraphConfig, stationName string, durationMs int64, threshold float64) error {
-	if !IsConfigured(cfg) {
-		return nil
-	}
-
-	client, err := n.getOrCreateGraphClient(cfg)
-	if err != nil {
-		return util.WrapError("create Graph client", err)
-	}
-
 	subject := "[OK] Audio Recovered - " + stationName
 	body := fmt.Sprintf(
 		"Audio recovered on the encoder.\n\n"+
@@ -228,17 +223,7 @@ func (n *SilenceNotifier) sendRecoveryEmailWithClient(cfg *GraphConfig, stationN
 			"Time:           %s",
 		util.FormatDuration(durationMs), threshold, util.HumanTime(),
 	)
-
-	recipients := ParseRecipients(cfg.Recipients)
-	if len(recipients) == 0 {
-		return fmt.Errorf("no valid recipients")
-	}
-
-	if err := client.SendMail(recipients, subject, body); err != nil {
-		return util.WrapError("send email via Graph", err)
-	}
-
-	return nil
+	return n.sendEmail(cfg, subject, body)
 }
 
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
