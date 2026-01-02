@@ -21,6 +21,10 @@ type SilenceEvent struct {
 	DurationMs int64              // Current silence duration in ms (0 if not silent)
 	Level      types.SilenceLevel // "active" when in silence, "" otherwise
 
+	// Current audio levels (for notifications)
+	CurrentLevelL float64 // Current left channel level in dB
+	CurrentLevelR float64 // Current right channel level in dB
+
 	// State transitions (for triggering notifications)
 	JustEntered     bool  // True on the frame when silence is first confirmed
 	JustRecovered   bool  // True on the frame when recovery completes
@@ -49,7 +53,10 @@ func (d *SilenceDetector) Update(dbL, dbR float64, cfg SilenceConfig, now time.T
 
 	audioIsSilent := dbL < cfg.Threshold && dbR < cfg.Threshold
 
-	event := SilenceEvent{}
+	event := SilenceEvent{
+		CurrentLevelL: dbL,
+		CurrentLevelR: dbR,
+	}
 
 	if audioIsSilent {
 		d.recoveryStart = time.Time{}

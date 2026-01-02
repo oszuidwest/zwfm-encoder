@@ -311,10 +311,12 @@ type WSSilenceLogResult struct {
 
 // SilenceLogEntry represents a single entry in the silence log.
 type SilenceLogEntry struct {
-	Timestamp   string  `json:"timestamp"`             // RFC3339 timestamp
-	Event       string  `json:"event"`                 // Event type (silence_start, silence_end)
-	DurationMs  int64   `json:"duration_ms,omitempty"` // Silence duration in milliseconds
-	ThresholdDB float64 `json:"threshold_db"`          // Threshold in dB
+	Timestamp    string  `json:"timestamp"`                // RFC3339 timestamp
+	Event        string  `json:"event"`                    // Event type (silence_start, silence_end)
+	DurationMs   int64   `json:"duration_ms,omitempty"`    // Silence duration in milliseconds
+	LevelLeftDB  float64 `json:"level_left_db,omitempty"`  // Left channel level in dB (silence_start only)
+	LevelRightDB float64 `json:"level_right_db,omitempty"` // Right channel level in dB (silence_start only)
+	ThresholdDB  float64 `json:"threshold_db"`             // Threshold in dB
 }
 
 // AudioDevice represents an available audio input device.

@@ -10,11 +10,13 @@ import (
 )
 
 // LogSilenceStart records the beginning of a silence event.
-func LogSilenceStart(logPath string, threshold float64) error {
+func LogSilenceStart(logPath string, levelL, levelR, threshold float64) error {
 	return appendLogEntry(logPath, types.SilenceLogEntry{
-		Timestamp:   timestampUTC(),
-		Event:       "silence_start",
-		ThresholdDB: threshold,
+		Timestamp:    timestampUTC(),
+		Event:        "silence_start",
+		LevelLeftDB:  levelL,
+		LevelRightDB: levelR,
+		ThresholdDB:  threshold,
 	})
 }
 

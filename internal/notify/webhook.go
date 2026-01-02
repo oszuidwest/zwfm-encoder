@@ -14,26 +14,30 @@ import (
 type WebhookPayload struct {
 	Event             string  `json:"event"`
 	SilenceDurationMs int64   `json:"silence_duration_ms,omitempty"`
+	LevelLeftDB       float64 `json:"level_left_db,omitempty"`
+	LevelRightDB      float64 `json:"level_right_db,omitempty"`
 	Threshold         float64 `json:"threshold,omitempty"`
 	Message           string  `json:"message,omitempty"`
 	Timestamp         string  `json:"timestamp"`
 }
 
 // SendSilenceWebhook notifies the configured webhook of critical silence detection.
-func SendSilenceWebhook(webhookURL string, durationMs int64, threshold float64) error {
-	return sendWebhook(webhookURL, WebhookPayload{
-		Event:             "silence_detected",
-		SilenceDurationMs: durationMs,
-		Threshold:         threshold,
-		Timestamp:         timestampUTC(),
+func SendSilenceWebhook(webhookURL string, levelL, levelR, threshold float64) error {
+	return sendWebhook(webhookURL, &WebhookPayload{
+		Event:        "silence_detected",
+		LevelLeftDB:  levelL,
+		LevelRightDB: levelR,
+		Threshold:    threshold,
+		Timestamp:    timestampUTC(),
 	})
 }
 
 // SendRecoveryWebhook notifies the configured webhook of audio recovery.
-func SendRecoveryWebhook(webhookURL string, silenceDurationMs int64) error {
-	return sendWebhook(webhookURL, WebhookPayload{
+func SendRecoveryWebhook(webhookURL string, silenceDurationMs int64, threshold float64) error {
+	return sendWebhook(webhookURL, &WebhookPayload{
 		Event:             "silence_recovered",
 		SilenceDurationMs: silenceDurationMs,
+		Threshold:         threshold,
 		Timestamp:         timestampUTC(),
 	})
 }
@@ -44,7 +48,7 @@ func SendTestWebhook(webhookURL, stationName string) error {
 		return fmt.Errorf("webhook URL not configured")
 	}
 
-	return sendWebhook(webhookURL, WebhookPayload{
+	return sendWebhook(webhookURL, &WebhookPayload{
 		Event:     "test",
 		Message:   "This is a test notification from " + stationName,
 		Timestamp: timestampUTC(),
@@ -52,7 +56,7 @@ func SendTestWebhook(webhookURL, stationName string) error {
 }
 
 // sendWebhook delivers a notification to the configured webhook endpoint.
-func sendWebhook(webhookURL string, payload WebhookPayload) error {
+func sendWebhook(webhookURL string, payload *WebhookPayload) error {
 	if !util.IsConfigured(webhookURL) {
 		return nil // Silently skip if not configured
 	}
