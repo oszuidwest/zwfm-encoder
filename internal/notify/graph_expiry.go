@@ -11,28 +11,22 @@ import (
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
-	"golang.org/x/oauth2"
 )
 
 const (
 	// expiryWarningDays is the number of days before expiration to show a warning.
 	expiryWarningDays = 30
-	// expiryCheckInterval is how often to re-check the secret expiry.
-	expiryCheckInterval = 24 * time.Hour
+	// expiryCacheTTL is how long to cache the expiry info before re-checking.
+	expiryCacheTTL = 1 * time.Hour
 )
 
-// SecretExpiryChecker monitors the client secret expiration date.
+// SecretExpiryChecker checks client secret expiration on-demand with caching.
 type SecretExpiryChecker struct {
-	mu          sync.RWMutex
-	cfg         *types.GraphConfig
-	tokenSource oauth2.TokenSource
-	cachedInfo  types.SecretExpiryInfo
-	lastCheck   time.Time
-	stopCh      chan struct{}
-	doneCh      chan struct{} // signals when current check completes
-	running     bool
-	checking    bool // true while a check is in progress
-	httpClient  *http.Client
+	mu         sync.RWMutex
+	cfg        *types.GraphConfig
+	cached     types.SecretExpiryInfo
+	lastCheck  time.Time
+	httpClient *http.Client
 }
 
 // NewSecretExpiryChecker creates a new expiry checker for the given config.
@@ -43,115 +37,54 @@ func NewSecretExpiryChecker(cfg *types.GraphConfig) *SecretExpiryChecker {
 	}
 }
 
-// Start begins the background expiry checking goroutine.
-func (c *SecretExpiryChecker) Start() {
-	c.mu.Lock()
-	if c.running {
-		c.mu.Unlock()
-		return
-	}
-	// Recreate channels for restart capability (previous Stop() closed them)
-	c.stopCh = make(chan struct{})
-	c.doneCh = make(chan struct{})
-	c.running = true
-	c.mu.Unlock()
-
-	// Initial check
-	c.check()
-
-	// Background periodic check
-	go func() {
-		ticker := time.NewTicker(expiryCheckInterval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ticker.C:
-				c.check()
-			case <-c.stopCh:
-				return
-			}
-		}
-	}()
-}
-
-// Stop halts the background expiry checking.
-// It waits for any in-progress check to complete before returning.
-func (c *SecretExpiryChecker) Stop() {
-	c.mu.Lock()
-	if !c.running {
-		c.mu.Unlock()
-		return
-	}
-	close(c.stopCh)
-	c.running = false
-	checking := c.checking
-	doneCh := c.doneCh
-	c.mu.Unlock()
-
-	// Wait for in-progress check to complete
-	if checking && doneCh != nil {
-		<-doneCh
-	}
-}
-
-// GetInfo returns the cached secret expiry information.
+// GetInfo returns the secret expiry information, fetching on-demand if cache is stale.
 func (c *SecretExpiryChecker) GetInfo() types.SecretExpiryInfo {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.cachedInfo
+	if time.Since(c.lastCheck) < expiryCacheTTL && c.lastCheck.After(time.Time{}) {
+		info := c.cached
+		c.mu.RUnlock()
+		return info
+	}
+	c.mu.RUnlock()
+
+	// Cache is stale, fetch fresh data
+	return c.refresh()
 }
 
-// UpdateConfig updates the configuration and triggers a re-check.
+// UpdateConfig updates the configuration and clears the cache.
 func (c *SecretExpiryChecker) UpdateConfig(cfg *types.GraphConfig) {
 	c.mu.Lock()
 	c.cfg = cfg
-	c.tokenSource = nil // Force new token source
+	c.lastCheck = time.Time{} // Invalidate cache
 	c.mu.Unlock()
-
-	c.check()
 }
 
-// check queries the Azure AD Graph API for the app's credential expiry.
-func (c *SecretExpiryChecker) check() {
+// refresh fetches fresh expiry info from Azure AD.
+func (c *SecretExpiryChecker) refresh() types.SecretExpiryInfo {
 	c.mu.Lock()
-	c.checking = true
 	cfg := c.cfg
-	doneCh := c.doneCh
 	c.mu.Unlock()
 
-	defer func() {
-		c.mu.Lock()
-		c.checking = false
-		c.mu.Unlock()
-		// Signal completion (non-blocking in case no one is waiting)
-		select {
-		case doneCh <- struct{}{}:
-		default:
-		}
-	}()
-
 	if cfg == nil || cfg.TenantID == "" || cfg.ClientID == "" || cfg.ClientSecret == "" {
+		info := types.SecretExpiryInfo{Error: "Graph API not configured"}
 		c.mu.Lock()
-		c.cachedInfo = types.SecretExpiryInfo{
-			Error: "Graph API not configured",
-		}
+		c.cached = info
 		c.lastCheck = time.Now()
 		c.mu.Unlock()
-		return
+		return info
 	}
 
 	info, err := c.fetchExpiryInfo(cfg)
-	c.mu.Lock()
 	if err != nil {
-		c.cachedInfo = types.SecretExpiryInfo{
-			Error: err.Error(),
-		}
-	} else {
-		c.cachedInfo = info
+		info = types.SecretExpiryInfo{Error: err.Error()}
 	}
+
+	c.mu.Lock()
+	c.cached = info
 	c.lastCheck = time.Now()
 	c.mu.Unlock()
+
+	return info
 }
 
 // applicationResponse represents the Graph API response for an application.
@@ -165,26 +98,16 @@ type passwordCredential struct {
 
 // fetchExpiryInfo queries the Azure AD Graph API for credential expiry.
 func (c *SecretExpiryChecker) fetchExpiryInfo(cfg *types.GraphConfig) (types.SecretExpiryInfo, error) {
-	// Get or create token source
-	c.mu.Lock()
-	if c.tokenSource == nil {
-		ts, err := TokenSource(cfg)
-		if err != nil {
-			c.mu.Unlock()
-			return types.SecretExpiryInfo{}, fmt.Errorf("create token source: %w", err)
-		}
-		c.tokenSource = ts
+	ts, err := TokenSource(cfg)
+	if err != nil {
+		return types.SecretExpiryInfo{}, fmt.Errorf("create token source: %w", err)
 	}
-	ts := c.tokenSource
-	c.mu.Unlock()
 
-	// Get token
 	token, err := ts.Token()
 	if err != nil {
 		return types.SecretExpiryInfo{}, fmt.Errorf("acquire token: %w", err)
 	}
 
-	// Query application by appId with context for timeout
 	ctx, cancel := context.WithTimeout(context.Background(), httpTimeout)
 	defer cancel()
 
@@ -228,9 +151,7 @@ func (c *SecretExpiryChecker) fetchExpiryInfo(cfg *types.GraphConfig) (types.Sec
 	}
 
 	if earliest.IsZero() {
-		return types.SecretExpiryInfo{
-			Error: "no password credentials found",
-		}, nil
+		return types.SecretExpiryInfo{Error: "no password credentials found"}, nil
 	}
 
 	daysLeft := int(time.Until(earliest).Hours() / 24)

@@ -62,8 +62,6 @@ type Encoder struct {
 // New creates a new Encoder with the given configuration and FFmpeg binary path.
 func New(cfg *config.Config, ffmpegPath string) *Encoder {
 	graphCfg := cfg.GraphConfig()
-	expiryChecker := notify.NewSecretExpiryChecker(&graphCfg)
-	expiryChecker.Start()
 
 	return &Encoder{
 		config:              cfg,
@@ -74,7 +72,7 @@ func New(cfg *config.Config, ffmpegPath string) *Encoder {
 		silenceDetect:       audio.NewSilenceDetector(),
 		silenceNotifier:     notify.NewSilenceNotifier(cfg),
 		peakHolder:          audio.NewPeakHolder(),
-		secretExpiryChecker: expiryChecker,
+		secretExpiryChecker: notify.NewSecretExpiryChecker(&graphCfg),
 	}
 }
 
@@ -220,11 +218,6 @@ func (e *Encoder) Start() error {
 	e.silenceNotifier.Reset()
 	e.peakHolder.Reset()
 
-	// Restart the secret expiry checker if it was stopped
-	if e.secretExpiryChecker != nil {
-		e.secretExpiryChecker.Start()
-	}
-
 	go e.runSourceLoop()
 
 	return nil
@@ -293,11 +286,6 @@ func (e *Encoder) Stop() error {
 	e.sourceCmd = nil
 	e.sourceCancel = nil
 	e.mu.Unlock()
-
-	// Stop the secret expiry checker goroutine
-	if e.secretExpiryChecker != nil {
-		e.secretExpiryChecker.Stop()
-	}
 
 	return errors.Join(errs...)
 }
