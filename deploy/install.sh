@@ -9,9 +9,9 @@ CONFIG_DIR="/etc/encoder"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
 SERVICE_PATH="/etc/systemd/system/encoder.service"
 
-# Functions library
+# Functions library (v2)
 FUNCTIONS_LIB_PATH=$(mktemp)
-FUNCTIONS_LIB_URL="https://raw.githubusercontent.com/oszuidwest/bash-functions/main/common-functions.sh"
+FUNCTIONS_LIB_URL="https://raw.githubusercontent.com/oszuidwest/bash-functions/v2/common-functions.sh"
 
 # Clean up temporary file on exit
 trap 'rm -f "$FUNCTIONS_LIB_PATH"' EXIT
@@ -35,10 +35,10 @@ source "$FUNCTIONS_LIB_PATH"
 
 # Set color variables and perform initial checks
 set_colors
-check_user_privileges privileged
-is_this_linux
-is_this_os_64bit
-check_rpi_model 4
+assert_user_privileged "root"
+assert_os_linux
+assert_os_64bit
+assert_hw_rpi 4
 
 # Determine the correct config.txt path
 CONFIG_TXT=""
@@ -55,7 +55,7 @@ if [ -z "$CONFIG_TXT" ]; then
 fi
 
 # Check if the required tools are installed
-require_tool curl systemctl
+assert_tool curl systemctl
 
 # Banner
 cat << "EOF"
@@ -83,86 +83,41 @@ fi
 echo -e "${BLUE}►► Configuration${NC}\n"
 
 # Station name
-while true; do
-  read -r -p "Enter your station name: " STATION_NAME < /dev/tty
-  if [[ -n "$STATION_NAME" ]]; then
-    break
-  fi
-  echo "Station name cannot be empty."
-done
+prompt_user "STATION_NAME" "ZuidWest FM" "Enter your station name" "str"
 
 # Web username
-while true; do
-  read -r -p "Enter the web interface username: " WEB_USERNAME < /dev/tty
-  if [[ -n "$WEB_USERNAME" ]]; then
-    break
-  fi
-  echo "Username cannot be empty."
-done
+prompt_user "WEB_USERNAME" "admin" "Enter the web interface username" "str"
 
-# Web password (silent input)
-while true; do
-  read -r -s -p "Enter the web interface password: " WEB_PASSWORD < /dev/tty
-  echo
-  if [[ -n "$WEB_PASSWORD" ]]; then
-    break
-  fi
-  echo "Password cannot be empty."
-done
+# Web password
+prompt_user "WEB_PASSWORD" "encoder" "Enter the web interface password" "str"
 
 # Web port
+prompt_user "WEB_PORT" "8080" "Enter the web interface port" "num"
+
+# Timezone with validation (retry loop)
 while true; do
-  read -r -p "Enter the web interface port [default: 8080]: " WEB_PORT < /dev/tty
-  WEB_PORT="${WEB_PORT:-8080}"
-  if [[ "$WEB_PORT" =~ ^[0-9]+$ ]]; then
+  prompt_user "TIMEZONE" "Europe/Amsterdam" "Enter your timezone (e.g. Europe/Amsterdam, Europe/London, Europe/Berlin)" "str"
+  if timedatectl list-timezones | grep -qx "$TIMEZONE"; then
     break
   fi
-  echo "Port must be a number."
+  echo -e "${RED}Invalid timezone '${TIMEZONE}'. Use 'timedatectl list-timezones' to see valid options.${NC}"
 done
-
-# Timezone
-read -r -p "Enter your timezone [default: Europe/Amsterdam]: " TIMEZONE < /dev/tty
-TIMEZONE="${TIMEZONE:-Europe/Amsterdam}"
 
 echo ""
 
 # OS updates
-ask_user "DO_UPDATES" "y" "Do you want to perform all OS updates? (y/n)" "y/n"
+prompt_user "DO_UPDATES" "y" "Do you want to perform all OS updates? (y/n)" "y/n"
 
 # Heartbeat monitoring
-ENABLE_HEARTBEAT="n"
-while true; do
-  read -r -p "Do you want to enable heartbeat monitoring via UptimeRobot? (y/n) [default: n]: " answer < /dev/tty
-  answer="${answer:-n}"
-  if [[ "$answer" =~ ^[yn]$ ]]; then
-    ENABLE_HEARTBEAT="$answer"
-    break
-  fi
-  echo "Invalid input. Please enter 'y' or 'n'."
-done
+prompt_user "ENABLE_HEARTBEAT" "n" "Do you want to enable heartbeat monitoring via UptimeRobot? (y/n)" "y/n"
 
 HEARTBEAT_URL=""
 if [ "$ENABLE_HEARTBEAT" == "y" ]; then
-  while true; do
-    read -r -p "Enter the heartbeat URL to ping every minute: " HEARTBEAT_URL < /dev/tty
-    if [[ -n "$HEARTBEAT_URL" ]]; then
-      break
-    fi
-    echo "URL cannot be empty."
-  done
+  prompt_user "HEARTBEAT_URL" "" "Enter the heartbeat URL to ping every minute" "str"
 fi
 
 # Beta version
-INSTALL_BETA="n"
-while true; do
-  read -r -p "Do you want to install a beta/prerelease version? (y/n) [default: n]: " answer < /dev/tty
-  answer="${answer:-n}"
-  if [[ "$answer" =~ ^[yn]$ ]]; then
-    INSTALL_BETA="$answer"
-    break
-  fi
-  echo "Invalid input. Please enter 'y' or 'n'."
-done
+prompt_user "INSTALL_BETA" "n" "Do you want to install a beta/prerelease version? (y/n)" "y/n"
 
 # =============================================================================
 # SUMMARY AND CONFIRMATION
@@ -183,13 +138,7 @@ echo -e "Beta version:     ${BOLD}${INSTALL_BETA}${NC}"
 echo -e "Config location:  ${BOLD}${CONFIG_FILE}${NC}"
 
 echo ""
-while true; do
-  read -r -p "Continue with installation? (y/n): " CONFIRM < /dev/tty
-  if [[ "$CONFIRM" =~ ^[yn]$ ]]; then
-    break
-  fi
-  echo "Invalid input. Please enter 'y' or 'n'."
-done
+prompt_user "CONFIRM" "y" "Continue with installation? (y/n)" "y/n"
 
 if [ "$CONFIRM" != "y" ]; then
   echo -e "${YELLOW}Installation cancelled.${NC}"
@@ -207,12 +156,12 @@ set_timezone "$TIMEZONE"
 
 # Run OS updates if requested
 if [ "$DO_UPDATES" == "y" ]; then
-  update_os silent
+  apt_update --silent
 fi
 
 # Install dependencies (including jq for config generation)
 echo -e "${BLUE}►► Installing FFmpeg, alsa-utils, and jq...${NC}"
-install_packages silent ffmpeg alsa-utils jq
+apt_install --silent ffmpeg alsa-utils jq
 
 # Stop existing service if running
 if systemctl is-active --quiet encoder 2>/dev/null; then
@@ -260,12 +209,8 @@ fi
 echo -e "${GREEN}✓ Version: ${LATEST_RELEASE}${NC}"
 
 # Download encoder binary
-echo -e "${BLUE}►► Downloading encoder binary...${NC}"
 ENCODER_BINARY_URL="https://github.com/${GITHUB_REPO}/releases/download/${LATEST_RELEASE}/encoder-linux-arm64"
-if ! curl -L -o "${INSTALL_DIR}/encoder" "$ENCODER_BINARY_URL"; then
-  echo -e "${RED}Failed to download encoder binary${NC}"
-  exit 1
-fi
+file_download "$ENCODER_BINARY_URL" "${INSTALL_DIR}/encoder" "encoder binary"
 chmod +x "${INSTALL_DIR}/encoder"
 
 # Create config directory with proper ownership
@@ -279,17 +224,18 @@ OLD_CONFIG="${INSTALL_DIR}/config.json"
 if [ -f "$OLD_CONFIG" ] && [ ! -f "$CONFIG_FILE" ]; then
   echo -e "${BLUE}►► Migrating config from old location...${NC}"
   mv "$OLD_CONFIG" "$CONFIG_FILE"
+  chown encoder:encoder "$CONFIG_FILE"
+  chmod 600 "$CONFIG_FILE"
   echo -e "${GREEN}✓ Config migrated to ${CONFIG_FILE}${NC}"
 fi
 
 # Backup existing config if present
 if [ -f "$CONFIG_FILE" ]; then
   echo -e "${BLUE}►► Backing up existing configuration...${NC}"
-  backup_file "$CONFIG_FILE"
-  echo -e "${GREEN}✓ Backup created${NC}"
+  file_backup "$CONFIG_FILE"
 fi
 
-# Generate configuration file using jq
+# Generate configuration file using jq (minimal config, app fills defaults)
 echo -e "${BLUE}►► Generating configuration file...${NC}"
 jq -n \
   --arg station_name "$STATION_NAME" \
@@ -297,21 +243,8 @@ jq -n \
   --arg password "$WEB_PASSWORD" \
   --argjson port "$WEB_PORT" \
   '{
-    station: {
-      name: $station_name,
-      color_light: "#E6007E",
-      color_dark: "#E6007E"
-    },
-    web: {
-      port: $port,
-      username: $username,
-      password: $password
-    },
-    audio: {
-      input: ""
-    },
-    outputs: [],
-    recorders: []
+    station: { name: $station_name },
+    web: { port: $port, username: $username, password: $password }
   }' > "$CONFIG_FILE"
 
 # Set proper ownership and permissions
@@ -320,11 +253,7 @@ chmod 600 "$CONFIG_FILE"
 echo -e "${GREEN}✓ Configuration saved to ${CONFIG_FILE}${NC}"
 
 # Download and install systemd service
-echo -e "${BLUE}►► Installing systemd service...${NC}"
-if ! curl -s -o "$SERVICE_PATH" "$ENCODER_SERVICE_URL"; then
-  echo -e "${RED}Failed to download service file${NC}"
-  exit 1
-fi
+file_download "$ENCODER_SERVICE_URL" "$SERVICE_PATH" "systemd service"
 
 # Reload systemd and enable service
 systemctl daemon-reload
@@ -374,7 +303,6 @@ echo -e "\n${BOLD}Next Steps${NC}"
 echo -e "  1. Open the web interface in your browser"
 echo -e "  2. Select your audio input device in Settings"
 echo -e "  3. Add at least one SRT output destination"
-echo -e "  4. Click Start to begin streaming"
 
 echo -e "\n${BOLD}Useful Commands${NC}"
 echo -e "  View logs:      ${BOLD}journalctl -u encoder -f${NC}"
