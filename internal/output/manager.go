@@ -247,24 +247,12 @@ func (m *Manager) AllStatuses(getMaxRetries func(string) int) map[string]types.P
 		maxRetries := getMaxRetries(id)
 		isRunning := proc.state == types.ProcessRunning
 
-		var pid int
-		if proc.cmd != nil && proc.cmd.Process != nil {
-			pid = proc.cmd.Process.Pid
-		}
-
-		var uptimeMs int64
-		if isRunning && !proc.startTime.IsZero() {
-			uptimeMs = time.Since(proc.startTime).Milliseconds()
-		}
-
 		statuses[id] = types.ProcessStatus{
 			State:      proc.state,
 			Stable:     isRunning && time.Since(proc.startTime) >= types.StableThreshold,
 			Exhausted:  proc.retryCount > maxRetries,
 			RetryCount: proc.retryCount,
 			MaxRetries: maxRetries,
-			UptimeMs:   uptimeMs,
-			PID:        pid,
 			Error:      proc.lastError,
 		}
 	}
@@ -272,14 +260,14 @@ func (m *Manager) AllStatuses(getMaxRetries func(string) int) map[string]types.P
 }
 
 // Process returns process info for monitoring.
-func (m *Manager) Process(outputID string) (cmd *exec.Cmd, ctx context.Context, retryCount int, backoff *util.Backoff, exists bool) {
+func (m *Manager) Process(outputID string) (cmd *exec.Cmd, ctx context.Context, backoff *util.Backoff, exists bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	proc, exists := m.processes[outputID]
 	if !exists {
-		return nil, nil, 0, nil, false
+		return nil, nil, nil, false
 	}
-	return proc.cmd, proc.ctx, proc.retryCount, proc.backoff, true
+	return proc.cmd, proc.ctx, proc.backoff, true
 }
 
 // SetError sets the last error for an output and transitions to error state.
@@ -405,7 +393,7 @@ func (m *Manager) MonitorAndRetry(outputID string, ctx OutputContext, stopChan <
 		default:
 		}
 
-		cmd, procCtx, _, backoff, exists := m.Process(outputID)
+		cmd, procCtx, backoff, exists := m.Process(outputID)
 		if !exists || cmd == nil || backoff == nil {
 			return
 		}

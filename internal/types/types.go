@@ -46,8 +46,6 @@ type ProcessStatus struct {
 	Exhausted  bool         `json:"exhausted,omitempty"`   // Outputs: max retries reached
 	RetryCount int          `json:"retry_count,omitempty"` // Outputs: current retry attempt
 	MaxRetries int          `json:"max_retries,omitempty"` // Outputs: max allowed retries
-	UptimeMs   int64        `json:"uptime_ms,omitempty"`   // Time since process started
-	PID        int          `json:"pid,omitempty"`         // Process ID for debugging
 	Error      string       `json:"error,omitempty"`       // Error message
 }
 

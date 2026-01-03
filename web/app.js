@@ -16,7 +16,7 @@
  *
  * WebSocket Commands (outgoing):
  *   - audio/update, silence/update: Update audio/silence settings
- *   - notifications/*/update, notifications/*/test: Notification config and tests
+ *   - notifications/{type}/update, notifications/{type}/test: Notification config and tests
  *   - outputs/add, outputs/delete, outputs/update: Manage stream outputs
  *   - recorders/add, recorders/delete, recorders/update: Manage recorders
  *   - recorders/start, recorders/stop: Control on-demand recorders
@@ -82,7 +82,7 @@ window.dbToPercent = (db) => Math.max(0, Math.min(100, (db - DB_MINIMUM) / DB_RA
 const DEFAULT_OUTPUT = {
     host: '',
     port: 8080,
-    streamid: '',
+    stream_id: '',
     password: '',
     codec: 'wav',
     max_retries: 99
@@ -182,7 +182,7 @@ document.addEventListener('alpine:init', () => {
 
         graphSecretExpiry: { expires_soon: false, days_left: 0 },
 
-        version: { current: '', latest: '', updateAvail: false, commit: '', build_time: '' },
+        version: { current: '', latest: '', update_available: false, commit: '', build_time: '' },
 
         ffmpegAvailable: true, // Assume available until we get status
 
@@ -366,8 +366,13 @@ document.addEventListener('alpine:init', () => {
                     this.handleRecorderResult(msg);
                 } else if (msg.type === 'output_result') {
                     this.handleOutputResult(msg);
-                } else if (msg.type === 'api_key_regenerated') {
-                    this.handleApiKeyRegenerated(msg);
+                } else if (msg.type === 'recording/regenerate-key_result') {
+                    if (msg.success && msg.data?.api_key) {
+                        this.settings.recordingApiKey = msg.data.api_key;
+                        this.showBanner('API key regenerated successfully', 'info');
+                    } else if (!msg.success) {
+                        this.showBanner(`Failed to regenerate API key: ${msg.error}`, 'danger');
+                    }
                 } else if (msg.type.endsWith('_result')) {
                     this.handleCommandResult(msg);
                 }
@@ -567,10 +572,10 @@ document.addEventListener('alpine:init', () => {
             }
 
             if (msg.version) {
-                const wasUpdateAvail = this.version.updateAvail;
+                const wasUpdateAvail = this.version.update_available;
                 this.version = msg.version;
                 // Show banner once when update becomes available
-                if (msg.version.updateAvail && !wasUpdateAvail) {
+                if (msg.version.update_available && !wasUpdateAvail) {
                     this.showBanner(`Update available: ${msg.version.latest}`, 'info', false);
                 }
             }
@@ -743,7 +748,7 @@ document.addEventListener('alpine:init', () => {
                     id: output.id,
                     host: output.host,
                     port: output.port,
-                    streamid: output.streamid || '',
+                    stream_id: output.stream_id || '',
                     password: '',
                     codec: output.codec || 'wav',
                     max_retries: output.max_retries || 99,
@@ -771,7 +776,7 @@ document.addEventListener('alpine:init', () => {
             const data = {
                 host: this.outputForm.host.trim(),
                 port: this.outputForm.port,
-                streamid: this.outputForm.streamid.trim() || 'studio',
+                stream_id: this.outputForm.stream_id.trim() || 'studio',
                 codec: this.outputForm.codec,
                 max_retries: this.outputForm.max_retries
             };
@@ -1155,22 +1160,6 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
-         * Handles API key regeneration result.
-         * Updates local state with new key from server.
-         * @param {Object} msg - Result with api_key or error
-         */
-        handleApiKeyRegenerated(msg) {
-            if (msg.error) {
-                this.showBanner(`Failed to regenerate API key: ${msg.error}`, 'danger', false);
-                return;
-            }
-            if (msg.api_key) {
-                this.settings.recordingApiKey = msg.api_key;
-                this.showBanner('API key regenerated successfully', 'info', false);
-            }
-        },
-
-        /**
          * Handles command result messages (slash-style API responses).
          * Extracts field-level errors and displays them on the form.
          * @param {Object} msg - Result with type, success, error, data
@@ -1271,7 +1260,7 @@ document.addEventListener('alpine:init', () => {
                 clearTimeout(this._bannerTimeout);
                 this._bannerTimeout = null;
             }
-            this.banner = { visible: true, message, type, persistent };
+            this.banner = { visible: true, message, type };
             if (!persistent) {
                 this._bannerTimeout = setTimeout(() => this.hideBanner(), 10000);
             }

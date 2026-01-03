@@ -492,12 +492,6 @@
         border-color: var(--brand-hover);
     }
 
-    .nav-btn[data-saved] {
-        background: var(--success);
-        border-color: var(--success);
-        color: var(--text-inverse);
-    }
-
     .nav-btn[data-variant="save"]:disabled {
         background: var(--surface-elevated);
         border-color: var(--border-default);
@@ -1023,6 +1017,18 @@
         }
     }
 
+    .warning-banner {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.75rem 1rem;
+        margin-bottom: 1rem;
+        border-radius: var(--radius-lg);
+        background: var(--warning);
+        color: var(--text-primary);
+        font-size: 0.875rem;
+    }
+
     /* =========================================================================
        Outputs Component
        ========================================================================= */
@@ -1103,13 +1109,6 @@
             font-weight: 500;
             background: var(--state-bg, var(--stopped-bg));
             color: var(--state-color, var(--text-secondary));
-        }
-
-        .error {
-            font-size: 0.75rem;
-            color: var(--text-secondary);
-            margin: var(--space-2) 0 0 var(--space-7);
-            word-break: break-word;
         }
     }
 

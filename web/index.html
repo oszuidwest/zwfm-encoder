@@ -39,7 +39,7 @@
     <style>{{.PrimaryCSS}}</style>
     <script src="/alpine.min.js" defer="defer"></script>
 </head>
-<body x-data="encoderApp()">
+<body x-data="encoderApp">
     <!-- Connection overlay - blocks UI when WebSocket disconnected -->
     <div class="connection-overlay" x-show="encoder.state === 'connecting'" x-cloak>
         <div class="content">
@@ -99,7 +99,7 @@
                 </div>
             </header>
 
-            <div class="banner" x-show="version.updateAvail && version.latest" x-cloak>
+            <div class="banner" x-show="version.update_available && version.latest" x-cloak>
             <span class="icon-container" x-html="icons.cloud"></span>
             <span>Update available: <strong x-text="version.latest"></strong></span>
             <a rel="noopener" href="https://github.com/oszuidwest/zwfm-encoder/releases" title="View release on GitHub" target="_blank">View release</a>
@@ -232,7 +232,7 @@
                             </div>
                             <div class="details">
                                 <span class="codec" x-text="output.codec.toUpperCase()"></span>
-                                <span class="streamid" x-text="`#${output.streamid}`"></span>
+                                <span class="streamid" x-text="`#${output.stream_id}`"></span>
                                 <span class="status" :class="d.stateClass" x-text="d.statusText"></span>
                             </div>
                             <div class="alert" role="alert" x-show="d.showError">
@@ -324,7 +324,7 @@
                 </template>
             </div>
 
-            <div class="panels" id="settings-panels">
+            <div class="panels">
                 <!-- Audio Panel - Silence detection configuration
                      - Threshold: dB level below which audio is considered silent (-60 to 0)
                      - Duration: Seconds of silence before triggering alerts (1-3600)
@@ -603,7 +603,7 @@
                                 <div class="group">
                                     <label for="output-streamid">Stream ID</label>
                                     <input id="output-streamid" type="text" placeholder="studio"
-                                           x-model="outputForm.streamid" @input="markOutputFormDirty()">
+                                           x-model="outputForm.stream_id" @input="markOutputFormDirty()">
                                 </div>
                             </div>
                             <div class="group">

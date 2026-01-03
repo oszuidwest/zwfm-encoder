@@ -1,21 +1,11 @@
 // Package types provides shared type definitions used across the encoder.
 package types
 
-import (
-	"fmt"
-	"strings"
-)
-
 // FieldError represents a validation error for a specific field.
 type FieldError struct {
 	Field   string `json:"field"`   // JSON path to the field (e.g., "silence_detection.threshold_db")
 	Message string `json:"message"` // Human-readable error message
 	Value   any    `json:"value"`   // The invalid value that was provided
-}
-
-// Error implements the error interface.
-func (e FieldError) Error() string {
-	return fmt.Sprintf("%s: %s", e.Field, e.Message)
 }
 
 // ValidationError collects multiple field validation errors.
@@ -37,21 +27,4 @@ func (v *ValidationError) Add(field, message string, value any) {
 		Message: message,
 		Value:   value,
 	})
-}
-
-// HasErrors returns true if there are any validation errors.
-func (v *ValidationError) HasErrors() bool {
-	return len(v.Errors) > 0
-}
-
-// Error implements the error interface.
-func (v *ValidationError) Error() string {
-	if !v.HasErrors() {
-		return ""
-	}
-	var msgs []string
-	for _, e := range v.Errors {
-		msgs = append(msgs, e.Error())
-	}
-	return strings.Join(msgs, "; ")
 }

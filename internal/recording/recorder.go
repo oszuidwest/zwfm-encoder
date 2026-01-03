@@ -295,21 +295,9 @@ func (r *GenericRecorder) Status() types.ProcessStatus {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	var pid int
-	if r.cmd != nil && r.cmd.Process != nil {
-		pid = r.cmd.Process.Pid
-	}
-
-	var uptimeMs int64
-	if (r.state == types.ProcessRunning || r.state == types.ProcessRotating) && !r.startTime.IsZero() {
-		uptimeMs = time.Since(r.startTime).Milliseconds()
-	}
-
 	return types.ProcessStatus{
-		State:    r.state,
-		UptimeMs: uptimeMs,
-		PID:      pid,
-		Error:    r.lastError,
+		State: r.state,
+		Error: r.lastError,
 	}
 }
 
