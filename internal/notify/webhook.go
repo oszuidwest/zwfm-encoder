@@ -33,10 +33,12 @@ func SendSilenceWebhook(webhookURL string, levelL, levelR, threshold float64) er
 }
 
 // SendRecoveryWebhook notifies the configured webhook of audio recovery.
-func SendRecoveryWebhook(webhookURL string, silenceDurationMs int64, threshold float64) error {
+func SendRecoveryWebhook(webhookURL string, silenceDurationMs int64, levelL, levelR, threshold float64) error {
 	return sendWebhook(webhookURL, &WebhookPayload{
 		Event:             "silence_recovered",
 		SilenceDurationMs: silenceDurationMs,
+		LevelLeftDB:       levelL,
+		LevelRightDB:      levelR,
 		Threshold:         threshold,
 		Timestamp:         timestampUTC(),
 	})

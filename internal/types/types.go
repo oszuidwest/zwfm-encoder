@@ -313,9 +313,9 @@ type WSSilenceLogResult struct {
 type SilenceLogEntry struct {
 	Timestamp    string  `json:"timestamp"`                // RFC3339 timestamp
 	Event        string  `json:"event"`                    // Event type (silence_start, silence_end)
-	DurationMs   int64   `json:"duration_ms,omitempty"`    // Silence duration in milliseconds
-	LevelLeftDB  float64 `json:"level_left_db,omitempty"`  // Left channel level in dB (silence_start only)
-	LevelRightDB float64 `json:"level_right_db,omitempty"` // Right channel level in dB (silence_start only)
+	DurationMs   int64   `json:"duration_ms,omitempty"`    // Silence duration in milliseconds (silence_end only)
+	LevelLeftDB  float64 `json:"level_left_db,omitempty"`  // Left channel RMS level in dB
+	LevelRightDB float64 `json:"level_right_db,omitempty"` // Right channel RMS level in dB
 	ThresholdDB  float64 `json:"threshold_db"`             // Threshold in dB
 }
 

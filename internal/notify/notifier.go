@@ -62,7 +62,7 @@ func (n *SilenceNotifier) HandleEvent(event audio.SilenceEvent) {
 	}
 
 	if event.JustRecovered {
-		n.handleSilenceEnd(event.TotalDurationMs)
+		n.handleSilenceEnd(event.TotalDurationMs, event.CurrentLevelL, event.CurrentLevelR)
 	}
 }
 
@@ -89,7 +89,7 @@ func (n *SilenceNotifier) trySend(sent *bool, condition bool, sender func()) {
 }
 
 // handleSilenceEnd triggers recovery notifications when silence ends.
-func (n *SilenceNotifier) handleSilenceEnd(totalDurationMs int64) {
+func (n *SilenceNotifier) handleSilenceEnd(totalDurationMs int64, levelL, levelR float64) {
 	cfg := n.cfg.Snapshot()
 
 	// Only send recovery notifications if we sent the corresponding start notification
@@ -104,15 +104,15 @@ func (n *SilenceNotifier) handleSilenceEnd(totalDurationMs int64) {
 	n.mu.Unlock()
 
 	if shouldSendWebhookRecovery {
-		go n.sendRecoveryWebhook(cfg, totalDurationMs)
+		go n.sendRecoveryWebhook(cfg, totalDurationMs, levelL, levelR)
 	}
 
 	if shouldSendEmailRecovery {
-		go n.sendRecoveryEmail(cfg, totalDurationMs)
+		go n.sendRecoveryEmail(cfg, totalDurationMs, levelL, levelR)
 	}
 
 	if shouldSendLogRecovery {
-		go n.logSilenceEnd(cfg, totalDurationMs)
+		go n.logSilenceEnd(cfg, totalDurationMs, levelL, levelR)
 	}
 }
 
@@ -134,9 +134,9 @@ func (n *SilenceNotifier) sendSilenceWebhook(cfg config.Snapshot, levelL, levelR
 }
 
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
-func (n *SilenceNotifier) sendRecoveryWebhook(cfg config.Snapshot, durationMs int64) {
+func (n *SilenceNotifier) sendRecoveryWebhook(cfg config.Snapshot, durationMs int64, levelL, levelR float64) {
 	util.LogNotifyResult(
-		func() error { return SendRecoveryWebhook(cfg.WebhookURL, durationMs, cfg.SilenceThreshold) },
+		func() error { return SendRecoveryWebhook(cfg.WebhookURL, durationMs, levelL, levelR, cfg.SilenceThreshold) },
 		"Recovery webhook",
 	)
 }
@@ -166,11 +166,11 @@ func (n *SilenceNotifier) sendSilenceEmail(cfg config.Snapshot, levelL, levelR f
 }
 
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
-func (n *SilenceNotifier) sendRecoveryEmail(cfg config.Snapshot, durationMs int64) {
+func (n *SilenceNotifier) sendRecoveryEmail(cfg config.Snapshot, durationMs int64, levelL, levelR float64) {
 	graphCfg := BuildGraphConfig(cfg)
 	util.LogNotifyResult(
 		func() error {
-			return n.sendRecoveryEmailWithClient(graphCfg, cfg.StationName, durationMs, cfg.SilenceThreshold)
+			return n.sendRecoveryEmailWithClient(graphCfg, cfg.StationName, durationMs, levelL, levelR, cfg.SilenceThreshold)
 		},
 		"Recovery email",
 	)
@@ -214,14 +214,15 @@ func (n *SilenceNotifier) sendSilenceEmailWithClient(cfg *GraphConfig, stationNa
 }
 
 // sendRecoveryEmailWithClient sends a recovery email using the cached Graph client.
-func (n *SilenceNotifier) sendRecoveryEmailWithClient(cfg *GraphConfig, stationName string, durationMs int64, threshold float64) error {
+func (n *SilenceNotifier) sendRecoveryEmailWithClient(cfg *GraphConfig, stationName string, durationMs int64, levelL, levelR, threshold float64) error {
 	subject := "[OK] Audio Recovered - " + stationName
 	body := fmt.Sprintf(
 		"Audio recovered on the encoder.\n\n"+
+			"Level:          L %.1f dB / R %.1f dB\n"+
 			"Silence lasted: %s\n"+
 			"Threshold:      %.1f dB\n"+
 			"Time:           %s",
-		util.FormatDuration(durationMs), threshold, util.HumanTime(),
+		levelL, levelR, util.FormatDuration(durationMs), threshold, util.HumanTime(),
 	)
 	return n.sendEmail(cfg, subject, body)
 }
@@ -235,9 +236,9 @@ func (n *SilenceNotifier) logSilenceStart(cfg config.Snapshot, levelL, levelR fl
 }
 
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
-func (n *SilenceNotifier) logSilenceEnd(cfg config.Snapshot, durationMs int64) {
+func (n *SilenceNotifier) logSilenceEnd(cfg config.Snapshot, durationMs int64, levelL, levelR float64) {
 	util.LogNotifyResult(
-		func() error { return LogSilenceEnd(cfg.LogPath, durationMs, cfg.SilenceThreshold) },
+		func() error { return LogSilenceEnd(cfg.LogPath, durationMs, levelL, levelR, cfg.SilenceThreshold) },
 		"Recovery log",
 	)
 }
