@@ -916,6 +916,7 @@
             color: var(--text-secondary);
         }
 
+        /* Prevent mobile browsers from auto-linking dB values as phone numbers */
         .scale a[href^="tel:"] {
             color: inherit;
             text-decoration: none;
@@ -949,8 +950,7 @@
             margin-top: 1rem;
         }
 
-        :scope > span,
-        :scope > svg {
+        :scope > span {
             color: var(--warning-icon);
             margin-top: 0.125rem;
         }
@@ -1236,7 +1236,6 @@
             padding-top: 0.75rem;
         }
 
-        .nav h1,
         .nav h2 {
             flex: 1;
             font-size: 1.5rem;

@@ -165,8 +165,7 @@ type RotationMode string
 
 // Supported rotation modes.
 const (
-	RotationHourly   RotationMode = "hourly"   // Rotate at system clock hour boundaries
-	RotationOnDemand RotationMode = "ondemand" // API-controlled start/stop
+	RotationHourly RotationMode = "hourly" // Rotate at system clock hour boundaries
 )
 
 // StorageMode determines where recordings are saved.

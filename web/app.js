@@ -173,12 +173,10 @@ document.addEventListener('alpine:init', () => {
         banner: {
             visible: false,
             message: '',
-            type: 'info', // info, warning, danger
-            persistent: false
+            type: 'info' // info, warning, danger
         },
 
         ws: null,
-        _keydownHandler: null,
         _bannerTimeout: null,
 
         // Computed properties
@@ -227,9 +225,7 @@ document.addEventListener('alpine:init', () => {
 
         init() {
             this.connectWebSocket();
-            // Global keyboard handlers - store reference for cleanup
-            this._keydownHandler = (e) => this.handleGlobalKeydown(e);
-            document.addEventListener('keydown', this._keydownHandler);
+            document.addEventListener('keydown', (e) => this.handleGlobalKeydown(e));
         },
 
         /** Global keyboard: Escape closes views, Enter saves, arrows navigate tabs. */
