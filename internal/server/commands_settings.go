@@ -1,7 +1,6 @@
 package server
 
 import (
-	"cmp"
 	"log/slog"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
@@ -105,13 +104,7 @@ func (h *CommandHandler) handleEmailUpdate(cmd WSCommand, send chan<- any) {
 // handleZabbixUpdate processes a notifications/zabbix/update command.
 func (h *CommandHandler) handleZabbixUpdate(cmd WSCommand, send chan<- any) {
 	HandleCommand(h, cmd, send, func(req *ZabbixUpdateRequest) error {
-		snap := h.cfg.Snapshot()
-		return h.cfg.SetZabbixConfig(
-			cmp.Or(req.Server, snap.ZabbixServer),
-			cmp.Or(req.Port, snap.ZabbixPort),
-			cmp.Or(req.Host, snap.ZabbixHost),
-			cmp.Or(req.Key, snap.ZabbixKey),
-		)
+		return h.cfg.SetZabbixConfig(req.Server, req.Port, req.Host, req.Key)
 	})
 }
 
