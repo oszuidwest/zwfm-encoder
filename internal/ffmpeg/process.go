@@ -12,7 +12,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-// Process holds FFmpeg process state.
+// Process represents a running FFmpeg subprocess with its associated resources.
 type Process struct {
 	Cmd    *exec.Cmd
 	Cancel context.CancelFunc

@@ -28,7 +28,7 @@ type csrfToken struct {
 	expiresAt time.Time
 }
 
-// SessionManager handles user authentication sessions.
+// SessionManager manages user authentication sessions and CSRF tokens.
 type SessionManager struct {
 	sessions   map[string]*session
 	csrfTokens map[string]*csrfToken

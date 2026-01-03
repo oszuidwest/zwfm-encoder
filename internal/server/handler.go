@@ -12,8 +12,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-// validate is a singleton validator instance.
-// It caches struct information for performance.
+// validate is the shared validator instance for request validation.
 var validate *validator.Validate
 
 func init() {
@@ -30,7 +29,6 @@ func init() {
 }
 
 // HandleCommand is a generic command handler that decodes, validates, and processes a command.
-// It handles all the boilerplate: JSON decoding, struct validation, error responses.
 //
 // Type parameter T is the request data struct (must have validation tags).
 // The process function receives the validated data and returns an error if processing fails.
@@ -54,7 +52,7 @@ func HandleCommand[T any](h *CommandHandler, cmd WSCommand, send chan<- any, pro
 	SendSuccess(send, cmd.Type, nil)
 }
 
-// HandleActionAsync handles async commands with panic recovery (for I/O operations).
+// HandleActionAsync runs a command action asynchronously with panic recovery.
 func HandleActionAsync(cmd WSCommand, send chan<- any, action func() (any, error)) {
 	go func() {
 		defer func() {
@@ -120,7 +118,7 @@ func SendValidationErrors(send chan<- any, cmdType string, err error) {
 	trySend(send, cmdType, result)
 }
 
-// SendData sends arbitrary data (for custom response types like test_result).
+// SendData sends arbitrary data to the WebSocket client.
 func SendData(send chan<- any, data any) {
 	trySend(send, "data", data)
 }

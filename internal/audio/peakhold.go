@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// PeakHoldDuration is how long peaks are held before decay.
+// PeakHoldDuration is the duration that peak values are held before decaying.
 const PeakHoldDuration = 1500 * time.Millisecond
 
 // PeakHolder tracks peak-hold state for VU meters.

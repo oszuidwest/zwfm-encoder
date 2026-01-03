@@ -22,7 +22,7 @@ type WSCommand struct {
 	Data json.RawMessage `json:"data,omitempty"`
 }
 
-// CommandHandler processes WebSocket commands.
+// CommandHandler is the WebSocket command processor for the encoder.
 type CommandHandler struct {
 	cfg             *config.Config
 	encoder         *encoder.Encoder
@@ -75,7 +75,7 @@ func (h *CommandHandler) Handle(cmd WSCommand, send chan<- any, triggerStatusUpd
 
 // --- Namespace handlers ---
 
-// handleOutputs routes outputs/* commands
+// handleOutputs routes outputs/* commands.
 func (h *CommandHandler) handleOutputs(action string, cmd WSCommand, send chan<- any) {
 	switch action {
 	case "add":
@@ -89,7 +89,7 @@ func (h *CommandHandler) handleOutputs(action string, cmd WSCommand, send chan<-
 	}
 }
 
-// handleRecorders routes recorders/* commands
+// handleRecorders routes recorders/* commands.
 func (h *CommandHandler) handleRecorders(action string, cmd WSCommand, send chan<- any) {
 	switch action {
 	case "add":
@@ -109,7 +109,7 @@ func (h *CommandHandler) handleRecorders(action string, cmd WSCommand, send chan
 	}
 }
 
-// handleAudio routes audio/* commands
+// handleAudio routes audio/* commands.
 func (h *CommandHandler) handleAudio(action string, cmd WSCommand, send chan<- any) {
 	switch action {
 	case "update":
@@ -119,7 +119,7 @@ func (h *CommandHandler) handleAudio(action string, cmd WSCommand, send chan<- a
 	}
 }
 
-// handleSilence routes silence/* commands
+// handleSilence routes silence/* commands.
 func (h *CommandHandler) handleSilence(action string, cmd WSCommand, send chan<- any) {
 	switch action {
 	case "update":
@@ -129,7 +129,7 @@ func (h *CommandHandler) handleSilence(action string, cmd WSCommand, send chan<-
 	}
 }
 
-// handleNotifications routes notifications/*/* commands
+// handleNotifications routes notifications/*/* commands.
 func (h *CommandHandler) handleNotifications(action, subaction string, cmd WSCommand, send chan<- any) {
 	switch action {
 	case "webhook":
@@ -166,7 +166,7 @@ func (h *CommandHandler) handleNotifications(action, subaction string, cmd WSCom
 	}
 }
 
-// handleRecording routes recording/* commands
+// handleRecording routes recording/* commands.
 func (h *CommandHandler) handleRecording(action string, cmd WSCommand, send chan<- any) {
 	switch action {
 	case "regenerate-key":

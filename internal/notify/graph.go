@@ -34,7 +34,7 @@ const (
 	httpTimeout = 30 * time.Second
 )
 
-// guidPattern validates Azure AD GUID format (standard UUID).
+// guidPattern is a regular expression that matches Azure AD GUID format.
 var guidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // validateCredentials checks Graph API credentials.
@@ -120,7 +120,7 @@ type graphEmailAddress struct {
 	Address string `json:"address"`
 }
 
-// SendMail sends an email via Graph API with retry logic.
+// SendMail sends an email to the specified recipients via the Microsoft Graph API.
 func (c *GraphClient) SendMail(recipients []string, subject, body string) error {
 	if len(recipients) == 0 {
 		return fmt.Errorf("no recipients specified")
@@ -210,7 +210,7 @@ func (c *GraphClient) sendWithRetry(payload graphMailRequest) error {
 	return fmt.Errorf("max retries exceeded: %w", lastErr)
 }
 
-// ValidateAuth reports whether the Graph API credentials are valid.
+// ValidateAuth verifies that the Graph API credentials are valid and returns an error if not.
 func (c *GraphClient) ValidateAuth() error {
 	// The httpClient already has a token source configured.
 	// Making any request will trigger token acquisition.
@@ -248,7 +248,7 @@ func (c *GraphClient) ValidateAuth() error {
 	}
 }
 
-// ValidateConfig reports whether cfg has all required fields with valid formats.
+// ValidateConfig checks that cfg has all required fields with valid formats and returns an error if not.
 func ValidateConfig(cfg *types.GraphConfig) error {
 	if err := validateCredentials(cfg, true); err != nil {
 		return err

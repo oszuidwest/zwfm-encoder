@@ -10,7 +10,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// WebSocketConn defines the interface for WebSocket connection operations.
+// WebSocketConn is the interface for WebSocket connection operations.
 type WebSocketConn interface {
 	io.Closer
 	WriteJSON(v interface{}) error

@@ -133,6 +133,8 @@ func (n *SilenceNotifier) Reset() {
 	n.mu.Unlock()
 }
 
+// sendSilenceWebhook sends a silence detection webhook notification.
+//
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) sendSilenceWebhook(cfg config.Snapshot, levelL, levelR float64) {
 	util.LogNotifyResult(
@@ -141,6 +143,8 @@ func (n *SilenceNotifier) sendSilenceWebhook(cfg config.Snapshot, levelL, levelR
 	)
 }
 
+// sendRecoveryWebhook sends an audio recovery webhook notification.
+//
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) sendRecoveryWebhook(cfg config.Snapshot, durationMs int64, levelL, levelR float64) {
 	util.LogNotifyResult(
@@ -164,6 +168,8 @@ func BuildGraphConfig(cfg config.Snapshot) *GraphConfig {
 	}
 }
 
+// sendSilenceEmail sends a silence detection email notification.
+//
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) sendSilenceEmail(cfg config.Snapshot, levelL, levelR float64) {
 	graphCfg := BuildGraphConfig(cfg)
@@ -175,6 +181,8 @@ func (n *SilenceNotifier) sendSilenceEmail(cfg config.Snapshot, levelL, levelR f
 	)
 }
 
+// sendRecoveryEmail sends an audio recovery email notification.
+//
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) sendRecoveryEmail(cfg config.Snapshot, durationMs int64, levelL, levelR float64) {
 	graphCfg := BuildGraphConfig(cfg)
@@ -209,7 +217,7 @@ func (n *SilenceNotifier) sendEmail(cfg *GraphConfig, subject, body string) erro
 	return nil
 }
 
-// sendSilenceEmailWithClient sends a silence alert email using the cached Graph client.
+// sendSilenceEmailWithClient sends a silence alert email via Microsoft Graph.
 func (n *SilenceNotifier) sendSilenceEmailWithClient(cfg *GraphConfig, stationName string, levelL, levelR, threshold float64) error {
 	subject := "[ALERT] Silence Detected - " + stationName
 	body := fmt.Sprintf(
@@ -223,7 +231,7 @@ func (n *SilenceNotifier) sendSilenceEmailWithClient(cfg *GraphConfig, stationNa
 	return n.sendEmail(cfg, subject, body)
 }
 
-// sendRecoveryEmailWithClient sends a recovery email using the cached Graph client.
+// sendRecoveryEmailWithClient sends an audio recovery email via Microsoft Graph.
 func (n *SilenceNotifier) sendRecoveryEmailWithClient(cfg *GraphConfig, stationName string, durationMs int64, levelL, levelR, threshold float64) error {
 	subject := "[OK] Audio Recovered - " + stationName
 	body := fmt.Sprintf(
@@ -237,6 +245,8 @@ func (n *SilenceNotifier) sendRecoveryEmailWithClient(cfg *GraphConfig, stationN
 	return n.sendEmail(cfg, subject, body)
 }
 
+// logSilenceStart logs the start of a silence event.
+//
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) logSilenceStart(cfg config.Snapshot, levelL, levelR float64) {
 	util.LogNotifyResult(
@@ -245,6 +255,8 @@ func (n *SilenceNotifier) logSilenceStart(cfg config.Snapshot, levelL, levelR fl
 	)
 }
 
+// logSilenceEnd logs the end of a silence event.
+//
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) logSilenceEnd(cfg config.Snapshot, durationMs int64, levelL, levelR float64) {
 	util.LogNotifyResult(

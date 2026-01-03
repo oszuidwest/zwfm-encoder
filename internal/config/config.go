@@ -18,7 +18,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// Configuration defaults.
+// Configuration defaults are used when values are not specified.
 const (
 	DefaultWebPort                     = 8080
 	DefaultWebUsername                 = "admin"
@@ -32,7 +32,7 @@ const (
 	DefaultRecordingMaxDurationMinutes = 240 // 4 hours for on-demand recorders
 )
 
-// Validation patterns.
+// Validation patterns define regular expressions for configuration value validation.
 var (
 	// Station name: any printable characters except control chars (blocks CRLF injection in emails)
 	stationNamePattern  = regexp.MustCompile(`^[^\x00-\x1F\x7F]+$`)
@@ -166,7 +166,7 @@ func (c *Config) Load() error {
 	return nil
 }
 
-// validate validates all configuration fields.
+// validate checks all configuration fields for correctness.
 func (c *Config) validate() error {
 	// Validate station name
 	name := c.Web.StationName
