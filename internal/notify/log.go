@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
@@ -20,16 +21,8 @@ func LogSilenceStart(logPath string, levelL, levelR, threshold float64) error {
 	})
 }
 
-// DumpInfo contains information about an audio dump for logging.
-type DumpInfo struct {
-	FilePath  string
-	Filename  string
-	SizeBytes int64
-	Error     error
-}
-
 // LogSilenceEndWithDump records the end of a silence event with optional dump info.
-func LogSilenceEndWithDump(logPath string, silenceDurationMs int64, levelL, levelR, threshold float64, dump *DumpInfo) error {
+func LogSilenceEndWithDump(logPath string, silenceDurationMs int64, levelL, levelR, threshold float64, dump *silencedump.EncodeResult) error {
 	entry := &types.SilenceLogEntry{
 		Timestamp:    timestampUTC(),
 		Event:        "silence_end",
@@ -45,7 +38,7 @@ func LogSilenceEndWithDump(logPath string, silenceDurationMs int64, levelL, leve
 		} else {
 			entry.DumpPath = dump.FilePath
 			entry.DumpFilename = dump.Filename
-			entry.DumpSizeBytes = dump.SizeBytes
+			entry.DumpSizeBytes = dump.FileSize
 		}
 	}
 

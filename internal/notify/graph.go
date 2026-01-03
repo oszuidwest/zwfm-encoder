@@ -103,9 +103,10 @@ type graphMailRequest struct {
 }
 
 type graphMessage struct {
-	Subject      string           `json:"subject"`
-	Body         graphBody        `json:"body"`
-	ToRecipients []graphRecipient `json:"toRecipients"`
+	Subject      string            `json:"subject"`
+	Body         graphBody         `json:"body"`
+	ToRecipients []graphRecipient  `json:"toRecipients"`
+	Attachments  []graphAttachment `json:"attachments,omitempty"`
 }
 
 type graphBody struct {
@@ -129,19 +130,6 @@ type graphAttachment struct {
 	ContentBytes string `json:"contentBytes"` // Base64-encoded
 }
 
-// graphMessageWithAttachments extends graphMessage with attachments.
-type graphMessageWithAttachments struct {
-	Subject      string            `json:"subject"`
-	Body         graphBody         `json:"body"`
-	ToRecipients []graphRecipient  `json:"toRecipients"`
-	Attachments  []graphAttachment `json:"attachments,omitempty"`
-}
-
-// graphMailRequestWithAttachments is the request body for sendMail with attachments.
-type graphMailRequestWithAttachments struct {
-	Message graphMessageWithAttachments `json:"message"`
-}
-
 // EmailAttachment represents an email attachment.
 type EmailAttachment struct {
 	Filename    string
@@ -151,45 +139,7 @@ type EmailAttachment struct {
 
 // SendMail sends an email to the specified recipients via the Microsoft Graph API.
 func (c *GraphClient) SendMail(recipients []string, subject, body string) error {
-	if len(recipients) == 0 {
-		return fmt.Errorf("no recipients specified")
-	}
-
-	toRecipients := make([]graphRecipient, 0, len(recipients))
-	for _, addr := range recipients {
-		addr = strings.TrimSpace(addr)
-		if addr != "" {
-			toRecipients = append(toRecipients, graphRecipient{
-				EmailAddress: graphEmailAddress{Address: addr},
-			})
-		}
-	}
-
-	if len(toRecipients) == 0 {
-		return fmt.Errorf("no valid recipients after filtering")
-	}
-
-	payload := graphMailRequest{
-		Message: graphMessage{
-			Subject: subject,
-			Body: graphBody{
-				ContentType: "Text",
-				Content:     body,
-			},
-			ToRecipients: toRecipients,
-		},
-	}
-
-	return c.sendWithRetry(payload)
-}
-
-// sendWithRetry sends the request with automatic retries on transient failures.
-func (c *GraphClient) sendWithRetry(payload graphMailRequest) error {
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("marshal request: %w", err)
-	}
-	return c.doWithRetry(jsonData)
+	return c.SendMailWithAttachment(recipients, subject, body, nil)
 }
 
 // doWithRetry sends JSON data to the sendMail endpoint with automatic retries.
@@ -263,7 +213,7 @@ func (c *GraphClient) SendMailWithAttachment(recipients []string, subject, body 
 		return fmt.Errorf("no valid recipients after filtering")
 	}
 
-	message := graphMessageWithAttachments{
+	message := graphMessage{
 		Subject: subject,
 		Body: graphBody{
 			ContentType: "Text",
@@ -284,7 +234,7 @@ func (c *GraphClient) SendMailWithAttachment(recipients []string, subject, body 
 		}
 	}
 
-	payload := &graphMailRequestWithAttachments{Message: message}
+	payload := graphMailRequest{Message: message}
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal request: %w", err)

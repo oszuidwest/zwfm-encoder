@@ -303,15 +303,9 @@ func (n *SilenceNotifier) sendRecoveryEmailWithDump(cfg config.Snapshot, duratio
 //
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) logSilenceEndWithDump(cfg config.Snapshot, durationMs int64, levelL, levelR float64, dump *silencedump.EncodeResult) {
-	dumpInfo := &DumpInfo{
-		FilePath:  dump.FilePath,
-		Filename:  dump.Filename,
-		SizeBytes: dump.FileSize,
-		Error:     dump.Error,
-	}
 	util.LogNotifyResult(
 		func() error {
-			return LogSilenceEndWithDump(cfg.LogPath, durationMs, levelL, levelR, cfg.SilenceThreshold, dumpInfo)
+			return LogSilenceEndWithDump(cfg.LogPath, durationMs, levelL, levelR, cfg.SilenceThreshold, dump)
 		},
 		"Recovery log with dump",
 	)
