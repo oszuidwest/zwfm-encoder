@@ -4,6 +4,7 @@ package notify
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -120,6 +121,34 @@ type graphEmailAddress struct {
 	Address string `json:"address"`
 }
 
+// graphAttachment represents an email attachment for the Graph API.
+type graphAttachment struct {
+	OdataType    string `json:"@odata.type"`
+	Name         string `json:"name"`
+	ContentType  string `json:"contentType"`
+	ContentBytes string `json:"contentBytes"` // Base64-encoded
+}
+
+// graphMessageWithAttachments extends graphMessage with attachments.
+type graphMessageWithAttachments struct {
+	Subject      string            `json:"subject"`
+	Body         graphBody         `json:"body"`
+	ToRecipients []graphRecipient  `json:"toRecipients"`
+	Attachments  []graphAttachment `json:"attachments,omitempty"`
+}
+
+// graphMailRequestWithAttachments is the request body for sendMail with attachments.
+type graphMailRequestWithAttachments struct {
+	Message graphMessageWithAttachments `json:"message"`
+}
+
+// EmailAttachment represents an email attachment.
+type EmailAttachment struct {
+	Filename    string
+	ContentType string
+	Data        []byte
+}
+
 // SendMail sends an email to the specified recipients via the Microsoft Graph API.
 func (c *GraphClient) SendMail(recipients []string, subject, body string) error {
 	if len(recipients) == 0 {
@@ -200,6 +229,105 @@ func (c *GraphClient) sendWithRetry(payload graphMailRequest) error {
 		case http.StatusInternalServerError, http.StatusBadGateway,
 			http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 			// Transient server errors - retry
+			lastErr = fmt.Errorf("graph API returned %d: %s", resp.StatusCode, string(respBody))
+			continue
+		default:
+			return fmt.Errorf("graph API error %d: %s", resp.StatusCode, string(respBody))
+		}
+	}
+
+	return fmt.Errorf("max retries exceeded: %w", lastErr)
+}
+
+// SendMailWithAttachment sends an email with an optional attachment.
+func (c *GraphClient) SendMailWithAttachment(recipients []string, subject, body string, attachment *EmailAttachment) error {
+	if len(recipients) == 0 {
+		return fmt.Errorf("no recipients specified")
+	}
+
+	toRecipients := make([]graphRecipient, 0, len(recipients))
+	for _, addr := range recipients {
+		addr = strings.TrimSpace(addr)
+		if addr != "" {
+			toRecipients = append(toRecipients, graphRecipient{
+				EmailAddress: graphEmailAddress{Address: addr},
+			})
+		}
+	}
+
+	if len(toRecipients) == 0 {
+		return fmt.Errorf("no valid recipients after filtering")
+	}
+
+	message := graphMessageWithAttachments{
+		Subject: subject,
+		Body: graphBody{
+			ContentType: "Text",
+			Content:     body,
+		},
+		ToRecipients: toRecipients,
+	}
+
+	// Add attachment if provided and valid
+	if attachment != nil && len(attachment.Data) > 0 {
+		message.Attachments = []graphAttachment{
+			{
+				OdataType:    "#microsoft.graph.fileAttachment",
+				Name:         attachment.Filename,
+				ContentType:  attachment.ContentType,
+				ContentBytes: base64.StdEncoding.EncodeToString(attachment.Data),
+			},
+		}
+	}
+
+	payload := &graphMailRequestWithAttachments{Message: message}
+	return c.sendWithRetryAttachment(payload)
+}
+
+// sendWithRetryAttachment sends email with attachment with automatic retries.
+func (c *GraphClient) sendWithRetryAttachment(payload *graphMailRequestWithAttachments) error {
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
+
+	apiURL := fmt.Sprintf("%s/users/%s/sendMail", graphBaseURL, url.PathEscape(c.fromAddress))
+	backoff := util.NewBackoff(initialRetryWait, maxRetryWait)
+
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(backoff.Next())
+		}
+
+		req, err := http.NewRequest(http.MethodPost, apiURL, bytes.NewReader(jsonData))
+		if err != nil {
+			return fmt.Errorf("create request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("send request: %w", err)
+			continue
+		}
+
+		respBody, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+
+		switch resp.StatusCode {
+		case http.StatusAccepted, http.StatusOK, http.StatusNoContent:
+			return nil
+		case http.StatusTooManyRequests:
+			if retryAfter := resp.Header.Get("Retry-After"); retryAfter != "" {
+				if seconds, err := strconv.Atoi(retryAfter); err == nil && seconds > 0 {
+					time.Sleep(time.Duration(seconds) * time.Second)
+				}
+			}
+			lastErr = fmt.Errorf("graph API rate limited (429): %s", string(respBody))
+			continue
+		case http.StatusInternalServerError, http.StatusBadGateway,
+			http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 			lastErr = fmt.Errorf("graph API returned %d: %s", resp.StatusCode, string(respBody))
 			continue
 		default:

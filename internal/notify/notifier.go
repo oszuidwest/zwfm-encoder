@@ -1,11 +1,15 @@
 package notify
 
 import (
+	"encoding/base64"
 	"fmt"
+	"os"
 	"sync"
+	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
+	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
@@ -23,11 +27,55 @@ type SilenceNotifier struct {
 
 	// Cached Graph client for email notifications
 	graphClient *GraphClient
+
+	// Silence dump capture
+	dumpCapturer *silencedump.Capturer
+
+	// Pending recovery data (stored when recovery detected, used when dump is ready)
+	pendingRecovery *pendingRecoveryData
+}
+
+// pendingRecoveryData stores recovery event data while waiting for dump.
+type pendingRecoveryData struct {
+	durationMs int64
+	levelL     float64
+	levelR     float64
+	cfg        config.Snapshot
+	sentFlags  recoveryFlags
+}
+
+// recoveryFlags tracks which recovery notifications should be sent.
+type recoveryFlags struct {
+	webhook bool
+	email   bool
+	log     bool
 }
 
 // NewSilenceNotifier returns a SilenceNotifier configured with the given config.
-func NewSilenceNotifier(cfg *config.Config) *SilenceNotifier {
-	return &SilenceNotifier{cfg: cfg}
+func NewSilenceNotifier(cfg *config.Config, ffmpegPath string) *SilenceNotifier {
+	n := &SilenceNotifier{cfg: cfg}
+
+	// Create dump capturer with callback
+	n.dumpCapturer = silencedump.NewCapturer(ffmpegPath, n.onDumpReady)
+
+	return n
+}
+
+// WriteAudio feeds PCM audio data to the dump capturer.
+func (n *SilenceNotifier) WriteAudio(pcm []byte) {
+	if n.dumpCapturer != nil {
+		n.dumpCapturer.WriteAudio(pcm)
+	}
+}
+
+// ResetCapturer resets the dump capturer state.
+func (n *SilenceNotifier) ResetCapturer() {
+	if n.dumpCapturer != nil {
+		n.dumpCapturer.Reset()
+	}
+	n.mu.Lock()
+	n.pendingRecovery = nil
+	n.mu.Unlock()
 }
 
 // InvalidateGraphClient clears the cached Graph client.
@@ -58,10 +106,18 @@ func (n *SilenceNotifier) getOrCreateGraphClient(cfg *GraphConfig) (*GraphClient
 func (n *SilenceNotifier) HandleEvent(event audio.SilenceEvent) {
 	if event.JustEntered {
 		n.handleSilenceStart(event.CurrentLevelL, event.CurrentLevelR)
+		// Start dump capture
+		if n.dumpCapturer != nil {
+			n.dumpCapturer.OnSilenceStart()
+		}
 	}
 
 	if event.JustRecovered {
 		n.handleSilenceEnd(event.TotalDurationMs, event.CurrentLevelL, event.CurrentLevelR)
+		// Trigger dump recovery (dump will be finalized after 15 more seconds)
+		if n.dumpCapturer != nil {
+			n.dumpCapturer.OnSilenceRecover(time.Duration(event.TotalDurationMs) * time.Millisecond)
+		}
 	}
 }
 
@@ -96,7 +152,8 @@ func (n *SilenceNotifier) handleSilenceStart(levelL, levelR float64) {
 	}
 }
 
-// handleSilenceEnd triggers recovery notifications when silence ends.
+// handleSilenceEnd stores recovery data and waits for dump to be ready.
+// Recovery notifications are delayed until the dump is captured (15 sec after recovery).
 func (n *SilenceNotifier) handleSilenceEnd(totalDurationMs int64, levelL, levelR float64) {
 	cfg := n.cfg.Snapshot()
 
@@ -109,19 +166,20 @@ func (n *SilenceNotifier) handleSilenceEnd(totalDurationMs int64, levelL, levelR
 	n.webhookSent = false
 	n.emailSent = false
 	n.logSent = false
+
+	// Store pending recovery data for when clip is ready
+	n.pendingRecovery = &pendingRecoveryData{
+		durationMs: totalDurationMs,
+		levelL:     levelL,
+		levelR:     levelR,
+		cfg:        cfg,
+		sentFlags: recoveryFlags{
+			webhook: shouldSendWebhookRecovery,
+			email:   shouldSendEmailRecovery,
+			log:     shouldSendLogRecovery,
+		},
+	}
 	n.mu.Unlock()
-
-	if shouldSendWebhookRecovery {
-		go n.sendRecoveryWebhook(cfg, totalDurationMs, levelL, levelR)
-	}
-
-	if shouldSendEmailRecovery {
-		go n.sendRecoveryEmail(cfg, totalDurationMs, levelL, levelR)
-	}
-
-	if shouldSendLogRecovery {
-		go n.logSilenceEnd(cfg, totalDurationMs, levelL, levelR)
-	}
 }
 
 // Reset clears the notification state.
@@ -140,18 +198,6 @@ func (n *SilenceNotifier) sendSilenceWebhook(cfg config.Snapshot, levelL, levelR
 	util.LogNotifyResult(
 		func() error { return SendSilenceWebhook(cfg.WebhookURL, levelL, levelR, cfg.SilenceThreshold) },
 		"Silence webhook",
-	)
-}
-
-// sendRecoveryWebhook sends an audio recovery webhook notification.
-//
-//nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
-func (n *SilenceNotifier) sendRecoveryWebhook(cfg config.Snapshot, durationMs int64, levelL, levelR float64) {
-	util.LogNotifyResult(
-		func() error {
-			return SendRecoveryWebhook(cfg.WebhookURL, durationMs, levelL, levelR, cfg.SilenceThreshold)
-		},
-		"Recovery webhook",
 	)
 }
 
@@ -178,19 +224,6 @@ func (n *SilenceNotifier) sendSilenceEmail(cfg config.Snapshot, levelL, levelR f
 			return n.sendSilenceEmailWithClient(graphCfg, cfg.StationName, levelL, levelR, cfg.SilenceThreshold)
 		},
 		"Silence email",
-	)
-}
-
-// sendRecoveryEmail sends an audio recovery email notification.
-//
-//nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
-func (n *SilenceNotifier) sendRecoveryEmail(cfg config.Snapshot, durationMs int64, levelL, levelR float64) {
-	graphCfg := BuildGraphConfig(cfg)
-	util.LogNotifyResult(
-		func() error {
-			return n.sendRecoveryEmailWithClient(graphCfg, cfg.StationName, durationMs, levelL, levelR, cfg.SilenceThreshold)
-		},
-		"Recovery email",
 	)
 }
 
@@ -231,20 +264,6 @@ func (n *SilenceNotifier) sendSilenceEmailWithClient(cfg *GraphConfig, stationNa
 	return n.sendEmail(cfg, subject, body)
 }
 
-// sendRecoveryEmailWithClient sends a recovery alert email.
-func (n *SilenceNotifier) sendRecoveryEmailWithClient(cfg *GraphConfig, stationName string, durationMs int64, levelL, levelR, threshold float64) error {
-	subject := "[OK] Audio Recovered - " + stationName
-	body := fmt.Sprintf(
-		"Audio recovered on the encoder.\n\n"+
-			"Level:          L %.1f dB / R %.1f dB\n"+
-			"Silence lasted: %s\n"+
-			"Threshold:      %.1f dB\n"+
-			"Time:           %s",
-		levelL, levelR, util.FormatDuration(durationMs), threshold, util.HumanTime(),
-	)
-	return n.sendEmail(cfg, subject, body)
-}
-
 // logSilenceStart logs the start of a silence event.
 //
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
@@ -255,12 +274,156 @@ func (n *SilenceNotifier) logSilenceStart(cfg config.Snapshot, levelL, levelR fl
 	)
 }
 
-// logSilenceEnd logs the end of a silence event.
+// onDumpReady is called when a silence dump has been encoded.
+func (n *SilenceNotifier) onDumpReady(result *silencedump.EncodeResult) {
+	n.mu.Lock()
+	pending := n.pendingRecovery
+	n.pendingRecovery = nil
+	n.mu.Unlock()
+
+	if pending == nil {
+		return
+	}
+
+	// Send recovery notifications with dump
+	if pending.sentFlags.webhook {
+		go n.sendRecoveryWebhookWithDump(pending.cfg, pending.durationMs, pending.levelL, pending.levelR, result)
+	}
+	if pending.sentFlags.email {
+		go n.sendRecoveryEmailWithDump(pending.cfg, pending.durationMs, pending.levelL, pending.levelR, result)
+	}
+	if pending.sentFlags.log {
+		go n.logSilenceEndWithDump(pending.cfg, pending.durationMs, pending.levelL, pending.levelR, result)
+	}
+}
+
+// sendRecoveryWebhookWithDump sends a recovery webhook with audio dump.
 //
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
-func (n *SilenceNotifier) logSilenceEnd(cfg config.Snapshot, durationMs int64, levelL, levelR float64) {
+func (n *SilenceNotifier) sendRecoveryWebhookWithDump(cfg config.Snapshot, durationMs int64, levelL, levelR float64, dump *silencedump.EncodeResult) {
 	util.LogNotifyResult(
-		func() error { return LogSilenceEnd(cfg.LogPath, durationMs, levelL, levelR, cfg.SilenceThreshold) },
-		"Recovery log",
+		func() error {
+			return sendRecoveryWebhookWithDump(cfg.WebhookURL, durationMs, levelL, levelR, cfg.SilenceThreshold, dump)
+		},
+		"Recovery webhook with dump",
 	)
+}
+
+// sendRecoveryEmailWithDump sends a recovery email with audio dump attachment.
+//
+//nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
+func (n *SilenceNotifier) sendRecoveryEmailWithDump(cfg config.Snapshot, durationMs int64, levelL, levelR float64, dump *silencedump.EncodeResult) {
+	graphCfg := BuildGraphConfig(cfg)
+	util.LogNotifyResult(
+		func() error {
+			return n.sendRecoveryEmailWithClientAndDump(graphCfg, cfg.StationName, durationMs, levelL, levelR, cfg.SilenceThreshold, dump)
+		},
+		"Recovery email with dump",
+	)
+}
+
+// logSilenceEndWithDump logs the end of a silence event with dump info.
+//
+//nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
+func (n *SilenceNotifier) logSilenceEndWithDump(cfg config.Snapshot, durationMs int64, levelL, levelR float64, dump *silencedump.EncodeResult) {
+	dumpInfo := &DumpInfo{
+		FilePath:  dump.FilePath,
+		Filename:  dump.Filename,
+		SizeBytes: dump.FileSize,
+		Error:     dump.Error,
+	}
+	util.LogNotifyResult(
+		func() error {
+			return LogSilenceEndWithDump(cfg.LogPath, durationMs, levelL, levelR, cfg.SilenceThreshold, dumpInfo)
+		},
+		"Recovery log with dump",
+	)
+}
+
+// sendRecoveryWebhookWithDump sends a recovery webhook with optional audio dump.
+func sendRecoveryWebhookWithDump(webhookURL string, durationMs int64, levelL, levelR, threshold float64, dump *silencedump.EncodeResult) error {
+	payload := &WebhookPayload{
+		Event:             "silence_recovered",
+		SilenceDurationMs: durationMs,
+		LevelLeftDB:       levelL,
+		LevelRightDB:      levelR,
+		Threshold:         threshold,
+		Timestamp:         timestampUTC(),
+	}
+
+	// Add dump info
+	if dump != nil {
+		if dump.Error != nil {
+			payload.AudioDumpError = dump.Error.Error()
+		} else if dump.FilePath != "" {
+			// Read and encode the dump file
+			data, err := os.ReadFile(dump.FilePath)
+			if err != nil {
+				payload.AudioDumpError = err.Error()
+			} else {
+				payload.AudioDumpBase64 = base64.StdEncoding.EncodeToString(data)
+				payload.AudioDumpFilename = dump.Filename
+				payload.AudioDumpSizeBytes = dump.FileSize
+			}
+		}
+	}
+
+	return sendWebhook(webhookURL, payload)
+}
+
+// sendRecoveryEmailWithClientAndDump sends a recovery email with optional audio dump attachment.
+func (n *SilenceNotifier) sendRecoveryEmailWithClientAndDump(cfg *GraphConfig, stationName string, durationMs int64, levelL, levelR, threshold float64, dump *silencedump.EncodeResult) error {
+	if !IsConfigured(cfg) {
+		return nil
+	}
+
+	subject := "[OK] Audio Recovered - " + stationName
+
+	// Build body with dump info
+	body := fmt.Sprintf(
+		"Audio recovered on the encoder.\n\n"+
+			"Level:          L %.1f dB / R %.1f dB\n"+
+			"Silence lasted: %s\n"+
+			"Threshold:      %.1f dB\n"+
+			"Time:           %s",
+		levelL, levelR, util.FormatDuration(durationMs), threshold, util.HumanTime(),
+	)
+
+	// Add dump info to body
+	if dump != nil {
+		if dump.Error != nil {
+			body += fmt.Sprintf("\n\nAudio dump: Failed to capture (%s)", dump.Error.Error())
+		} else {
+			body += fmt.Sprintf("\n\nAudio dump attached: %s (15s before, silence, 15s after)", dump.Filename)
+		}
+	}
+
+	client, err := n.getOrCreateGraphClient(cfg)
+	if err != nil {
+		return util.WrapError("create Graph client", err)
+	}
+
+	recipients := ParseRecipients(cfg.Recipients)
+	if len(recipients) == 0 {
+		return fmt.Errorf("no valid recipients")
+	}
+
+	// Prepare attachment if dump is available
+	var attachment *EmailAttachment
+	if dump != nil && dump.Error == nil && dump.FilePath != "" {
+		data, err := os.ReadFile(dump.FilePath)
+		if err == nil {
+			attachment = &EmailAttachment{
+				Filename:    dump.Filename,
+				ContentType: "audio/mpeg",
+				Data:        data,
+			}
+		}
+	}
+
+	if err := client.SendMailWithAttachment(recipients, subject, body, attachment); err != nil {
+		return util.WrapError("send email via Graph", err)
+	}
+
+	return nil
 }

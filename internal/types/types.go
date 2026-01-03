@@ -318,6 +318,12 @@ type SilenceLogEntry struct {
 	LevelLeftDB  float64 `json:"level_left_db,omitempty"`  // Left channel RMS level in dB
 	LevelRightDB float64 `json:"level_right_db,omitempty"` // Right channel RMS level in dB
 	ThresholdDB  float64 `json:"threshold_db"`             // Threshold in dB
+
+	// Audio dump fields (silence_end only)
+	DumpPath      string `json:"dump_path,omitempty"`       // Full path to the MP3 dump file
+	DumpFilename  string `json:"dump_filename,omitempty"`   // Dump filename
+	DumpSizeBytes int64  `json:"dump_size_bytes,omitempty"` // Dump file size in bytes
+	DumpError     string `json:"dump_error,omitempty"`      // Error message if dump encoding failed
 }
 
 // AudioDevice represents an available audio input device.

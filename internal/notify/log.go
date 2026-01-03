@@ -11,7 +11,7 @@ import (
 
 // LogSilenceStart records the beginning of a silence event.
 func LogSilenceStart(logPath string, levelL, levelR, threshold float64) error {
-	return appendLogEntry(logPath, types.SilenceLogEntry{
+	return appendLogEntry(logPath, &types.SilenceLogEntry{
 		Timestamp:    timestampUTC(),
 		Event:        "silence_start",
 		LevelLeftDB:  levelL,
@@ -20,16 +20,36 @@ func LogSilenceStart(logPath string, levelL, levelR, threshold float64) error {
 	})
 }
 
-// LogSilenceEnd records the end of a silence event with its total duration.
-func LogSilenceEnd(logPath string, silenceDurationMs int64, levelL, levelR, threshold float64) error {
-	return appendLogEntry(logPath, types.SilenceLogEntry{
+// DumpInfo contains information about an audio dump for logging.
+type DumpInfo struct {
+	FilePath  string
+	Filename  string
+	SizeBytes int64
+	Error     error
+}
+
+// LogSilenceEndWithDump records the end of a silence event with optional dump info.
+func LogSilenceEndWithDump(logPath string, silenceDurationMs int64, levelL, levelR, threshold float64, dump *DumpInfo) error {
+	entry := &types.SilenceLogEntry{
 		Timestamp:    timestampUTC(),
 		Event:        "silence_end",
 		DurationMs:   silenceDurationMs,
 		LevelLeftDB:  levelL,
 		LevelRightDB: levelR,
 		ThresholdDB:  threshold,
-	})
+	}
+
+	if dump != nil {
+		if dump.Error != nil {
+			entry.DumpError = dump.Error.Error()
+		} else {
+			entry.DumpPath = dump.FilePath
+			entry.DumpFilename = dump.Filename
+			entry.DumpSizeBytes = dump.SizeBytes
+		}
+	}
+
+	return appendLogEntry(logPath, entry)
 }
 
 // WriteTestLog writes a test log entry.
@@ -38,7 +58,7 @@ func WriteTestLog(logPath string) error {
 		return fmt.Errorf("log file path not configured")
 	}
 
-	return appendLogEntry(logPath, types.SilenceLogEntry{
+	return appendLogEntry(logPath, &types.SilenceLogEntry{
 		Timestamp:   timestampUTC(),
 		Event:       "test",
 		DurationMs:  0,
@@ -47,7 +67,7 @@ func WriteTestLog(logPath string) error {
 }
 
 // appendLogEntry appends a JSON log entry to the file.
-func appendLogEntry(logPath string, entry types.SilenceLogEntry) error {
+func appendLogEntry(logPath string, entry *types.SilenceLogEntry) error {
 	if !util.IsConfigured(logPath) {
 		return nil
 	}

@@ -76,7 +76,7 @@ func New(cfg *config.Config, ffmpegPath string) *Encoder {
 		state:               types.StateStopped,
 		backoff:             util.NewBackoff(types.InitialRetryDelay, types.MaxRetryDelay),
 		silenceDetect:       audio.NewSilenceDetector(),
-		silenceNotifier:     notify.NewSilenceNotifier(cfg),
+		silenceNotifier:     notify.NewSilenceNotifier(cfg, ffmpegPath),
 		peakHolder:          audio.NewPeakHolder(),
 		secretExpiryChecker: notify.NewSecretExpiryChecker(&graphCfg),
 	}
@@ -281,6 +281,11 @@ func (e *Encoder) Stop() error {
 		}
 		errs = append(errs, fmt.Errorf("source shutdown timeout"))
 	}
+
+	// Reset silence detection and dump capture state
+	e.silenceDetect.Reset()
+	e.silenceNotifier.Reset()
+	e.silenceNotifier.ResetCapturer()
 
 	e.mu.Lock()
 	e.state = types.StateStopped
@@ -564,6 +569,9 @@ func (e *Encoder) runDistributor() {
 		if n == 0 {
 			continue
 		}
+
+		// Feed audio to silence dump capturer
+		e.silenceNotifier.WriteAudio(buf[:n])
 
 		distributor.ProcessSamples(buf, n)
 
