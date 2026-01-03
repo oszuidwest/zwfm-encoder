@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<zabbix_export>
+    <version>7.4</version>
+    <template_groups>
+        <template_group>
+            <uuid>a571c0d144b14fd4a87a9d9b2aa9fcd6</uuid>
+            <name>Templates/Applications</name>
+        </template_group>
+    </template_groups>
+    <templates>
+        <template>
+            <uuid>679dae272b534829a4f83735a83dabc5</uuid>
+            <template>ZWFM Encoder Silence Monitor</template>
+            <name>ZWFM Encoder Silence Monitor</name>
+            <groups>
+                <group>
+                    <name>Templates/Applications</name>
+                </group>
+            </groups>
+            <items>
+                <item>
+                    <uuid>67cd2d20cdf24d49a547567c73f68bb8</uuid>
+                    <name>Silence Alert</name>
+                    <type>TRAP</type>
+                    <key>silence.alert</key>
+                    <value_type>TEXT</value_type>
+                    <description>Receives silence detection alerts from ZWFM encoder. Values contain SILENCE, RECOVERY, or TEST messages with audio levels.</description>
+                    <triggers>
+                        <trigger>
+                            <uuid>aa7ea5e33ab14a8f8bbc4f7a74eb11ed</uuid>
+                            <expression>find(/ZWFM Encoder Silence Monitor/silence.alert,,&quot;like&quot;,&quot;RECOVERY&quot;) = 1</expression>
+                            <name>Audio Recovered</name>
+                            <opdata>{ITEM.LASTVALUE}</opdata>
+                            <priority>INFO</priority>
+                            <description>Audio has recovered from silence</description>
+                        </trigger>
+                        <trigger>
+                            <uuid>656aef0e053447978932e7e6d8dddf55</uuid>
+                            <expression>find(/ZWFM Encoder Silence Monitor/silence.alert,,&quot;like&quot;,&quot;SILENCE&quot;) = 1</expression>
+                            <recovery_mode>RECOVERY_EXPRESSION</recovery_mode>
+                            <recovery_expression>find(/ZWFM Encoder Silence Monitor/silence.alert,,&quot;like&quot;,&quot;RECOVERY&quot;) = 1</recovery_expression>
+                            <name>Silence Detected</name>
+                            <opdata>{ITEM.LASTVALUE}</opdata>
+                            <priority>DISASTER</priority>
+                            <description>Silence has been detected by the ZWFM encoder. Trigger recovers when audio returns to normal levels.</description>
+                        </trigger>
+                        <trigger>
+                            <uuid>6b003bc3fb6b4b1abdbbca315219508c</uuid>
+                            <expression>find(/ZWFM Encoder Silence Monitor/silence.alert,,&quot;like&quot;,&quot;TEST&quot;) = 1</expression>
+                            <name>Test Message Received</name>
+                            <priority>INFO</priority>
+                            <description>Test message received from ZWFM encoder (information only)</description>
+                        </trigger>
+                    </triggers>
+                </item>
+            </items>
+        </template>
+    </templates>
+</zabbix_export>
