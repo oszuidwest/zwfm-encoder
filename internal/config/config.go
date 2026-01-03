@@ -184,25 +184,13 @@ func (c *Config) validate() error {
 
 func (c *Config) applyDefaults() {
 	// System defaults
-	if c.System.Port == 0 {
-		c.System.Port = DefaultWebPort
-	}
-	if c.System.Username == "" {
-		c.System.Username = DefaultWebUsername
-	}
-	if c.System.Password == "" {
-		c.System.Password = DefaultWebPassword
-	}
+	c.System.Port = cmp.Or(c.System.Port, DefaultWebPort)
+	c.System.Username = cmp.Or(c.System.Username, DefaultWebUsername)
+	c.System.Password = cmp.Or(c.System.Password, DefaultWebPassword)
 	// Web defaults
-	if c.Web.StationName == "" {
-		c.Web.StationName = DefaultStationName
-	}
-	if c.Web.ColorLight == "" {
-		c.Web.ColorLight = DefaultStationColorLight
-	}
-	if c.Web.ColorDark == "" {
-		c.Web.ColorDark = DefaultStationColorDark
-	}
+	c.Web.StationName = cmp.Or(c.Web.StationName, DefaultStationName)
+	c.Web.ColorLight = cmp.Or(c.Web.ColorLight, DefaultStationColorLight)
+	c.Web.ColorDark = cmp.Or(c.Web.ColorDark, DefaultStationColorDark)
 	// Streaming defaults
 	if c.Streaming.Outputs == nil {
 		c.Streaming.Outputs = []types.Output{}
@@ -359,9 +347,7 @@ func (c *Config) AddRecorder(recorder *types.Recorder) error {
 	recorder.ID = fmt.Sprintf("recorder-%s", shortID)
 
 	// Apply retention days default if not specified
-	if recorder.RetentionDays == 0 {
-		recorder.RetentionDays = types.DefaultRetentionDays
-	}
+	recorder.RetentionDays = cmp.Or(recorder.RetentionDays, types.DefaultRetentionDays)
 	// New recorders are enabled by default
 	recorder.Enabled = true
 	recorder.CreatedAt = time.Now().UnixMilli()

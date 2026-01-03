@@ -29,7 +29,7 @@ func (m *Manager) startCleanupScheduler() {
 			}
 			duration := next.Sub(now)
 
-			slog.Info("cleanup scheduler: next run scheduled", "at", next.Format("2006-01-02 15:04:05"))
+			slog.Info("cleanup scheduler: next run scheduled", "at", next.Format(time.DateTime))
 
 			select {
 			case <-time.After(duration):

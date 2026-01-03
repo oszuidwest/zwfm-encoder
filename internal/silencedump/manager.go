@@ -139,7 +139,7 @@ func (m *Manager) startCleanupScheduler() {
 			}
 			duration := next.Sub(now)
 
-			slog.Debug("silence dump cleanup: next run scheduled", "at", next.Format("2006-01-02 15:04:05"))
+			slog.Debug("silence dump cleanup: next run scheduled", "at", next.Format(time.DateTime))
 
 			select {
 			case <-time.After(duration):

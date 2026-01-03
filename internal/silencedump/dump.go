@@ -107,7 +107,7 @@ func (c *Capturer) WriteAudio(pcm []byte) {
 	}
 
 	// Write to ring buffer with wrap-around
-	for i := 0; i < len(pcm); i++ {
+	for i := range pcm {
 		c.buffer[c.writePos] = pcm[i]
 		c.writePos = (c.writePos + 1) % bufferCapacity
 	}
