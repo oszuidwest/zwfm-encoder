@@ -141,6 +141,7 @@ document.addEventListener('alpine:init', () => {
             silenceDump: { enabled: true, retentionDays: 7 },
             silenceWebhook: '',
             silenceLogPath: '',
+            zabbix: { server: '', port: 10051, host: '', key: '' },
             graph: { tenantId: '', clientId: '', clientSecret: '', fromAddress: '', recipients: '' },
             recordingApiKey: '',
             platform: ''
@@ -160,6 +161,7 @@ document.addEventListener('alpine:init', () => {
             webhook: { pending: false, text: 'Test' },
             log: { pending: false, text: 'Test' },
             email: { pending: false, text: 'Test' },
+            zabbix: { pending: false, text: 'Test' },
             recorderS3: { pending: false, text: 'Test Connection' }
         },
 
@@ -518,7 +520,10 @@ document.addEventListener('alpine:init', () => {
                 }
                 this.settings.silenceWebhook = msg.silence_webhook ?? '';
                 this.settings.silenceLogPath = msg.silence_log_path ?? '';
-                // Microsoft Graph settings
+                this.settings.zabbix.server = msg.silence_zabbix_server ?? '';
+                this.settings.zabbix.port = msg.silence_zabbix_port ?? 10051;
+                this.settings.zabbix.host = msg.silence_zabbix_host ?? '';
+                this.settings.zabbix.key = msg.silence_zabbix_key ?? '';
                 this.settings.graph.tenantId = msg.graph_tenant_id ?? '';
                 this.settings.graph.clientId = msg.graph_client_id ?? '';
                 this.settings.graph.fromAddress = msg.graph_from_address ?? '';
@@ -679,6 +684,14 @@ document.addEventListener('alpine:init', () => {
             // Log notification settings
             this.send('notifications/log/update', null, {
                 path: this.settings.silenceLogPath
+            });
+
+            // Zabbix notification settings
+            this.send('notifications/zabbix/update', null, {
+                server: this.settings.zabbix.server,
+                port: this.settings.zabbix.port,
+                host: this.settings.zabbix.host,
+                key: this.settings.zabbix.key
             });
 
             // Email notification settings (Microsoft Graph)

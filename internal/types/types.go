@@ -267,28 +267,32 @@ type AudioMetrics struct {
 
 // WSStatusResponse is sent to clients with full encoder and output status.
 type WSStatusResponse struct {
-	Type              string                   `json:"type"`                // Message type identifier
-	FFmpegAvailable   bool                     `json:"ffmpeg_available"`    // FFmpeg binary is available
-	Encoder           EncoderStatus            `json:"encoder"`             // Encoder status
-	Outputs           []Output                 `json:"outputs"`             // Output configurations
-	OutputStatus      map[string]ProcessStatus `json:"output_status"`       // Runtime output status
-	Recorders         []Recorder               `json:"recorders"`           // Recorder configurations
-	RecorderStatuses  map[string]ProcessStatus `json:"recorder_statuses"`   // Runtime recorder status
-	RecordingAPIKey   string                   `json:"recording_api_key"`   // API key for recording control
-	Devices           []AudioDevice            `json:"devices"`             // Available audio devices
-	SilenceThreshold  float64                  `json:"silence_threshold"`   // Silence threshold in dB
-	SilenceDurationMs int64                    `json:"silence_duration_ms"` // Silence duration in milliseconds
-	SilenceRecoveryMs int64                    `json:"silence_recovery_ms"` // Recovery duration in milliseconds
-	SilenceWebhook    string                   `json:"silence_webhook"`     // Webhook URL for alerts
-	SilenceLogPath    string                   `json:"silence_log_path"`    // Log file path
-	GraphTenantID     string                   `json:"graph_tenant_id"`     // Azure AD tenant ID
-	GraphClientID     string                   `json:"graph_client_id"`     // App registration client ID
-	GraphFromAddress  string                   `json:"graph_from_address"`  // Shared mailbox address
-	GraphRecipients   string                   `json:"graph_recipients"`    // Comma-separated recipients
-	GraphSecretExpiry SecretExpiryInfo         `json:"graph_secret_expiry"` // Client secret expiration info
-	SilenceDump       SilenceDumpConfig        `json:"silence_dump"`        // Silence dump configuration
-	Settings          WSSettings               `json:"settings"`            // Current settings
-	Version           VersionInfo              `json:"version"`             // Version information
+	Type                string                   `json:"type"`                            // Message type identifier
+	FFmpegAvailable     bool                     `json:"ffmpeg_available"`                // FFmpeg binary is available
+	Encoder             EncoderStatus            `json:"encoder"`                         // Encoder status
+	Outputs             []Output                 `json:"outputs"`                         // Output configurations
+	OutputStatus        map[string]ProcessStatus `json:"output_status"`                   // Runtime output status
+	Recorders           []Recorder               `json:"recorders"`                       // Recorder configurations
+	RecorderStatuses    map[string]ProcessStatus `json:"recorder_statuses"`               // Runtime recorder status
+	RecordingAPIKey     string                   `json:"recording_api_key"`               // API key for recording control
+	Devices             []AudioDevice            `json:"devices"`                         // Available audio devices
+	SilenceThreshold    float64                  `json:"silence_threshold"`               // Silence threshold in dB
+	SilenceDurationMs   int64                    `json:"silence_duration_ms"`             // Silence duration in milliseconds
+	SilenceRecoveryMs   int64                    `json:"silence_recovery_ms"`             // Recovery duration in milliseconds
+	SilenceWebhook      string                   `json:"silence_webhook"`                 // Webhook URL for alerts
+	SilenceLogPath      string                   `json:"silence_log_path"`                // Log file path
+	SilenceZabbixServer string                   `json:"silence_zabbix_server,omitempty"` // Zabbix server address
+	SilenceZabbixPort   int                      `json:"silence_zabbix_port,omitempty"`   // Zabbix server port
+	SilenceZabbixHost   string                   `json:"silence_zabbix_host,omitempty"`   // Zabbix host name
+	SilenceZabbixKey    string                   `json:"silence_zabbix_key,omitempty"`    // Zabbix item key
+	GraphTenantID       string                   `json:"graph_tenant_id"`                 // Azure AD tenant ID
+	GraphClientID       string                   `json:"graph_client_id"`                 // App registration client ID
+	GraphFromAddress    string                   `json:"graph_from_address"`              // Shared mailbox address
+	GraphRecipients     string                   `json:"graph_recipients"`                // Comma-separated recipients
+	GraphSecretExpiry   SecretExpiryInfo         `json:"graph_secret_expiry"`             // Client secret expiration info
+	SilenceDump         SilenceDumpConfig        `json:"silence_dump"`                    // Silence dump configuration
+	Settings            WSSettings               `json:"settings"`                        // Current settings
+	Version             VersionInfo              `json:"version"`                         // Version information
 }
 
 // WSSettings contains the settings sub-object in status responses.
@@ -349,6 +353,15 @@ type GraphConfig struct {
 	ClientSecret string `json:"client_secret,omitempty"` // App registration client secret
 	FromAddress  string `json:"from_address,omitempty"`  // Shared mailbox address (sender)
 	Recipients   string `json:"recipients,omitempty"`    // Comma-separated recipients
+}
+
+// ZabbixConfig contains settings for sending trapper items to a Zabbix server.
+type ZabbixConfig struct {
+	Server    string `json:"server,omitempty"`
+	Port      int    `json:"port,omitempty"`
+	Host      string `json:"host,omitempty"`
+	Key       string `json:"key,omitempty"`
+	TimeoutMs int    `json:"timeout_ms,omitempty"`
 }
 
 // SecretExpiryInfo contains client secret expiration data.

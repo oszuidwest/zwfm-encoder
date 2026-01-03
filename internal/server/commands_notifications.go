@@ -20,6 +20,8 @@ func (h *CommandHandler) runTest(testType string) error {
 		return h.encoder.TriggerTestLog()
 	case "email":
 		return h.encoder.TriggerTestEmail()
+	case "zabbix":
+		return h.encoder.TriggerTestZabbix()
 	default:
 		return fmt.Errorf("unknown test type: %s", testType)
 	}

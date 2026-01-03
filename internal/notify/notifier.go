@@ -25,6 +25,7 @@ type SilenceNotifier struct {
 	webhookSent bool
 	emailSent   bool
 	logSent     bool
+	zabbixSent  bool
 
 	// Cached Graph client for email notifications
 	graphClient *GraphClient
@@ -47,6 +48,7 @@ type recoveryFlags struct {
 	webhook bool
 	email   bool
 	log     bool
+	zabbix  bool
 }
 
 // NewSilenceNotifier returns a SilenceNotifier configured with the given config.
@@ -106,6 +108,7 @@ func (n *SilenceNotifier) handleSilenceStart(levelL, levelR float64) {
 	shouldSendWebhook := !n.webhookSent && cfg.HasWebhook()
 	shouldSendEmail := !n.emailSent && cfg.HasGraph()
 	shouldSendLog := !n.logSent && cfg.HasLogPath()
+	shouldSendZabbix := !n.zabbixSent && cfg.HasZabbix()
 	if shouldSendWebhook {
 		n.webhookSent = true
 	}
@@ -114,6 +117,9 @@ func (n *SilenceNotifier) handleSilenceStart(levelL, levelR float64) {
 	}
 	if shouldSendLog {
 		n.logSent = true
+	}
+	if shouldSendZabbix {
+		n.zabbixSent = true
 	}
 	n.mu.Unlock()
 
@@ -126,6 +132,9 @@ func (n *SilenceNotifier) handleSilenceStart(levelL, levelR float64) {
 	if shouldSendLog {
 		go n.logSilenceStart(cfg, levelL, levelR)
 	}
+	if shouldSendZabbix {
+		go n.sendSilenceZabbix(cfg, levelL, levelR)
+	}
 }
 
 // handleSilenceEnd stores recovery data for later notification with audio dump.
@@ -137,10 +146,12 @@ func (n *SilenceNotifier) handleSilenceEnd(totalDurationMs int64, levelL, levelR
 	shouldSendWebhookRecovery := n.webhookSent
 	shouldSendEmailRecovery := n.emailSent
 	shouldSendLogRecovery := n.logSent
+	shouldSendZabbixRecovery := n.zabbixSent
 	// Reset notification state for next silence period
 	n.webhookSent = false
 	n.emailSent = false
 	n.logSent = false
+	n.zabbixSent = false
 
 	// Store pending recovery data for when clip is ready
 	n.pendingRecovery = &pendingRecoveryData{
@@ -152,6 +163,7 @@ func (n *SilenceNotifier) handleSilenceEnd(totalDurationMs int64, levelL, levelR
 			webhook: shouldSendWebhookRecovery,
 			email:   shouldSendEmailRecovery,
 			log:     shouldSendLogRecovery,
+			zabbix:  shouldSendZabbixRecovery,
 		},
 	}
 	n.mu.Unlock()
@@ -163,6 +175,7 @@ func (n *SilenceNotifier) Reset() {
 	n.webhookSent = false
 	n.emailSent = false
 	n.logSent = false
+	n.zabbixSent = false
 	n.mu.Unlock()
 }
 
@@ -270,6 +283,9 @@ func (n *SilenceNotifier) OnDumpReady(result *silencedump.EncodeResult) {
 	if pending.sentFlags.log {
 		go n.logSilenceEndWithDump(pending.cfg, pending.durationMs, pending.levelL, pending.levelR, result)
 	}
+	if pending.sentFlags.zabbix {
+		go n.sendRecoveryZabbix(pending.cfg, pending.durationMs, pending.levelL, pending.levelR)
+	}
 }
 
 // sendRecoveryWebhookWithDump sends a recovery webhook with audio dump.
@@ -306,6 +322,30 @@ func (n *SilenceNotifier) logSilenceEndWithDump(cfg config.Snapshot, durationMs 
 			return LogSilenceEndWithDump(cfg.LogPath, durationMs, levelL, levelR, cfg.SilenceThreshold, dump)
 		},
 		"Recovery log with dump",
+	)
+}
+
+// sendSilenceZabbix sends a silence alert to Zabbix.
+//
+//nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
+func (n *SilenceNotifier) sendSilenceZabbix(cfg config.Snapshot, levelL, levelR float64) {
+	util.LogNotifyResult(
+		func() error {
+			return SendSilenceZabbix(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixKey, levelL, levelR, cfg.SilenceThreshold, cfg.ZabbixTimeoutMs)
+		},
+		"Silence zabbix",
+	)
+}
+
+// sendRecoveryZabbix sends a recovery message to Zabbix.
+//
+//nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
+func (n *SilenceNotifier) sendRecoveryZabbix(cfg config.Snapshot, durationMs int64, levelL, levelR float64) {
+	util.LogNotifyResult(
+		func() error {
+			return SendRecoveryZabbix(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixKey, durationMs, levelL, levelR, cfg.SilenceThreshold, cfg.ZabbixTimeoutMs)
+		},
+		"Recovery zabbix",
 	)
 }
 

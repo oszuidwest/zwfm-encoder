@@ -416,6 +416,12 @@ func (e *Encoder) TriggerTestLog() error {
 	return notify.WriteTestLog(e.config.Snapshot().LogPath)
 }
 
+// TriggerTestZabbix sends a test Zabbix trapper item to verify configuration.
+func (e *Encoder) TriggerTestZabbix() error {
+	cfg := e.config.Snapshot()
+	return notify.SendTestZabbix(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixKey, cfg.ZabbixTimeoutMs)
+}
+
 // runSourceLoop runs the audio capture process.
 func (e *Encoder) runSourceLoop() {
 	for {

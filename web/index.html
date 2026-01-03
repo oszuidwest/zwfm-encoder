@@ -479,6 +479,34 @@
                         </div>
                         <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('email')" :disabled="testStates.email.pending || settingsDirty" x-text="testStates.email.text">Test</button>
                     </div>
+                    <div class="section">
+                        <div class="section-header">
+                            <span class="icon-container" x-html="icons.server"></span>
+                            <h3>Zabbix</h3>
+                        </div>
+                        <p class="section-desc">Zabbix trapper items sent when silence is detected.</p>
+                        <div class="form">
+                            <div class="group">
+                                <label for="zabbix-server">Server</label>
+                                <input id="zabbix-server" type="text" placeholder="zabbix.example.com" x-model="settings.zabbix.server" @input="markSettingsDirty()">
+                            </div>
+                            <div class="row">
+                                <div class="group">
+                                    <label for="zabbix-port">Port</label>
+                                    <input id="zabbix-port" type="number" placeholder="10051" x-model.number="settings.zabbix.port" @input="markSettingsDirty()">
+                                </div>
+                                <div class="group">
+                                    <label for="zabbix-host">Host</label>
+                                    <input id="zabbix-host" type="text" placeholder="encoder-host" x-model="settings.zabbix.host" @input="markSettingsDirty()">
+                                </div>
+                            </div>
+                            <div class="group">
+                                <label for="zabbix-key">Key</label>
+                                <input id="zabbix-key" type="text" placeholder="silence.key" x-model="settings.zabbix.key" @input="markSettingsDirty()">
+                            </div>
+                        </div>
+                        <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('zabbix')" :disabled="testStates.zabbix.pending || settingsDirty" x-text="testStates.zabbix.text">Test</button>
+                    </div>
                 </div>
 
                 <!-- Recording Panel - API key management

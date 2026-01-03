@@ -87,9 +87,10 @@ type EmailConfig struct {
 
 // NotificationsConfig represents all notification channel settings.
 type NotificationsConfig struct {
-	Webhook WebhookConfig `json:"webhook"` // Webhook settings
-	Log     LogConfig     `json:"log"`     // Log file settings
-	Email   EmailConfig   `json:"email"`   // Email settings
+	Webhook WebhookConfig      `json:"webhook"`          // Webhook settings
+	Log     LogConfig          `json:"log"`              // Log file settings
+	Email   EmailConfig        `json:"email"`            // Email settings
+	Zabbix  types.ZabbixConfig `json:"zabbix,omitempty"` // Zabbix settings
 }
 
 // StreamingConfig represents SRT output streaming settings.
@@ -544,8 +545,16 @@ type Snapshot struct {
 	SilenceDumpRetentionDays int
 
 	// Notifications
-	WebhookURL        string
-	LogPath           string
+	WebhookURL string
+	LogPath    string
+
+	// Zabbix
+	ZabbixServer string
+	ZabbixPort   int
+	ZabbixHost   string
+	ZabbixKey    string
+
+	// Microsoft Graph
 	GraphTenantID     string
 	GraphClientID     string
 	GraphClientSecret string
@@ -590,8 +599,16 @@ func (c *Config) Snapshot() Snapshot {
 		SilenceDumpRetentionDays: cmp.Or(c.SilenceDump.RetentionDays, types.DefaultSilenceDumpRetentionDays),
 
 		// Notifications
-		WebhookURL:        c.Notifications.Webhook.URL,
-		LogPath:           c.Notifications.Log.Path,
+		WebhookURL: c.Notifications.Webhook.URL,
+		LogPath:    c.Notifications.Log.Path,
+
+		// Zabbix
+		ZabbixServer: c.Notifications.Zabbix.Server,
+		ZabbixPort:   cmp.Or(c.Notifications.Zabbix.Port, 10051),
+		ZabbixHost:   c.Notifications.Zabbix.Host,
+		ZabbixKey:    c.Notifications.Zabbix.Key,
+
+		// Microsoft Graph
 		GraphTenantID:     c.Notifications.Email.TenantID,
 		GraphClientID:     c.Notifications.Email.ClientID,
 		GraphClientSecret: c.Notifications.Email.ClientSecret,
@@ -624,6 +641,11 @@ func (s *Snapshot) HasLogPath() bool {
 	return s.LogPath != ""
 }
 
+// HasZabbix reports whether Zabbix settings are configured.
+func (s *Snapshot) HasZabbix() bool {
+	return s.ZabbixServer != "" && s.ZabbixHost != "" && s.ZabbixKey != ""
+}
+
 // --- Utility functions ---
 
 // GenerateAPIKey returns a new random API key.
@@ -647,4 +669,15 @@ func generateShortID() (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%x", b), nil
+}
+
+// SetZabbixConfig updates Zabbix notification settings.
+func (c *Config) SetZabbixConfig(server string, port int, host, key string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Notifications.Zabbix.Server = server
+	c.Notifications.Zabbix.Port = port
+	c.Notifications.Zabbix.Host = host
+	c.Notifications.Zabbix.Key = key
+	return c.saveLocked()
 }
