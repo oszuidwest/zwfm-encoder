@@ -169,7 +169,6 @@ document.addEventListener('alpine:init', () => {
         settingsForm: null,
         settingsDirty: false,
         saving: false,
-        formErrors: {},
 
         graphSecretExpiry: { expires_soon: false, days_left: 0 },
 
@@ -624,31 +623,6 @@ document.addEventListener('alpine:init', () => {
          */
         markSettingsDirty() {
             this.settingsDirty = true;
-        },
-
-        /**
-         * Clears all form errors.
-         */
-        clearFormErrors() {
-            this.formErrors = {};
-        },
-
-        /**
-         * Checks if a field has an error.
-         * @param {string} field - Field path (e.g., 'silence.threshold_db')
-         * @returns {boolean} True if field has error
-         */
-        hasFieldError(field) {
-            return !!this.formErrors[field];
-        },
-
-        /**
-         * Gets error message for a field.
-         * @param {string} field - Field path
-         * @returns {string} Error message or empty string
-         */
-        getFieldError(field) {
-            return this.formErrors[field] || '';
         },
 
         /**

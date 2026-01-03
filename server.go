@@ -42,7 +42,6 @@ type Server struct {
 	config          *config.Config
 	encoder         *encoder.Encoder
 	sessions        *server.SessionManager
-	commands        *server.CommandHandler
 	version         *VersionChecker
 	ffmpegAvailable bool
 
@@ -53,14 +52,10 @@ type Server struct {
 
 // NewServer returns a new Server configured with the provided config and encoder.
 func NewServer(cfg *config.Config, enc *encoder.Encoder, ffmpegAvailable bool) *Server {
-	sessions := server.NewSessionManager()
-	commands := server.NewCommandHandler(cfg, enc, ffmpegAvailable)
-
 	return &Server{
 		config:          cfg,
 		encoder:         enc,
-		sessions:        sessions,
-		commands:        commands,
+		sessions:        server.NewSessionManager(),
 		version:         NewVersionChecker(),
 		ffmpegAvailable: ffmpegAvailable,
 		wsClients:       make(map[chan any]struct{}),
@@ -79,7 +74,6 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Only the writer goroutine writes to the connection, preventing race conditions.
 	send := make(chan any, 16)
 	done := make(chan struct{})
-	statusUpdate := make(chan struct{}, 1)
 
 	// Register this client for broadcasts
 	s.registerWSClient(send)
@@ -88,10 +82,10 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Writer goroutine - sole writer to the connection
 	go s.runWebSocketWriter(conn, send)
 
-	// Reader goroutine - handles incoming commands
-	go s.runWebSocketReader(conn, send, done, statusUpdate)
+	// Reader goroutine - keeps connection alive
+	go s.runWebSocketReader(conn, done)
 
-	s.runWebSocketEventLoop(send, done, statusUpdate)
+	s.runWebSocketEventLoop(send, done)
 }
 
 // registerWSClient adds a client's send channel to the broadcast list.
@@ -138,31 +132,21 @@ func (s *Server) runWebSocketWriter(conn server.WebSocketConn, send <-chan any) 
 	}
 }
 
-// runWebSocketReader reads commands from the connection and dispatches them.
-func (s *Server) runWebSocketReader(conn server.WebSocketConn, send chan<- any, done, statusUpdate chan<- struct{}) {
-	defer func() {
-		if r := recover(); r != nil {
-			slog.Error("panic in WebSocket reader", "panic", r)
-		}
-		close(done)
-	}()
+// runWebSocketReader reads from the connection to keep it alive.
+// All commands are now handled via REST API.
+func (s *Server) runWebSocketReader(conn server.WebSocketConn, done chan<- struct{}) {
+	defer close(done)
 
 	for {
-		var cmd server.WSCommand
-		if err := conn.ReadJSON(&cmd); err != nil {
+		// Read messages to keep connection alive and detect disconnects
+		if _, _, err := conn.ReadMessage(); err != nil {
 			return
 		}
-		s.commands.Handle(cmd, send, func() {
-			select {
-			case statusUpdate <- struct{}{}:
-			default:
-			}
-		})
 	}
 }
 
 // runWebSocketEventLoop handles periodic status and level updates.
-func (s *Server) runWebSocketEventLoop(send chan any, done, statusUpdate <-chan struct{}) {
+func (s *Server) runWebSocketEventLoop(send chan any, done <-chan struct{}) {
 	levelsTicker := time.NewTicker(100 * time.Millisecond)  // 10 fps for VU meters
 	statusTicker := time.NewTicker(3000 * time.Millisecond) // Status updates every 3s
 	defer levelsTicker.Stop()
@@ -189,11 +173,6 @@ func (s *Server) runWebSocketEventLoop(send chan any, done, statusUpdate <-chan 
 		case <-done:
 			close(send)
 			return
-		case <-statusUpdate:
-			if !trySend(s.buildWSRuntime()) {
-				close(send)
-				return
-			}
 		case <-levelsTicker.C:
 			if !trySend(types.WSLevelsResponse{Type: "levels", Levels: s.encoder.AudioLevels()}) {
 				close(send)

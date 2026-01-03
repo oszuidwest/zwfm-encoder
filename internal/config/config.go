@@ -105,20 +105,14 @@ type RecordingConfig struct {
 	Recorders          []types.Recorder `json:"recorders"`            // Recording destinations
 }
 
-// SilenceDumpConfig represents settings for capturing audio around silence events.
-type SilenceDumpConfig struct {
-	Enabled       bool `json:"enabled"`        // Whether dump capture is active
-	RetentionDays int  `json:"retention_days"` // Days to keep dump files
-}
-
 // Config represents all application configuration and is safe for concurrent use.
 type Config struct {
 	System           SystemConfig           `json:"system"`
 	Web              WebConfig              `json:"web"`
 	Audio            AudioConfig            `json:"audio"`
-	SilenceDetection SilenceDetectionConfig `json:"silence_detection"`
-	SilenceDump      SilenceDumpConfig      `json:"silence_dump"`
-	Notifications    NotificationsConfig    `json:"notifications"`
+	SilenceDetection SilenceDetectionConfig    `json:"silence_detection"`
+	SilenceDump      types.SilenceDumpConfig   `json:"silence_dump"`
+	Notifications    NotificationsConfig       `json:"notifications"`
 	Streaming        StreamingConfig        `json:"streaming"`
 	Recording        RecordingConfig        `json:"recording"`
 
@@ -141,7 +135,7 @@ func New(filePath string) *Config {
 		},
 		Audio:            AudioConfig{},
 		SilenceDetection: SilenceDetectionConfig{},
-		SilenceDump: SilenceDumpConfig{
+		SilenceDump: types.SilenceDumpConfig{
 			Enabled:       true, // Enabled by default when FFmpeg is available
 			RetentionDays: types.DefaultSilenceDumpRetentionDays,
 		},

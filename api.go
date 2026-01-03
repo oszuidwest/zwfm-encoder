@@ -113,34 +113,30 @@ type SettingsUpdateRequest struct {
 	AudioInput *string `json:"audio_input"`
 
 	// Silence detection
-	SilenceThreshold  *float64 `json:"silence_threshold"`
-	SilenceDurationMs *int64   `json:"silence_duration_ms"`
-	SilenceRecoveryMs *int64   `json:"silence_recovery_ms"`
-	SilenceDumpEnabled *bool   `json:"silence_dump_enabled"`
-	SilenceDumpRetentionDays *int `json:"silence_dump_retention_days"`
+	SilenceThreshold         *float64 `json:"silence_threshold"`
+	SilenceDurationMs        *int64   `json:"silence_duration_ms"`
+	SilenceRecoveryMs        *int64   `json:"silence_recovery_ms"`
+	SilenceDumpEnabled       *bool    `json:"silence_dump_enabled"`
+	SilenceDumpRetentionDays *int     `json:"silence_dump_retention_days"`
 
 	// Webhook
-	WebhookURL    *string `json:"webhook_url"`
-	WebhookEvents *types.EventConfig `json:"webhook_events"`
+	WebhookURL *string `json:"webhook_url"`
 
 	// Log
-	LogPath   *string `json:"log_path"`
-	LogEvents *types.EventConfig `json:"log_events"`
+	LogPath *string `json:"log_path"`
 
 	// Zabbix
 	ZabbixServer *string `json:"zabbix_server"`
 	ZabbixPort   *int    `json:"zabbix_port"`
 	ZabbixHost   *string `json:"zabbix_host"`
 	ZabbixKey    *string `json:"zabbix_key"`
-	ZabbixEvents *types.EventConfig `json:"zabbix_events"`
 
 	// Email (Graph)
-	GraphTenantID    *string `json:"graph_tenant_id"`
-	GraphClientID    *string `json:"graph_client_id"`
+	GraphTenantID     *string `json:"graph_tenant_id"`
+	GraphClientID     *string `json:"graph_client_id"`
 	GraphClientSecret *string `json:"graph_client_secret"`
-	GraphFromAddress *string `json:"graph_from_address"`
-	GraphRecipients  *string `json:"graph_recipients"`
-	GraphEvents      *types.EventConfig `json:"graph_events"`
+	GraphFromAddress  *string `json:"graph_from_address"`
+	GraphRecipients   *string `json:"graph_recipients"`
 }
 
 // handleAPISettings updates all settings atomically.

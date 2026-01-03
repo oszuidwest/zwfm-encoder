@@ -14,7 +14,7 @@ import (
 type WebSocketConn interface {
 	io.Closer
 	WriteJSON(v interface{}) error
-	ReadJSON(v interface{}) error
+	ReadMessage() (messageType int, p []byte, err error)
 }
 
 var upgrader = websocket.Upgrader{
