@@ -7,10 +7,9 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
-	"runtime"
+	"sync"
 	"time"
 
-	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
 	"github.com/oszuidwest/zwfm-encoder/internal/server"
@@ -46,6 +45,10 @@ type Server struct {
 	commands        *server.CommandHandler
 	version         *VersionChecker
 	ffmpegAvailable bool
+
+	// WebSocket broadcast channels
+	wsClients   map[chan any]struct{}
+	wsClientsMu sync.RWMutex
 }
 
 // NewServer returns a new Server configured with the provided config and encoder.
@@ -60,6 +63,7 @@ func NewServer(cfg *config.Config, enc *encoder.Encoder, ffmpegAvailable bool) *
 		commands:        commands,
 		version:         NewVersionChecker(),
 		ffmpegAvailable: ffmpegAvailable,
+		wsClients:       make(map[chan any]struct{}),
 	}
 }
 
@@ -77,6 +81,10 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	done := make(chan struct{})
 	statusUpdate := make(chan struct{}, 1)
 
+	// Register this client for broadcasts
+	s.registerWSClient(send)
+	defer s.unregisterWSClient(send)
+
 	// Writer goroutine - sole writer to the connection
 	go s.runWebSocketWriter(conn, send)
 
@@ -84,6 +92,36 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	go s.runWebSocketReader(conn, send, done, statusUpdate)
 
 	s.runWebSocketEventLoop(send, done, statusUpdate)
+}
+
+// registerWSClient adds a client's send channel to the broadcast list.
+func (s *Server) registerWSClient(send chan any) {
+	s.wsClientsMu.Lock()
+	s.wsClients[send] = struct{}{}
+	s.wsClientsMu.Unlock()
+}
+
+// unregisterWSClient removes a client's send channel from the broadcast list.
+func (s *Server) unregisterWSClient(send chan any) {
+	s.wsClientsMu.Lock()
+	delete(s.wsClients, send)
+	s.wsClientsMu.Unlock()
+}
+
+// broadcastConfigChanged notifies all connected WebSocket clients that config has changed.
+func (s *Server) broadcastConfigChanged() {
+	msg := map[string]string{"type": "config_changed"}
+
+	s.wsClientsMu.RLock()
+	defer s.wsClientsMu.RUnlock()
+
+	for send := range s.wsClients {
+		select {
+		case send <- msg:
+		default:
+			// Channel full, skip this client
+		}
+	}
 }
 
 // runWebSocketWriter writes messages from the send channel to the connection.
@@ -141,7 +179,7 @@ func (s *Server) runWebSocketEventLoop(send chan any, done, statusUpdate <-chan 
 	}
 
 	// Send initial status
-	if !trySend(s.buildWSStatus()) {
+	if !trySend(s.buildWSRuntime()) {
 		close(send)
 		return
 	}
@@ -152,7 +190,7 @@ func (s *Server) runWebSocketEventLoop(send chan any, done, statusUpdate <-chan 
 			close(send)
 			return
 		case <-statusUpdate:
-			if !trySend(s.buildWSStatus()) {
+			if !trySend(s.buildWSRuntime()) {
 				close(send)
 				return
 			}
@@ -162,7 +200,7 @@ func (s *Server) runWebSocketEventLoop(send chan any, done, statusUpdate <-chan 
 				return
 			}
 		case <-statusTicker.C:
-			if !trySend(s.buildWSStatus()) {
+			if !trySend(s.buildWSRuntime()) {
 				close(send)
 				return
 			}
@@ -170,45 +208,21 @@ func (s *Server) runWebSocketEventLoop(send chan any, done, statusUpdate <-chan 
 	}
 }
 
-// buildWSStatus returns the current WebSocket status response.
-func (s *Server) buildWSStatus() types.WSStatusResponse {
+// buildWSRuntime returns runtime-only status for WebSocket clients.
+// Config data is fetched separately via GET /api/config.
+func (s *Server) buildWSRuntime() types.WSRuntimeStatus {
 	cfg := s.config.Snapshot()
 	status := s.encoder.Status()
 	status.OutputCount = len(cfg.Outputs)
 
-	return types.WSStatusResponse{
-		Type:                "status",
-		FFmpegAvailable:     s.ffmpegAvailable,
-		Encoder:             status,
-		Outputs:             cfg.Outputs,
-		OutputStatus:        s.encoder.AllOutputStatuses(cfg.Outputs),
-		Recorders:           cfg.Recorders,
-		RecorderStatuses:    s.encoder.AllRecorderStatuses(),
-		RecordingAPIKey:     cfg.RecordingAPIKey,
-		Devices:             audio.ListDevices(),
-		SilenceThreshold:    cfg.SilenceThreshold,
-		SilenceDurationMs:   cfg.SilenceDurationMs,
-		SilenceRecoveryMs:   cfg.SilenceRecoveryMs,
-		SilenceWebhook:      cfg.WebhookURL,
-		SilenceLogPath:      cfg.LogPath,
-		SilenceZabbixServer: cfg.ZabbixServer,
-		SilenceZabbixPort:   cfg.ZabbixPort,
-		SilenceZabbixHost:   cfg.ZabbixHost,
-		SilenceZabbixKey:    cfg.ZabbixKey,
-		GraphTenantID:       cfg.GraphTenantID,
-		GraphClientID:       cfg.GraphClientID,
-		GraphFromAddress:    cfg.GraphFromAddress,
-		GraphRecipients:     cfg.GraphRecipients,
-		GraphSecretExpiry:   s.encoder.GraphSecretExpiry(),
-		SilenceDump: types.SilenceDumpConfig{
-			Enabled:       cfg.SilenceDumpEnabled,
-			RetentionDays: cfg.SilenceDumpRetentionDays,
-		},
-		Settings: types.WSSettings{
-			AudioInput: cfg.AudioInput,
-			Platform:   runtime.GOOS,
-		},
-		Version: s.version.Info(),
+	return types.WSRuntimeStatus{
+		Type:              "status",
+		FFmpegAvailable:   s.ffmpegAvailable,
+		Encoder:           status,
+		OutputStatus:      s.encoder.AllOutputStatuses(cfg.Outputs),
+		RecorderStatuses:  s.encoder.AllRecorderStatuses(),
+		GraphSecretExpiry: s.encoder.GraphSecretExpiry(),
+		Version:           s.version.Info(),
 	}
 }
 
@@ -229,6 +243,21 @@ func (s *Server) SetupRoutes() http.Handler {
 	// Recording API routes (API key auth)
 	mux.HandleFunc("/api/recordings/start", s.apiKeyAuth(s.handleStartRecording))
 	mux.HandleFunc("/api/recordings/stop", s.apiKeyAuth(s.handleStopRecording))
+
+	// REST API routes (session auth)
+	mux.HandleFunc("/api/config", auth(s.handleAPIConfig))
+	mux.HandleFunc("/api/devices", auth(s.handleAPIDevices))
+	mux.HandleFunc("/api/settings", auth(s.handleAPISettings))
+	mux.HandleFunc("/api/outputs/", auth(s.handleAPIOutputs))
+	mux.HandleFunc("/api/outputs", auth(s.handleAPIOutputs))
+	mux.HandleFunc("/api/recorders/", auth(s.handleAPIRecorders))
+	mux.HandleFunc("/api/recorders", auth(s.handleAPIRecorders))
+	mux.HandleFunc("/api/notifications/test/webhook", auth(s.handleAPITestWebhook))
+	mux.HandleFunc("/api/notifications/test/log", auth(s.handleAPITestLog))
+	mux.HandleFunc("/api/notifications/test/email", auth(s.handleAPITestEmail))
+	mux.HandleFunc("/api/notifications/test/zabbix", auth(s.handleAPITestZabbix))
+	mux.HandleFunc("/api/notifications/log", auth(s.handleAPIViewLog))
+	mux.HandleFunc("/api/recording/regenerate-key", auth(s.handleAPIRegenerateKey))
 
 	// Protected routes
 	mux.HandleFunc("/ws", auth(s.handleWebSocket))

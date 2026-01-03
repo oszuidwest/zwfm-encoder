@@ -2,24 +2,30 @@
  * ZuidWest FM Encoder - Alpine.js Web Application
  *
  * Real-time audio monitoring, encoder control, and multi-output stream
- * management via WebSocket connection to Go backend.
+ * management via WebSocket and REST API connection to Go backend.
  *
  * Architecture:
  *   - Single Alpine.js component (encoderApp) manages all UI state
- *   - WebSocket connection at /ws for bidirectional communication
+ *   - REST API at /api/* for configuration (settings, outputs, recorders)
+ *   - WebSocket at /ws for real-time data (audio levels, status)
  *   - Views: dashboard, settings, output-form, recorder-form
  *
- * WebSocket Message Types (incoming):
- *   - levels: Audio RMS/peak levels for VU meters
- *   - status: Encoder state, outputs, recorders, devices, settings (every 3s)
- *   - test_result: Notification test result with test_type field
+ * REST API (configuration):
+ *   - GET  /api/config: Full configuration snapshot
+ *   - POST /api/settings: Update all settings atomically
+ *   - POST/GET/PUT/DELETE /api/outputs/*: Output CRUD
+ *   - POST/GET/PUT/DELETE /api/recorders/*: Recorder CRUD
+ *   - POST /api/notifications/test/*: Test notifications
+ *   - GET  /api/notifications/log: View silence log
+ *
+ * WebSocket (real-time):
+ *   - levels: Audio RMS/peak levels for VU meters (10fps)
+ *   - status: Encoder state, output/recorder statuses (3s)
+ *   - config_changed: Signal to refetch /api/config
  *
  * WebSocket Commands (outgoing):
- *   - audio/update, silence/update: Update audio/silence settings
- *   - notifications/{type}/update, notifications/{type}/test: Notification config and tests
- *   - outputs/add, outputs/delete, outputs/update: Manage stream outputs
- *   - recorders/add, recorders/delete, recorders/update: Manage recorders
- *   - recorders/start, recorders/stop: Control on-demand recorders
+ *   - start, stop: Encoder control
+ *   - recorders/start, recorders/stop: Recorder control
  *
  * Dependencies:
  *   - Alpine.js 3.x (loaded before this script)
@@ -133,21 +139,36 @@ document.addEventListener('alpine:init', () => {
         clipActive: false,
         clipTimeout: null,
 
-        settings: {
-            audioInput: '',
-            silenceThreshold: -40,
-            silenceDuration: 15,
-            silenceRecovery: 5,
-            silenceDump: { enabled: true, retentionDays: 7 },
-            silenceWebhook: '',
-            silenceLogPath: '',
-            zabbix: { server: '', port: 10051, host: '', key: '' },
-            graph: { tenantId: '', clientId: '', clientSecret: '', fromAddress: '', recipients: '' },
-            recordingApiKey: '',
-            platform: ''
+        // Configuration from REST API (fetched once, updated on config_changed)
+        config: {
+            audio_input: '',
+            devices: [],
+            platform: '',
+            silence_threshold: -40,
+            silence_duration_ms: 15000,
+            silence_recovery_ms: 5000,
+            silence_dump: { enabled: true, retention_days: 7 },
+            webhook_url: '',
+            log_path: '',
+            zabbix_server: '',
+            zabbix_port: 10051,
+            zabbix_host: '',
+            zabbix_key: '',
+            graph_tenant_id: '',
+            graph_client_id: '',
+            graph_from_address: '',
+            graph_recipients: '',
+            graph_has_secret: false,
+            recording_api_key: '',
+            outputs: [],
+            recorders: []
         },
-        originalSettings: null,
+        configLoaded: false,
+
+        // Form state for settings (copied from config when entering settings view)
+        settingsForm: null,
         settingsDirty: false,
+        saving: false,
         formErrors: {},
 
         graphSecretExpiry: { expires_soon: false, days_left: 0 },
@@ -226,9 +247,50 @@ document.addEventListener('alpine:init', () => {
             return true;
         },
 
-        init() {
+        async init() {
+            await this.loadConfig();
             this.connectWebSocket();
             document.addEventListener('keydown', (e) => this.handleGlobalKeydown(e));
+        },
+
+        /**
+         * Fetches configuration from REST API.
+         * Called on init and when config_changed event is received.
+         */
+        async loadConfig() {
+            try {
+                const response = await fetch('/api/config');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                const data = await response.json();
+                this.config = data;
+                this.configLoaded = true;
+
+                // Update derived state from config
+                this.outputs = data.outputs || [];
+                this.recorders = data.recorders || [];
+                this.devices = data.devices || [];
+            } catch (err) {
+                console.error('Failed to load config:', err);
+                this.showBanner('Failed to load configuration', 'danger', true);
+            }
+        },
+
+        /**
+         * Refreshes the devices list from the server.
+         * Called when the audio input dropdown is focused.
+         */
+        async refreshDevices() {
+            try {
+                const response = await fetch('/api/devices');
+                if (response.ok) {
+                    const data = await response.json();
+                    this.devices = data.devices || [];
+                }
+            } catch {
+                // Silently fail - devices will show stale data
+            }
         },
 
         /** Global keyboard: Escape closes views, Enter saves, arrows navigate tabs. */
@@ -308,25 +370,12 @@ document.addEventListener('alpine:init', () => {
                     this.handleLevels(msg.levels);
                 } else if (msg.type === 'status') {
                     this.handleStatus(msg);
-                } else if (msg.type === 'test_result') {
-                    this.handleTestResult(msg);
-                } else if (msg.type === 'silence_log_result') {
-                    this.handleSilenceLogResult(msg);
-                } else if (msg.type === 'recorder_s3_test_result') {
-                    this.handleRecorderS3TestResult(msg);
-                } else if (msg.type === 'recorder_result') {
-                    this.handleRecorderResult(msg);
-                } else if (msg.type === 'output_result') {
-                    this.handleOutputResult(msg);
-                } else if (msg.type === 'recording/regenerate-key_result') {
-                    if (msg.success && msg.data?.api_key) {
-                        this.settings.recordingApiKey = msg.data.api_key;
-                        this.showBanner('API key regenerated successfully', 'info');
-                    } else if (!msg.success) {
-                        this.showBanner(`Failed to regenerate API key: ${msg.error}`, 'danger');
+                } else if (msg.type === 'config_changed') {
+                    // Config was changed (by this or another client), refetch
+                    // Skip if we're currently editing (form open)
+                    if (this.view !== 'settings' && this.view !== 'output-form' && this.view !== 'recorder-form') {
+                        this.loadConfig();
                     }
-                } else if (msg.type.endsWith('_result')) {
-                    this.handleCommandResult(msg);
                 }
             };
 
@@ -339,19 +388,6 @@ document.addEventListener('alpine:init', () => {
             // Note: Don't call close() here - it triggers onclose which causes reconnect.
             // The socket will close naturally on error, triggering onclose once.
             this.ws.onerror = () => {};
-        },
-
-        /**
-         * Sends command to backend via WebSocket.
-         *
-         * @param {string} type - Command type (start, stop, outputs/add, silence/update, etc.)
-         * @param {string} [id] - Optional entity ID for entity-specific commands
-         * @param {Object} [data] - Optional payload data
-         */
-        send(type, id, data) {
-            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                this.ws.send(JSON.stringify({ type: type, id: id, data: data }));
-            }
         },
 
         /**
@@ -417,7 +453,7 @@ document.addEventListener('alpine:init', () => {
         getSilenceState() {
             if (!this.levels.silence_level) return '';
             const durationMs = this.levels.silence_duration_ms || 0;
-            const thresholdMs = secondsToMs(this.settings.silenceDuration || 15);
+            const thresholdMs = this.config.silence_duration_ms || 15000;
             if (durationMs >= thresholdMs * 4) return 'critical';
             if (durationMs >= thresholdMs * 2) return 'warning';
             return 'active';
@@ -444,16 +480,16 @@ document.addEventListener('alpine:init', () => {
 
         /**
          * Processes encoder status updates from backend.
-         * Updates encoder state, output statuses, available devices, and settings.
-         * Settings sync is skipped when user is on settings view to prevent
-         * overwriting in-progress edits.
+         * Only handles runtime data (encoder state, output/recorder statuses).
+         * Configuration is handled by loadConfig() via REST API.
          *
-         * @param {Object} msg - Status message with state, outputs, devices, settings
+         * @param {Object} msg - Status message with encoder state and statuses
          */
         handleStatus(msg) {
             // FFmpeg availability
             this.ffmpegAvailable = msg.ffmpeg_available ?? true;
 
+            // Encoder state
             this.encoder.state = msg.encoder.state;
             this.encoder.uptime = msg.encoder.uptime || '';
             this.encoder.sourceRetryCount = msg.encoder.source_retry_count || 0;
@@ -464,7 +500,7 @@ document.addEventListener('alpine:init', () => {
                 this.resetVuMeter();
             }
 
-            this.outputs = msg.outputs || [];
+            // Output statuses (not config, just runtime state)
             const newOutputStatuses = msg.output_status || {};
 
             // Detect status transitions to "connected" and trigger animation
@@ -472,12 +508,7 @@ document.addEventListener('alpine:init', () => {
                 const oldStatus = this.previousOutputStatuses[id] || {};
                 const newStatus = newOutputStatuses[id] || {};
 
-                // Check if status just became stable (connected)
-                const wasNotConnected = !oldStatus.stable;
-                const isNowConnected = newStatus.stable;
-
-                if (wasNotConnected && isNowConnected) {
-                    // Trigger animation via reactive state instead of DOM manipulation
+                if (!oldStatus.stable && newStatus.stable) {
                     this.connectingAnimations[id] = true;
                     setTimeout(() => {
                         delete this.connectingAnimations[id];
@@ -488,7 +519,22 @@ document.addEventListener('alpine:init', () => {
             this.previousOutputStatuses = deepClone(newOutputStatuses);
             this.outputStatuses = newOutputStatuses;
 
-            // Clean up deleting state using created_at to handle ID reuse after delete
+            // Recorder statuses
+            this.recorderStatuses = msg.recorder_statuses || {};
+
+            // Graph secret expiry (runtime info, not config)
+            this.graphSecretExpiry = msg.graph_secret_expiry ?? { expires_soon: false, days_left: 0 };
+
+            // Version info
+            if (msg.version) {
+                const wasUpdateAvail = this.version.update_available;
+                this.version = msg.version;
+                if (msg.version.update_available && !wasUpdateAvail) {
+                    this.showBanner(`Update available: ${msg.version.latest}`, 'info', false);
+                }
+            }
+
+            // Clean up deleting state for outputs that no longer exist
             for (const id in this.deletingOutputs) {
                 const output = this.outputs.find(o => o.id === id);
                 if (!output || output.created_at !== this.deletingOutputs[id]) {
@@ -496,60 +542,7 @@ document.addEventListener('alpine:init', () => {
                 }
             }
 
-            // Only update settings and devices from status when not on settings view
-            // to prevent overwriting user input while editing
-            if (this.view !== 'settings') {
-                // Devices (frozen while in settings to keep dropdown stable)
-                if (msg.devices) {
-                    this.devices = msg.devices;
-                }
-                if (msg.settings?.audio_input) {
-                    this.settings.audioInput = msg.settings.audio_input;
-                }
-                if (msg.settings?.platform !== undefined) {
-                    this.settings.platform = msg.settings.platform;
-                }
-                // Silence detection settings (convert ms to seconds for UI)
-                this.settings.silenceThreshold = msg.silence_threshold ?? -40;
-                this.settings.silenceDuration = msToSeconds(msg.silence_duration_ms ?? 15000);
-                this.settings.silenceRecovery = msToSeconds(msg.silence_recovery_ms ?? 5000);
-                // Silence dump settings
-                if (msg.silence_dump) {
-                    this.settings.silenceDump.enabled = msg.silence_dump.enabled ?? true;
-                    this.settings.silenceDump.retentionDays = msg.silence_dump.retention_days ?? 7;
-                }
-                this.settings.silenceWebhook = msg.silence_webhook ?? '';
-                this.settings.silenceLogPath = msg.silence_log_path ?? '';
-                this.settings.zabbix.server = msg.silence_zabbix_server ?? '';
-                this.settings.zabbix.port = msg.silence_zabbix_port ?? 10051;
-                this.settings.zabbix.host = msg.silence_zabbix_host ?? '';
-                this.settings.zabbix.key = msg.silence_zabbix_key ?? '';
-                this.settings.graph.tenantId = msg.graph_tenant_id ?? '';
-                this.settings.graph.clientId = msg.graph_client_id ?? '';
-                this.settings.graph.fromAddress = msg.graph_from_address ?? '';
-                this.settings.graph.recipients = msg.graph_recipients ?? '';
-                // Update secret expiry info (only expires_soon and days_left are used in UI)
-                this.graphSecretExpiry = msg.graph_secret_expiry ?? { expires_soon: false, days_left: 0 };
-            }
-
-            if (msg.version) {
-                const wasUpdateAvail = this.version.update_available;
-                this.version = msg.version;
-                // Show banner once when update becomes available
-                if (msg.version.update_available && !wasUpdateAvail) {
-                    this.showBanner(`Update available: ${msg.version.latest}`, 'info', false);
-                }
-            }
-
-            // Sync recorders and statuses
-            this.recorders = msg.recorders || [];
-            this.recorderStatuses = msg.recorder_statuses || {};
-            // Only sync API key when not in settings view
-            if (this.view !== 'settings') {
-                this.settings.recordingApiKey = msg.recording_api_key || '';
-            }
-
-            // Clean up deleting recorders that are no longer in the list
+            // Clean up deleting state for recorders that no longer exist
             for (const id in this.deletingRecorders) {
                 const recorder = this.recorders.find(r => r.id === id);
                 if (!recorder || recorder.created_at !== this.deletingRecorders[id]) {
@@ -558,30 +551,12 @@ document.addEventListener('alpine:init', () => {
             }
         },
 
-        /**
-         * Handles notification test result from backend.
-         * Updates UI feedback and auto-clears after TEST_FEEDBACK_MS.
-         *
-         * @param {Object} msg - Result with test_type, success, and optional error
-         */
-        handleTestResult(msg) {
-            const type = msg.test_type;
-            if (!Object.hasOwn(this.testStates, type)) return;
-
-            this.testStates[type].pending = false;
-            this.testStates[type].text = msg.success ? 'Sent!' : 'Failed';
-            if (!msg.success) {
-                const typeName = type.charAt(0).toUpperCase() + type.slice(1);
-                this.showBanner(`${typeName} test failed: ${msg.error || 'Unknown error'}`, 'danger', false);
-            }
-            setTimeout(() => { this.testStates[type].text = 'Test'; }, TEST_FEEDBACK_MS);
-        },
 
         // Navigation
         showDashboard() {
             this.view = 'dashboard';
             this.settingsDirty = false;
-            this.originalSettings = null;
+            this.settingsForm = null;
         },
 
         // Shows save success animation via data-saved attribute, then navigates to dashboard
@@ -604,11 +579,41 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
-         * Navigates to settings view and captures current settings snapshot.
-         * Snapshot enables cancel/restore functionality.
+         * Navigates to settings view and creates form copy from fresh config.
+         * Always fetches fresh data from server before opening.
          */
-        showSettings() {
-            this.originalSettings = deepClone(this.settings);
+        async showSettings() {
+            // Fetch fresh config before opening settings
+            await this.loadConfig();
+
+            // Create form copy from config (convert ms to seconds for UI)
+            this.settingsForm = {
+                audioInput: this.config.audio_input || '',
+                silenceThreshold: this.config.silence_threshold ?? -40,
+                silenceDuration: msToSeconds(this.config.silence_duration_ms ?? 15000),
+                silenceRecovery: msToSeconds(this.config.silence_recovery_ms ?? 5000),
+                silenceDump: {
+                    enabled: this.config.silence_dump?.enabled ?? true,
+                    retentionDays: this.config.silence_dump?.retention_days ?? 7
+                },
+                silenceWebhook: this.config.webhook_url || '',
+                silenceLogPath: this.config.log_path || '',
+                zabbix: {
+                    server: this.config.zabbix_server || '',
+                    port: this.config.zabbix_port || 10051,
+                    host: this.config.zabbix_host || '',
+                    key: this.config.zabbix_key || ''
+                },
+                graph: {
+                    tenantId: this.config.graph_tenant_id || '',
+                    clientId: this.config.graph_client_id || '',
+                    clientSecret: '', // Never pre-fill, only send if user enters new value
+                    fromAddress: this.config.graph_from_address || '',
+                    recipients: this.config.graph_recipients || ''
+                },
+                recordingApiKey: this.config.recording_api_key || '',
+                platform: this.config.platform || ''
+            };
             this.settingsDirty = false;
             this.view = 'settings';
         },
@@ -647,67 +652,65 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
-         * Reverts settings to snapshot taken when entering settings view.
-         * Returns to dashboard without saving changes.
+         * Discards form changes and returns to dashboard.
          */
         cancelSettings() {
-            if (this.originalSettings) {
-                this.settings = deepClone(this.originalSettings);
-            }
             this.showDashboard();
         },
 
         /**
-         * Persists all settings to backend via WebSocket.
-         * Sends separate commands for each settings category.
-         * Resets dirty state on send.
+         * Persists all settings to backend via REST API.
+         * Sends single atomic POST to /api/settings.
          */
-        saveSettings() {
-            // Silence detection settings
-            this.send('silence/update', null, {
-                threshold_db: this.settings.silenceThreshold,
-                duration_ms: secondsToMs(this.settings.silenceDuration),
-                recovery_ms: secondsToMs(this.settings.silenceRecovery)
-            });
+        async saveSettings() {
+            const form = this.settingsForm;
+            if (!form) return;
 
-            // Silence dump settings
-            this.send('silence_dump/update', null, {
-                enabled: this.settings.silenceDump.enabled,
-                retention_days: this.settings.silenceDump.retentionDays
-            });
+            this.saving = true;
 
-            // Webhook notification settings
-            this.send('notifications/webhook/update', null, {
-                url: this.settings.silenceWebhook
-            });
-
-            // Log notification settings
-            this.send('notifications/log/update', null, {
-                path: this.settings.silenceLogPath
-            });
-
-            // Zabbix notification settings
-            this.send('notifications/zabbix/update', null, {
-                server: this.settings.zabbix.server,
-                port: this.settings.zabbix.port,
-                host: this.settings.zabbix.host,
-                key: this.settings.zabbix.key
-            });
-
-            // Email notification settings (Microsoft Graph)
-            const emailUpdate = {
-                tenant_id: this.settings.graph.tenantId,
-                client_id: this.settings.graph.clientId,
-                from_address: this.settings.graph.fromAddress,
-                recipients: this.settings.graph.recipients
+            const payload = {
+                audio_input: form.audioInput,
+                silence_threshold: form.silenceThreshold,
+                silence_duration_ms: secondsToMs(form.silenceDuration),
+                silence_recovery_ms: secondsToMs(form.silenceRecovery),
+                silence_dump_enabled: form.silenceDump.enabled,
+                silence_dump_retention_days: form.silenceDump.retentionDays,
+                webhook_url: form.silenceWebhook,
+                log_path: form.silenceLogPath,
+                zabbix_server: form.zabbix.server,
+                zabbix_port: form.zabbix.port,
+                zabbix_host: form.zabbix.host,
+                zabbix_key: form.zabbix.key,
+                graph_tenant_id: form.graph.tenantId,
+                graph_client_id: form.graph.clientId,
+                graph_from_address: form.graph.fromAddress,
+                graph_recipients: form.graph.recipients
             };
-            // Only include client secret if it was changed
-            if (this.settings.graph.clientSecret) {
-                emailUpdate.client_secret = this.settings.graph.clientSecret;
-            }
-            this.send('notifications/email/update', null, emailUpdate);
 
-            this.saveAndClose();
+            // Only include client secret if user entered a new value
+            if (form.graph.clientSecret) {
+                payload.graph_client_secret = form.graph.clientSecret;
+            }
+
+            try {
+                const response = await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || `HTTP ${response.status}`);
+                }
+
+                // Success - config_changed will trigger loadConfig()
+                this.saveAndClose();
+            } catch (err) {
+                this.showBanner(`Failed to save settings: ${err.message}`, 'danger', false);
+            } finally {
+                this.saving = false;
+            }
         },
 
         showOutputForm(id = null) {
@@ -735,8 +738,12 @@ document.addEventListener('alpine:init', () => {
             this.settingsTab = tabId;
         },
 
-        // Output management
-        submitOutputForm() {
+        // Output management (REST API)
+
+        /**
+         * Submits output form via REST API.
+         */
+        async submitOutputForm() {
             if (!this.outputForm.host?.trim()) return;
 
             const data = {
@@ -751,26 +758,62 @@ document.addEventListener('alpine:init', () => {
                 data.password = this.outputForm.password;
             }
 
-            if (this.isEditMode) {
-                data.enabled = this.outputForm.enabled;
-                this.send('outputs/update', this.outputForm.id, data);
-            } else {
-                this.send('outputs/add', null, data);
+            try {
+                let response;
+                if (this.isEditMode) {
+                    data.enabled = this.outputForm.enabled;
+                    response = await fetch(`/api/outputs/${this.outputForm.id}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data)
+                    });
+                } else {
+                    response = await fetch('/api/outputs', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data)
+                    });
+                }
+
+                if (!response.ok) {
+                    const result = await response.json();
+                    throw new Error(result.error || `HTTP ${response.status}`);
+                }
+
+                // Success - config_changed will trigger loadConfig()
+                this.saveAndClose();
+            } catch (err) {
+                this.showBanner(`Failed to save output: ${err.message}`, 'danger', false);
             }
-            this.saveAndClose();
         },
 
         /**
-         * Initiates output deletion with confirmation and optimistic UI update.
+         * Deletes output via REST API with confirmation.
          * @param {string} id - Output ID to delete
          * @param {boolean} [returnToDashboard=false] - Navigate to dashboard after delete
          */
-        deleteOutput(id, returnToDashboard = false) {
+        async deleteOutput(id, returnToDashboard = false) {
             if (!confirm('Delete this output? This action cannot be undone.')) return;
+
             const output = this.outputs.find(o => o.id === id);
             if (output) this.deletingOutputs[id] = output.created_at;
-            this.send('outputs/delete', id, null);
-            if (returnToDashboard) this.showDashboard();
+
+            try {
+                const response = await fetch(`/api/outputs/${id}`, {
+                    method: 'DELETE'
+                });
+
+                if (!response.ok) {
+                    const result = await response.json();
+                    throw new Error(result.error || `HTTP ${response.status}`);
+                }
+
+                // Success - config_changed will trigger loadConfig()
+                if (returnToDashboard) this.showDashboard();
+            } catch (err) {
+                delete this.deletingOutputs[id];
+                this.showBanner(`Failed to delete output: ${err.message}`, 'danger', false);
+            }
         },
 
         markOutputFormDirty() {
@@ -813,9 +856,9 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
-         * Submits recorder form for add or update.
+         * Submits recorder form via REST API.
          */
-        submitRecorderForm() {
+        async submitRecorderForm() {
             const name = this.recorderForm.name?.trim();
             const storageMode = this.recorderForm.storage_mode;
             const localPath = this.recorderForm.local_path?.trim();
@@ -846,7 +889,6 @@ document.addEventListener('alpine:init', () => {
                     this.showBanner('S3 Access Key ID is required', 'danger', true);
                     return;
                 }
-                // Secret key required for new recorders
                 if (!this.isRecorderEditMode && !secretKey) {
                     this.showBanner('S3 Secret Access Key is required', 'danger', true);
                     return;
@@ -870,54 +912,140 @@ document.addEventListener('alpine:init', () => {
                 data.s3_secret_access_key = secretKey;
             }
 
-            if (this.isRecorderEditMode) {
-                this.send('recorders/update', this.recorderForm.id, data);
-            } else {
-                this.send('recorders/add', null, data);
+            try {
+                let response;
+                if (this.isRecorderEditMode) {
+                    response = await fetch(`/api/recorders/${this.recorderForm.id}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data)
+                    });
+                } else {
+                    response = await fetch('/api/recorders', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data)
+                    });
+                }
+
+                if (!response.ok) {
+                    const result = await response.json();
+                    throw new Error(result.error || `HTTP ${response.status}`);
+                }
+
+                // Success - config_changed will trigger loadConfig()
+                this.view = 'dashboard';
+                this.recorderFormDirty = false;
+            } catch (err) {
+                this.showBanner(`Failed to save recorder: ${err.message}`, 'danger', false);
             }
-            // Navigation handled by handleRecorderResult on success
         },
 
         /**
-         * Deletes a recorder with confirmation.
+         * Deletes a recorder via REST API with confirmation.
          * @param {string} id - Recorder ID to delete
          * @param {boolean} returnToDashboard - Navigate to dashboard after delete
          */
-        deleteRecorder(id, returnToDashboard = false) {
+        async deleteRecorder(id, returnToDashboard = false) {
             if (!confirm('Delete this recorder? This action cannot be undone.')) return;
+
             const recorder = this.recorders.find(r => r.id === id);
             if (recorder) this.deletingRecorders[id] = recorder.created_at;
-            this.send('recorders/delete', id, null);
-            if (returnToDashboard) this.showDashboard();
+
+            try {
+                const response = await fetch(`/api/recorders/${id}`, {
+                    method: 'DELETE'
+                });
+
+                if (!response.ok) {
+                    const result = await response.json();
+                    throw new Error(result.error || `HTTP ${response.status}`);
+                }
+
+                // Success - config_changed will trigger loadConfig()
+                if (returnToDashboard) this.showDashboard();
+            } catch (err) {
+                delete this.deletingRecorders[id];
+                this.showBanner(`Failed to delete recorder: ${err.message}`, 'danger', false);
+            }
         },
 
         /**
-         * Starts recording for a specific recorder.
+         * Starts recording via REST API.
          * @param {string} id - Recorder ID
          */
-        startRecorder(id) {
-            this.send('recorders/start', id, null);
+        async startRecorder(id) {
+            try {
+                const response = await fetch(`/api/recorders/${id}/start`, {
+                    method: 'POST'
+                });
+
+                if (!response.ok) {
+                    const result = await response.json();
+                    throw new Error(result.error || `HTTP ${response.status}`);
+                }
+            } catch (err) {
+                this.showBanner(`Failed to start recorder: ${err.message}`, 'danger', false);
+            }
         },
 
         /**
-         * Stops recording for a specific recorder.
+         * Stops recording via REST API.
          * @param {string} id - Recorder ID
          */
-        stopRecorder(id) {
-            this.send('recorders/stop', id, null);
+        async stopRecorder(id) {
+            try {
+                const response = await fetch(`/api/recorders/${id}/stop`, {
+                    method: 'POST'
+                });
+
+                if (!response.ok) {
+                    const result = await response.json();
+                    throw new Error(result.error || `HTTP ${response.status}`);
+                }
+            } catch (err) {
+                this.showBanner(`Failed to stop recorder: ${err.message}`, 'danger', false);
+            }
         },
 
         /**
-         * Tests S3 connection for the current recorder form.
+         * Tests S3 connection via REST API.
          */
-        testRecorderS3() {
+        async testRecorderS3() {
             this.testStates.recorderS3 = { pending: true, text: 'Testing...' };
-            this.send('recorders/test-s3', null, {
-                s3_endpoint: this.recorderForm.s3_endpoint,
-                s3_bucket: this.recorderForm.s3_bucket,
-                s3_access_key_id: this.recorderForm.s3_access_key_id,
-                s3_secret_access_key: this.recorderForm.s3_secret_access_key
-            });
+
+            try {
+                const response = await fetch('/api/recorders/test-s3', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        s3_endpoint: this.recorderForm.s3_endpoint,
+                        s3_bucket: this.recorderForm.s3_bucket,
+                        s3_access_key_id: this.recorderForm.s3_access_key_id,
+                        s3_secret_access_key: this.recorderForm.s3_secret_access_key
+                    })
+                });
+
+                const result = await response.json();
+
+                this.testStates.recorderS3.pending = false;
+                this.testStates.recorderS3.text = result.success ? 'Connected!' : 'Failed';
+
+                if (!result.success) {
+                    this.showBanner(`S3 test failed: ${result.error || 'Unknown error'}`, 'danger', false);
+                }
+
+                setTimeout(() => {
+                    this.testStates.recorderS3.text = 'Test Connection';
+                }, TEST_FEEDBACK_MS);
+            } catch (err) {
+                this.testStates.recorderS3.pending = false;
+                this.testStates.recorderS3.text = 'Failed';
+                this.showBanner(`S3 test failed: ${err.message}`, 'danger', false);
+                setTimeout(() => {
+                    this.testStates.recorderS3.text = 'Test Connection';
+                }, TEST_FEEDBACK_MS);
+            }
         },
 
         /**
@@ -1054,114 +1182,102 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
-         * Triggers a notification test via WebSocket.
-         * Temporarily disables button and shows testing state.
+         * Triggers a notification test via REST API.
+         * Uses form values (unsaved) for testing.
          *
-         * @param {string} type - Test type: 'webhook', 'log', or 'email'
+         * @param {string} type - Test type: 'webhook', 'log', 'email', or 'zabbix'
          */
-        sendTest(type) {
+        async sendTest(type) {
             if (!this.testStates[type]) return;
             this.testStates[type].pending = true;
             this.testStates[type].text = 'Testing...';
-            this.send(`notifications/${type}/test`, null, null);
-        },
 
-        /**
-         * Handles recorder S3 connection test result.
-         * @param {Object} msg - Result with success, error
-         */
-        handleRecorderS3TestResult(msg) {
-            this.testStates.recorderS3.pending = false;
-            this.testStates.recorderS3.text = msg.success ? 'Connected!' : 'Failed';
-
-            if (!msg.success) {
-                this.showBanner(`S3 test failed: ${msg.error || 'Unknown error'}`, 'danger', false);
-            }
-
-            setTimeout(() => {
-                this.testStates.recorderS3.text = 'Test Connection';
-            }, TEST_FEEDBACK_MS);
-        },
-
-        /**
-         * Handles recorder operation results (add, update, delete, start, stop).
-         * @param {Object} msg - Result with action, success, error
-         */
-        handleRecorderResult(msg) {
-            if (!msg.success) {
-                this.showBanner(`Recorder ${msg.action} failed: ${msg.error || 'Unknown error'}`, 'danger', false);
-                return;
-            }
-
-            // On successful add/update, go back to dashboard
-            if (msg.action === 'add' || msg.action === 'update') {
-                this.view = 'dashboard';
-                this.recorderFormDirty = false;
-            }
-        },
-
-        /**
-         * Handles output operation results (add, update, delete, clear_error).
-         * @param {Object} msg - Result with action, success, error
-         */
-        handleOutputResult(msg) {
-            if (!msg.success) {
-                const actionText = msg.action.replace('_', ' ');
-                this.showBanner(`Output ${actionText} failed: ${msg.error || 'Unknown error'}`, 'danger', false);
-                return;
-            }
-
-            // On successful add/update from output form, go back to dashboard
-            if (this.view === 'output-form' && (msg.action === 'add' || msg.action === 'update')) {
-                this.view = 'dashboard';
-                this.outputFormDirty = false;
-            }
-        },
-
-        /**
-         * Handles command result messages (slash-style API responses).
-         * Extracts field-level errors and displays them on the form.
-         * @param {Object} msg - Result with type, success, error, data
-         */
-        handleCommandResult(msg) {
-            // Clear previous errors on success
-            if (msg.success) {
-                this.clearFormErrors();
-                return;
-            }
-
-            // Handle validation errors with field-level detail
-            if (msg.error?.errors) {
-                this.clearFormErrors();
-                for (const fieldError of msg.error.errors) {
-                    this.formErrors[fieldError.field] = fieldError.message;
+            // Build payload with current form values
+            const payload = {};
+            if (this.settingsForm) {
+                if (type === 'webhook') {
+                    payload.webhook_url = this.settingsForm.silenceWebhook;
+                } else if (type === 'log') {
+                    payload.log_path = this.settingsForm.silenceLogPath;
+                } else if (type === 'email') {
+                    payload.graph_tenant_id = this.settingsForm.graph.tenantId;
+                    payload.graph_client_id = this.settingsForm.graph.clientId;
+                    payload.graph_from_address = this.settingsForm.graph.fromAddress;
+                    payload.graph_recipients = this.settingsForm.graph.recipients;
+                    if (this.settingsForm.graph.clientSecret) {
+                        payload.graph_client_secret = this.settingsForm.graph.clientSecret;
+                    }
+                } else if (type === 'zabbix') {
+                    payload.zabbix_server = this.settingsForm.zabbix.server;
+                    payload.zabbix_port = this.settingsForm.zabbix.port;
+                    payload.zabbix_host = this.settingsForm.zabbix.host;
+                    payload.zabbix_key = this.settingsForm.zabbix.key;
                 }
-                // Show first error in banner
-                const firstError = msg.error.errors[0];
-                if (firstError) {
-                    this.showBanner(firstError.message, 'danger', false);
+            }
+
+            try {
+                const response = await fetch(`/api/notifications/test/${type}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const result = await response.json();
+
+                this.testStates[type].pending = false;
+                this.testStates[type].text = result.success ? 'Sent!' : 'Failed';
+
+                if (!result.success) {
+                    const typeName = type.charAt(0).toUpperCase() + type.slice(1);
+                    this.showBanner(`${typeName} test failed: ${result.error || 'Unknown error'}`, 'danger', false);
                 }
-            } else if (msg.error) {
-                // Simple error string
-                this.showBanner(msg.error, 'danger', false);
+
+                setTimeout(() => { this.testStates[type].text = 'Test'; }, TEST_FEEDBACK_MS);
+            } catch (err) {
+                this.testStates[type].pending = false;
+                this.testStates[type].text = 'Failed';
+                this.showBanner(`Test failed: ${err.message}`, 'danger', false);
+                setTimeout(() => { this.testStates[type].text = 'Test'; }, TEST_FEEDBACK_MS);
             }
         },
 
+
         /**
-         * Regenerates the API key for recording endpoints.
-         * Calls backend to generate and persist new key.
+         * Regenerates the API key for recording endpoints via REST API.
          */
-        regenerateApiKey() {
+        async regenerateApiKey() {
             if (!confirm('Regenerate API key? Existing integrations will need to be updated.')) return;
-            this.send('recording/regenerate-key');
+
+            try {
+                const response = await fetch('/api/recording/regenerate-key', {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.error || `HTTP ${response.status}`);
+                }
+
+                if (result.api_key) {
+                    // Update form if open
+                    if (this.settingsForm) {
+                        this.settingsForm.recordingApiKey = result.api_key;
+                    }
+                    this.showBanner('API key regenerated successfully', 'info', false);
+                }
+            } catch (err) {
+                this.showBanner(`Failed to regenerate API key: ${err.message}`, 'danger', false);
+            }
         },
 
         /**
          * Copies the API key to clipboard.
          */
         async copyApiKey() {
+            const key = this.settingsForm?.recordingApiKey || this.config.recording_api_key;
             try {
-                await navigator.clipboard.writeText(this.settings.recordingApiKey);
+                await navigator.clipboard.writeText(key);
                 this.showBanner('API key copied to clipboard', 'info', false);
             } catch {
                 this.showBanner('Failed to copy to clipboard', 'danger', false);
@@ -1169,41 +1285,48 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
-         * Handles silence log view result from backend.
-         * Updates modal state with log entries or error message.
-         *
-         * @param {Object} msg - Result with success, entries[], path, error
+         * Opens the silence log modal and fetches log entries via REST API.
          */
-        handleSilenceLogResult(msg) {
-            this.silenceLogModal.loading = false;
-            if (msg.success) {
-                this.silenceLogModal.entries = msg.entries || [];
-                this.silenceLogModal.path = msg.path || '';
-                this.silenceLogModal.error = '';
-            } else {
-                this.silenceLogModal.entries = [];
-                this.silenceLogModal.error = msg.error || 'Unknown error';
-            }
-        },
-
-        /**
-         * Opens the silence log modal and fetches log entries.
-         */
-        viewSilenceLog() {
+        async viewSilenceLog() {
             this.silenceLogModal.visible = true;
             this.silenceLogModal.loading = true;
             this.silenceLogModal.entries = [];
             this.silenceLogModal.error = '';
-            this.send('notifications/log/view', null, null);
+
+            await this.fetchSilenceLog();
         },
 
         handleSilenceLogClose() {
             this.silenceLogModal.visible = false;
         },
 
-        handleSilenceLogRefresh() {
+        async handleSilenceLogRefresh() {
             this.silenceLogModal.loading = true;
-            this.send('notifications/log/view', null, null);
+            await this.fetchSilenceLog();
+        },
+
+        /**
+         * Fetches silence log entries from REST API.
+         */
+        async fetchSilenceLog() {
+            try {
+                const response = await fetch('/api/notifications/log');
+                const result = await response.json();
+
+                this.silenceLogModal.loading = false;
+                if (result.success) {
+                    this.silenceLogModal.entries = result.entries || [];
+                    this.silenceLogModal.path = result.path || '';
+                    this.silenceLogModal.error = '';
+                } else {
+                    this.silenceLogModal.entries = [];
+                    this.silenceLogModal.error = result.error || 'Unknown error';
+                }
+            } catch (err) {
+                this.silenceLogModal.loading = false;
+                this.silenceLogModal.entries = [];
+                this.silenceLogModal.error = err.message;
+            }
         },
 
         /**
