@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"html/template"
 	"log/slog"
+	"maps"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -106,10 +108,7 @@ func (s *Server) unregisterWSClient(send chan any) {
 func (s *Server) broadcastConfigChanged() {
 	// Copy client channels while holding lock to avoid race conditions
 	s.wsClientsMu.RLock()
-	clients := make([]chan any, 0, len(s.wsClients))
-	for ch := range s.wsClients {
-		clients = append(clients, ch)
-	}
+	clients := slices.Collect(maps.Keys(s.wsClients))
 	s.wsClientsMu.RUnlock()
 
 	// Send to all clients outside the lock

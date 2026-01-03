@@ -253,21 +253,19 @@ func (c *Config) Output(id string) *types.Output {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	for i := range c.Streaming.Outputs {
-		if c.Streaming.Outputs[i].ID == id {
-			return &c.Streaming.Outputs[i]
-		}
+	idx := slices.IndexFunc(c.Streaming.Outputs, func(o types.Output) bool {
+		return o.ID == id
+	})
+	if idx == -1 {
+		return nil
 	}
-	return nil
+	return &c.Streaming.Outputs[idx]
 }
 
 func (c *Config) findOutputIndex(id string) int {
-	for i, o := range c.Streaming.Outputs {
-		if o.ID == id {
-			return i
-		}
-	}
-	return -1
+	return slices.IndexFunc(c.Streaming.Outputs, func(o types.Output) bool {
+		return o.ID == id
+	})
 }
 
 // AddOutput creates a new output.
@@ -300,7 +298,7 @@ func (c *Config) RemoveOutput(id string) error {
 		return fmt.Errorf("output not found: %s", id)
 	}
 
-	c.Streaming.Outputs = append(c.Streaming.Outputs[:i], c.Streaming.Outputs[i+1:]...)
+	c.Streaming.Outputs = slices.Delete(c.Streaming.Outputs, i, i+1)
 	return c.saveLocked()
 }
 
@@ -325,21 +323,19 @@ func (c *Config) Recorder(id string) *types.Recorder {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	for i := range c.Recording.Recorders {
-		if c.Recording.Recorders[i].ID == id {
-			return &c.Recording.Recorders[i]
-		}
+	idx := slices.IndexFunc(c.Recording.Recorders, func(r types.Recorder) bool {
+		return r.ID == id
+	})
+	if idx == -1 {
+		return nil
 	}
-	return nil
+	return &c.Recording.Recorders[idx]
 }
 
 func (c *Config) findRecorderIndex(id string) int {
-	for i := range c.Recording.Recorders {
-		if c.Recording.Recorders[i].ID == id {
-			return i
-		}
-	}
-	return -1
+	return slices.IndexFunc(c.Recording.Recorders, func(r types.Recorder) bool {
+		return r.ID == id
+	})
 }
 
 // AddRecorder creates a new recorder.
@@ -374,7 +370,7 @@ func (c *Config) RemoveRecorder(id string) error {
 		return fmt.Errorf("recorder not found: %s", id)
 	}
 
-	c.Recording.Recorders = append(c.Recording.Recorders[:i], c.Recording.Recorders[i+1:]...)
+	c.Recording.Recorders = slices.Delete(c.Recording.Recorders, i, i+1)
 	return c.saveLocked()
 }
 

@@ -3,9 +3,11 @@ package recording
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -45,10 +47,7 @@ func (m *Manager) startCleanupScheduler() {
 // runCleanup performs cleanup for all recorders.
 func (m *Manager) runCleanup() {
 	m.mu.RLock()
-	recorders := make([]*GenericRecorder, 0, len(m.recorders))
-	for _, r := range m.recorders {
-		recorders = append(recorders, r)
-	}
+	recorders := slices.Collect(maps.Values(m.recorders))
 	m.mu.RUnlock()
 
 	slog.Info("cleanup: starting daily cleanup", "recorders", len(recorders))

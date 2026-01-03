@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -44,17 +45,6 @@ func parseJSON[T any](s *Server, w http.ResponseWriter, r *http.Request) (T, boo
 		return v, false
 	}
 	return v, true
-}
-
-// coalesce returns the first non-zero value from the provided values.
-func coalesce[T comparable](values ...T) T {
-	var zero T
-	for _, v := range values {
-		if v != zero {
-			return v
-		}
-	}
-	return zero
 }
 
 // handleAPIConfig returns the full configuration for the frontend.
@@ -806,7 +796,7 @@ func (s *Server) handleAPITestWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := s.config.Snapshot()
-	url := coalesce(req.WebhookURL, cfg.WebhookURL)
+	url := cmp.Or(req.WebhookURL, cfg.WebhookURL)
 
 	if url == "" {
 		s.writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": "No webhook URL configured"})
@@ -832,7 +822,7 @@ func (s *Server) handleAPITestLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path := coalesce(req.LogPath, s.config.Snapshot().LogPath)
+	path := cmp.Or(req.LogPath, s.config.Snapshot().LogPath)
 
 	if path == "" {
 		s.writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": "No log path configured"})
@@ -860,11 +850,11 @@ func (s *Server) handleAPITestEmail(w http.ResponseWriter, r *http.Request) {
 
 	// Use request values or fall back to saved config
 	cfg := s.config.Snapshot()
-	tenantID := coalesce(req.GraphTenantID, cfg.GraphTenantID)
-	clientID := coalesce(req.GraphClientID, cfg.GraphClientID)
-	clientSecret := coalesce(req.GraphClientSecret, cfg.GraphClientSecret)
-	fromAddress := coalesce(req.GraphFromAddress, cfg.GraphFromAddress)
-	recipients := coalesce(req.GraphRecipients, cfg.GraphRecipients)
+	tenantID := cmp.Or(req.GraphTenantID, cfg.GraphTenantID)
+	clientID := cmp.Or(req.GraphClientID, cfg.GraphClientID)
+	clientSecret := cmp.Or(req.GraphClientSecret, cfg.GraphClientSecret)
+	fromAddress := cmp.Or(req.GraphFromAddress, cfg.GraphFromAddress)
+	recipients := cmp.Or(req.GraphRecipients, cfg.GraphRecipients)
 
 	if tenantID == "" || clientID == "" || clientSecret == "" {
 		s.writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Email not fully configured"})
@@ -900,10 +890,10 @@ func (s *Server) handleAPITestZabbix(w http.ResponseWriter, r *http.Request) {
 
 	// Use request values or fall back to saved config
 	cfg := s.config.Snapshot()
-	server := coalesce(req.ZabbixServer, cfg.ZabbixServer)
-	port := coalesce(req.ZabbixPort, cfg.ZabbixPort)
-	host := coalesce(req.ZabbixHost, cfg.ZabbixHost)
-	key := coalesce(req.ZabbixKey, cfg.ZabbixKey)
+	server := cmp.Or(req.ZabbixServer, cfg.ZabbixServer)
+	port := cmp.Or(req.ZabbixPort, cfg.ZabbixPort)
+	host := cmp.Or(req.ZabbixHost, cfg.ZabbixHost)
+	key := cmp.Or(req.ZabbixKey, cfg.ZabbixKey)
 
 	if server == "" || host == "" || key == "" {
 		s.writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Zabbix not fully configured"})
