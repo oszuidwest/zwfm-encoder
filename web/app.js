@@ -16,9 +16,10 @@
  *
  * WebSocket Commands (outgoing):
  *   - start/stop: Control encoder
- *   - update_settings: Persist configuration changes
- *   - add_output/delete_output: Manage stream outputs
- *   - test_<type>: Trigger notification test (webhook, log, email)
+ *   - audio/update, silence/update: Update audio/silence settings
+ *   - notifications/webhook/update, notifications/email/update: Update notification settings
+ *   - outputs/add, outputs/delete, outputs/update: Manage stream outputs
+ *   - notifications/webhook/test, notifications/email/test: Trigger notification tests
  *
  * Dependencies:
  *   - Alpine.js 3.x (loaded before this script)
@@ -417,8 +418,8 @@ document.addEventListener('alpine:init', () => {
         /**
          * Sends command to backend via WebSocket.
          *
-         * @param {string} type - Command type (start, stop, update_settings, etc.)
-         * @param {string} [id] - Optional output ID for output-specific commands
+         * @param {string} type - Command type (start, stop, outputs/add, silence/update, etc.)
+         * @param {string} [id] - Optional entity ID for entity-specific commands
          * @param {Object} [data] - Optional payload data
          */
         send(type, id, data) {
@@ -703,30 +704,47 @@ document.addEventListener('alpine:init', () => {
 
         /**
          * Persists all settings to backend via WebSocket.
-         * Builds payload with all current values, only including password
-         * if it was modified (non-empty). Resets dirty state on send.
+         * Sends separate commands for each settings category.
+         * Resets dirty state on send.
          */
         saveSettings() {
-            const update = {
-                silence_threshold: this.settings.silenceThreshold,
-                silence_duration: this.settings.silenceDuration,
-                silence_recovery: this.settings.silenceRecovery,
-                silence_webhook: this.settings.silenceWebhook,
-                silence_log_path: this.settings.silenceLogPath,
-                graph_tenant_id: this.settings.graph.tenantId,
-                graph_client_id: this.settings.graph.clientId,
-                graph_from_address: this.settings.graph.fromAddress,
-                graph_recipients: this.settings.graph.recipients
+            // Silence detection settings
+            this.send('silence/update', null, {
+                threshold_db: this.settings.silenceThreshold,
+                duration_ms: secondsToMs(this.settings.silenceDuration),
+                recovery_ms: secondsToMs(this.settings.silenceRecovery)
+            });
+
+            // Webhook notification settings
+            this.send('notifications/webhook/update', null, {
+                url: this.settings.silenceWebhook
+            });
+
+            // Log notification settings
+            this.send('notifications/log/update', null, {
+                path: this.settings.silenceLogPath
+            });
+
+            // Email notification settings (Microsoft Graph)
+            const emailUpdate = {
+                tenant_id: this.settings.graph.tenantId,
+                client_id: this.settings.graph.clientId,
+                from_address: this.settings.graph.fromAddress,
+                recipients: this.settings.graph.recipients
             };
             // Only include client secret if it was changed
             if (this.settings.graph.clientSecret) {
-                update.graph_client_secret = this.settings.graph.clientSecret;
+                emailUpdate.client_secret = this.settings.graph.clientSecret;
             }
-            // Only include API key if it changed from original
+            this.send('notifications/email/update', null, emailUpdate);
+
+            // Only update API key if it changed from original
             if (this.settings.recordingApiKey !== this.originalSettings?.recordingApiKey) {
-                update.recording_api_key = this.settings.recordingApiKey;
+                this.send('update_settings', null, {
+                    recording_api_key: this.settings.recordingApiKey
+                });
             }
-            this.send('update_settings', null, update);
+
             this.saveAndClose();
         },
 
@@ -785,9 +803,9 @@ document.addEventListener('alpine:init', () => {
 
             if (this.isEditMode) {
                 data.enabled = this.outputForm.enabled;
-                this.send('update_output', this.outputForm.id, data);
+                this.send('outputs/update', this.outputForm.id, data);
             } else {
-                this.send('add_output', null, data);
+                this.send('outputs/add', null, data);
             }
             this.saveAndClose();
         },
@@ -801,7 +819,7 @@ document.addEventListener('alpine:init', () => {
             if (!confirm('Delete this output? This action cannot be undone.')) return;
             const output = this.outputs.find(o => o.id === id);
             if (output) this.deletingOutputs[id] = output.created_at;
-            this.send('delete_output', id, null);
+            this.send('outputs/delete', id, null);
             if (returnToDashboard) this.showDashboard();
         },
 
@@ -903,9 +921,9 @@ document.addEventListener('alpine:init', () => {
             }
 
             if (this.isRecorderEditMode) {
-                this.send('update_recorder', this.recorderForm.id, data);
+                this.send('recorders/update', this.recorderForm.id, data);
             } else {
-                this.send('add_recorder', null, data);
+                this.send('recorders/add', null, data);
             }
             // Navigation handled by handleRecorderResult on success
         },
@@ -919,7 +937,7 @@ document.addEventListener('alpine:init', () => {
             if (!confirm('Delete this recorder? This action cannot be undone.')) return;
             const recorder = this.recorders.find(r => r.id === id);
             if (recorder) this.deletingRecorders[id] = recorder.created_at;
-            this.send('delete_recorder', id, null);
+            this.send('recorders/delete', id, null);
             if (returnToDashboard) this.showDashboard();
         },
 
@@ -928,7 +946,7 @@ document.addEventListener('alpine:init', () => {
          * @param {string} id - Recorder ID
          */
         startRecorder(id) {
-            this.send('start_recorder', id, null);
+            this.send('recorders/start', id, null);
         },
 
         /**
@@ -936,7 +954,7 @@ document.addEventListener('alpine:init', () => {
          * @param {string} id - Recorder ID
          */
         stopRecorder(id) {
-            this.send('stop_recorder', id, null);
+            this.send('recorders/stop', id, null);
         },
 
         /**
@@ -944,7 +962,7 @@ document.addEventListener('alpine:init', () => {
          */
         testRecorderS3() {
             this.testStates.recorderS3 = { pending: true, text: 'Testing...' };
-            this.send('test_recorder_s3', null, {
+            this.send('recorders/test-s3', null, {
                 s3_endpoint: this.recorderForm.s3_endpoint,
                 s3_bucket: this.recorderForm.s3_bucket,
                 s3_access_key_id: this.recorderForm.s3_access_key_id,
@@ -1104,7 +1122,7 @@ document.addEventListener('alpine:init', () => {
             if (!this.testStates[type]) return;
             this.testStates[type].pending = true;
             this.testStates[type].text = 'Testing...';
-            this.send(`test_${type}`, null, null);
+            this.send(`notifications/${type}/test`, null, null);
         },
 
         /**
@@ -1208,7 +1226,7 @@ document.addEventListener('alpine:init', () => {
             this.silenceLogModal.loading = true;
             this.silenceLogModal.entries = [];
             this.silenceLogModal.error = '';
-            this.send('view_silence_log', null, null);
+            this.send('notifications/log/view', null, null);
         },
 
         handleSilenceLogClose() {
@@ -1217,7 +1235,7 @@ document.addEventListener('alpine:init', () => {
 
         handleSilenceLogRefresh() {
             this.silenceLogModal.loading = true;
-            this.send('view_silence_log', null, null);
+            this.send('notifications/log/view', null, null);
         },
 
         /**
