@@ -70,21 +70,30 @@ func (n *SilenceNotifier) HandleEvent(event audio.SilenceEvent) {
 func (n *SilenceNotifier) handleSilenceStart(levelL, levelR float64) {
 	cfg := n.cfg.Snapshot()
 
-	n.trySend(&n.webhookSent, cfg.HasWebhook(), func() { n.sendSilenceWebhook(cfg, levelL, levelR) })
-	n.trySend(&n.emailSent, cfg.HasGraph(), func() { n.sendSilenceEmail(cfg, levelL, levelR) })
-	n.trySend(&n.logSent, cfg.HasLogPath(), func() { n.logSilenceStart(cfg, levelL, levelR) })
-}
-
-// trySend sends a notification if the condition is met and not already sent.
-func (n *SilenceNotifier) trySend(sent *bool, condition bool, sender func()) {
+	// Determine which notifications to send (only once per silence period)
 	n.mu.Lock()
-	shouldSend := !*sent && condition
-	if shouldSend {
-		*sent = true
+	shouldSendWebhook := !n.webhookSent && cfg.HasWebhook()
+	shouldSendEmail := !n.emailSent && cfg.HasGraph()
+	shouldSendLog := !n.logSent && cfg.HasLogPath()
+	if shouldSendWebhook {
+		n.webhookSent = true
+	}
+	if shouldSendEmail {
+		n.emailSent = true
+	}
+	if shouldSendLog {
+		n.logSent = true
 	}
 	n.mu.Unlock()
-	if shouldSend {
-		go sender()
+
+	if shouldSendWebhook {
+		go n.sendSilenceWebhook(cfg, levelL, levelR)
+	}
+	if shouldSendEmail {
+		go n.sendSilenceEmail(cfg, levelL, levelR)
+	}
+	if shouldSendLog {
+		go n.logSilenceStart(cfg, levelL, levelR)
 	}
 }
 

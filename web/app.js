@@ -1302,7 +1302,7 @@ document.addEventListener('alpine:init', () => {
          * Formats a silence log entry for display.
          * For "ended" events, duration is the key metric (total silence time).
          * For "started" events, duration is just detection delay (not shown).
-         * @param {Object} entry - Log entry with timestamp, event, duration_ms, threshold_db
+         * @param {Object} entry - Log entry with timestamp, event, duration_ms, threshold_db, level_left_db, level_right_db
          * @returns {Object} Formatted entry with human-readable values
          */
         formatLogEntry(entry) {
@@ -1327,13 +1327,19 @@ document.addEventListener('alpine:init', () => {
             if (isStart) stateClass = 'state-warning';
             else if (isEnd) stateClass = 'state-success';
 
+            // Format audio levels if present
+            const hasLevels = entry.level_left_db !== undefined && entry.level_right_db !== undefined;
+            const levels = hasLevels
+                ? `L ${entry.level_left_db.toFixed(1)} / R ${entry.level_right_db.toFixed(1)} dB`
+                : '';
+
             return {
                 time: date.toLocaleString(),
                 event: eventText,
                 eventType: isStart ? 'silence' : isEnd ? 'recovery' : 'test',
                 stateClass,
-                // Only show threshold, duration is now in the event name for ended events
-                threshold: `${entry.threshold_db.toFixed(0)} dB`
+                threshold: `${entry.threshold_db.toFixed(0)} dB`,
+                levels
             };
         }
     }));
