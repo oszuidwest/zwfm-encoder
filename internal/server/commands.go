@@ -73,38 +73,6 @@ func (h *CommandHandler) Handle(cmd WSCommand, send chan<- interface{}, triggerS
 		h.handleConfig(action, send)
 	case "status":
 		h.handleStatus(action, send)
-
-	// Legacy command support (backward compatibility)
-	case "add_output":
-		h.handleAddOutput(cmd, send)
-	case "delete_output":
-		h.handleDeleteOutput(cmd, send)
-	case "update_output":
-		h.handleUpdateOutput(cmd, send)
-	case "clear_output_error":
-		h.handleClearOutputError(cmd, send)
-	case "update_settings":
-		h.handleUpdateSettings(cmd)
-	case "test_webhook", "test_log", "test_email":
-		h.handleTest(send, cmd.Type)
-	case "view_silence_log":
-		h.handleViewSilenceLog(send)
-	case "add_recorder":
-		h.handleAddRecorder(cmd, send)
-	case "delete_recorder":
-		h.handleDeleteRecorder(cmd, send)
-	case "update_recorder":
-		h.handleUpdateRecorder(cmd, send)
-	case "start_recorder":
-		h.handleStartRecorder(cmd, send)
-	case "stop_recorder":
-		h.handleStopRecorder(cmd, send)
-	case "clear_recorder_error":
-		h.handleClearRecorderError(cmd, send)
-	case "test_recorder_s3":
-		h.handleTestRecorderS3(cmd, send)
-	case "regenerate_api_key":
-		h.handleRegenerateAPIKey(send)
 	default:
 		slog.Warn("unknown WebSocket command", "type", cmd.Type)
 	}

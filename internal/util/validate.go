@@ -39,17 +39,6 @@ func ValidateRange(field string, value, minVal, maxVal int) *ValidationError {
 	return nil
 }
 
-// ValidateRangeFloat returns an error if value is outside the range [minVal, maxVal].
-func ValidateRangeFloat(field string, value, minVal, maxVal float64) *ValidationError {
-	if value < minVal || value > maxVal {
-		return &ValidationError{
-			Field:   field,
-			Message: fmt.Sprintf("%s must be between %.1f and %.1f, got %.1f", field, minVal, maxVal, value),
-		}
-	}
-	return nil
-}
-
 // ValidateMaxLength returns an error if value exceeds maxLen characters.
 func ValidateMaxLength(field, value string, maxLen int) *ValidationError {
 	if len(value) > maxLen {
