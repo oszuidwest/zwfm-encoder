@@ -953,45 +953,6 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
-         * Returns CSS class for recorder status dot.
-         * @param {Object} recorder - Recorder object
-         * @returns {string} CSS class
-         */
-        getRecorderStateClass(recorder) {
-            if (recorder.enabled === false) return 'state-stopped';
-            const status = this.recorderStatuses[recorder.id];
-            if (!status) return 'state-stopped';
-            switch (status.state) {
-                case 'recording': return 'state-success';
-                case 'starting': return 'state-warning';
-                case 'finalizing': return 'state-warning';
-                case 'error': return 'state-danger';
-                case 'idle': return 'state-stopped';
-                default: return 'state-stopped';
-            }
-        },
-
-        /**
-         * Returns status text for a recorder.
-         * @param {Object} recorder - Recorder object
-         * @returns {string} Status text
-         */
-        getRecorderStatusText(recorder) {
-            const status = this.recorderStatuses[recorder.id];
-            if (!status) return 'Idle';
-            switch (status.state) {
-                case 'disabled': return 'Disabled';
-                case 'starting': return 'Starting...';
-                case 'running': return 'Recording';
-                case 'rotating': return 'Rotating...';
-                case 'stopping': return 'Finalizing...';
-                case 'error': return status.error || 'Error';
-                case 'stopped': return 'Idle';
-                default: return status.state || 'Unknown';
-            }
-        },
-
-        /**
          * Computes all display data for a recorder in a single call.
          * @param {Object} recorder - Recorder object
          * @returns {Object} Display data with stateClass, statusText, duration
