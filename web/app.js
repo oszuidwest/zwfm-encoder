@@ -36,15 +36,7 @@ const CLIP_TIMEOUT_MS = 1500;     // Peak hold / clip indicator timeout
 const WS_RECONNECT_MS = 1000;     // WebSocket reconnection delay
 const TEST_FEEDBACK_MS = 2000;    // Test result display duration
 
-/**
- * Formats milliseconds to human-readable smart units.
- * - <1000ms: shows as "XXXms"
- * - <60000ms: shows as "Xs" or "X.Xs"
- * - >=60000ms: shows as "Xm Ys"
- *
- * @param {number} ms - Duration in milliseconds
- * @returns {string} Formatted duration
- */
+/** Formats milliseconds to human-readable smart units (ms/s/m). */
 const formatSmartDuration = (ms) => {
     if (ms < 1000) return `${Math.round(ms)}ms`;
     if (ms < 60000) {
@@ -56,27 +48,10 @@ const formatSmartDuration = (ms) => {
     return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
 };
 
-/**
- * Converts milliseconds to seconds for UI display/input.
- * @param {number} ms - Duration in milliseconds
- * @returns {number} Duration in seconds
- */
 const msToSeconds = (ms) => ms / 1000;
-
-/**
- * Converts seconds to milliseconds for storage.
- * @param {number} sec - Duration in seconds
- * @returns {number} Duration in milliseconds
- */
 const secondsToMs = (sec) => Math.round(sec * 1000);
 
-/**
- * Converts decibel value to percentage for VU meter display.
- * Maps -60dB to 0% and 0dB to 100%.
- *
- * @param {number} db - Decibel value (typically -60 to 0)
- * @returns {number} Percentage value (0-100), clamped to valid range
- */
+/** Converts dB (-60 to 0) to percentage (0-100) for VU meter display. */
 window.dbToPercent = (db) => Math.max(0, Math.min(100, (db - DB_MINIMUM) / DB_RANGE * 100));
 
 const DEFAULT_OUTPUT = {
@@ -110,13 +85,6 @@ const DEFAULT_LEVELS = {
     silence_level: null
 };
 
-/**
- * Creates a deep clone of an object using JSON serialization.
- * Safe for plain objects without functions, undefined, or circular refs.
- *
- * @param {Object} obj - Object to clone
- * @returns {Object} Deep copy of the object
- */
 const deepClone = (obj) => JSON.parse(JSON.stringify(obj));
 
 document.addEventListener('alpine:init', () => {
@@ -151,7 +119,7 @@ document.addEventListener('alpine:init', () => {
         outputStatuses: {},
         previousOutputStatuses: {},
         deletingOutputs: {},
-        connectingAnimations: {},  // Track output connection animations reactively
+        connectingAnimations: {},
 
         recorders: [],
         recorderStatuses: {},
@@ -178,7 +146,7 @@ document.addEventListener('alpine:init', () => {
         },
         originalSettings: null,
         settingsDirty: false,
-        formErrors: {},  // Field-level validation errors keyed by field path
+        formErrors: {},
 
         graphSecretExpiry: { expires_soon: false, days_left: 0 },
 
@@ -251,16 +219,12 @@ document.addEventListener('alpine:init', () => {
             if (needsS3) {
                 if (!this.recorderForm.s3_bucket?.trim()) return false;
                 if (!this.recorderForm.s3_access_key_id?.trim()) return false;
+                // Secret only required for new recorders; edit mode keeps existing secret
                 if (!this.isRecorderEditMode && !this.recorderForm.s3_secret_access_key) return false;
             }
             return true;
         },
 
-        // Lifecycle
-        /**
-         * Alpine.js lifecycle hook - initializes WebSocket connection.
-         * Called automatically when component mounts.
-         */
         init() {
             this.connectWebSocket();
             // Global keyboard handlers - store reference for cleanup
@@ -268,14 +232,7 @@ document.addEventListener('alpine:init', () => {
             document.addEventListener('keydown', this._keydownHandler);
         },
 
-        /**
-         * Handles global keyboard events for navigation and actions.
-         * - Escape: Close settings/add-output views, close silence log modal
-         * - Enter: Save settings when on settings view (if dirty)
-         * - Arrow keys: Navigate between settings tabs
-         *
-         * @param {KeyboardEvent} event - The keyboard event
-         */
+        /** Global keyboard: Escape closes views, Enter saves, arrows navigate tabs. */
         handleGlobalKeydown(event) {
             // Don't handle if user is typing in an input field
             const isInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName);
@@ -335,11 +292,7 @@ document.addEventListener('alpine:init', () => {
             });
         },
 
-        /**
-         * Establishes WebSocket connection to backend.
-         * Handles incoming messages by type and auto-reconnects on close.
-         * Reconnection uses WS_RECONNECT_MS delay to prevent rapid retries.
-         */
+        // Establishes WebSocket connection with auto-reconnect
         connectWebSocket() {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
             this.ws = new WebSocket(`${protocol}//${location.host}/ws`);
@@ -536,6 +489,7 @@ document.addEventListener('alpine:init', () => {
             this.previousOutputStatuses = deepClone(newOutputStatuses);
             this.outputStatuses = newOutputStatuses;
 
+            // Clean up deleting state using created_at to handle ID reuse after delete
             for (const id in this.deletingOutputs) {
                 const output = this.outputs.find(o => o.id === id);
                 if (!output || output.created_at !== this.deletingOutputs[id]) {
@@ -617,18 +571,13 @@ document.addEventListener('alpine:init', () => {
         },
 
         // Navigation
-        /**
-         * Returns to dashboard view and clears settings state.
-         */
         showDashboard() {
             this.view = 'dashboard';
             this.settingsDirty = false;
             this.originalSettings = null;
         },
 
-        /**
-         * Shows success state on save button, then navigates to dashboard.
-         */
+        // Shows save success animation via data-saved attribute, then navigates to dashboard
         saveAndClose() {
             const viewIds = {
                 'settings': 'settings-view',
@@ -761,10 +710,6 @@ document.addEventListener('alpine:init', () => {
             this.view = 'output-form';
         },
 
-        /**
-         * Switches active settings tab.
-         * @param {string} tabId - Tab identifier (audio, notifications, recording, about)
-         */
         showTab(tabId) {
             this.settingsTab = tabId;
         },
@@ -1078,18 +1023,11 @@ document.addEventListener('alpine:init', () => {
             };
         },
 
-        /**
-         * Toggles VU meter display mode between peak and RMS.
-         */
         toggleVuMode() {
             this.vuMode = this.vuMode === 'peak' ? 'rms' : 'peak';
             localStorage.setItem('vuMode', this.vuMode);
         },
 
-        /**
-         * Resets VU meter to default zero state.
-         * Called when encoder stops or on initialization.
-         */
         resetVuMeter() {
             this.levels = { ...DEFAULT_LEVELS };
         },
