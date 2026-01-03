@@ -144,14 +144,35 @@ The app sends emails "from" a shared mailbox (not a user mailbox). This is requi
 
 ### Zabbix Setup
 
-Zabbix notifications send trapper items to a Zabbix server when silence is detected or recovered. This allows integration with Zabbix monitoring and alerting.
+Zabbix notifications send trapper items to a Zabbix server when silence is detected or recovered. This integrates with your existing Zabbix monitoring and alerting infrastructure.
 
-**Setup:** Import the `zabbix/template.xml` file included with the encoder distribution. In Zabbix web interface: **Configuration** → **Templates** → **Import**, select the XML file, then link the template to your host. This automatically creates the required item and triggers with operational data showing audio levels and context. Then configure the encoder settings as described below.
+**Step 1: Import the Template**
 
-**Manual Setup (Alternative):** If you prefer manual configuration:
-1. Create a host in Zabbix
-2. Add a trapper item with key `silence.alert` (Text type)
-3. Create triggers for SILENCE, RECOVERY, and TEST events
+1. Download `zabbix/template.xml` from the [GitHub repository](https://github.com/oszuidwest/zwfm-encoder/blob/main/zabbix/template.xml)
+2. In Zabbix web interface, go to **Data collection** → **Templates**
+3. Click **Import** (top right)
+4. Select the downloaded XML file and click **Import**
+
+**Step 2: Link Template to Host**
+
+1. Go to **Data collection** → **Hosts**
+2. Select your encoder host (or create one if it doesn't exist)
+3. Go to the **Templates** tab
+4. Click **Select** and choose **ZWFM Encoder Silence Monitor**
+5. Click **Update**
+
+> **Note:** The template creates a trapper item (`silence.alert`) and triggers for SILENCE (Disaster), RECOVERY (Info), and TEST (Info) events.
+
+**Step 3: Configure the Encoder**
+
+| Field | Description |
+|-------|-------------|
+| Server | Zabbix server hostname or IP address |
+| Port | Zabbix trapper port (default: 10051) |
+| Host | Exact hostname as configured in Zabbix |
+| Key | Item key (default: `silence.alert`) |
+
+> **Tip:** The Host field must exactly match the host name in Zabbix, not the visible display name.
 
 ## Configuration
 
