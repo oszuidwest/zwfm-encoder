@@ -357,11 +357,10 @@ type GraphConfig struct {
 
 // ZabbixConfig contains settings for sending trapper items to a Zabbix server.
 type ZabbixConfig struct {
-	Server    string `json:"server,omitempty"`
-	Port      int    `json:"port,omitempty"`
-	Host      string `json:"host,omitempty"`
-	Key       string `json:"key,omitempty"`
-	TimeoutMs int    `json:"timeout_ms,omitempty"`
+	Server string `json:"server,omitempty"`
+	Port   int    `json:"port,omitempty"`
+	Host   string `json:"host,omitempty"`
+	Key    string `json:"key,omitempty"`
 }
 
 // SecretExpiryInfo contains client secret expiration data.

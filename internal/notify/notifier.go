@@ -331,7 +331,7 @@ func (n *SilenceNotifier) logSilenceEndWithDump(cfg config.Snapshot, durationMs 
 func (n *SilenceNotifier) sendSilenceZabbix(cfg config.Snapshot, levelL, levelR float64) {
 	util.LogNotifyResult(
 		func() error {
-			return SendSilenceZabbix(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixKey, levelL, levelR, cfg.SilenceThreshold, cfg.ZabbixTimeoutMs)
+			return SendSilenceZabbix(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixKey, levelL, levelR, cfg.SilenceThreshold)
 		},
 		"Silence zabbix",
 	)
@@ -343,7 +343,7 @@ func (n *SilenceNotifier) sendSilenceZabbix(cfg config.Snapshot, levelL, levelR 
 func (n *SilenceNotifier) sendRecoveryZabbix(cfg config.Snapshot, durationMs int64, levelL, levelR float64) {
 	util.LogNotifyResult(
 		func() error {
-			return SendRecoveryZabbix(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixKey, durationMs, levelL, levelR, cfg.SilenceThreshold, cfg.ZabbixTimeoutMs)
+			return SendRecoveryZabbix(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixKey, durationMs, levelL, levelR, cfg.SilenceThreshold)
 		},
 		"Recovery zabbix",
 	)
