@@ -66,14 +66,47 @@ type SilenceDetectionConfig struct {
 	RecoveryMs  int64   `json:"recovery_ms"`  // Duration above threshold before recovery
 }
 
+// Validate checks silence detection settings and returns field-level errors.
+func (c *SilenceDetectionConfig) Validate() *types.ValidationError {
+	v := types.NewValidationError()
+	if c.ThresholdDB < -60 || c.ThresholdDB > 0 {
+		v.Add("silence.threshold_db", "must be between -60 and 0 dB", c.ThresholdDB)
+	}
+	if c.DurationMs < 500 || c.DurationMs > 300000 {
+		v.Add("silence.duration_ms", "must be between 500ms and 300000ms", c.DurationMs)
+	}
+	if c.RecoveryMs < 500 || c.RecoveryMs > 60000 {
+		v.Add("silence.recovery_ms", "must be between 500ms and 60000ms", c.RecoveryMs)
+	}
+	return v
+}
+
 // WebhookConfig holds webhook notification settings.
 type WebhookConfig struct {
 	URL string `json:"url"` // Webhook URL for silence alerts
 }
 
+// Validate checks webhook settings and returns field-level errors.
+func (c *WebhookConfig) Validate() *types.ValidationError {
+	v := types.NewValidationError()
+	if c.URL != "" && len(c.URL) > 2048 {
+		v.Add("notifications.webhook.url", "URL too long (max 2048 characters)", c.URL)
+	}
+	return v
+}
+
 // LogConfig holds log file notification settings.
 type LogConfig struct {
 	Path string `json:"path"` // Log file path for silence events
+}
+
+// Validate checks log settings and returns field-level errors.
+func (c *LogConfig) Validate() *types.ValidationError {
+	v := types.NewValidationError()
+	if c.Path != "" && len(c.Path) > 4096 {
+		v.Add("notifications.log.path", "path too long (max 4096 characters)", c.Path)
+	}
+	return v
 }
 
 // EmailConfig holds Microsoft Graph email notification settings.
@@ -83,6 +116,28 @@ type EmailConfig struct {
 	ClientSecret string `json:"client_secret"` // App registration client secret
 	FromAddress  string `json:"from_address"`  // Shared mailbox sender address
 	Recipients   string `json:"recipients"`    // Comma-separated recipient addresses
+}
+
+// Validate checks email settings and returns field-level errors.
+func (c *EmailConfig) Validate() *types.ValidationError {
+	v := types.NewValidationError()
+	// If any email field is set, require the essential ones
+	hasAnyField := c.TenantID != "" || c.ClientID != "" || c.FromAddress != "" || c.Recipients != ""
+	if hasAnyField {
+		if c.TenantID == "" {
+			v.Add("notifications.email.tenant_id", "required when email is configured", c.TenantID)
+		}
+		if c.ClientID == "" {
+			v.Add("notifications.email.client_id", "required when email is configured", c.ClientID)
+		}
+		if c.FromAddress == "" {
+			v.Add("notifications.email.from_address", "required when email is configured", c.FromAddress)
+		}
+		if c.Recipients == "" {
+			v.Add("notifications.email.recipients", "required when email is configured", c.Recipients)
+		}
+	}
+	return v
 }
 
 // NotificationsConfig holds all notification channel settings.

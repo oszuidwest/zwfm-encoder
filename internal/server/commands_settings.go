@@ -213,6 +213,20 @@ func sendResult(send chan<- interface{}, cmdType string, success bool, errMsg st
 	}
 }
 
+// sendValidationError sends a validation error response with field-level details.
+func sendValidationError(send chan<- interface{}, cmdType string, verr *types.ValidationError) {
+	result := map[string]interface{}{
+		"type":    cmdType + "_result",
+		"success": false,
+		"error":   verr,
+	}
+	select {
+	case send <- result:
+	default:
+		slog.Warn("failed to send validation error: channel full or closed", "type", cmdType)
+	}
+}
+
 // handleAudioUpdate handles audio/update command
 func (h *CommandHandler) handleAudioUpdate(cmd WSCommand, send chan<- interface{}) {
 	var data struct {
@@ -248,6 +262,30 @@ func (h *CommandHandler) handleSilenceUpdate(cmd WSCommand, send chan<- interfac
 		return
 	}
 
+	// Build config for validation
+	snap := h.cfg.Snapshot()
+	cfg := config.SilenceDetectionConfig{
+		ThresholdDB: snap.SilenceThreshold,
+		DurationMs:  snap.SilenceDurationMs,
+		RecoveryMs:  snap.SilenceRecoveryMs,
+	}
+	if data.ThresholdDB != nil {
+		cfg.ThresholdDB = *data.ThresholdDB
+	}
+	if data.DurationMs != nil {
+		cfg.DurationMs = *data.DurationMs
+	}
+	if data.RecoveryMs != nil {
+		cfg.RecoveryMs = *data.RecoveryMs
+	}
+
+	// Validate
+	if verr := cfg.Validate(); verr.HasErrors() {
+		sendValidationError(send, "silence/update", verr)
+		return
+	}
+
+	// Apply validated values
 	if data.ThresholdDB != nil {
 		if err := h.cfg.SetSilenceThreshold(*data.ThresholdDB); err != nil {
 			sendResult(send, "silence/update", false, err.Error(), nil)
@@ -291,6 +329,14 @@ func (h *CommandHandler) handleWebhookUpdate(cmd WSCommand, send chan<- interfac
 		sendResult(send, "notifications/webhook/update", false, err.Error(), nil)
 		return
 	}
+
+	// Validate
+	cfg := config.WebhookConfig{URL: data.URL}
+	if verr := cfg.Validate(); verr.HasErrors() {
+		sendValidationError(send, "notifications/webhook/update", verr)
+		return
+	}
+
 	if err := h.cfg.SetWebhookURL(data.URL); err != nil {
 		sendResult(send, "notifications/webhook/update", false, err.Error(), nil)
 		return
@@ -315,6 +361,14 @@ func (h *CommandHandler) handleLogUpdate(cmd WSCommand, send chan<- interface{})
 		sendResult(send, "notifications/log/update", false, err.Error(), nil)
 		return
 	}
+
+	// Validate
+	cfg := config.LogConfig{Path: data.Path}
+	if verr := cfg.Validate(); verr.HasErrors() {
+		sendValidationError(send, "notifications/log/update", verr)
+		return
+	}
+
 	if err := h.cfg.SetLogPath(data.Path); err != nil {
 		sendResult(send, "notifications/log/update", false, err.Error(), nil)
 		return
@@ -343,6 +397,19 @@ func (h *CommandHandler) handleEmailUpdate(cmd WSCommand, send chan<- interface{
 		sendResult(send, "notifications/email/update", false, err.Error(), nil)
 		return
 	}
+
+	// Validate
+	cfg := config.EmailConfig{
+		TenantID:    data.TenantID,
+		ClientID:    data.ClientID,
+		FromAddress: data.FromAddress,
+		Recipients:  data.Recipients,
+	}
+	if verr := cfg.Validate(); verr.HasErrors() {
+		sendValidationError(send, "notifications/email/update", verr)
+		return
+	}
+
 	if err := h.cfg.SetGraphConfig(data.TenantID, data.ClientID, data.ClientSecret, data.FromAddress, data.Recipients); err != nil {
 		sendResult(send, "notifications/email/update", false, err.Error(), nil)
 		return
