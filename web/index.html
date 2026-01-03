@@ -834,13 +834,13 @@
                             <div class="form" data-spaced>
                                 <div class="group">
                                     <label>Recording Control</label>
-                                    <template x-if="recorderStatuses[recorderForm.id]?.state === 'recording'">
+                                    <template x-if="recorderStatuses[recorderForm.id]?.state === 'running'">
                                         <button class="btn" data-variant="danger" type="button" tabindex="0"
                                                 @click="stopRecorder(recorderForm.id)">
                                             Stop Recording
                                         </button>
                                     </template>
-                                    <template x-if="recorderStatuses[recorderForm.id]?.state !== 'recording'">
+                                    <template x-if="recorderStatuses[recorderForm.id]?.state !== 'running'">
                                         <button class="btn" data-variant="primary" type="button" tabindex="0"
                                                 @click="startRecorder(recorderForm.id)"
                                                 :disabled="!recorderForm.enabled">

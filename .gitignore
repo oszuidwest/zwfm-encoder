@@ -8,3 +8,4 @@ config.json
 *.md
 !README.md
 !LICENSE.md
+zwfm-encoder

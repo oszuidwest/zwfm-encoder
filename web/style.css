@@ -439,8 +439,7 @@
         height: 1.25rem;
     }
 
-    .icon-btn[data-variant="edit"],
-    .icon-btn[data-variant="delete"] {
+    .icon-btn[data-variant="edit"] {
         min-width: var(--touch-target);
         min-height: var(--touch-target);
         padding: 0.25rem;
@@ -448,7 +447,6 @@
         color: var(--border-strong);
     }
 
-    .icon-btn[data-variant="delete"]:hover { color: var(--danger); }
     .icon-btn[data-variant="edit"]:hover { color: var(--brand); }
 
     .icon-btn[data-variant="close"] {

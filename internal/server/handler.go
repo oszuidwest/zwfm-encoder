@@ -155,12 +155,6 @@ func formatValidationMessage(e validator.FieldError) string {
 		return fmt.Sprintf("must be one of: %s", e.Param())
 	case "hostname":
 		return "must be a valid hostname"
-	case "hostname_port":
-		return "must be a valid host:port"
-	case "required_with":
-		return fmt.Sprintf("is required when %s is set", e.Param())
-	case "required_without":
-		return fmt.Sprintf("is required when %s is not set", e.Param())
 	default:
 		return fmt.Sprintf("failed validation '%s'", e.Tag())
 	}

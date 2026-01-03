@@ -180,7 +180,7 @@ document.addEventListener('alpine:init', () => {
         settingsDirty: false,
         formErrors: {},  // Field-level validation errors keyed by field path
 
-        graphSecretExpiry: { expires_at: '', expires_soon: false, days_left: 0, error: '' },
+        graphSecretExpiry: { expires_soon: false, days_left: 0 },
 
         version: { current: '', latest: '', updateAvail: false, commit: '', build_time: '' },
 
@@ -266,29 +266,6 @@ document.addEventListener('alpine:init', () => {
             // Global keyboard handlers - store reference for cleanup
             this._keydownHandler = (e) => this.handleGlobalKeydown(e);
             document.addEventListener('keydown', this._keydownHandler);
-        },
-
-        /**
-         * Alpine.js lifecycle hook - cleanup on component destruction.
-         * Removes event listeners and closes WebSocket to prevent memory leaks.
-         */
-        destroy() {
-            if (this._keydownHandler) {
-                document.removeEventListener('keydown', this._keydownHandler);
-                this._keydownHandler = null;
-            }
-            if (this._bannerTimeout) {
-                clearTimeout(this._bannerTimeout);
-                this._bannerTimeout = null;
-            }
-            if (this.clipTimeout) {
-                clearTimeout(this.clipTimeout);
-                this.clipTimeout = null;
-            }
-            if (this.ws) {
-                this.ws.close();
-                this.ws = null;
-            }
         },
 
         /**
@@ -585,8 +562,8 @@ document.addEventListener('alpine:init', () => {
                 this.settings.graph.clientId = msg.graph_client_id ?? '';
                 this.settings.graph.fromAddress = msg.graph_from_address ?? '';
                 this.settings.graph.recipients = msg.graph_recipients ?? '';
-                // Update secret expiry info
-                this.graphSecretExpiry = msg.graph_secret_expiry ?? { expires_at: '', expires_soon: false, days_left: 0, error: '' };
+                // Update secret expiry info (only expires_soon and days_left are used in UI)
+                this.graphSecretExpiry = msg.graph_secret_expiry ?? { expires_soon: false, days_left: 0 };
             }
 
             if (msg.version) {
@@ -780,19 +757,11 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
-         * Switches active settings tab and manages focus.
+         * Switches active settings tab.
          * @param {string} tabId - Tab identifier (audio, notifications, recording, about)
-         * @param {boolean} focusPanel - If true, focus first input in panel
          */
-        showTab(tabId, focusPanel = false) {
+        showTab(tabId) {
             this.settingsTab = tabId;
-            if (focusPanel) {
-                this.$nextTick(() => {
-                    const panel = document.getElementById(`panel-${tabId}`);
-                    const focusable = panel?.querySelector('input, select, button, [tabindex="0"]');
-                    focusable?.focus();
-                });
-            }
         },
 
         // Output management
@@ -1354,7 +1323,6 @@ document.addEventListener('alpine:init', () => {
             return {
                 time: date.toLocaleString(),
                 event: eventText,
-                eventType: isStart ? 'silence' : isEnd ? 'recovery' : 'test',
                 stateClass,
                 threshold: `${entry.threshold_db.toFixed(0)} dB`,
                 levels

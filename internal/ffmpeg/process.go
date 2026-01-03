@@ -15,7 +15,6 @@ import (
 // Process holds FFmpeg process state.
 type Process struct {
 	Cmd    *exec.Cmd
-	Ctx    context.Context
 	Cancel context.CancelFunc
 	Stdin  io.WriteCloser
 	Stderr *bytes.Buffer
@@ -55,7 +54,6 @@ func StartProcess(ffmpegPath string, args []string) (*Process, error) {
 
 	return &Process{
 		Cmd:    cmd,
-		Ctx:    ctx,
 		Cancel: cancel,
 		Stdin:  stdinPipe,
 		Stderr: &stderr,

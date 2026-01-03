@@ -521,7 +521,6 @@ func (c *Config) SetRecordingAPIKey(key string) error {
 // Snapshot is a point-in-time copy of configuration values.
 type Snapshot struct {
 	// System
-	FFmpegPath  string
 	WebPort     int
 	WebUser     string
 	WebPassword string
@@ -564,7 +563,6 @@ func (c *Config) Snapshot() Snapshot {
 
 	return Snapshot{
 		// System
-		FFmpegPath:  c.System.FFmpegPath,
 		WebPort:     c.System.Port,
 		WebUser:     c.System.Username,
 		WebPassword: c.System.Password,
