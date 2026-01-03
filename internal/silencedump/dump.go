@@ -132,13 +132,8 @@ func (c *Capturer) OnSilenceStart() {
 		c.extractAndEncode()
 	}
 
-	// Save "before" audio immediately to prevent loss during long silences.
-	// This snapshot is taken now, guaranteeing we have the pre-silence context
-	// even if silence lasts longer than the ring buffer can hold.
-	beforeBytes := int64(beforeSeconds * bytesPerSecond)
-	if c.totalWritten < beforeBytes {
-		beforeBytes = c.totalWritten
-	}
+	// Snapshot pre-silence audio to prevent loss during long silences
+	beforeBytes := min(c.totalWritten, int64(beforeSeconds*bytesPerSecond))
 	if beforeBytes > 0 {
 		c.savedBefore = make([]byte, beforeBytes)
 		c.copyFromRing(c.savedBefore, c.totalWritten-beforeBytes)
@@ -199,17 +194,8 @@ func (c *Capturer) checkAndFinalize() {
 // Must be called with lock held. The lock is held during buffer extraction
 // to ensure data consistency (prevent WriteAudio from overwriting data we need).
 func (c *Capturer) extractAndEncode() {
-	// Cap silence duration at maxSilenceSeconds
-	silenceBytes := c.silenceEndPos - c.silenceStartPos
-	if silenceBytes < 0 {
-		silenceBytes = 0 // No recovery yet (early finalization during ongoing silence)
-	}
-	maxSilenceBytes := int64(maxSilenceSeconds * bytesPerSecond)
-	if silenceBytes > maxSilenceBytes {
-		silenceBytes = maxSilenceBytes
-	}
-
-	// Calculate "after" bytes (0 if no recovery yet)
+	// Calculate section sizes (silence capped at maxSilenceSeconds)
+	silenceBytes := min(max(0, c.silenceEndPos-c.silenceStartPos), int64(maxSilenceSeconds*bytesPerSecond))
 	afterBytes := int64(0)
 	if c.silenceEndPos > 0 {
 		afterBytes = int64(afterSeconds * bytesPerSecond)
@@ -217,21 +203,10 @@ func (c *Capturer) extractAndEncode() {
 
 	// Build PCM: savedBefore (guaranteed intact) + silence (capped) + after
 	beforeLen := int64(len(c.savedBefore))
-	totalBytes := beforeLen + silenceBytes + afterBytes
-	pcm := make([]byte, totalBytes)
-
-	// Copy "before" from saved snapshot (never lost, even for long silences)
+	pcm := make([]byte, beforeLen+silenceBytes+afterBytes)
 	copy(pcm, c.savedBefore)
-
-	// Copy silence section from ring buffer (capped at maxSilenceSeconds)
-	if silenceBytes > 0 {
-		c.copyFromRing(pcm[beforeLen:beforeLen+silenceBytes], c.silenceStartPos)
-	}
-
-	// Copy "after" section from ring buffer
-	if afterBytes > 0 {
-		c.copyFromRing(pcm[beforeLen+silenceBytes:], c.silenceEndPos)
-	}
+	c.copyFromRing(pcm[beforeLen:beforeLen+silenceBytes], c.silenceStartPos)
+	c.copyFromRing(pcm[beforeLen+silenceBytes:], c.silenceEndPos)
 
 	// Capture all values needed for encoding before releasing lock
 	silenceStart := c.silenceStart
