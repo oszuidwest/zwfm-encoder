@@ -122,6 +122,12 @@ func (c *Capturer) OnSilenceStart() {
 		return
 	}
 
+	// If already capturing with recovery detected, finalize current dump first.
+	// This prevents losing silence1 when silence2 starts before 15s post-recovery completes.
+	if c.capturing && c.silenceEndPos > 0 {
+		c.extractAndEncode()
+	}
+
 	c.silenceStartPos = c.totalWritten
 	c.silenceStart = time.Now()
 	c.silenceEndPos = 0
