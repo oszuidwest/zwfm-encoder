@@ -280,13 +280,6 @@ func (c *Config) applyDefaults() {
 	}
 }
 
-// Save writes the configuration to file.
-func (c *Config) Save() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.saveLocked()
-}
-
 // saveLocked persists configuration. Caller must hold c.mu.
 func (c *Config) saveLocked() error {
 	data, err := json.MarshalIndent(c, "", "  ")

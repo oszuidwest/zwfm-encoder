@@ -276,11 +276,6 @@ func ParseRotationMode(s string) (RotationMode, error) {
 	}
 }
 
-// IsValid returns true if the rotation mode is valid.
-func (r RotationMode) IsValid() bool {
-	return r >= RotationHourly && r <= RotationOnDemand
-}
-
 // StorageMode determines where recordings are saved.
 type StorageMode int
 
@@ -338,11 +333,6 @@ func ParseStorageMode(s string) (StorageMode, error) {
 	default:
 		return StorageLocal, fmt.Errorf("unknown storage mode: %s", s)
 	}
-}
-
-// IsValid returns true if the storage mode is valid.
-func (s StorageMode) IsValid() bool {
-	return s >= StorageLocal && s <= StorageBoth
 }
 
 // DefaultRetentionDays is the default number of days to keep recordings.

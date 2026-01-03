@@ -698,7 +698,7 @@ document.addEventListener('alpine:init', () => {
                 'output-form': 'output-form-view'
             };
             const viewId = viewIds[this.view] || 'settings-view';
-            const saveBtn = document.querySelector(`#${viewId} .nav-btn[data-action="save"]`);
+            const saveBtn = document.querySelector(`#${viewId} .nav-btn[data-variant="save"]`);
             if (saveBtn) {
                 saveBtn.dataset.saved = 'true';
                 setTimeout(() => {
@@ -1361,18 +1361,6 @@ document.addEventListener('alpine:init', () => {
                 this._bannerTimeout = null;
             }
             this.banner.visible = false;
-        },
-
-        /**
-         * Formats duration in human-readable format.
-         * @param {number} seconds - Duration in seconds
-         * @returns {string} Formatted duration (e.g., "1m 6s" or "45s")
-         */
-        formatDuration(seconds) {
-            if (seconds < 60) return `${Math.round(seconds)}s`;
-            const mins = Math.floor(seconds / 60);
-            const secs = Math.round(seconds % 60);
-            return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
         },
 
         /**
