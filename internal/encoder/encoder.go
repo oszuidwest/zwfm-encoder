@@ -335,11 +335,6 @@ func (e *Encoder) StopOutput(outputID string) error {
 	return e.outputManager.Stop(outputID)
 }
 
-// ClearOutputError clears the error state for an output.
-func (e *Encoder) ClearOutputError(outputID string) {
-	e.outputManager.ClearError(outputID)
-}
-
 // TriggerTestEmail sends a test email to verify Microsoft Graph configuration.
 func (e *Encoder) TriggerTestEmail() error {
 	cfg := e.config.Snapshot()
@@ -646,9 +641,4 @@ func (e *Encoder) StartRecorder(id string) error {
 // StopRecorder stops a specific recorder.
 func (e *Encoder) StopRecorder(id string) error {
 	return e.recordingManager.StopRecorder(id)
-}
-
-// ClearRecorderError clears the error state for a recorder.
-func (e *Encoder) ClearRecorderError(id string) error {
-	return e.recordingManager.ClearRecorderError(id)
 }

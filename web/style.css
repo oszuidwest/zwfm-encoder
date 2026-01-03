@@ -94,9 +94,6 @@
         --tab-text: var(--neutral-600);
         --tab-text-hover: var(--neutral-800);
 
-        /* Log entries */
-        --log-silence-text: var(--warning-text);
-
         /* Typography */
         --font-mono: 'SF Mono', Monaco, 'Courier New', monospace;
         --text-2xs: 0.5625rem;
@@ -183,7 +180,6 @@
             --tabs-bg: var(--neutral-700);
             --tab-text: var(--neutral-300);
             --tab-text-hover: var(--neutral-100);
-            --log-silence-text: var(--warning);
         }
 
         select {
@@ -225,17 +221,17 @@
     }
 
     input.field-error, select.field-error {
-        border-color: var(--state-danger);
+        border-color: var(--danger);
         border-width: 2px;
     }
 
     input.field-error:focus, select.field-error:focus {
-        border-color: var(--state-danger);
+        border-color: var(--danger);
     }
 
     .error-text {
         display: block;
-        color: var(--state-danger);
+        color: var(--danger);
         font-size: 0.75rem;
         margin-top: var(--space-1);
     }

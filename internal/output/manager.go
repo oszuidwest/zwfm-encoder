@@ -292,27 +292,6 @@ func (m *Manager) SetError(outputID, errMsg string) {
 	}
 }
 
-// ClearError clears the error and transitions to stopped state.
-func (m *Manager) ClearError(outputID string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	proc, exists := m.processes[outputID]
-	if !exists {
-		slog.Warn("clear_output_error: output not found", "output_id", outputID)
-		return
-	}
-	if proc.state != types.ProcessError {
-		slog.Warn("clear_output_error: output not in error state", "output_id", outputID, "state", proc.state)
-		return
-	}
-	proc.lastError = ""
-	proc.state = types.ProcessStopped
-	proc.retryCount = 0
-	if proc.backoff != nil {
-		proc.backoff.Reset()
-	}
-}
-
 // IncrementRetry increments the retry count for an output.
 func (m *Manager) IncrementRetry(outputID string) {
 	m.mu.Lock()

@@ -33,7 +33,6 @@ type GenericRecorder struct {
 
 	// FFmpeg process
 	cmd    *exec.Cmd
-	ctx    context.Context
 	cancel context.CancelFunc
 	stdin  io.WriteCloser
 	stderr *bytes.Buffer
@@ -321,20 +320,6 @@ func (r *GenericRecorder) IsRecording() bool {
 	return r.state == types.ProcessRunning
 }
 
-// ClearError clears the error state for the recorder.
-func (r *GenericRecorder) ClearError() error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if r.state != types.ProcessError {
-		return nil // Not in error state, nothing to clear
-	}
-
-	r.state = types.ProcessStopped
-	r.lastError = ""
-	return nil
-}
-
 // UpdateConfig updates the recorder configuration.
 func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 	r.mu.Lock()
@@ -418,7 +403,6 @@ func (r *GenericRecorder) startEncoderLocked() error {
 	}
 
 	r.cmd = proc.Cmd
-	r.ctx = proc.Ctx
 	r.cancel = proc.Cancel
 	r.stdin = proc.Stdin
 	r.stderr = proc.Stderr

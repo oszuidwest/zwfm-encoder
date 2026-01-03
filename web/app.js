@@ -1030,9 +1030,7 @@ document.addEventListener('alpine:init', () => {
 
             return {
                 stateClass,
-                statusText,
-                uptimeMs: status.uptime_ms || 0,
-                isRecording: status.state === 'running' || status.state === 'rotating'
+                statusText
             };
         },
 

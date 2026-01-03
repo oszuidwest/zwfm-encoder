@@ -153,19 +153,6 @@ func (m *Manager) StopRecorder(id string) error {
 	return recorder.Stop()
 }
 
-// ClearRecorderError clears the error state for a recorder.
-func (m *Manager) ClearRecorderError(id string) error {
-	m.mu.RLock()
-	recorder, exists := m.recorders[id]
-	m.mu.RUnlock()
-
-	if !exists {
-		return fmt.Errorf("recorder not found: %s", id)
-	}
-
-	return recorder.ClearError()
-}
-
 // Start marks the manager as running and starts auto-start recorders.
 func (m *Manager) Start() error {
 	m.mu.Lock()
