@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"sync"
-	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
@@ -14,6 +13,8 @@ import (
 )
 
 // SilenceNotifier manages notifications for silence detection events.
+// Audio dump capture is handled by silencedump.Manager; this notifier
+// receives dump results via OnDumpReady callback.
 type SilenceNotifier struct {
 	cfg *config.Config
 
@@ -27,9 +28,6 @@ type SilenceNotifier struct {
 
 	// Cached Graph client for email notifications
 	graphClient *GraphClient
-
-	// Silence dump capture
-	dumpCapturer *silencedump.Capturer
 
 	// Pending recovery data (stored when recovery detected, used when dump is ready)
 	pendingRecovery *pendingRecoveryData
@@ -52,27 +50,12 @@ type recoveryFlags struct {
 }
 
 // NewSilenceNotifier returns a SilenceNotifier configured with the given config.
-func NewSilenceNotifier(cfg *config.Config, ffmpegPath string) *SilenceNotifier {
-	n := &SilenceNotifier{cfg: cfg}
-
-	// Create dump capturer with callback
-	n.dumpCapturer = silencedump.NewCapturer(ffmpegPath, n.onDumpReady)
-
-	return n
+func NewSilenceNotifier(cfg *config.Config) *SilenceNotifier {
+	return &SilenceNotifier{cfg: cfg}
 }
 
-// WriteAudio feeds PCM audio data to the dump capturer.
-func (n *SilenceNotifier) WriteAudio(pcm []byte) {
-	if n.dumpCapturer != nil {
-		n.dumpCapturer.WriteAudio(pcm)
-	}
-}
-
-// ResetCapturer resets the dump capturer state.
-func (n *SilenceNotifier) ResetCapturer() {
-	if n.dumpCapturer != nil {
-		n.dumpCapturer.Reset()
-	}
+// ResetPendingRecovery clears any pending recovery notification state.
+func (n *SilenceNotifier) ResetPendingRecovery() {
 	n.mu.Lock()
 	n.pendingRecovery = nil
 	n.mu.Unlock()
@@ -103,21 +86,14 @@ func (n *SilenceNotifier) getOrCreateGraphClient(cfg *GraphConfig) (*GraphClient
 }
 
 // HandleEvent processes a silence event and triggers notifications.
+// Note: Silence dump capture is handled separately by silencedump.Manager.
 func (n *SilenceNotifier) HandleEvent(event audio.SilenceEvent) {
 	if event.JustEntered {
 		n.handleSilenceStart(event.CurrentLevelL, event.CurrentLevelR)
-		// Start dump capture
-		if n.dumpCapturer != nil {
-			n.dumpCapturer.OnSilenceStart()
-		}
 	}
 
 	if event.JustRecovered {
 		n.handleSilenceEnd(event.TotalDurationMs, event.CurrentLevelL, event.CurrentLevelR)
-		// Trigger dump recovery (dump will be finalized after 15 more seconds)
-		if n.dumpCapturer != nil {
-			n.dumpCapturer.OnSilenceRecover(time.Duration(event.TotalDurationMs) * time.Millisecond)
-		}
 	}
 }
 
@@ -274,8 +250,9 @@ func (n *SilenceNotifier) logSilenceStart(cfg config.Snapshot, levelL, levelR fl
 	)
 }
 
-// onDumpReady is called when a silence dump has been encoded.
-func (n *SilenceNotifier) onDumpReady(result *silencedump.EncodeResult) {
+// OnDumpReady is called by silencedump.Manager when a dump has been encoded.
+// This triggers the recovery notifications with the audio dump attached.
+func (n *SilenceNotifier) OnDumpReady(result *silencedump.EncodeResult) {
 	n.mu.Lock()
 	pending := n.pendingRecovery
 	n.pendingRecovery = nil

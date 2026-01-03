@@ -19,6 +19,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/notify"
 	"github.com/oszuidwest/zwfm-encoder/internal/output"
 	"github.com/oszuidwest/zwfm-encoder/internal/recording"
+	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
@@ -47,6 +48,7 @@ type Encoder struct {
 	ffmpegPath          string
 	outputManager       *output.Manager
 	recordingManager    *recording.Manager
+	silenceDumpManager  *silencedump.Manager
 	sourceCmd           *exec.Cmd
 	sourceCancel        context.CancelFunc
 	sourceStdout        io.ReadCloser
@@ -69,14 +71,21 @@ type Encoder struct {
 func New(cfg *config.Config, ffmpegPath string) *Encoder {
 	graphCfg := cfg.GraphConfig()
 
+	// Create notifier first (no dependencies)
+	notifier := notify.NewSilenceNotifier(cfg)
+
+	// Create dump manager with callback to notifier
+	dumpManager := silencedump.NewManager(ffmpegPath, notifier.OnDumpReady)
+
 	return &Encoder{
 		config:              cfg,
 		ffmpegPath:          ffmpegPath,
 		outputManager:       output.NewManager(ffmpegPath),
+		silenceDumpManager:  dumpManager,
 		state:               types.StateStopped,
 		backoff:             util.NewBackoff(types.InitialRetryDelay, types.MaxRetryDelay),
 		silenceDetect:       audio.NewSilenceDetector(),
-		silenceNotifier:     notify.NewSilenceNotifier(cfg, ffmpegPath),
+		silenceNotifier:     notifier,
 		peakHolder:          audio.NewPeakHolder(),
 		secretExpiryChecker: notify.NewSecretExpiryChecker(&graphCfg),
 	}
@@ -282,10 +291,15 @@ func (e *Encoder) Stop() error {
 		errs = append(errs, fmt.Errorf("source shutdown timeout"))
 	}
 
-	// Reset silence detection and dump capture state
+	// Reset silence detection and notification state
 	e.silenceDetect.Reset()
 	e.silenceNotifier.Reset()
-	e.silenceNotifier.ResetCapturer()
+	e.silenceNotifier.ResetPendingRecovery()
+
+	// Stop silence dump manager
+	if e.silenceDumpManager != nil {
+		e.silenceDumpManager.Stop()
+	}
 
 	e.mu.Lock()
 	e.state = types.StateStopped
@@ -515,6 +529,11 @@ func (e *Encoder) runSource() (string, error) {
 
 // startEnabledOutputs starts the audio distributor and all enabled output processes.
 func (e *Encoder) startEnabledOutputs() {
+	// Start silence dump manager (cleanup scheduler)
+	if e.silenceDumpManager != nil {
+		e.silenceDumpManager.Start()
+	}
+
 	go e.runDistributor()
 
 	for _, out := range e.config.ConfiguredOutputs() {
@@ -540,6 +559,7 @@ func (e *Encoder) runDistributor() {
 	distributor := NewDistributor(
 		e.silenceDetect,
 		e.silenceNotifier,
+		e.silenceDumpManager,
 		e.peakHolder,
 		e.config,
 		e.updateAudioLevels,
@@ -570,8 +590,10 @@ func (e *Encoder) runDistributor() {
 			continue
 		}
 
-		// Feed audio to silence dump capturer
-		e.silenceNotifier.WriteAudio(buf[:n])
+		// Feed audio to silence dump manager
+		if e.silenceDumpManager != nil {
+			e.silenceDumpManager.WriteAudio(buf[:n])
+		}
 
 		distributor.ProcessSamples(buf, n)
 
