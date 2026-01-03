@@ -11,11 +11,8 @@ import (
 
 // Validation limits for output configuration.
 const (
-	MaxHostLength     = 253  // RFC 1035 hostname limit
-	MaxStreamIDLength = 256  // SRT stream ID limit
-	MaxOutputs        = 10   // Maximum concurrent outputs
-	MaxRetriesLimit   = 9999 // Upper bound for retry configuration
-	MaxLogEntries     = 100  // Maximum silence log entries to return
+	MaxOutputs    = 10  // Maximum concurrent outputs
+	MaxLogEntries = 100 // Maximum silence log entries to return
 )
 
 // WSCommand is a command received from a WebSocket client.
@@ -69,10 +66,6 @@ func (h *CommandHandler) Handle(cmd WSCommand, send chan<- any, triggerStatusUpd
 		h.handleNotifications(action, subaction, cmd, send)
 	case "recording":
 		h.handleRecording(action, cmd, send)
-	case "config":
-		h.handleConfig(action, send)
-	case "status":
-		h.handleStatus(action, send)
 	default:
 		slog.Warn("unknown WebSocket command", "type", cmd.Type)
 	}
@@ -91,8 +84,6 @@ func (h *CommandHandler) handleOutputs(action string, cmd WSCommand, send chan<-
 		h.handleDeleteOutput(cmd, send)
 	case "update":
 		h.handleUpdateOutput(cmd, send)
-	case "clear-error":
-		h.handleClearOutputError(cmd, send)
 	default:
 		slog.Warn("unknown outputs action", "action", action)
 	}
@@ -111,8 +102,6 @@ func (h *CommandHandler) handleRecorders(action string, cmd WSCommand, send chan
 		h.handleStartRecorder(cmd, send)
 	case "stop":
 		h.handleStopRecorder(cmd, send)
-	case "clear-error":
-		h.handleClearRecorderError(cmd, send)
 	case "test-s3":
 		h.handleTestRecorderS3(cmd, send)
 	default:
@@ -125,8 +114,6 @@ func (h *CommandHandler) handleAudio(action string, cmd WSCommand, send chan<- a
 	switch action {
 	case "update":
 		h.handleAudioUpdate(cmd, send)
-	case "get":
-		h.handleAudioGet(send)
 	default:
 		slog.Warn("unknown audio action", "action", action)
 	}
@@ -137,8 +124,6 @@ func (h *CommandHandler) handleSilence(action string, cmd WSCommand, send chan<-
 	switch action {
 	case "update":
 		h.handleSilenceUpdate(cmd, send)
-	case "get":
-		h.handleSilenceGet(send)
 	default:
 		slog.Warn("unknown silence action", "action", action)
 	}
@@ -153,8 +138,6 @@ func (h *CommandHandler) handleNotifications(action, subaction string, cmd WSCom
 			h.handleWebhookUpdate(cmd, send)
 		case "test":
 			h.handleTest(send, "test_webhook")
-		case "get":
-			h.handleWebhookGet(send)
 		default:
 			slog.Warn("unknown webhook action", "subaction", subaction)
 		}
@@ -166,8 +149,6 @@ func (h *CommandHandler) handleNotifications(action, subaction string, cmd WSCom
 			h.handleTest(send, "test_log")
 		case "view":
 			h.handleViewSilenceLog(send)
-		case "get":
-			h.handleLogGet(send)
 		default:
 			slog.Warn("unknown log action", "subaction", subaction)
 		}
@@ -177,8 +158,6 @@ func (h *CommandHandler) handleNotifications(action, subaction string, cmd WSCom
 			h.handleEmailUpdate(cmd, send)
 		case "test":
 			h.handleTest(send, "test_email")
-		case "get":
-			h.handleEmailGet(send)
 		default:
 			slog.Warn("unknown email action", "subaction", subaction)
 		}
@@ -192,30 +171,7 @@ func (h *CommandHandler) handleRecording(action string, cmd WSCommand, send chan
 	switch action {
 	case "regenerate-key":
 		h.handleRegenerateAPIKey(send)
-	case "get":
-		h.handleRecordingGet(send)
 	default:
 		slog.Warn("unknown recording action", "action", action)
-	}
-}
-
-// handleConfig routes config/* commands
-func (h *CommandHandler) handleConfig(action string, send chan<- any) {
-	switch action {
-	case "get":
-		h.handleConfigGet(send)
-	default:
-		slog.Warn("unknown config action", "action", action)
-	}
-}
-
-// handleStatus routes status/* commands
-func (h *CommandHandler) handleStatus(action string, send chan<- any) {
-	switch action {
-	case "get":
-		// Status is sent automatically, but explicit get triggers immediate update
-		slog.Debug("status/get received, status update will be triggered")
-	default:
-		slog.Warn("unknown status action", "action", action)
 	}
 }

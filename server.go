@@ -125,8 +125,8 @@ func (s *Server) runWebSocketReader(conn server.WebSocketConn, send chan<- any, 
 
 // runWebSocketEventLoop handles periodic status and level updates.
 func (s *Server) runWebSocketEventLoop(send chan any, done, statusUpdate <-chan struct{}) {
-	levelsTicker := time.NewTicker(10000 * time.Millisecond) // TEMP: 1 per 10s for debugging
-	statusTicker := time.NewTicker(3000 * time.Millisecond)  // Status updates every 3s
+	levelsTicker := time.NewTicker(100 * time.Millisecond)  // 10 fps for VU meters
+	statusTicker := time.NewTicker(3000 * time.Millisecond) // Status updates every 3s
 	defer levelsTicker.Stop()
 	defer statusTicker.Stop()
 

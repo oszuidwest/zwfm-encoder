@@ -168,19 +168,6 @@ func (h *CommandHandler) handleUpdateOutput(cmd WSCommand, send chan<- any) {
 	})
 }
 
-// handleClearOutputError processes an outputs/clear-error command.
-func (h *CommandHandler) handleClearOutputError(cmd WSCommand, send chan<- any) {
-	if cmd.ID == "" {
-		slog.Warn("outputs/clear-error: no ID provided")
-		SendEntityResult(send, "output", "clear_error", "", false, "no ID provided")
-		return
-	}
-
-	slog.Info("outputs/clear-error: clearing error", "output_id", cmd.ID)
-	h.encoder.ClearOutputError(cmd.ID)
-	SendEntityResult(send, "output", "clear_error", cmd.ID, true, "")
-}
-
 // outputNeedsRestart reports whether an output needs restart after configuration changes.
 func outputNeedsRestart(existing, updated *types.Output) bool {
 	return existing.Host != updated.Host ||
@@ -210,4 +197,3 @@ func (h *CommandHandler) restartOutput(outputID string) {
 		}
 	}()
 }
-

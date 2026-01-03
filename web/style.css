@@ -359,24 +359,6 @@
         text-align: center;
     }
 
-    .empty-state[data-variant="error"] { color: var(--danger); }
-
-    /* List item base */
-    .list-item {
-        border-bottom: 1px solid var(--border-default);
-    }
-
-    .list-item:last-child {
-        border-bottom: none;
-    }
-
-    .list-item[data-hover]:hover {
-        background: var(--surface-elevated);
-    }
-
-    /* Animate pulse */
-    .animate-pulse { animation: pulse 2s infinite; }
-
     /* Focus rings */
     :where(.btn, .icon-btn, .nav-btn, .add-btn, .mode-btn, .tab, .segmented-btn):focus-visible {
         outline: 2px solid var(--brand);
@@ -612,27 +594,7 @@
         margin-top: 1rem;
     }
 
-    /* Flexbox utilities - DRY: replaces 12+ repeated patterns */
-    .flex-center {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .flex-between {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-    }
-
-    /* Surface utilities - DRY: replaces 4+ repeated card patterns */
-    .surface-card {
-        background: var(--surface-card);
-        border-radius: var(--radius-lg);
-        box-shadow: var(--shadow-sm);
-    }
-
-    /* Typography utilities - DRY: replaces 9+ repeated font-mono patterns */
+    /* Typography utilities */
     .font-mono {
         font-family: var(--font-mono);
     }
@@ -1189,31 +1151,6 @@
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: var(--space-5);
-        }
-
-        .checkbox {
-            display: flex;
-            align-items: center;
-            gap: var(--space-3);
-            font-size: var(--text-base);
-            font-weight: 500;
-            color: var(--text-primary);
-            cursor: pointer;
-        }
-
-        .checkbox input[type="checkbox"] {
-            width: 1.125rem;
-            height: 1.125rem;
-            accent-color: var(--brand);
-            cursor: pointer;
-        }
-
-        .checkbox[data-prominent] {
-            padding: var(--space-6);
-            background: var(--surface-elevated);
-            border-radius: var(--radius-lg);
-            font-size: var(--text-md);
-            font-weight: 600;
         }
 
         .toggle {

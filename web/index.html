@@ -7,13 +7,14 @@
   Built with Alpine.js for reactive state management.
 
   Views:
-    - Dashboard: Live VU meter, encoder status, output management
+    - Dashboard: Live VU meter, encoder status, output/recorder management
     - Settings: Audio input, silence detection, notifications, about info
-    - Add Output: Form for creating new stream outputs
+    - Output Form: Add/edit stream outputs
+    - Recorder Form: Add/edit audio recorders
 
   State Management:
     - Alpine.js component: encoderApp() defined in app.js
-    - View switching via 'view' property: 'dashboard' | 'settings' | 'add-output'
+    - View switching via 'view' property
     - WebSocket at /ws for real-time updates
 
   File Dependencies:

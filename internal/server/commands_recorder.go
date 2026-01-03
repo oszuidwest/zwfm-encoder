@@ -177,24 +177,6 @@ func (h *CommandHandler) handleStopRecorder(cmd WSCommand, send chan<- any) {
 	SendEntityResult(send, "recorder", "stop", cmd.ID, true, "")
 }
 
-// handleClearRecorderError processes a recorders/clear-error command.
-func (h *CommandHandler) handleClearRecorderError(cmd WSCommand, send chan<- any) {
-	if cmd.ID == "" {
-		slog.Warn("recorders/clear-error: no ID provided")
-		SendEntityResult(send, "recorder", "clear_error", "", false, "no ID provided")
-		return
-	}
-
-	if err := h.encoder.ClearRecorderError(cmd.ID); err != nil {
-		slog.Error("recorders/clear-error: failed to clear", "error", err)
-		SendEntityResult(send, "recorder", "clear_error", cmd.ID, false, err.Error())
-		return
-	}
-
-	slog.Info("recorders/clear-error: cleared error", "id", cmd.ID)
-	SendEntityResult(send, "recorder", "clear_error", cmd.ID, true, "")
-}
-
 // handleTestRecorderS3 processes a recorders/test-s3 command.
 func (h *CommandHandler) handleTestRecorderS3(cmd WSCommand, send chan<- any) {
 	HandleCommand(h, cmd, send, func(req *S3TestRequest) error {

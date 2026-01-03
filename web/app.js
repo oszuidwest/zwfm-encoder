@@ -7,19 +7,19 @@
  * Architecture:
  *   - Single Alpine.js component (encoderApp) manages all UI state
  *   - WebSocket connection at /ws for bidirectional communication
- *   - Three views: dashboard (monitoring), settings (config), add-output (form)
+ *   - Views: dashboard, settings, output-form, recorder-form
  *
  * WebSocket Message Types (incoming):
- *   - levels: Audio RMS/peak levels, ~4 updates per second
- *   - status: Encoder state, outputs, devices, settings (every 3s)
- *   - test_result: Unified notification test result with test_type field
+ *   - levels: Audio RMS/peak levels for VU meters
+ *   - status: Encoder state, outputs, recorders, devices, settings (every 3s)
+ *   - test_result: Notification test result with test_type field
  *
  * WebSocket Commands (outgoing):
- *   - start/stop: Control encoder
  *   - audio/update, silence/update: Update audio/silence settings
- *   - notifications/webhook/update, notifications/email/update: Update notification settings
+ *   - notifications/*/update, notifications/*/test: Notification config and tests
  *   - outputs/add, outputs/delete, outputs/update: Manage stream outputs
- *   - notifications/webhook/test, notifications/email/test: Trigger notification tests
+ *   - recorders/add, recorders/delete, recorders/update: Manage recorders
+ *   - recorders/start, recorders/stop: Control on-demand recorders
  *
  * Dependencies:
  *   - Alpine.js 3.x (loaded before this script)
@@ -379,8 +379,6 @@ document.addEventListener('alpine:init', () => {
                     this.handleLevels(msg.levels);
                 } else if (msg.type === 'status') {
                     this.handleStatus(msg);
-                } else if (msg.type === 'config') {
-                    this.handleConfig(msg);
                 } else if (msg.type === 'test_result') {
                     this.handleTestResult(msg);
                 } else if (msg.type === 'silence_log_result') {
@@ -614,49 +612,6 @@ document.addEventListener('alpine:init', () => {
                 if (!recorder || recorder.created_at !== this.deletingRecorders[id]) {
                     delete this.deletingRecorders[id];
                 }
-            }
-        },
-
-        /**
-         * Handles config/get response from backend.
-         * Updates settings state with full configuration.
-         * Only applied when not in settings view to prevent overwriting edits.
-         *
-         * @param {Object} msg - Config message with config object
-         */
-        handleConfig(msg) {
-            if (this.view === 'settings' || !msg.config) return;
-
-            const cfg = msg.config;
-
-            // Map config blocks to settings state
-            if (cfg.audio) {
-                this.settings.audioInput = cfg.audio.input || '';
-            }
-            if (cfg.silence_detection) {
-                this.settings.silenceThreshold = cfg.silence_detection.threshold_db ?? -40;
-                this.settings.silenceDuration = msToSeconds(cfg.silence_detection.duration_ms ?? 15000);
-                this.settings.silenceRecovery = msToSeconds(cfg.silence_detection.recovery_ms ?? 5000);
-            }
-            if (cfg.notifications) {
-                if (cfg.notifications.webhook) {
-                    this.settings.silenceWebhook = cfg.notifications.webhook.url || '';
-                }
-                if (cfg.notifications.log) {
-                    this.settings.silenceLogPath = cfg.notifications.log.path || '';
-                }
-                if (cfg.notifications.email) {
-                    this.settings.graph.tenantId = cfg.notifications.email.tenant_id || '';
-                    this.settings.graph.clientId = cfg.notifications.email.client_id || '';
-                    this.settings.graph.fromAddress = cfg.notifications.email.from_address || '';
-                    this.settings.graph.recipients = cfg.notifications.email.recipients || '';
-                }
-            }
-            if (cfg.recording) {
-                this.settings.recordingApiKey = cfg.recording.api_key || '';
-            }
-            if (cfg.system) {
-                this.settings.platform = cfg.system.platform || '';
             }
         },
 
