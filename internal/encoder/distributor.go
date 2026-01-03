@@ -9,10 +9,10 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-// AudioLevelCallback is a function type for receiving audio level updates.
+// AudioLevelCallback is called with calculated audio metrics.
 type AudioLevelCallback func(metrics *types.AudioMetrics)
 
-// Distributor fans out PCM audio data to outputs and calculates audio levels.
+// Distributor distributes PCM audio to multiple outputs.
 type Distributor struct {
 	levelData       *audio.LevelData
 	silenceDetect   *audio.SilenceDetector
@@ -22,7 +22,7 @@ type Distributor struct {
 	callback        AudioLevelCallback
 }
 
-// NewDistributor creates a new audio distributor with the given configuration and callback.
+// NewDistributor returns a new Distributor.
 func NewDistributor(silenceDetect *audio.SilenceDetector, silenceNotifier *notify.SilenceNotifier, peakHolder *audio.PeakHolder, cfg *config.Config, callback AudioLevelCallback) *Distributor {
 	return &Distributor{
 		levelData:       &audio.LevelData{},
@@ -34,7 +34,7 @@ func NewDistributor(silenceDetect *audio.SilenceDetector, silenceNotifier *notif
 	}
 }
 
-// ProcessSamples analyzes audio samples and returns updated metrics.
+// ProcessSamples processes audio data and reports level metrics.
 func (d *Distributor) ProcessSamples(buf []byte, n int) {
 	audio.ProcessSamples(buf, n, d.levelData)
 

@@ -73,7 +73,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	// Create buffered send channel for thread-safe writes.
 	// Only the writer goroutine writes to the connection, preventing race conditions.
-	send := make(chan interface{}, 16)
+	send := make(chan any, 16)
 	done := make(chan struct{})
 	statusUpdate := make(chan struct{}, 1)
 
@@ -87,7 +87,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 // runWebSocketWriter writes messages from the send channel to the connection.
-func (s *Server) runWebSocketWriter(conn server.WebSocketConn, send <-chan interface{}) {
+func (s *Server) runWebSocketWriter(conn server.WebSocketConn, send <-chan any) {
 	defer func() {
 		if err := conn.Close(); err != nil {
 			slog.Debug("WebSocket close error", "error", err)
@@ -101,7 +101,7 @@ func (s *Server) runWebSocketWriter(conn server.WebSocketConn, send <-chan inter
 }
 
 // runWebSocketReader reads commands from the connection and dispatches them.
-func (s *Server) runWebSocketReader(conn server.WebSocketConn, send chan<- interface{}, done, statusUpdate chan<- struct{}) {
+func (s *Server) runWebSocketReader(conn server.WebSocketConn, send chan<- any, done, statusUpdate chan<- struct{}) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("panic in WebSocket reader", "panic", r)
@@ -124,14 +124,14 @@ func (s *Server) runWebSocketReader(conn server.WebSocketConn, send chan<- inter
 }
 
 // runWebSocketEventLoop handles periodic status and level updates.
-func (s *Server) runWebSocketEventLoop(send chan interface{}, done, statusUpdate <-chan struct{}) {
-	levelsTicker := time.NewTicker(100 * time.Millisecond)  // 10 fps for VU meter
+func (s *Server) runWebSocketEventLoop(send chan any, done, statusUpdate <-chan struct{}) {
+	levelsTicker := time.NewTicker(100 * time.Millisecond)  // 10 fps for VU meters
 	statusTicker := time.NewTicker(3000 * time.Millisecond) // Status updates every 3s
 	defer levelsTicker.Stop()
 	defer statusTicker.Stop()
 
 	// trySend attempts to send a message, returning false if done is closed
-	trySend := func(msg interface{}) bool {
+	trySend := func(msg any) bool {
 		select {
 		case send <- msg:
 			return true
@@ -170,7 +170,7 @@ func (s *Server) runWebSocketEventLoop(send chan interface{}, done, statusUpdate
 	}
 }
 
-// buildWSStatus creates a WebSocket status response with current state.
+// buildWSStatus returns the current WebSocket status response.
 func (s *Server) buildWSStatus() types.WSStatusResponse {
 	cfg := s.config.Snapshot()
 	status := s.encoder.Status()
@@ -229,7 +229,7 @@ func (s *Server) SetupRoutes() http.Handler {
 	return securityHeaders(mux)
 }
 
-// securityHeaders returns middleware that adds security headers to responses.
+// securityHeaders returns middleware that wraps handlers with security headers.
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Frame-Options", "DENY")
@@ -311,7 +311,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleLogout handles logout by clearing the session and redirecting.
+// handleLogout handles user logout requests.
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	s.sessions.Logout(w, r)
 	http.Redirect(w, r, "/login", http.StatusFound)
@@ -378,7 +378,7 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-// apiKeyAuth returns middleware that validates API key authentication.
+// apiKeyAuth returns middleware for API key authentication.
 func (s *Server) apiKeyAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		apiKey := s.config.GetRecordingAPIKey()
@@ -462,7 +462,7 @@ func (s *Server) handleStopRecording(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Start begins listening and serving HTTP requests on the configured port.
+// Start begins the HTTP server.
 // Returns an *http.Server that can be used for graceful shutdown.
 func (s *Server) Start() *http.Server {
 	addr := fmt.Sprintf(":%d", s.config.Snapshot().WebPort)

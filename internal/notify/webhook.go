@@ -44,7 +44,7 @@ func SendRecoveryWebhook(webhookURL string, silenceDurationMs int64, levelL, lev
 	})
 }
 
-// SendTestWebhook verifies webhook configuration by sending a test notification.
+// SendTestWebhook sends a test webhook notification.
 func SendTestWebhook(webhookURL, stationName string) error {
 	if webhookURL == "" {
 		return fmt.Errorf("webhook URL not configured")

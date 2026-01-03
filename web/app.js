@@ -7,18 +7,19 @@
  * Architecture:
  *   - Single Alpine.js component (encoderApp) manages all UI state
  *   - WebSocket connection at /ws for bidirectional communication
- *   - Three views: dashboard (monitoring), settings (config), add-output (form)
+ *   - Views: dashboard, settings, output-form, recorder-form
  *
  * WebSocket Message Types (incoming):
- *   - levels: Audio RMS/peak levels, ~4 updates per second
- *   - status: Encoder state, outputs, devices, settings (every 3s)
- *   - test_result: Unified notification test result with test_type field
+ *   - levels: Audio RMS/peak levels for VU meters
+ *   - status: Encoder state, outputs, recorders, devices, settings (every 3s)
+ *   - test_result: Notification test result with test_type field
  *
  * WebSocket Commands (outgoing):
- *   - start/stop: Control encoder
- *   - update_settings: Persist configuration changes
- *   - add_output/delete_output: Manage stream outputs
- *   - test_<type>: Trigger notification test (webhook, log, email)
+ *   - audio/update, silence/update: Update audio/silence settings
+ *   - notifications/{type}/update, notifications/{type}/test: Notification config and tests
+ *   - outputs/add, outputs/delete, outputs/update: Manage stream outputs
+ *   - recorders/add, recorders/delete, recorders/update: Manage recorders
+ *   - recorders/start, recorders/stop: Control on-demand recorders
  *
  * Dependencies:
  *   - Alpine.js 3.x (loaded before this script)
@@ -34,29 +35,8 @@ const DB_RANGE = 60;              // dB range (0 to -60)
 const CLIP_TIMEOUT_MS = 1500;     // Peak hold / clip indicator timeout
 const WS_RECONNECT_MS = 1000;     // WebSocket reconnection delay
 const TEST_FEEDBACK_MS = 2000;    // Test result display duration
-const API_KEY_LENGTH = 32;        // Length of generated API keys
-const API_KEY_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 
-/**
- * Generates a cryptographically secure API key.
- * Uses Web Crypto API for secure random generation.
- * @returns {string} 32-character alphanumeric key
- */
-const generateApiKey = () => {
-    const array = new Uint8Array(API_KEY_LENGTH);
-    crypto.getRandomValues(array);
-    return Array.from(array, byte => API_KEY_CHARS[byte % API_KEY_CHARS.length]).join('');
-};
-
-/**
- * Formats milliseconds to human-readable smart units.
- * - <1000ms: shows as "XXXms"
- * - <60000ms: shows as "Xs" or "X.Xs"
- * - >=60000ms: shows as "Xm Ys"
- *
- * @param {number} ms - Duration in milliseconds
- * @returns {string} Formatted duration
- */
+/** Formats milliseconds to human-readable smart units (ms/s/m). */
 const formatSmartDuration = (ms) => {
     if (ms < 1000) return `${Math.round(ms)}ms`;
     if (ms < 60000) {
@@ -68,33 +48,16 @@ const formatSmartDuration = (ms) => {
     return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
 };
 
-/**
- * Converts milliseconds to seconds for UI display/input.
- * @param {number} ms - Duration in milliseconds
- * @returns {number} Duration in seconds
- */
 const msToSeconds = (ms) => ms / 1000;
-
-/**
- * Converts seconds to milliseconds for storage.
- * @param {number} sec - Duration in seconds
- * @returns {number} Duration in milliseconds
- */
 const secondsToMs = (sec) => Math.round(sec * 1000);
 
-/**
- * Converts decibel value to percentage for VU meter display.
- * Maps -60dB to 0% and 0dB to 100%.
- *
- * @param {number} db - Decibel value (typically -60 to 0)
- * @returns {number} Percentage value (0-100), clamped to valid range
- */
+/** Converts dB (-60 to 0) to percentage (0-100) for VU meter display. */
 window.dbToPercent = (db) => Math.max(0, Math.min(100, (db - DB_MINIMUM) / DB_RANGE * 100));
 
 const DEFAULT_OUTPUT = {
     host: '',
     port: 8080,
-    streamid: '',
+    stream_id: '',
     password: '',
     codec: 'wav',
     max_retries: 99
@@ -122,13 +85,6 @@ const DEFAULT_LEVELS = {
     silence_level: null
 };
 
-/**
- * Creates a deep clone of an object using JSON serialization.
- * Safe for plain objects without functions, undefined, or circular refs.
- *
- * @param {Object} obj - Object to clone
- * @returns {Object} Deep copy of the object
- */
 const deepClone = (obj) => JSON.parse(JSON.stringify(obj));
 
 document.addEventListener('alpine:init', () => {
@@ -163,7 +119,7 @@ document.addEventListener('alpine:init', () => {
         outputStatuses: {},
         previousOutputStatuses: {},
         deletingOutputs: {},
-        connectingAnimations: {},  // Track output connection animations reactively
+        connectingAnimations: {},
 
         recorders: [],
         recorderStatuses: {},
@@ -190,10 +146,11 @@ document.addEventListener('alpine:init', () => {
         },
         originalSettings: null,
         settingsDirty: false,
+        formErrors: {},
 
-        graphSecretExpiry: { expires_at: '', expires_soon: false, days_left: 0, error: '' },
+        graphSecretExpiry: { expires_soon: false, days_left: 0 },
 
-        version: { current: '', latest: '', updateAvail: false, commit: '', build_time: '' },
+        version: { current: '', latest: '', update_available: false, commit: '', build_time: '' },
 
         ffmpegAvailable: true, // Assume available until we get status
 
@@ -216,12 +173,10 @@ document.addEventListener('alpine:init', () => {
         banner: {
             visible: false,
             message: '',
-            type: 'info', // info, warning, danger
-            persistent: false
+            type: 'info' // info, warning, danger
         },
 
         ws: null,
-        _keydownHandler: null,
         _bannerTimeout: null,
 
         // Computed properties
@@ -262,54 +217,18 @@ document.addEventListener('alpine:init', () => {
             if (needsS3) {
                 if (!this.recorderForm.s3_bucket?.trim()) return false;
                 if (!this.recorderForm.s3_access_key_id?.trim()) return false;
+                // Secret only required for new recorders; edit mode keeps existing secret
                 if (!this.isRecorderEditMode && !this.recorderForm.s3_secret_access_key) return false;
             }
             return true;
         },
 
-        // Lifecycle
-        /**
-         * Alpine.js lifecycle hook - initializes WebSocket connection.
-         * Called automatically when component mounts.
-         */
         init() {
             this.connectWebSocket();
-            // Global keyboard handlers - store reference for cleanup
-            this._keydownHandler = (e) => this.handleGlobalKeydown(e);
-            document.addEventListener('keydown', this._keydownHandler);
+            document.addEventListener('keydown', (e) => this.handleGlobalKeydown(e));
         },
 
-        /**
-         * Alpine.js lifecycle hook - cleanup on component destruction.
-         * Removes event listeners and closes WebSocket to prevent memory leaks.
-         */
-        destroy() {
-            if (this._keydownHandler) {
-                document.removeEventListener('keydown', this._keydownHandler);
-                this._keydownHandler = null;
-            }
-            if (this._bannerTimeout) {
-                clearTimeout(this._bannerTimeout);
-                this._bannerTimeout = null;
-            }
-            if (this.clipTimeout) {
-                clearTimeout(this.clipTimeout);
-                this.clipTimeout = null;
-            }
-            if (this.ws) {
-                this.ws.close();
-                this.ws = null;
-            }
-        },
-
-        /**
-         * Handles global keyboard events for navigation and actions.
-         * - Escape: Close settings/add-output views, close silence log modal
-         * - Enter: Save settings when on settings view (if dirty)
-         * - Arrow keys: Navigate between settings tabs
-         *
-         * @param {KeyboardEvent} event - The keyboard event
-         */
+        /** Global keyboard: Escape closes views, Enter saves, arrows navigate tabs. */
         handleGlobalKeydown(event) {
             // Don't handle if user is typing in an input field
             const isInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName);
@@ -369,11 +288,7 @@ document.addEventListener('alpine:init', () => {
             });
         },
 
-        /**
-         * Establishes WebSocket connection to backend.
-         * Handles incoming messages by type and auto-reconnects on close.
-         * Reconnection uses WS_RECONNECT_MS delay to prevent rapid retries.
-         */
+        // Establishes WebSocket connection with auto-reconnect
         connectWebSocket() {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
             this.ws = new WebSocket(`${protocol}//${location.host}/ws`);
@@ -400,6 +315,15 @@ document.addEventListener('alpine:init', () => {
                     this.handleRecorderResult(msg);
                 } else if (msg.type === 'output_result') {
                     this.handleOutputResult(msg);
+                } else if (msg.type === 'recording/regenerate-key_result') {
+                    if (msg.success && msg.data?.api_key) {
+                        this.settings.recordingApiKey = msg.data.api_key;
+                        this.showBanner('API key regenerated successfully', 'info');
+                    } else if (!msg.success) {
+                        this.showBanner(`Failed to regenerate API key: ${msg.error}`, 'danger');
+                    }
+                } else if (msg.type.endsWith('_result')) {
+                    this.handleCommandResult(msg);
                 }
             };
 
@@ -417,8 +341,8 @@ document.addEventListener('alpine:init', () => {
         /**
          * Sends command to backend via WebSocket.
          *
-         * @param {string} type - Command type (start, stop, update_settings, etc.)
-         * @param {string} [id] - Optional output ID for output-specific commands
+         * @param {string} type - Command type (start, stop, outputs/add, silence/update, etc.)
+         * @param {string} [id] - Optional entity ID for entity-specific commands
          * @param {Object} [data] - Optional payload data
          */
         send(type, id, data) {
@@ -561,6 +485,7 @@ document.addEventListener('alpine:init', () => {
             this.previousOutputStatuses = deepClone(newOutputStatuses);
             this.outputStatuses = newOutputStatuses;
 
+            // Clean up deleting state using created_at to handle ID reuse after delete
             for (const id in this.deletingOutputs) {
                 const output = this.outputs.find(o => o.id === id);
                 if (!output || output.created_at !== this.deletingOutputs[id]) {
@@ -592,15 +517,15 @@ document.addEventListener('alpine:init', () => {
                 this.settings.graph.clientId = msg.graph_client_id ?? '';
                 this.settings.graph.fromAddress = msg.graph_from_address ?? '';
                 this.settings.graph.recipients = msg.graph_recipients ?? '';
-                // Update secret expiry info
-                this.graphSecretExpiry = msg.graph_secret_expiry ?? { expires_at: '', expires_soon: false, days_left: 0, error: '' };
+                // Update secret expiry info (only expires_soon and days_left are used in UI)
+                this.graphSecretExpiry = msg.graph_secret_expiry ?? { expires_soon: false, days_left: 0 };
             }
 
             if (msg.version) {
-                const wasUpdateAvail = this.version.updateAvail;
+                const wasUpdateAvail = this.version.update_available;
                 this.version = msg.version;
                 // Show banner once when update becomes available
-                if (msg.version.updateAvail && !wasUpdateAvail) {
+                if (msg.version.update_available && !wasUpdateAvail) {
                     this.showBanner(`Update available: ${msg.version.latest}`, 'info', false);
                 }
             }
@@ -642,25 +567,20 @@ document.addEventListener('alpine:init', () => {
         },
 
         // Navigation
-        /**
-         * Returns to dashboard view and clears settings state.
-         */
         showDashboard() {
             this.view = 'dashboard';
             this.settingsDirty = false;
             this.originalSettings = null;
         },
 
-        /**
-         * Shows success state on save button, then navigates to dashboard.
-         */
+        // Shows save success animation via data-saved attribute, then navigates to dashboard
         saveAndClose() {
             const viewIds = {
                 'settings': 'settings-view',
                 'output-form': 'output-form-view'
             };
             const viewId = viewIds[this.view] || 'settings-view';
-            const saveBtn = document.querySelector(`#${viewId} .nav-btn[data-action="save"]`);
+            const saveBtn = document.querySelector(`#${viewId} .nav-btn[data-variant="save"]`);
             if (saveBtn) {
                 saveBtn.dataset.saved = 'true';
                 setTimeout(() => {
@@ -691,6 +611,31 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
+         * Clears all form errors.
+         */
+        clearFormErrors() {
+            this.formErrors = {};
+        },
+
+        /**
+         * Checks if a field has an error.
+         * @param {string} field - Field path (e.g., 'silence.threshold_db')
+         * @returns {boolean} True if field has error
+         */
+        hasFieldError(field) {
+            return !!this.formErrors[field];
+        },
+
+        /**
+         * Gets error message for a field.
+         * @param {string} field - Field path
+         * @returns {string} Error message or empty string
+         */
+        getFieldError(field) {
+            return this.formErrors[field] || '';
+        },
+
+        /**
          * Reverts settings to snapshot taken when entering settings view.
          * Returns to dashboard without saving changes.
          */
@@ -703,30 +648,40 @@ document.addEventListener('alpine:init', () => {
 
         /**
          * Persists all settings to backend via WebSocket.
-         * Builds payload with all current values, only including password
-         * if it was modified (non-empty). Resets dirty state on send.
+         * Sends separate commands for each settings category.
+         * Resets dirty state on send.
          */
         saveSettings() {
-            const update = {
-                silence_threshold: this.settings.silenceThreshold,
-                silence_duration: this.settings.silenceDuration,
-                silence_recovery: this.settings.silenceRecovery,
-                silence_webhook: this.settings.silenceWebhook,
-                silence_log_path: this.settings.silenceLogPath,
-                graph_tenant_id: this.settings.graph.tenantId,
-                graph_client_id: this.settings.graph.clientId,
-                graph_from_address: this.settings.graph.fromAddress,
-                graph_recipients: this.settings.graph.recipients
+            // Silence detection settings
+            this.send('silence/update', null, {
+                threshold_db: this.settings.silenceThreshold,
+                duration_ms: secondsToMs(this.settings.silenceDuration),
+                recovery_ms: secondsToMs(this.settings.silenceRecovery)
+            });
+
+            // Webhook notification settings
+            this.send('notifications/webhook/update', null, {
+                url: this.settings.silenceWebhook
+            });
+
+            // Log notification settings
+            this.send('notifications/log/update', null, {
+                path: this.settings.silenceLogPath
+            });
+
+            // Email notification settings (Microsoft Graph)
+            const emailUpdate = {
+                tenant_id: this.settings.graph.tenantId,
+                client_id: this.settings.graph.clientId,
+                from_address: this.settings.graph.fromAddress,
+                recipients: this.settings.graph.recipients
             };
             // Only include client secret if it was changed
             if (this.settings.graph.clientSecret) {
-                update.graph_client_secret = this.settings.graph.clientSecret;
+                emailUpdate.client_secret = this.settings.graph.clientSecret;
             }
-            // Only include API key if it changed from original
-            if (this.settings.recordingApiKey !== this.originalSettings?.recordingApiKey) {
-                update.recording_api_key = this.settings.recordingApiKey;
-            }
-            this.send('update_settings', null, update);
+            this.send('notifications/email/update', null, emailUpdate);
+
             this.saveAndClose();
         },
 
@@ -738,7 +693,7 @@ document.addEventListener('alpine:init', () => {
                     id: output.id,
                     host: output.host,
                     port: output.port,
-                    streamid: output.streamid || '',
+                    stream_id: output.stream_id || '',
                     password: '',
                     codec: output.codec || 'wav',
                     max_retries: output.max_retries || 99,
@@ -751,20 +706,8 @@ document.addEventListener('alpine:init', () => {
             this.view = 'output-form';
         },
 
-        /**
-         * Switches active settings tab and manages focus.
-         * @param {string} tabId - Tab identifier (audio, notifications, recording, about)
-         * @param {boolean} focusPanel - If true, focus first input in panel
-         */
-        showTab(tabId, focusPanel = false) {
+        showTab(tabId) {
             this.settingsTab = tabId;
-            if (focusPanel) {
-                this.$nextTick(() => {
-                    const panel = document.getElementById(`panel-${tabId}`);
-                    const focusable = panel?.querySelector('input, select, button, [tabindex="0"]');
-                    focusable?.focus();
-                });
-            }
         },
 
         // Output management
@@ -774,7 +717,7 @@ document.addEventListener('alpine:init', () => {
             const data = {
                 host: this.outputForm.host.trim(),
                 port: this.outputForm.port,
-                streamid: this.outputForm.streamid.trim() || 'studio',
+                stream_id: this.outputForm.stream_id.trim() || 'studio',
                 codec: this.outputForm.codec,
                 max_retries: this.outputForm.max_retries
             };
@@ -785,9 +728,9 @@ document.addEventListener('alpine:init', () => {
 
             if (this.isEditMode) {
                 data.enabled = this.outputForm.enabled;
-                this.send('update_output', this.outputForm.id, data);
+                this.send('outputs/update', this.outputForm.id, data);
             } else {
-                this.send('add_output', null, data);
+                this.send('outputs/add', null, data);
             }
             this.saveAndClose();
         },
@@ -801,7 +744,7 @@ document.addEventListener('alpine:init', () => {
             if (!confirm('Delete this output? This action cannot be undone.')) return;
             const output = this.outputs.find(o => o.id === id);
             if (output) this.deletingOutputs[id] = output.created_at;
-            this.send('delete_output', id, null);
+            this.send('outputs/delete', id, null);
             if (returnToDashboard) this.showDashboard();
         },
 
@@ -903,9 +846,9 @@ document.addEventListener('alpine:init', () => {
             }
 
             if (this.isRecorderEditMode) {
-                this.send('update_recorder', this.recorderForm.id, data);
+                this.send('recorders/update', this.recorderForm.id, data);
             } else {
-                this.send('add_recorder', null, data);
+                this.send('recorders/add', null, data);
             }
             // Navigation handled by handleRecorderResult on success
         },
@@ -919,7 +862,7 @@ document.addEventListener('alpine:init', () => {
             if (!confirm('Delete this recorder? This action cannot be undone.')) return;
             const recorder = this.recorders.find(r => r.id === id);
             if (recorder) this.deletingRecorders[id] = recorder.created_at;
-            this.send('delete_recorder', id, null);
+            this.send('recorders/delete', id, null);
             if (returnToDashboard) this.showDashboard();
         },
 
@@ -928,7 +871,7 @@ document.addEventListener('alpine:init', () => {
          * @param {string} id - Recorder ID
          */
         startRecorder(id) {
-            this.send('start_recorder', id, null);
+            this.send('recorders/start', id, null);
         },
 
         /**
@@ -936,7 +879,7 @@ document.addEventListener('alpine:init', () => {
          * @param {string} id - Recorder ID
          */
         stopRecorder(id) {
-            this.send('stop_recorder', id, null);
+            this.send('recorders/stop', id, null);
         },
 
         /**
@@ -944,7 +887,7 @@ document.addEventListener('alpine:init', () => {
          */
         testRecorderS3() {
             this.testStates.recorderS3 = { pending: true, text: 'Testing...' };
-            this.send('test_recorder_s3', null, {
+            this.send('recorders/test-s3', null, {
                 s3_endpoint: this.recorderForm.s3_endpoint,
                 s3_bucket: this.recorderForm.s3_bucket,
                 s3_access_key_id: this.recorderForm.s3_access_key_id,
@@ -1002,9 +945,7 @@ document.addEventListener('alpine:init', () => {
 
             return {
                 stateClass,
-                statusText,
-                uptimeMs: status.uptime_ms || 0,
-                isRecording: status.state === 'running' || status.state === 'rotating'
+                statusText
             };
         },
 
@@ -1078,18 +1019,11 @@ document.addEventListener('alpine:init', () => {
             };
         },
 
-        /**
-         * Toggles VU meter display mode between peak and RMS.
-         */
         toggleVuMode() {
             this.vuMode = this.vuMode === 'peak' ? 'rms' : 'peak';
             localStorage.setItem('vuMode', this.vuMode);
         },
 
-        /**
-         * Resets VU meter to default zero state.
-         * Called when encoder stops or on initialization.
-         */
         resetVuMeter() {
             this.levels = { ...DEFAULT_LEVELS };
         },
@@ -1104,7 +1038,7 @@ document.addEventListener('alpine:init', () => {
             if (!this.testStates[type]) return;
             this.testStates[type].pending = true;
             this.testStates[type].text = 'Testing...';
-            this.send(`test_${type}`, null, null);
+            this.send(`notifications/${type}/test`, null, null);
         },
 
         /**
@@ -1160,14 +1094,41 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
+         * Handles command result messages (slash-style API responses).
+         * Extracts field-level errors and displays them on the form.
+         * @param {Object} msg - Result with type, success, error, data
+         */
+        handleCommandResult(msg) {
+            // Clear previous errors on success
+            if (msg.success) {
+                this.clearFormErrors();
+                return;
+            }
+
+            // Handle validation errors with field-level detail
+            if (msg.error?.errors) {
+                this.clearFormErrors();
+                for (const fieldError of msg.error.errors) {
+                    this.formErrors[fieldError.field] = fieldError.message;
+                }
+                // Show first error in banner
+                const firstError = msg.error.errors[0];
+                if (firstError) {
+                    this.showBanner(firstError.message, 'danger', false);
+                }
+            } else if (msg.error) {
+                // Simple error string
+                this.showBanner(msg.error, 'danger', false);
+            }
+        },
+
+        /**
          * Regenerates the API key for recording endpoints.
-         * Generates key client-side and marks settings dirty.
-         * Key is persisted when user clicks Save.
+         * Calls backend to generate and persist new key.
          */
         regenerateApiKey() {
-            if (!confirm('Regenerate API key? Click Save to apply. Existing integrations will need to be updated.')) return;
-            this.settings.recordingApiKey = generateApiKey();
-            this.markSettingsDirty();
+            if (!confirm('Regenerate API key? Existing integrations will need to be updated.')) return;
+            this.send('recording/regenerate-key');
         },
 
         /**
@@ -1208,7 +1169,7 @@ document.addEventListener('alpine:init', () => {
             this.silenceLogModal.loading = true;
             this.silenceLogModal.entries = [];
             this.silenceLogModal.error = '';
-            this.send('view_silence_log', null, null);
+            this.send('notifications/log/view', null, null);
         },
 
         handleSilenceLogClose() {
@@ -1217,7 +1178,7 @@ document.addEventListener('alpine:init', () => {
 
         handleSilenceLogRefresh() {
             this.silenceLogModal.loading = true;
-            this.send('view_silence_log', null, null);
+            this.send('notifications/log/view', null, null);
         },
 
         /**
@@ -1233,7 +1194,7 @@ document.addEventListener('alpine:init', () => {
                 clearTimeout(this._bannerTimeout);
                 this._bannerTimeout = null;
             }
-            this.banner = { visible: true, message, type, persistent };
+            this.banner = { visible: true, message, type };
             if (!persistent) {
                 this._bannerTimeout = setTimeout(() => this.hideBanner(), 10000);
             }
@@ -1245,18 +1206,6 @@ document.addEventListener('alpine:init', () => {
                 this._bannerTimeout = null;
             }
             this.banner.visible = false;
-        },
-
-        /**
-         * Formats duration in human-readable format.
-         * @param {number} seconds - Duration in seconds
-         * @returns {string} Formatted duration (e.g., "1m 6s" or "45s")
-         */
-        formatDuration(seconds) {
-            if (seconds < 60) return `${Math.round(seconds)}s`;
-            const mins = Math.floor(seconds / 60);
-            const secs = Math.round(seconds % 60);
-            return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
         },
 
         /**
@@ -1297,7 +1246,6 @@ document.addEventListener('alpine:init', () => {
             return {
                 time: date.toLocaleString(),
                 event: eventText,
-                eventType: isStart ? 'silence' : isEnd ? 'recovery' : 'test',
                 stateClass,
                 threshold: `${entry.threshold_db.toFixed(0)} dB`,
                 levels

@@ -15,7 +15,6 @@ type Manager struct {
 	mu sync.RWMutex
 
 	recorders          map[string]*GenericRecorder
-	apiKey             string
 	tempDir            string
 	ffmpegPath         string
 	maxDurationMinutes int  // Global max duration for on-demand recorders
@@ -26,7 +25,7 @@ type Manager struct {
 }
 
 // NewManager creates a new recording manager.
-func NewManager(ffmpegPath, apiKey, tempDir string, maxDurationMinutes int) (*Manager, error) {
+func NewManager(ffmpegPath, tempDir string, maxDurationMinutes int) (*Manager, error) {
 	if tempDir == "" {
 		tempDir = DefaultTempDir
 	}
@@ -38,7 +37,6 @@ func NewManager(ffmpegPath, apiKey, tempDir string, maxDurationMinutes int) (*Ma
 
 	return &Manager{
 		recorders:          make(map[string]*GenericRecorder),
-		apiKey:             apiKey,
 		tempDir:            tempDir,
 		ffmpegPath:         ffmpegPath,
 		maxDurationMinutes: maxDurationMinutes,
@@ -109,7 +107,7 @@ func (m *Manager) UpdateRecorder(cfg *types.Recorder) error {
 	return recorder.UpdateConfig(cfg)
 }
 
-// StartRecorder starts a specific on-demand recorder via API.
+// StartRecorder starts an on-demand recorder.
 func (m *Manager) StartRecorder(id string) error {
 	m.mu.RLock()
 	recorder, exists := m.recorders[id]
@@ -132,7 +130,7 @@ func (m *Manager) StartRecorder(id string) error {
 	return recorder.Start()
 }
 
-// StopRecorder stops a specific on-demand recorder via API.
+// StopRecorder stops an on-demand recorder.
 func (m *Manager) StopRecorder(id string) error {
 	m.mu.RLock()
 	recorder, exists := m.recorders[id]
@@ -155,20 +153,7 @@ func (m *Manager) StopRecorder(id string) error {
 	return recorder.Stop()
 }
 
-// ClearRecorderError clears the error state for a recorder.
-func (m *Manager) ClearRecorderError(id string) error {
-	m.mu.RLock()
-	recorder, exists := m.recorders[id]
-	m.mu.RUnlock()
-
-	if !exists {
-		return fmt.Errorf("recorder not found: %s", id)
-	}
-
-	return recorder.ClearError()
-}
-
-// Start marks the manager as running and starts auto-start recorders.
+// Start begins recorder management.
 func (m *Manager) Start() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -195,7 +180,7 @@ func (m *Manager) Start() error {
 	return nil
 }
 
-// Stop stops all recorders and marks manager as not running.
+// Stop terminates all recorders.
 func (m *Manager) Stop() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -252,21 +237,7 @@ func (m *Manager) AllStatuses() map[string]types.ProcessStatus {
 	return statuses
 }
 
-// APIKey returns the configured API key.
-func (m *Manager) APIKey() string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.apiKey
-}
-
-// SetAPIKey updates the API key.
-func (m *Manager) SetAPIKey(key string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.apiKey = key
-}
-
-// startHourlyRetryScheduler starts a goroutine that retries failed hourly recorders at hour boundaries.
+// startHourlyRetryScheduler retries failed hourly recorders.
 func (m *Manager) startHourlyRetryScheduler() {
 	go func() {
 		for {

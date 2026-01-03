@@ -41,7 +41,7 @@ var ErrOutputDisabled = errors.New("output is disabled")
 // ErrOutputNotFound indicates the output was not found.
 var ErrOutputNotFound = errors.New("output not found")
 
-// Encoder manages audio capture and distribution to multiple streaming outputs.
+// Encoder is the audio capture and distribution engine.
 type Encoder struct {
 	config              *config.Config
 	ffmpegPath          string
@@ -82,15 +82,14 @@ func New(cfg *config.Config, ffmpegPath string) *Encoder {
 	}
 }
 
-// InitRecording initializes the recording manager.
+// InitRecording prepares the recording manager for use.
 func (e *Encoder) InitRecording() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	snap := e.config.Snapshot()
-	apiKey := e.config.GetRecordingAPIKey()
 
-	mgr, err := recording.NewManager(e.ffmpegPath, apiKey, "", snap.RecordingMaxDurationMinutes)
+	mgr, err := recording.NewManager(e.ffmpegPath, "", snap.RecordingMaxDurationMinutes)
 	if err != nil {
 		return fmt.Errorf("create recording manager: %w", err)
 	}
@@ -199,7 +198,7 @@ func (e *Encoder) AllOutputStatuses(outputs []types.Output) map[string]types.Pro
 	return result
 }
 
-// Start begins audio capture and all output processes.
+// Start starts audio capture and output processes.
 func (e *Encoder) Start() error {
 	if e.config.AudioInput() == "" {
 		return ErrNoAudioInput
@@ -225,7 +224,7 @@ func (e *Encoder) Start() error {
 	return nil
 }
 
-// Stop stops all processes with graceful shutdown.
+// Stop shuts down all processes.
 func (e *Encoder) Stop() error {
 	e.mu.Lock()
 
@@ -292,7 +291,7 @@ func (e *Encoder) Stop() error {
 	return errors.Join(errs...)
 }
 
-// Restart performs a full encoder restart cycle.
+// Restart restarts the encoder.
 func (e *Encoder) Restart() error {
 	if err := e.Stop(); err != nil {
 		return fmt.Errorf("stop: %w", err)
@@ -301,7 +300,7 @@ func (e *Encoder) Restart() error {
 	return e.Start()
 }
 
-// StartOutput starts an individual output FFmpeg process.
+// StartOutput initiates an output process.
 func (e *Encoder) StartOutput(outputID string) error {
 	var stopChan chan struct{}
 
@@ -331,17 +330,12 @@ func (e *Encoder) StartOutput(outputID string) error {
 	return nil
 }
 
-// StopOutput stops an output by ID.
+// StopOutput terminates the output with the given ID.
 func (e *Encoder) StopOutput(outputID string) error {
 	return e.outputManager.Stop(outputID)
 }
 
-// ClearOutputError clears the error state for an output.
-func (e *Encoder) ClearOutputError(outputID string) {
-	e.outputManager.ClearError(outputID)
-}
-
-// TriggerTestEmail sends a test email to verify Microsoft Graph configuration.
+// TriggerTestEmail sends a test email.
 func (e *Encoder) TriggerTestEmail() error {
 	cfg := e.config.Snapshot()
 	return notify.SendTestEmail(notify.BuildGraphConfig(cfg), cfg.StationName)
@@ -355,7 +349,7 @@ func (e *Encoder) GraphSecretExpiry() types.SecretExpiryInfo {
 	return e.secretExpiryChecker.GetInfo()
 }
 
-// UpdateGraphConfig notifies the encoder of Graph configuration changes.
+// UpdateGraphConfig updates the Graph configuration.
 func (e *Encoder) UpdateGraphConfig() {
 	// Invalidate cached Graph client in silence notifier
 	if e.silenceNotifier != nil {
@@ -369,20 +363,20 @@ func (e *Encoder) UpdateGraphConfig() {
 	}
 }
 
-// UpdateSilenceConfig applies new silence detection settings immediately.
+// UpdateSilenceConfig updates the silence detection settings.
 func (e *Encoder) UpdateSilenceConfig() {
 	if e.silenceDetect != nil {
 		e.silenceDetect.Reset()
 	}
 }
 
-// TriggerTestWebhook sends a test webhook to verify configuration.
+// TriggerTestWebhook sends a test webhook.
 func (e *Encoder) TriggerTestWebhook() error {
 	cfg := e.config.Snapshot()
 	return notify.SendTestWebhook(cfg.WebhookURL, cfg.StationName)
 }
 
-// TriggerTestLog writes a test entry to verify log file configuration.
+// TriggerTestLog writes a test log entry.
 func (e *Encoder) TriggerTestLog() error {
 	return notify.WriteTestLog(e.config.Snapshot().LogPath)
 }
@@ -615,7 +609,7 @@ func (e *Encoder) pollUntil(condition func() bool) <-chan struct{} {
 	return done
 }
 
-// AddRecorder adds a new recorder and saves to config.
+// AddRecorder creates a new recorder.
 func (e *Encoder) AddRecorder(cfg *types.Recorder) error {
 	if err := e.config.AddRecorder(cfg); err != nil {
 		return err
@@ -623,7 +617,7 @@ func (e *Encoder) AddRecorder(cfg *types.Recorder) error {
 	return e.recordingManager.AddRecorder(cfg)
 }
 
-// RemoveRecorder removes a recorder and saves to config.
+// RemoveRecorder deletes a recorder.
 func (e *Encoder) RemoveRecorder(id string) error {
 	if err := e.recordingManager.RemoveRecorder(id); err != nil {
 		slog.Warn("error removing recorder from manager", "id", id, "error", err)
@@ -631,7 +625,7 @@ func (e *Encoder) RemoveRecorder(id string) error {
 	return e.config.RemoveRecorder(id)
 }
 
-// UpdateRecorder updates a recorder configuration.
+// UpdateRecorder modifies a recorder configuration.
 func (e *Encoder) UpdateRecorder(cfg *types.Recorder) error {
 	if err := e.config.UpdateRecorder(cfg); err != nil {
 		return err
@@ -639,17 +633,12 @@ func (e *Encoder) UpdateRecorder(cfg *types.Recorder) error {
 	return e.recordingManager.UpdateRecorder(cfg)
 }
 
-// StartRecorder starts a specific recorder.
+// StartRecorder initiates a recorder.
 func (e *Encoder) StartRecorder(id string) error {
 	return e.recordingManager.StartRecorder(id)
 }
 
-// StopRecorder stops a specific recorder.
+// StopRecorder terminates a recorder.
 func (e *Encoder) StopRecorder(id string) error {
 	return e.recordingManager.StopRecorder(id)
-}
-
-// ClearRecorderError clears the error state for a recorder.
-func (e *Encoder) ClearRecorderError(id string) error {
-	return e.recordingManager.ClearRecorderError(id)
 }

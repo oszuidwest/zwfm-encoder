@@ -1,7 +1,9 @@
 // Package types provides shared type definitions used across the encoder.
 package types
 
-import "time"
+import (
+	"time"
+)
 
 // EncoderState represents the current state of the encoder.
 type EncoderState string
@@ -44,8 +46,6 @@ type ProcessStatus struct {
 	Exhausted  bool         `json:"exhausted,omitempty"`   // Outputs: max retries reached
 	RetryCount int          `json:"retry_count,omitempty"` // Outputs: current retry attempt
 	MaxRetries int          `json:"max_retries,omitempty"` // Outputs: max allowed retries
-	UptimeMs   int64        `json:"uptime_ms,omitempty"`   // Time since process started
-	PID        int          `json:"pid,omitempty"`         // Process ID for debugging
 	Error      string       `json:"error,omitempty"`       // Error message
 }
 
@@ -77,22 +77,33 @@ const (
 	Channels = 2
 )
 
+// Codec represents an audio codec type.
+type Codec string
+
+// Supported audio codecs.
+const (
+	CodecWAV Codec = "wav" // Uncompressed PCM in Matroska container
+	CodecMP3 Codec = "mp3" // MPEG Audio Layer III
+	CodecMP2 Codec = "mp2" // MPEG Audio Layer II
+	CodecOGG Codec = "ogg" // Ogg Vorbis
+)
+
 // Output represents a single SRT output destination.
 type Output struct {
-	ID         string `json:"id"`                    // Unique identifier
-	Enabled    *bool  `json:"enabled,omitempty"`     // Whether output is active (nil defaults to true)
-	Host       string `json:"host"`                  // SRT server hostname
-	Port       int    `json:"port"`                  // SRT server port
-	Password   string `json:"password"`              // SRT encryption passphrase
-	StreamID   string `json:"streamid"`              // SRT stream identifier
-	Codec      string `json:"codec"`                 // Audio codec (mp2, mp3, ogg, wav)
-	MaxRetries int    `json:"max_retries,omitempty"` // Maximum retry attempts
-	CreatedAt  int64  `json:"created_at"`            // Unix timestamp of creation
+	ID         string `json:"id"`          // Unique identifier
+	Enabled    bool   `json:"enabled"`     // Whether output is active
+	Host       string `json:"host"`        // SRT server hostname
+	Port       int    `json:"port"`        // SRT server port
+	Password   string `json:"password"`    // SRT encryption passphrase
+	StreamID   string `json:"stream_id"`   // SRT stream identifier
+	Codec      Codec  `json:"codec"`       // Audio codec (mp2, mp3, ogg, wav)
+	MaxRetries int    `json:"max_retries"` // Maximum retry attempts (0 = no retries)
+	CreatedAt  int64  `json:"created_at"`  // Unix timestamp of creation
 }
 
-// IsEnabled reports whether the output is enabled, defaulting to true if not set.
+// IsEnabled reports whether the output is enabled.
 func (o *Output) IsEnabled() bool {
-	return o.Enabled == nil || *o.Enabled
+	return o.Enabled
 }
 
 // DefaultMaxRetries is the default number of retry attempts for outputs.
@@ -115,31 +126,28 @@ type CodecPreset struct {
 	Format string   // FFmpeg output format
 }
 
-// CodecPresets maps codec names to their FFmpeg configuration.
-var CodecPresets = map[string]CodecPreset{
-	"mp2": {[]string{"libtwolame", "-b:a", "384k", "-psymodel", "4"}, "mp2"},
-	"mp3": {[]string{"libmp3lame", "-b:a", "320k"}, "mp3"},
-	"ogg": {[]string{"libvorbis", "-qscale:a", "10"}, "ogg"},
-	"wav": {[]string{"pcm_s16le"}, "matroska"},
+// CodecPresets maps codec types to their FFmpeg configuration.
+var CodecPresets = map[Codec]CodecPreset{
+	CodecMP2: {[]string{"libtwolame", "-b:a", "384k", "-psymodel", "4"}, "mp2"},
+	CodecMP3: {[]string{"libmp3lame", "-b:a", "320k"}, "mp3"},
+	CodecOGG: {[]string{"libvorbis", "-qscale:a", "10"}, "ogg"},
+	CodecWAV: {[]string{"pcm_s16le"}, "matroska"},
 }
 
-// DefaultCodec is used when an unknown codec is specified.
-const DefaultCodec = "wav"
-
-// CodecArgsFor returns FFmpeg codec arguments for the given codec name.
-func CodecArgsFor(codec string) []string {
+// CodecArgsFor returns FFmpeg codec arguments for the given codec.
+func CodecArgsFor(codec Codec) []string {
 	if preset, ok := CodecPresets[codec]; ok {
 		return preset.Args
 	}
-	return CodecPresets[DefaultCodec].Args
+	return CodecPresets[CodecWAV].Args
 }
 
-// FormatFor returns the FFmpeg output format for the given codec name.
-func FormatFor(codec string) string {
+// FormatFor returns the FFmpeg output format for the given codec.
+func FormatFor(codec Codec) string {
 	if preset, ok := CodecPresets[codec]; ok {
 		return preset.Format
 	}
-	return CodecPresets[DefaultCodec].Format
+	return CodecPresets[CodecWAV].Format
 }
 
 // CodecArgs returns FFmpeg codec arguments for this output's codec.
@@ -155,23 +163,19 @@ func (o *Output) Format() string {
 // RotationMode determines how recordings are split into files.
 type RotationMode string
 
+// Supported rotation modes.
 const (
-	// RotationHourly rotates recordings at system clock hour boundaries.
-	RotationHourly RotationMode = "hourly"
-	// RotationOnDemand allows API-controlled recording start and stop.
-	RotationOnDemand RotationMode = "ondemand"
+	RotationHourly RotationMode = "hourly" // Rotate at system clock hour boundaries
 )
 
 // StorageMode determines where recordings are saved.
 type StorageMode string
 
+// Supported storage modes.
 const (
-	// StorageLocal saves recordings only to local filesystem.
-	StorageLocal StorageMode = "local"
-	// StorageS3 uploads recordings only to S3.
-	StorageS3 StorageMode = "s3"
-	// StorageBoth saves locally AND uploads to S3.
-	StorageBoth StorageMode = "both"
+	StorageLocal StorageMode = "local" // Save only to local filesystem
+	StorageS3    StorageMode = "s3"    // Upload only to S3
+	StorageBoth  StorageMode = "both"  // Save locally AND upload to S3
 )
 
 // DefaultRetentionDays is the default number of days to keep recordings.
@@ -179,28 +183,28 @@ const DefaultRetentionDays = 90
 
 // Recorder represents a recording destination configuration.
 type Recorder struct {
-	ID           string       `json:"id"`                   // Unique identifier
-	Name         string       `json:"name"`                 // Display name
-	Enabled      *bool        `json:"enabled,omitempty"`    // Whether recorder is active (nil defaults to true)
-	Codec        string       `json:"codec"`                // Audio codec (mp2, mp3, ogg, wav)
-	RotationMode RotationMode `json:"rotation_mode"`        // hourly or ondemand
-	StorageMode  StorageMode  `json:"storage_mode"`         // local, s3, or both
-	LocalPath    string       `json:"local_path,omitempty"` // Local directory for recordings (required for local/both)
+	ID           string       `json:"id"`            // Unique identifier
+	Name         string       `json:"name"`          // Display name
+	Enabled      bool         `json:"enabled"`       // Whether recorder is active
+	Codec        Codec        `json:"codec"`         // Audio codec (mp2, mp3, ogg, wav)
+	RotationMode RotationMode `json:"rotation_mode"` // hourly or ondemand
+	StorageMode  StorageMode  `json:"storage_mode"`  // local, s3, or both
+	LocalPath    string       `json:"local_path"`    // Local directory for recordings (required for local/both)
 
 	// S3 configuration (required for s3/both modes)
-	S3Endpoint        string `json:"s3_endpoint,omitempty"`          // S3-compatible endpoint URL
-	S3Bucket          string `json:"s3_bucket,omitempty"`            // S3 bucket name
-	S3AccessKeyID     string `json:"s3_access_key_id,omitempty"`     // S3 access key ID
-	S3SecretAccessKey string `json:"s3_secret_access_key,omitempty"` // S3 secret access key
+	S3Endpoint        string `json:"s3_endpoint"`          // S3-compatible endpoint URL
+	S3Bucket          string `json:"s3_bucket"`            // S3 bucket name
+	S3AccessKeyID     string `json:"s3_access_key_id"`     // S3 access key ID
+	S3SecretAccessKey string `json:"s3_secret_access_key"` // S3 secret access key
 	// S3 prefix auto-generated: recordings/{sanitized-name}/
 
-	RetentionDays int   `json:"retention_days,omitempty"` // Days to keep recordings (default 90)
-	CreatedAt     int64 `json:"created_at"`               // Unix timestamp of creation
+	RetentionDays int   `json:"retention_days"` // Days to keep recordings (default 90)
+	CreatedAt     int64 `json:"created_at"`     // Unix timestamp of creation
 }
 
-// IsEnabled reports whether the recorder is enabled, defaulting to true if not set.
+// IsEnabled reports whether the recorder is enabled.
 func (r *Recorder) IsEnabled() bool {
-	return r.Enabled == nil || *r.Enabled
+	return r.Enabled
 }
 
 // CodecArgs returns FFmpeg codec arguments for this recorder's codec.

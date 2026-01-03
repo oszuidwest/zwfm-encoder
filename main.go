@@ -1,4 +1,4 @@
-// Encoder is an audio streaming application that captures audio from digital input and streams to multiple SRT destinations.
+// Package main provides an audio streaming application that captures audio from digital input and streams to multiple SRT destinations.
 //
 // Usage:
 //

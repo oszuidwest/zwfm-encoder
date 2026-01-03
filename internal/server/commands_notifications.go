@@ -26,7 +26,7 @@ func (h *CommandHandler) runTest(testType string) error {
 }
 
 // handleTest processes a notification test WebSocket command.
-func (h *CommandHandler) handleTest(send chan<- interface{}, testCmd string) {
+func (h *CommandHandler) handleTest(send chan<- any, testCmd string) {
 	testType := strings.TrimPrefix(testCmd, "test_")
 
 	go func() {
@@ -50,17 +50,12 @@ func (h *CommandHandler) handleTest(send chan<- interface{}, testCmd string) {
 			slog.Info("test succeeded", "command", testCmd)
 		}
 
-		// Send via channel (non-blocking to prevent goroutine leak if channel is closed)
-		select {
-		case send <- result:
-		default:
-			slog.Warn("failed to send test response: channel full or closed", "command", testCmd)
-		}
+		SendData(send, result)
 	}()
 }
 
-// handleViewSilenceLog processes a view_silence_log WebSocket command.
-func (h *CommandHandler) handleViewSilenceLog(send chan<- interface{}) {
+// handleViewSilenceLog processes a notifications/log/view command.
+func (h *CommandHandler) handleViewSilenceLog(send chan<- any) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -88,12 +83,7 @@ func (h *CommandHandler) handleViewSilenceLog(send chan<- interface{}) {
 			}
 		}
 
-		// Send via channel (non-blocking to prevent goroutine leak if channel is closed)
-		select {
-		case send <- result:
-		default:
-			slog.Warn("failed to send silence log response: channel full or closed")
-		}
+		SendData(send, result)
 	}()
 }
 

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// Backoff is an exponential backoff calculator with jitter. It is safe for concurrent use.
+// Backoff calculates exponential backoff delays.
 type Backoff struct {
 	mu           sync.Mutex
 	current      time.Duration

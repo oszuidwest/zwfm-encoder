@@ -11,7 +11,7 @@ const (
 	MinDB = -60.0
 	// MaxSampleValue is the maximum absolute value for 16-bit signed audio.
 	MaxSampleValue = 32768.0
-	// ClipThreshold is slightly below max to catch near-clips.
+	// ClipThreshold is the sample value at or above which audio is considered clipping.
 	ClipThreshold int16 = 32760
 )
 
@@ -26,7 +26,7 @@ type LevelData struct {
 	SampleCount int
 }
 
-// ProcessSamples processes S16LE stereo PCM data and accumulates level data.
+// ProcessSamples accumulates level data from audio samples.
 func ProcessSamples(buf []byte, n int, data *LevelData) {
 	for i := 0; i+3 < n; i += 4 {
 		leftSample := int16(binary.LittleEndian.Uint16(buf[i:]))
@@ -93,7 +93,7 @@ func CalculateLevels(data *LevelData) Levels {
 	}
 }
 
-// Reset resets accumulators for the next measurement period.
+// Reset clears all accumulated sample data.
 func (d *LevelData) Reset() {
 	d.SampleCount = 0
 	d.SumSquaresL = 0

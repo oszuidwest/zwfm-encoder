@@ -2,7 +2,7 @@ package util
 
 import "log/slog"
 
-// LogNotifyResult executes a notification function and logs the result.
+// LogNotifyResult logs the result of a notification attempt.
 func LogNotifyResult(fn func() error, notifyType string) {
 	err := fn()
 	if err != nil {

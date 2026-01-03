@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// PeakHoldDuration is how long peaks are held before decay.
+// PeakHoldDuration is the duration that peak values are held before decaying.
 const PeakHoldDuration = 1500 * time.Millisecond
 
 // PeakHolder tracks peak-hold state for VU meters.
@@ -26,7 +26,7 @@ func NewPeakHolder() *PeakHolder {
 	}
 }
 
-// Update refreshes held peak values based on current peaks and elapsed time.
+// Update returns the current held peak values.
 func (p *PeakHolder) Update(peakL, peakR float64, now time.Time) (heldL, heldR float64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

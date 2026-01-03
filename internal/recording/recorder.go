@@ -33,7 +33,6 @@ type GenericRecorder struct {
 
 	// FFmpeg process
 	cmd    *exec.Cmd
-	ctx    context.Context
 	cancel context.CancelFunc
 	stdin  io.WriteCloser
 	stderr *bytes.Buffer
@@ -93,7 +92,7 @@ func (r *GenericRecorder) ID() string {
 	return r.id
 }
 
-// Config returns a copy of the recorder's configuration.
+// Config returns the recorder configuration.
 func (r *GenericRecorder) Config() types.Recorder {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -114,7 +113,7 @@ func (r *GenericRecorder) IsCurrentFile(path string) bool {
 	return r.currentFile == path
 }
 
-// Start begins recording asynchronously.
+// Start begins recording.
 func (r *GenericRecorder) Start() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -208,7 +207,7 @@ func (r *GenericRecorder) setError(msg string) {
 	slog.Error("recorder error", "id", r.id, "error", msg)
 }
 
-// Stop gracefully stops recording.
+// Stop ends recording.
 func (r *GenericRecorder) Stop() error {
 	r.mu.Lock()
 
@@ -260,7 +259,7 @@ func (r *GenericRecorder) Stop() error {
 	return nil
 }
 
-// WriteAudio writes PCM audio to the encoder.
+// WriteAudio writes PCM audio data.
 func (r *GenericRecorder) WriteAudio(pcm []byte) error {
 	r.mu.RLock()
 	state := r.state
@@ -296,21 +295,9 @@ func (r *GenericRecorder) Status() types.ProcessStatus {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	var pid int
-	if r.cmd != nil && r.cmd.Process != nil {
-		pid = r.cmd.Process.Pid
-	}
-
-	var uptimeMs int64
-	if (r.state == types.ProcessRunning || r.state == types.ProcessRotating) && !r.startTime.IsZero() {
-		uptimeMs = time.Since(r.startTime).Milliseconds()
-	}
-
 	return types.ProcessStatus{
-		State:    r.state,
-		UptimeMs: uptimeMs,
-		PID:      pid,
-		Error:    r.lastError,
+		State: r.state,
+		Error: r.lastError,
 	}
 }
 
@@ -319,20 +306,6 @@ func (r *GenericRecorder) IsRecording() bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.state == types.ProcessRunning
-}
-
-// ClearError clears the error state for the recorder.
-func (r *GenericRecorder) ClearError() error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if r.state != types.ProcessError {
-		return nil // Not in error state, nothing to clear
-	}
-
-	r.state = types.ProcessStopped
-	r.lastError = ""
-	return nil
 }
 
 // UpdateConfig updates the recorder configuration.
@@ -418,7 +391,6 @@ func (r *GenericRecorder) startEncoderLocked() error {
 	}
 
 	r.cmd = proc.Cmd
-	r.ctx = proc.Ctx
 	r.cancel = proc.Cancel
 	r.stdin = proc.Stdin
 	r.stderr = proc.Stderr
@@ -573,13 +545,13 @@ func (r *GenericRecorder) generateS3Key(filename string) string {
 // getFileExtension returns the file extension for the configured codec.
 func (r *GenericRecorder) getFileExtension() string {
 	switch r.config.Codec {
-	case "mp2":
+	case types.CodecMP2:
 		return "mp2"
-	case "mp3":
+	case types.CodecMP3:
 		return "mp3"
-	case "ogg":
+	case types.CodecOGG:
 		return "ogg"
-	case "wav":
+	case types.CodecWAV:
 		return "mkv" // WAV uses matroska container
 	default:
 		return "mp3"
@@ -589,13 +561,13 @@ func (r *GenericRecorder) getFileExtension() string {
 // getContentType returns the MIME type for the configured codec.
 func (r *GenericRecorder) getContentType() string {
 	switch r.config.Codec {
-	case "mp2":
+	case types.CodecMP2:
 		return "audio/mpeg"
-	case "mp3":
+	case types.CodecMP3:
 		return "audio/mpeg"
-	case "ogg":
+	case types.CodecOGG:
 		return "audio/ogg"
-	case "wav":
+	case types.CodecWAV:
 		return "audio/x-matroska"
 	default:
 		return "audio/mpeg"

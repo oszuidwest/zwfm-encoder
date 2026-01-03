@@ -12,16 +12,15 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-// Process holds FFmpeg process state.
+// Process represents a running FFmpeg subprocess.
 type Process struct {
 	Cmd    *exec.Cmd
-	Ctx    context.Context
 	Cancel context.CancelFunc
 	Stdin  io.WriteCloser
 	Stderr *bytes.Buffer
 }
 
-// BaseInputArgs returns the standard FFmpeg arguments for reading audio from stdin.
+// BaseInputArgs returns FFmpeg arguments for PCM audio input.
 func BaseInputArgs() []string {
 	return []string{
 		"-f", "s16le",
@@ -31,7 +30,7 @@ func BaseInputArgs() []string {
 	}
 }
 
-// StartProcess creates and starts an FFmpeg process with the given arguments.
+// StartProcess launches an FFmpeg subprocess.
 func StartProcess(ffmpegPath string, args []string) (*Process, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
@@ -55,7 +54,6 @@ func StartProcess(ffmpegPath string, args []string) (*Process, error) {
 
 	return &Process{
 		Cmd:    cmd,
-		Ctx:    ctx,
 		Cancel: cancel,
 		Stdin:  stdinPipe,
 		Stderr: &stderr,
