@@ -145,7 +145,9 @@ func (n *SilenceNotifier) sendSilenceWebhook(cfg config.Snapshot, levelL, levelR
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) sendRecoveryWebhook(cfg config.Snapshot, durationMs int64, levelL, levelR float64) {
 	util.LogNotifyResult(
-		func() error { return SendRecoveryWebhook(cfg.WebhookURL, durationMs, levelL, levelR, cfg.SilenceThreshold) },
+		func() error {
+			return SendRecoveryWebhook(cfg.WebhookURL, durationMs, levelL, levelR, cfg.SilenceThreshold)
+		},
 		"Recovery webhook",
 	)
 }
