@@ -189,7 +189,11 @@ func (c *GraphClient) sendWithRetry(payload graphMailRequest) error {
 	if err != nil {
 		return fmt.Errorf("marshal request: %w", err)
 	}
+	return c.doWithRetry(jsonData)
+}
 
+// doWithRetry sends JSON data to the sendMail endpoint with automatic retries.
+func (c *GraphClient) doWithRetry(jsonData []byte) error {
 	apiURL := fmt.Sprintf("%s/users/%s/sendMail", graphBaseURL, url.PathEscape(c.fromAddress))
 	backoff := util.NewBackoff(initialRetryWait, maxRetryWait)
 
@@ -281,61 +285,11 @@ func (c *GraphClient) SendMailWithAttachment(recipients []string, subject, body 
 	}
 
 	payload := &graphMailRequestWithAttachments{Message: message}
-	return c.sendWithRetryAttachment(payload)
-}
-
-// sendWithRetryAttachment sends email with attachment with automatic retries.
-func (c *GraphClient) sendWithRetryAttachment(payload *graphMailRequestWithAttachments) error {
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal request: %w", err)
 	}
-
-	apiURL := fmt.Sprintf("%s/users/%s/sendMail", graphBaseURL, url.PathEscape(c.fromAddress))
-	backoff := util.NewBackoff(initialRetryWait, maxRetryWait)
-
-	var lastErr error
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if attempt > 0 {
-			time.Sleep(backoff.Next())
-		}
-
-		req, err := http.NewRequest(http.MethodPost, apiURL, bytes.NewReader(jsonData))
-		if err != nil {
-			return fmt.Errorf("create request: %w", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			lastErr = fmt.Errorf("send request: %w", err)
-			continue
-		}
-
-		respBody, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-
-		switch resp.StatusCode {
-		case http.StatusAccepted, http.StatusOK, http.StatusNoContent:
-			return nil
-		case http.StatusTooManyRequests:
-			if retryAfter := resp.Header.Get("Retry-After"); retryAfter != "" {
-				if seconds, err := strconv.Atoi(retryAfter); err == nil && seconds > 0 {
-					time.Sleep(time.Duration(seconds) * time.Second)
-				}
-			}
-			lastErr = fmt.Errorf("graph API rate limited (429): %s", string(respBody))
-			continue
-		case http.StatusInternalServerError, http.StatusBadGateway,
-			http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-			lastErr = fmt.Errorf("graph API returned %d: %s", resp.StatusCode, string(respBody))
-			continue
-		default:
-			return fmt.Errorf("graph API error %d: %s", resp.StatusCode, string(respBody))
-		}
-	}
-
-	return fmt.Errorf("max retries exceeded: %w", lastErr)
+	return c.doWithRetry(jsonData)
 }
 
 // ValidateAuth verifies the Graph API credentials.

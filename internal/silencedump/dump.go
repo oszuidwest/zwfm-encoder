@@ -32,9 +32,14 @@ const (
 	mp3Bitrate    = "64k"
 	encodeTimeout = 30 * time.Second
 
-	// Output directory.
-	outputDir = "/tmp/encoder-silence-dumps"
+	// Output subdirectory name (inside system temp dir).
+	outputDirName = "encoder-silence-dumps"
 )
+
+// outputDir returns the platform-appropriate output directory for silence dumps.
+func outputDir() string {
+	return filepath.Join(os.TempDir(), outputDirName)
+}
 
 // EncodeResult contains the result of encoding a silence dump.
 type EncodeResult struct {
@@ -167,7 +172,8 @@ func (c *Capturer) checkAndFinalize() {
 }
 
 // extractAndEncode extracts PCM from the ring buffer and encodes to MP3.
-// Must be called with lock held.
+// Must be called with lock held. The lock is held during buffer extraction
+// to ensure data consistency (prevent WriteAudio from overwriting data we need).
 func (c *Capturer) extractAndEncode() {
 	// Calculate byte positions
 	beforeStart := c.silenceStartPos - int64(beforeSeconds*bytesPerSecond)
@@ -179,23 +185,26 @@ func (c *Capturer) extractAndEncode() {
 	actualSilenceBytes := c.silenceEndPos - c.silenceStartPos
 	maxSilenceBytes := int64(maxSilenceSeconds * bytesPerSecond)
 	if actualSilenceBytes > maxSilenceBytes {
-		// Truncate silence: keep first half and last half of max
 		actualSilenceBytes = maxSilenceBytes
 	}
 
 	afterEnd := c.silenceEndPos + int64(afterSeconds*bytesPerSecond)
 
-	// Extract PCM data from ring buffer
+	// Extract PCM data from ring buffer (must be done under lock)
 	pcm := c.extractFromRing(beforeStart, c.silenceStartPos, c.silenceEndPos, actualSilenceBytes, afterEnd)
 
+	// Capture all values needed for encoding before releasing lock
 	silenceStart := c.silenceStart
 	silenceDuration := time.Duration(c.silenceEndPos-c.silenceStartPos) * time.Second / time.Duration(bytesPerSecond)
+	ffmpegPath := c.ffmpegPath
+	callback := c.onDumpReady
 
-	// Encode in background to not block audio processing
+	// Encode in background to not block audio processing.
+	// All values are captured above; goroutine doesn't access Capturer fields.
 	go func() {
-		result := c.encodeToMP3(pcm, silenceStart, silenceDuration)
-		if c.onDumpReady != nil {
-			c.onDumpReady(result)
+		result := encodeToMP3(ffmpegPath, pcm, silenceStart, silenceDuration)
+		if callback != nil {
+			callback(result)
 		}
 	}()
 }
@@ -242,21 +251,22 @@ func (c *Capturer) copyFromRing(dst []byte, startPos int64) {
 }
 
 // encodeToMP3 encodes PCM audio to an MP3 file.
-func (c *Capturer) encodeToMP3(pcm []byte, silenceStart time.Time, duration time.Duration) *EncodeResult {
+func encodeToMP3(ffmpegPath string, pcm []byte, silenceStart time.Time, duration time.Duration) *EncodeResult {
 	result := &EncodeResult{
 		Duration:  duration,
 		DumpStart: silenceStart,
 	}
 
 	// Ensure output directory exists
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+	outDir := outputDir()
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		result.Error = fmt.Errorf("create output dir: %w", err)
 		return result
 	}
 
 	// Generate filename: 2024-01-15_14-32-05.mp3 (local time)
 	result.Filename = silenceStart.Local().Format("2006-01-02_15-04-05") + ".mp3"
-	result.FilePath = filepath.Join(outputDir, result.Filename)
+	result.FilePath = filepath.Join(outDir, result.Filename)
 
 	// Build FFmpeg command
 	ctx, cancel := context.WithTimeout(context.Background(), encodeTimeout)
@@ -274,7 +284,7 @@ func (c *Capturer) encodeToMP3(pcm []byte, silenceStart time.Time, duration time
 		result.FilePath,
 	}
 
-	cmd := exec.CommandContext(ctx, c.ffmpegPath, args...)
+	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
 	cmd.Stdin = bytes.NewReader(pcm)
 
 	var stderr bytes.Buffer
