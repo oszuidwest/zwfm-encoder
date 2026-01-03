@@ -70,12 +70,19 @@ type Encoder struct {
 // New creates a new Encoder with the given configuration and FFmpeg binary path.
 func New(cfg *config.Config, ffmpegPath string) *Encoder {
 	graphCfg := cfg.GraphConfig()
+	snap := cfg.Snapshot()
 
 	// Create notifier first (no dependencies)
 	notifier := notify.NewSilenceNotifier(cfg)
 
 	// Create dump manager with callback to notifier
-	dumpManager := silencedump.NewManager(ffmpegPath, notifier.OnDumpReady)
+	dumpManager := silencedump.NewManager(
+		ffmpegPath,
+		snap.WebPort,
+		snap.SilenceDumpEnabled,
+		snap.SilenceDumpRetentionDays,
+		notifier.OnDumpReady,
+	)
 
 	return &Encoder{
 		config:              cfg,
@@ -386,6 +393,15 @@ func (e *Encoder) UpdateGraphConfig() {
 func (e *Encoder) UpdateSilenceConfig() {
 	if e.silenceDetect != nil {
 		e.silenceDetect.Reset()
+	}
+}
+
+// UpdateSilenceDumpConfig updates the silence dump capture settings.
+func (e *Encoder) UpdateSilenceDumpConfig() {
+	snap := e.config.Snapshot()
+	if e.silenceDumpManager != nil {
+		e.silenceDumpManager.SetEnabled(snap.SilenceDumpEnabled)
+		e.silenceDumpManager.SetRetentionDays(snap.SilenceDumpRetentionDays)
 	}
 }
 

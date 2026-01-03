@@ -104,12 +104,19 @@ type RecordingConfig struct {
 	Recorders          []types.Recorder `json:"recorders"`            // Recording destinations
 }
 
+// SilenceDumpConfig holds silence dump capture settings.
+type SilenceDumpConfig struct {
+	Enabled       bool `json:"enabled"`        // Whether dump capture is active
+	RetentionDays int  `json:"retention_days"` // Days to keep dump files
+}
+
 // Config holds all application configuration. It is safe for concurrent use.
 type Config struct {
 	System           SystemConfig           `json:"system"`
 	Web              WebConfig              `json:"web"`
 	Audio            AudioConfig            `json:"audio"`
 	SilenceDetection SilenceDetectionConfig `json:"silence_detection"`
+	SilenceDump      SilenceDumpConfig      `json:"silence_dump"`
 	Notifications    NotificationsConfig    `json:"notifications"`
 	Streaming        StreamingConfig        `json:"streaming"`
 	Recording        RecordingConfig        `json:"recording"`
@@ -133,7 +140,11 @@ func New(filePath string) *Config {
 		},
 		Audio:            AudioConfig{},
 		SilenceDetection: SilenceDetectionConfig{},
-		Notifications:    NotificationsConfig{},
+		SilenceDump: SilenceDumpConfig{
+			Enabled:       true, // Enabled by default when FFmpeg is available
+			RetentionDays: types.DefaultSilenceDumpRetentionDays,
+		},
+		Notifications: NotificationsConfig{},
 		Streaming:        StreamingConfig{Outputs: []types.Output{}},
 		Recording:        RecordingConfig{Recorders: []types.Recorder{}},
 		filePath:         filePath,
@@ -497,6 +508,15 @@ func (c *Config) SetRecordingAPIKey(key string) error {
 	return c.saveLocked()
 }
 
+// SetSilenceDump sets the silence dump configuration.
+func (c *Config) SetSilenceDump(enabled bool, retentionDays int) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.SilenceDump.Enabled = enabled
+	c.SilenceDump.RetentionDays = retentionDays
+	return c.saveLocked()
+}
+
 // --- Snapshot for atomic reads ---
 
 // Snapshot is a point-in-time copy of configuration values.
@@ -518,6 +538,10 @@ type Snapshot struct {
 	SilenceThreshold  float64
 	SilenceDurationMs int64
 	SilenceRecoveryMs int64
+
+	// Silence Dump
+	SilenceDumpEnabled       bool
+	SilenceDumpRetentionDays int
 
 	// Notifications
 	WebhookURL        string
@@ -560,6 +584,10 @@ func (c *Config) Snapshot() Snapshot {
 		SilenceThreshold:  cmp.Or(c.SilenceDetection.ThresholdDB, DefaultSilenceThreshold),
 		SilenceDurationMs: cmp.Or(c.SilenceDetection.DurationMs, DefaultSilenceDurationMs),
 		SilenceRecoveryMs: cmp.Or(c.SilenceDetection.RecoveryMs, DefaultSilenceRecoveryMs),
+
+		// Silence Dump
+		SilenceDumpEnabled:       c.SilenceDump.Enabled,
+		SilenceDumpRetentionDays: cmp.Or(c.SilenceDump.RetentionDays, types.DefaultSilenceDumpRetentionDays),
 
 		// Notifications
 		WebhookURL:        c.Notifications.Webhook.URL,

@@ -138,6 +138,7 @@ document.addEventListener('alpine:init', () => {
             silenceThreshold: -40,
             silenceDuration: 15,
             silenceRecovery: 5,
+            silenceDump: { enabled: true, retentionDays: 7 },
             silenceWebhook: '',
             silenceLogPath: '',
             graph: { tenantId: '', clientId: '', clientSecret: '', fromAddress: '', recipients: '' },
@@ -510,6 +511,11 @@ document.addEventListener('alpine:init', () => {
                 this.settings.silenceThreshold = msg.silence_threshold ?? -40;
                 this.settings.silenceDuration = msToSeconds(msg.silence_duration_ms ?? 15000);
                 this.settings.silenceRecovery = msToSeconds(msg.silence_recovery_ms ?? 5000);
+                // Silence dump settings
+                if (msg.silence_dump) {
+                    this.settings.silenceDump.enabled = msg.silence_dump.enabled ?? true;
+                    this.settings.silenceDump.retentionDays = msg.silence_dump.retention_days ?? 7;
+                }
                 this.settings.silenceWebhook = msg.silence_webhook ?? '';
                 this.settings.silenceLogPath = msg.silence_log_path ?? '';
                 // Microsoft Graph settings
@@ -657,6 +663,12 @@ document.addEventListener('alpine:init', () => {
                 threshold_db: this.settings.silenceThreshold,
                 duration_ms: secondsToMs(this.settings.silenceDuration),
                 recovery_ms: secondsToMs(this.settings.silenceRecovery)
+            });
+
+            // Silence dump settings
+            this.send('silence_dump/update', null, {
+                enabled: this.settings.silenceDump.enabled,
+                retention_days: this.settings.silenceDump.retentionDays
             });
 
             // Webhook notification settings

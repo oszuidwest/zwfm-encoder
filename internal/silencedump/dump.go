@@ -32,13 +32,13 @@ const (
 	mp3Bitrate    = "64k"
 	encodeTimeout = 30 * time.Second
 
-	// Output subdirectory name (inside system temp dir).
-	outputDirName = "encoder-silence-dumps"
+	// Output subdirectory name prefix (inside system temp dir).
+	outputDirPrefix = "encoder-silence-dumps"
 )
 
-// outputDir returns the platform-appropriate output directory for silence dumps.
-func outputDir() string {
-	return filepath.Join(os.TempDir(), outputDirName)
+// outputDirForPort returns the output directory for silence dumps, unique per port.
+func outputDirForPort(port int) string {
+	return filepath.Join(os.TempDir(), fmt.Sprintf("%s-%d", outputDirPrefix, port))
 }
 
 // EncodeResult contains the result of encoding a silence dump.
@@ -75,15 +75,17 @@ type Capturer struct {
 
 	// Configuration.
 	ffmpegPath  string
+	outputDir   string
 	enabled     bool
 	onDumpReady DumpCallback
 }
 
 // NewCapturer creates a new silence dump capturer.
-func NewCapturer(ffmpegPath string, onDumpReady DumpCallback) *Capturer {
+func NewCapturer(ffmpegPath string, outputDir string, onDumpReady DumpCallback) *Capturer {
 	return &Capturer{
 		buffer:      make([]byte, bufferCapacity),
 		ffmpegPath:  ffmpegPath,
+		outputDir:   outputDir,
 		enabled:     ffmpegPath != "",
 		onDumpReady: onDumpReady,
 	}
@@ -212,6 +214,7 @@ func (c *Capturer) extractAndEncode() {
 	silenceStart := c.silenceStart
 	silenceDuration := time.Duration(c.silenceEndPos-c.silenceStartPos) * time.Second / time.Duration(bytesPerSecond)
 	ffmpegPath := c.ffmpegPath
+	outputDir := c.outputDir
 	callback := c.onDumpReady
 
 	// Clear savedBefore to free memory (no longer needed after extraction)
@@ -220,7 +223,7 @@ func (c *Capturer) extractAndEncode() {
 	// Encode in background to not block audio processing.
 	// All values are captured above; goroutine doesn't access Capturer fields.
 	go func() {
-		result := encodeToMP3(ffmpegPath, pcm, silenceStart, silenceDuration)
+		result := encodeToMP3(ffmpegPath, outputDir, pcm, silenceStart, silenceDuration)
 		if callback != nil {
 			callback(result)
 		}
@@ -239,22 +242,21 @@ func (c *Capturer) copyFromRing(dst []byte, startPos int64) {
 }
 
 // encodeToMP3 encodes PCM audio to an MP3 file.
-func encodeToMP3(ffmpegPath string, pcm []byte, silenceStart time.Time, duration time.Duration) *EncodeResult {
+func encodeToMP3(ffmpegPath string, outputDir string, pcm []byte, silenceStart time.Time, duration time.Duration) *EncodeResult {
 	result := &EncodeResult{
 		Duration:  duration,
 		DumpStart: silenceStart,
 	}
 
 	// Ensure output directory exists
-	outDir := outputDir()
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		result.Error = fmt.Errorf("create output dir: %w", err)
 		return result
 	}
 
 	// Generate filename: 2024-01-15_14-32-05.mp3 (local time)
 	result.Filename = silenceStart.Local().Format("2006-01-02_15-04-05") + ".mp3"
-	result.FilePath = filepath.Join(outDir, result.Filename)
+	result.FilePath = filepath.Join(outputDir, result.Filename)
 
 	// Build FFmpeg command
 	ctx, cancel := context.WithTimeout(context.Background(), encodeTimeout)

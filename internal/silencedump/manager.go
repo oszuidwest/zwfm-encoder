@@ -20,6 +20,7 @@ type Manager struct {
 
 	capturer    *Capturer
 	ffmpegPath  string
+	outputDir   string
 	enabled     bool
 	onDumpReady DumpCallback
 
@@ -32,17 +33,22 @@ type Manager struct {
 }
 
 // NewManager creates a new silence dump manager.
-func NewManager(ffmpegPath string, onDumpReady DumpCallback) *Manager {
+// The port is used to create a unique output directory per encoder instance.
+func NewManager(ffmpegPath string, port int, enabled bool, retentionDays int, onDumpReady DumpCallback) *Manager {
+	outputDir := outputDirForPort(port)
+
 	m := &Manager{
 		ffmpegPath:    ffmpegPath,
-		enabled:       ffmpegPath != "",
+		outputDir:     outputDir,
+		enabled:       enabled && ffmpegPath != "",
 		onDumpReady:   onDumpReady,
-		retentionDays: 7, // Default: 7 days
+		retentionDays: retentionDays,
 	}
 
 	// Create capturer if FFmpeg is available
-	if m.enabled {
-		m.capturer = NewCapturer(ffmpegPath, onDumpReady)
+	if ffmpegPath != "" {
+		m.capturer = NewCapturer(ffmpegPath, outputDir, onDumpReady)
+		m.capturer.SetEnabled(m.enabled)
 	}
 
 	return m
@@ -163,7 +169,9 @@ func (m *Manager) runCleanup() {
 		return
 	}
 
-	dir := outputDir()
+	m.mu.RLock()
+	dir := m.outputDir
+	m.mu.RUnlock()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		// Directory might not exist yet, which is fine

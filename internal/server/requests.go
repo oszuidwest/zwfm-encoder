@@ -21,6 +21,14 @@ type SilenceUpdateRequest struct {
 	RecoveryMs  *int64   `json:"recovery_ms" validate:"omitempty,gte=500,lte=60000"`
 }
 
+// --- Silence dump settings ---
+
+// SilenceDumpUpdateRequest is the request body for silence_dump/update.
+type SilenceDumpUpdateRequest struct {
+	Enabled       *bool `json:"enabled"`
+	RetentionDays *int  `json:"retention_days" validate:"omitempty,gte=1,lte=365"`
+}
+
 // --- Notification settings ---
 
 // WebhookUpdateRequest is the request body for notifications/webhook/update.

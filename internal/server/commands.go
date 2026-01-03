@@ -61,6 +61,8 @@ func (h *CommandHandler) Handle(cmd WSCommand, send chan<- any, triggerStatusUpd
 		h.handleAudio(action, cmd, send)
 	case "silence":
 		h.handleSilence(action, cmd, send)
+	case "silence_dump":
+		h.handleSilenceDump(action, cmd, send)
 	case "notifications":
 		h.handleNotifications(action, subaction, cmd, send)
 	case "recording":
@@ -125,6 +127,16 @@ func (h *CommandHandler) handleSilence(action string, cmd WSCommand, send chan<-
 		h.handleSilenceUpdate(cmd, send)
 	default:
 		slog.Warn("unknown silence action", "action", action)
+	}
+}
+
+// handleSilenceDump routes silence_dump/* commands.
+func (h *CommandHandler) handleSilenceDump(action string, cmd WSCommand, send chan<- any) {
+	switch action {
+	case "update":
+		h.handleSilenceDumpUpdate(cmd, send)
+	default:
+		slog.Warn("unknown silence_dump action", "action", action)
 	}
 }
 

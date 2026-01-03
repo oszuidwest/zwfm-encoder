@@ -196,6 +196,10 @@ func (s *Server) buildWSStatus() types.WSStatusResponse {
 		GraphFromAddress:  cfg.GraphFromAddress,
 		GraphRecipients:   cfg.GraphRecipients,
 		GraphSecretExpiry: s.encoder.GraphSecretExpiry(),
+		SilenceDump: types.SilenceDumpConfig{
+			Enabled:       cfg.SilenceDumpEnabled,
+			RetentionDays: cfg.SilenceDumpRetentionDays,
+		},
 		Settings: types.WSSettings{
 			AudioInput: cfg.AudioInput,
 			Platform:   runtime.GOOS,

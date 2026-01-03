@@ -367,6 +367,30 @@
                             <span id="silence-duration-hint" class="input-hint">Silence triggers alerts. Recovery clears after audio returns.</span>
                         </div>
                     </div>
+                    <div class="section">
+                        <div class="section-header">
+                            <span class="icon-container" x-html="icons.file"></span>
+                            <h3>Silence Dumps</h3>
+                        </div>
+                        <p class="section-desc">Capture audio around silence events for debugging.</p>
+                        <div class="form">
+                            <div class="group">
+                                <label>Capture</label>
+                                <div class="segmented">
+                                    <button type="button" class="segmented-btn" :aria-pressed="(!settings.silenceDump.enabled).toString()" @click="settings.silenceDump.enabled = false; markSettingsDirty()">Disabled</button>
+                                    <button type="button" class="segmented-btn" :aria-pressed="settings.silenceDump.enabled.toString()" @click="settings.silenceDump.enabled = true; markSettingsDirty()">Enabled</button>
+                                </div>
+                            </div>
+                            <div class="group" x-show="settings.silenceDump.enabled">
+                                <label for="dump-retention">Retention</label>
+                                <div class="input-group">
+                                    <input id="dump-retention" type="number" min="1" max="365" step="1" x-model.number="settings.silenceDump.retentionDays" @input="markSettingsDirty()">
+                                    <span class="input-unit">days</span>
+                                </div>
+                                <span class="input-hint">MP3 dumps stored in temp directory. Older files are automatically deleted.</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Notifications Panel - Notification configuration for silence events

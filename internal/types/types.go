@@ -181,6 +181,15 @@ const (
 // DefaultRetentionDays is the default number of days to keep recordings.
 const DefaultRetentionDays = 90
 
+// DefaultSilenceDumpRetentionDays is the default number of days to keep silence dumps.
+const DefaultSilenceDumpRetentionDays = 7
+
+// SilenceDumpConfig contains configuration for silence dump capture.
+type SilenceDumpConfig struct {
+	Enabled       bool `json:"enabled"`        // Whether dump capture is active
+	RetentionDays int  `json:"retention_days"` // Days to keep dump files (default 7)
+}
+
 // Recorder represents a recording destination configuration.
 type Recorder struct {
 	ID           string       `json:"id"`            // Unique identifier
@@ -277,6 +286,7 @@ type WSStatusResponse struct {
 	GraphFromAddress  string                   `json:"graph_from_address"`  // Shared mailbox address
 	GraphRecipients   string                   `json:"graph_recipients"`    // Comma-separated recipients
 	GraphSecretExpiry SecretExpiryInfo         `json:"graph_secret_expiry"` // Client secret expiration info
+	SilenceDump       SilenceDumpConfig        `json:"silence_dump"`        // Silence dump configuration
 	Settings          WSSettings               `json:"settings"`            // Current settings
 	Version           VersionInfo              `json:"version"`             // Version information
 }
