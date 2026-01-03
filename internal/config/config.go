@@ -145,9 +145,9 @@ func New(filePath string) *Config {
 			RetentionDays: types.DefaultSilenceDumpRetentionDays,
 		},
 		Notifications: NotificationsConfig{},
-		Streaming:        StreamingConfig{Outputs: []types.Output{}},
-		Recording:        RecordingConfig{Recorders: []types.Recorder{}},
-		filePath:         filePath,
+		Streaming:     StreamingConfig{Outputs: []types.Output{}},
+		Recording:     RecordingConfig{Recorders: []types.Recorder{}},
+		filePath:      filePath,
 	}
 }
 
