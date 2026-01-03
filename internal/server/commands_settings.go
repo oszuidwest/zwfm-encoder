@@ -1,311 +1,144 @@
 package server
 
 import (
-	"encoding/json"
 	"log/slog"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-// handleRegenerateAPIKey processes a regenerate_api_key WebSocket command.
-func (h *CommandHandler) handleRegenerateAPIKey(send chan<- interface{}) {
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("panic in regenerate_api_key handler", "panic", r)
-			}
-		}()
+// --- Audio handlers ---
 
-		result := struct {
-			Type   string `json:"type"`
-			APIKey string `json:"api_key"`
-			Error  string `json:"error,omitempty"`
-		}{
-			Type: "api_key_regenerated",
+// handleAudioUpdate handles audio/update command.
+func (h *CommandHandler) handleAudioUpdate(cmd WSCommand, send chan<- any) {
+	HandleCommand(h, cmd, send, func(req *AudioUpdateRequest) error {
+		if req.Input == "" {
+			return nil // No change requested
 		}
 
-		newKey, err := config.GenerateAPIKey()
-		if err != nil {
-			slog.Error("failed to generate API key", "error", err)
-			result.Error = err.Error()
-		} else {
-			if err := h.cfg.SetRecordingAPIKey(newKey); err != nil {
-				slog.Error("failed to save API key", "error", err)
-				result.Error = err.Error()
-			} else {
-				result.APIKey = newKey
-				slog.Info("API key regenerated")
-			}
+		slog.Info("audio/update: changing audio input", "input", req.Input)
+		if err := h.cfg.SetAudioInput(req.Input); err != nil {
+			return err
 		}
 
-		// Send via channel (non-blocking to prevent goroutine leak if channel is closed)
-		select {
-		case send <- result:
-		default:
-			slog.Warn("failed to send API key result: channel full or closed")
+		// Start/restart encoder if FFmpeg is available
+		if h.ffmpegAvailable {
+			go func() {
+				var err error
+				switch h.encoder.State() {
+				case types.StateRunning:
+					err = h.encoder.Restart()
+				case types.StateStopped:
+					err = h.encoder.Start()
+				}
+				if err != nil {
+					slog.Error("audio/update: encoder state change failed", "error", err)
+				}
+			}()
 		}
-	}()
+
+		return nil
+	})
 }
 
-// --- New slash-style command handlers ---
-
-// sendResult sends a result message for a command
-func sendResult(send chan<- interface{}, cmdType string, success bool, errMsg string, data interface{}) {
-	result := map[string]interface{}{
-		"type":    cmdType + "_result",
-		"success": success,
-	}
-	if errMsg != "" {
-		result["error"] = errMsg
-	}
-	if data != nil {
-		result["data"] = data
-	}
-	select {
-	case send <- result:
-	default:
-		slog.Warn("failed to send result: channel full or closed", "type", cmdType)
-	}
-}
-
-// sendValidationError sends a validation error response with field-level details.
-func sendValidationError(send chan<- interface{}, cmdType string, verr *types.ValidationError) {
-	result := map[string]interface{}{
-		"type":    cmdType + "_result",
-		"success": false,
-		"error":   verr,
-	}
-	select {
-	case send <- result:
-	default:
-		slog.Warn("failed to send validation error: channel full or closed", "type", cmdType)
-	}
-}
-
-// handleAudioUpdate handles audio/update command
-func (h *CommandHandler) handleAudioUpdate(cmd WSCommand, send chan<- interface{}) {
-	var data struct {
-		Input string `json:"input"`
-	}
-	if err := json.Unmarshal(cmd.Data, &data); err != nil {
-		sendResult(send, "audio/update", false, err.Error(), nil)
-		return
-	}
-	if data.Input == "" {
-		sendResult(send, "audio/update", true, "", nil)
-		return
-	}
-
-	// Save new audio input
-	slog.Info("audio/update: changing audio input", "input", data.Input)
-	if err := h.cfg.SetAudioInput(data.Input); err != nil {
-		slog.Error("audio/update: failed to save audio input", "error", err)
-		sendResult(send, "audio/update", false, err.Error(), nil)
-		return
-	}
-
-	// Start/restart encoder if FFmpeg is available
-	if h.ffmpegAvailable {
-		go func() {
-			var err error
-			switch h.encoder.State() {
-			case types.StateRunning:
-				err = h.encoder.Restart()
-			case types.StateStopped:
-				err = h.encoder.Start()
-			}
-			if err != nil {
-				slog.Error("audio/update: encoder state change failed", "error", err)
-			}
-		}()
-	} else {
-		slog.Warn("audio/update: FFmpeg not available, encoder will not start")
-	}
-
-	sendResult(send, "audio/update", true, "", nil)
-}
-
-// handleAudioGet handles audio/get command
-func (h *CommandHandler) handleAudioGet(send chan<- interface{}) {
+// handleAudioGet handles audio/get command.
+func (h *CommandHandler) handleAudioGet(send chan<- any) {
 	snap := h.cfg.Snapshot()
-	sendResult(send, "audio/get", true, "", map[string]interface{}{
+	SendSuccess(send, "audio/get", map[string]any{
 		"input": snap.AudioInput,
 	})
 }
 
-// handleSilenceUpdate handles silence/update command
-func (h *CommandHandler) handleSilenceUpdate(cmd WSCommand, send chan<- interface{}) {
-	var data struct {
-		ThresholdDB *float64 `json:"threshold_db"`
-		DurationMs  *int64   `json:"duration_ms"`
-		RecoveryMs  *int64   `json:"recovery_ms"`
-	}
-	if err := json.Unmarshal(cmd.Data, &data); err != nil {
-		sendResult(send, "silence/update", false, err.Error(), nil)
-		return
-	}
+// --- Silence detection handlers ---
 
-	// Build config for validation
-	snap := h.cfg.Snapshot()
-	cfg := config.SilenceDetectionConfig{
-		ThresholdDB: snap.SilenceThreshold,
-		DurationMs:  snap.SilenceDurationMs,
-		RecoveryMs:  snap.SilenceRecoveryMs,
-	}
-	if data.ThresholdDB != nil {
-		cfg.ThresholdDB = *data.ThresholdDB
-	}
-	if data.DurationMs != nil {
-		cfg.DurationMs = *data.DurationMs
-	}
-	if data.RecoveryMs != nil {
-		cfg.RecoveryMs = *data.RecoveryMs
-	}
-
-	// Validate
-	if verr := cfg.Validate(); verr.HasErrors() {
-		sendValidationError(send, "silence/update", verr)
-		return
-	}
-
-	// Apply validated values
-	if data.ThresholdDB != nil {
-		if err := h.cfg.SetSilenceThreshold(*data.ThresholdDB); err != nil {
-			sendResult(send, "silence/update", false, err.Error(), nil)
-			return
+// handleSilenceUpdate handles silence/update command.
+func (h *CommandHandler) handleSilenceUpdate(cmd WSCommand, send chan<- any) {
+	HandleCommand(h, cmd, send, func(req *SilenceUpdateRequest) error {
+		if req.ThresholdDB != nil {
+			if err := h.cfg.SetSilenceThreshold(*req.ThresholdDB); err != nil {
+				return err
+			}
 		}
-	}
-	if data.DurationMs != nil {
-		if err := h.cfg.SetSilenceDurationMs(*data.DurationMs); err != nil {
-			sendResult(send, "silence/update", false, err.Error(), nil)
-			return
+		if req.DurationMs != nil {
+			if err := h.cfg.SetSilenceDurationMs(*req.DurationMs); err != nil {
+				return err
+			}
 		}
-	}
-	if data.RecoveryMs != nil {
-		if err := h.cfg.SetSilenceRecoveryMs(*data.RecoveryMs); err != nil {
-			sendResult(send, "silence/update", false, err.Error(), nil)
-			return
+		if req.RecoveryMs != nil {
+			if err := h.cfg.SetSilenceRecoveryMs(*req.RecoveryMs); err != nil {
+				return err
+			}
 		}
-	}
 
-	// Apply changes to encoder
-	h.encoder.UpdateSilenceConfig()
-	sendResult(send, "silence/update", true, "", nil)
+		// Apply changes to encoder
+		h.encoder.UpdateSilenceConfig()
+		return nil
+	})
 }
 
-// handleSilenceGet handles silence/get command
-func (h *CommandHandler) handleSilenceGet(send chan<- interface{}) {
+// handleSilenceGet handles silence/get command.
+func (h *CommandHandler) handleSilenceGet(send chan<- any) {
 	snap := h.cfg.Snapshot()
-	sendResult(send, "silence/get", true, "", map[string]interface{}{
+	SendSuccess(send, "silence/get", map[string]any{
 		"threshold_db": snap.SilenceThreshold,
 		"duration_ms":  snap.SilenceDurationMs,
 		"recovery_ms":  snap.SilenceRecoveryMs,
 	})
 }
 
-// handleWebhookUpdate handles notifications/webhook/update command
-func (h *CommandHandler) handleWebhookUpdate(cmd WSCommand, send chan<- interface{}) {
-	var data struct {
-		URL string `json:"url"`
-	}
-	if err := json.Unmarshal(cmd.Data, &data); err != nil {
-		sendResult(send, "notifications/webhook/update", false, err.Error(), nil)
-		return
-	}
+// --- Notification handlers ---
 
-	// Validate
-	cfg := config.WebhookConfig{URL: data.URL}
-	if verr := cfg.Validate(); verr.HasErrors() {
-		sendValidationError(send, "notifications/webhook/update", verr)
-		return
-	}
-
-	if err := h.cfg.SetWebhookURL(data.URL); err != nil {
-		sendResult(send, "notifications/webhook/update", false, err.Error(), nil)
-		return
-	}
-	sendResult(send, "notifications/webhook/update", true, "", nil)
+// handleWebhookUpdate handles notifications/webhook/update command.
+func (h *CommandHandler) handleWebhookUpdate(cmd WSCommand, send chan<- any) {
+	HandleCommand(h, cmd, send, func(req *WebhookUpdateRequest) error {
+		return h.cfg.SetWebhookURL(req.URL)
+	})
 }
 
-// handleWebhookGet handles notifications/webhook/get command
-func (h *CommandHandler) handleWebhookGet(send chan<- interface{}) {
+// handleWebhookGet handles notifications/webhook/get command.
+func (h *CommandHandler) handleWebhookGet(send chan<- any) {
 	snap := h.cfg.Snapshot()
-	sendResult(send, "notifications/webhook/get", true, "", map[string]interface{}{
+	SendSuccess(send, "notifications/webhook/get", map[string]any{
 		"url": snap.WebhookURL,
 	})
 }
 
-// handleLogUpdate handles notifications/log/update command
-func (h *CommandHandler) handleLogUpdate(cmd WSCommand, send chan<- interface{}) {
-	var data struct {
-		Path string `json:"path"`
-	}
-	if err := json.Unmarshal(cmd.Data, &data); err != nil {
-		sendResult(send, "notifications/log/update", false, err.Error(), nil)
-		return
-	}
-
-	// Validate
-	cfg := config.LogConfig{Path: data.Path}
-	if verr := cfg.Validate(); verr.HasErrors() {
-		sendValidationError(send, "notifications/log/update", verr)
-		return
-	}
-
-	if err := h.cfg.SetLogPath(data.Path); err != nil {
-		sendResult(send, "notifications/log/update", false, err.Error(), nil)
-		return
-	}
-	sendResult(send, "notifications/log/update", true, "", nil)
+// handleLogUpdate handles notifications/log/update command.
+func (h *CommandHandler) handleLogUpdate(cmd WSCommand, send chan<- any) {
+	HandleCommand(h, cmd, send, func(req *LogUpdateRequest) error {
+		return h.cfg.SetLogPath(req.Path)
+	})
 }
 
-// handleLogGet handles notifications/log/get command
-func (h *CommandHandler) handleLogGet(send chan<- interface{}) {
+// handleLogGet handles notifications/log/get command.
+func (h *CommandHandler) handleLogGet(send chan<- any) {
 	snap := h.cfg.Snapshot()
-	sendResult(send, "notifications/log/get", true, "", map[string]interface{}{
+	SendSuccess(send, "notifications/log/get", map[string]any{
 		"path": snap.LogPath,
 	})
 }
 
-// handleEmailUpdate handles notifications/email/update command
-func (h *CommandHandler) handleEmailUpdate(cmd WSCommand, send chan<- interface{}) {
-	var data struct {
-		TenantID     string `json:"tenant_id"`
-		ClientID     string `json:"client_id"`
-		ClientSecret string `json:"client_secret"`
-		FromAddress  string `json:"from_address"`
-		Recipients   string `json:"recipients"`
-	}
-	if err := json.Unmarshal(cmd.Data, &data); err != nil {
-		sendResult(send, "notifications/email/update", false, err.Error(), nil)
-		return
-	}
-
-	// Validate
-	cfg := config.EmailConfig{
-		TenantID:    data.TenantID,
-		ClientID:    data.ClientID,
-		FromAddress: data.FromAddress,
-		Recipients:  data.Recipients,
-	}
-	if verr := cfg.Validate(); verr.HasErrors() {
-		sendValidationError(send, "notifications/email/update", verr)
-		return
-	}
-
-	if err := h.cfg.SetGraphConfig(data.TenantID, data.ClientID, data.ClientSecret, data.FromAddress, data.Recipients); err != nil {
-		sendResult(send, "notifications/email/update", false, err.Error(), nil)
-		return
-	}
-	h.encoder.UpdateGraphConfig()
-	sendResult(send, "notifications/email/update", true, "", nil)
+// handleEmailUpdate handles notifications/email/update command.
+func (h *CommandHandler) handleEmailUpdate(cmd WSCommand, send chan<- any) {
+	HandleCommand(h, cmd, send, func(req *EmailUpdateRequest) error {
+		if err := h.cfg.SetGraphConfig(
+			req.TenantID,
+			req.ClientID,
+			req.ClientSecret,
+			req.FromAddress,
+			req.Recipients,
+		); err != nil {
+			return err
+		}
+		h.encoder.UpdateGraphConfig()
+		return nil
+	})
 }
 
-// handleEmailGet handles notifications/email/get command
-func (h *CommandHandler) handleEmailGet(send chan<- interface{}) {
+// handleEmailGet handles notifications/email/get command.
+func (h *CommandHandler) handleEmailGet(send chan<- any) {
 	snap := h.cfg.Snapshot()
-	sendResult(send, "notifications/email/get", true, "", map[string]interface{}{
+	SendSuccess(send, "notifications/email/get", map[string]any{
 		"tenant_id":    snap.GraphTenantID,
 		"client_id":    snap.GraphClientID,
 		"from_address": snap.GraphFromAddress,
@@ -314,67 +147,86 @@ func (h *CommandHandler) handleEmailGet(send chan<- interface{}) {
 	})
 }
 
-// handleRecordingGet handles recording/get command
-func (h *CommandHandler) handleRecordingGet(send chan<- interface{}) {
+// --- Recording handlers ---
+
+// handleRecordingGet handles recording/get command.
+func (h *CommandHandler) handleRecordingGet(send chan<- any) {
 	snap := h.cfg.Snapshot()
-	sendResult(send, "recording/get", true, "", map[string]interface{}{
+	SendSuccess(send, "recording/get", map[string]any{
 		"api_key":              snap.RecordingAPIKey,
 		"max_duration_minutes": snap.RecordingMaxDurationMinutes,
 	})
 }
 
-// handleConfigGet handles config/get command - returns full config
-func (h *CommandHandler) handleConfigGet(send chan<- interface{}) {
+// handleRegenerateAPIKey handles recording/regenerate-key command.
+func (h *CommandHandler) handleRegenerateAPIKey(send chan<- any) {
+	HandleActionAsync(WSCommand{Type: "recording/regenerate-key"}, send, func() (any, error) {
+		newKey, err := config.GenerateAPIKey()
+		if err != nil {
+			return nil, err
+		}
+
+		if err := h.cfg.SetRecordingAPIKey(newKey); err != nil {
+			return nil, err
+		}
+
+		slog.Info("API key regenerated")
+
+		// Return custom response format for backwards compatibility
+		return map[string]string{"api_key": newKey}, nil
+	})
+}
+
+// --- Config handlers ---
+
+// handleConfigGet handles config/get command - returns full config.
+func (h *CommandHandler) handleConfigGet(send chan<- any) {
 	snap := h.cfg.Snapshot()
-	result := map[string]interface{}{
+	result := map[string]any{
 		"type": "config",
-		"config": map[string]interface{}{
-			"system": map[string]interface{}{
+		"config": map[string]any{
+			"system": map[string]any{
 				"ffmpeg_path": snap.FFmpegPath,
 				"port":        snap.WebPort,
 				"username":    snap.WebUser,
 				// password intentionally omitted
 			},
-			"web": map[string]interface{}{
+			"web": map[string]any{
 				"station_name": snap.StationName,
 				"color_light":  snap.StationColorLight,
 				"color_dark":   snap.StationColorDark,
 			},
-			"audio": map[string]interface{}{
+			"audio": map[string]any{
 				"input": snap.AudioInput,
 			},
-			"silence_detection": map[string]interface{}{
+			"silence_detection": map[string]any{
 				"threshold_db": snap.SilenceThreshold,
 				"duration_ms":  snap.SilenceDurationMs,
 				"recovery_ms":  snap.SilenceRecoveryMs,
 			},
-			"notifications": map[string]interface{}{
-				"webhook": map[string]interface{}{
+			"notifications": map[string]any{
+				"webhook": map[string]any{
 					"url": snap.WebhookURL,
 				},
-				"log": map[string]interface{}{
+				"log": map[string]any{
 					"path": snap.LogPath,
 				},
-				"email": map[string]interface{}{
+				"email": map[string]any{
 					"tenant_id":    snap.GraphTenantID,
 					"client_id":    snap.GraphClientID,
 					"from_address": snap.GraphFromAddress,
 					"recipients":   snap.GraphRecipients,
 				},
 			},
-			"streaming": map[string]interface{}{
+			"streaming": map[string]any{
 				"outputs": snap.Outputs,
 			},
-			"recording": map[string]interface{}{
+			"recording": map[string]any{
 				"api_key":              snap.RecordingAPIKey,
 				"max_duration_minutes": snap.RecordingMaxDurationMinutes,
 				"recorders":            snap.Recorders,
 			},
 		},
 	}
-	select {
-	case send <- result:
-	default:
-		slog.Warn("failed to send config: channel full or closed")
-	}
+	SendData(send, result)
 }

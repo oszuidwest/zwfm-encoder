@@ -73,7 +73,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	// Create buffered send channel for thread-safe writes.
 	// Only the writer goroutine writes to the connection, preventing race conditions.
-	send := make(chan interface{}, 16)
+	send := make(chan any, 16)
 	done := make(chan struct{})
 	statusUpdate := make(chan struct{}, 1)
 
@@ -87,7 +87,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 // runWebSocketWriter writes messages from the send channel to the connection.
-func (s *Server) runWebSocketWriter(conn server.WebSocketConn, send <-chan interface{}) {
+func (s *Server) runWebSocketWriter(conn server.WebSocketConn, send <-chan any) {
 	defer func() {
 		if err := conn.Close(); err != nil {
 			slog.Debug("WebSocket close error", "error", err)
@@ -101,7 +101,7 @@ func (s *Server) runWebSocketWriter(conn server.WebSocketConn, send <-chan inter
 }
 
 // runWebSocketReader reads commands from the connection and dispatches them.
-func (s *Server) runWebSocketReader(conn server.WebSocketConn, send chan<- interface{}, done, statusUpdate chan<- struct{}) {
+func (s *Server) runWebSocketReader(conn server.WebSocketConn, send chan<- any, done, statusUpdate chan<- struct{}) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("panic in WebSocket reader", "panic", r)
@@ -124,14 +124,14 @@ func (s *Server) runWebSocketReader(conn server.WebSocketConn, send chan<- inter
 }
 
 // runWebSocketEventLoop handles periodic status and level updates.
-func (s *Server) runWebSocketEventLoop(send chan interface{}, done, statusUpdate <-chan struct{}) {
-	levelsTicker := time.NewTicker(100 * time.Millisecond)  // 10 fps for VU meter
-	statusTicker := time.NewTicker(3000 * time.Millisecond) // Status updates every 3s
+func (s *Server) runWebSocketEventLoop(send chan any, done, statusUpdate <-chan struct{}) {
+	levelsTicker := time.NewTicker(10000 * time.Millisecond) // TEMP: 1 per 10s for debugging
+	statusTicker := time.NewTicker(3000 * time.Millisecond)  // Status updates every 3s
 	defer levelsTicker.Stop()
 	defer statusTicker.Stop()
 
 	// trySend attempts to send a message, returning false if done is closed
-	trySend := func(msg interface{}) bool {
+	trySend := func(msg any) bool {
 		select {
 		case send <- msg:
 			return true

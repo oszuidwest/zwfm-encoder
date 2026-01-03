@@ -43,7 +43,7 @@ func NewCommandHandler(cfg *config.Config, enc *encoder.Encoder, ffmpegAvailable
 
 // Handle processes a WebSocket command and performs the requested action.
 // Commands use slash-style format: namespace/action (e.g., "outputs/add", "audio/update")
-func (h *CommandHandler) Handle(cmd WSCommand, send chan<- interface{}, triggerStatusUpdate func()) {
+func (h *CommandHandler) Handle(cmd WSCommand, send chan<- any, triggerStatusUpdate func()) {
 	// Parse command into namespace and action
 	parts := strings.SplitN(cmd.Type, "/", 3)
 	namespace := parts[0]
@@ -83,7 +83,7 @@ func (h *CommandHandler) Handle(cmd WSCommand, send chan<- interface{}, triggerS
 // --- Namespace handlers ---
 
 // handleOutputs routes outputs/* commands
-func (h *CommandHandler) handleOutputs(action string, cmd WSCommand, send chan<- interface{}) {
+func (h *CommandHandler) handleOutputs(action string, cmd WSCommand, send chan<- any) {
 	switch action {
 	case "add":
 		h.handleAddOutput(cmd, send)
@@ -99,7 +99,7 @@ func (h *CommandHandler) handleOutputs(action string, cmd WSCommand, send chan<-
 }
 
 // handleRecorders routes recorders/* commands
-func (h *CommandHandler) handleRecorders(action string, cmd WSCommand, send chan<- interface{}) {
+func (h *CommandHandler) handleRecorders(action string, cmd WSCommand, send chan<- any) {
 	switch action {
 	case "add":
 		h.handleAddRecorder(cmd, send)
@@ -121,7 +121,7 @@ func (h *CommandHandler) handleRecorders(action string, cmd WSCommand, send chan
 }
 
 // handleAudio routes audio/* commands
-func (h *CommandHandler) handleAudio(action string, cmd WSCommand, send chan<- interface{}) {
+func (h *CommandHandler) handleAudio(action string, cmd WSCommand, send chan<- any) {
 	switch action {
 	case "update":
 		h.handleAudioUpdate(cmd, send)
@@ -133,7 +133,7 @@ func (h *CommandHandler) handleAudio(action string, cmd WSCommand, send chan<- i
 }
 
 // handleSilence routes silence/* commands
-func (h *CommandHandler) handleSilence(action string, cmd WSCommand, send chan<- interface{}) {
+func (h *CommandHandler) handleSilence(action string, cmd WSCommand, send chan<- any) {
 	switch action {
 	case "update":
 		h.handleSilenceUpdate(cmd, send)
@@ -145,7 +145,7 @@ func (h *CommandHandler) handleSilence(action string, cmd WSCommand, send chan<-
 }
 
 // handleNotifications routes notifications/*/* commands
-func (h *CommandHandler) handleNotifications(action, subaction string, cmd WSCommand, send chan<- interface{}) {
+func (h *CommandHandler) handleNotifications(action, subaction string, cmd WSCommand, send chan<- any) {
 	switch action {
 	case "webhook":
 		switch subaction {
@@ -188,7 +188,7 @@ func (h *CommandHandler) handleNotifications(action, subaction string, cmd WSCom
 }
 
 // handleRecording routes recording/* commands
-func (h *CommandHandler) handleRecording(action string, cmd WSCommand, send chan<- interface{}) {
+func (h *CommandHandler) handleRecording(action string, cmd WSCommand, send chan<- any) {
 	switch action {
 	case "regenerate-key":
 		h.handleRegenerateAPIKey(send)
@@ -200,7 +200,7 @@ func (h *CommandHandler) handleRecording(action string, cmd WSCommand, send chan
 }
 
 // handleConfig routes config/* commands
-func (h *CommandHandler) handleConfig(action string, send chan<- interface{}) {
+func (h *CommandHandler) handleConfig(action string, send chan<- any) {
 	switch action {
 	case "get":
 		h.handleConfigGet(send)
@@ -210,7 +210,7 @@ func (h *CommandHandler) handleConfig(action string, send chan<- interface{}) {
 }
 
 // handleStatus routes status/* commands
-func (h *CommandHandler) handleStatus(action string, send chan<- interface{}) {
+func (h *CommandHandler) handleStatus(action string, send chan<- any) {
 	switch action {
 	case "get":
 		// Status is sent automatically, but explicit get triggers immediate update
