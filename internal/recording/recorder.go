@@ -573,13 +573,13 @@ func (r *GenericRecorder) generateS3Key(filename string) string {
 // getFileExtension returns the file extension for the configured codec.
 func (r *GenericRecorder) getFileExtension() string {
 	switch r.config.Codec {
-	case "mp2":
+	case types.CodecMP2:
 		return "mp2"
-	case "mp3":
+	case types.CodecMP3:
 		return "mp3"
-	case "ogg":
+	case types.CodecOGG:
 		return "ogg"
-	case "wav":
+	case types.CodecWAV:
 		return "mkv" // WAV uses matroska container
 	default:
 		return "mp3"
@@ -589,13 +589,13 @@ func (r *GenericRecorder) getFileExtension() string {
 // getContentType returns the MIME type for the configured codec.
 func (r *GenericRecorder) getContentType() string {
 	switch r.config.Codec {
-	case "mp2":
+	case types.CodecMP2:
 		return "audio/mpeg"
-	case "mp3":
+	case types.CodecMP3:
 		return "audio/mpeg"
-	case "ogg":
+	case types.CodecOGG:
 		return "audio/ogg"
-	case "wav":
+	case types.CodecWAV:
 		return "audio/x-matroska"
 	default:
 		return "audio/mpeg"

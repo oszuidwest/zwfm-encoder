@@ -26,12 +26,13 @@ func validateOutput(output *types.Output) error {
 	if err := util.ValidateRange("max_retries", output.MaxRetries, 0, MaxRetriesLimit); err != nil {
 		return err
 	}
+	// Validate codec enum (defaults to CodecWAV if invalid/empty via JSON unmarshal)
+	if !output.Codec.IsValid() {
+		output.Codec = types.CodecWAV
+	}
 	// Apply defaults
 	if output.StreamID == "" {
 		output.StreamID = "studio"
-	}
-	if output.Codec == "" {
-		output.Codec = types.DefaultCodec
 	}
 	return nil
 }

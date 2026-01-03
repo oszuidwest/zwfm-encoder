@@ -176,9 +176,7 @@ func (c *Config) applyDefaults() {
 		c.Outputs = []types.Output{}
 	}
 	for i := range c.Outputs {
-		if c.Outputs[i].Codec == "" {
-			c.Outputs[i].Codec = types.DefaultCodec
-		}
+		// Codec enum defaults to CodecWAV (0) automatically
 		if c.Outputs[i].CreatedAt == 0 {
 			c.Outputs[i].CreatedAt = time.Now().UnixMilli()
 		}
@@ -187,12 +185,7 @@ func (c *Config) applyDefaults() {
 		c.Recorders = []types.Recorder{}
 	}
 	for i := range c.Recorders {
-		if c.Recorders[i].Codec == "" {
-			c.Recorders[i].Codec = types.DefaultCodec
-		}
-		if c.Recorders[i].RotationMode == "" {
-			c.Recorders[i].RotationMode = types.RotationHourly
-		}
+		// Codec, RotationMode, StorageMode enums default to first value (0) automatically
 		if c.Recorders[i].CreatedAt == 0 {
 			c.Recorders[i].CreatedAt = time.Now().UnixMilli()
 		}
@@ -268,11 +261,8 @@ func (c *Config) AddOutput(output *types.Output) error {
 	}
 	output.ID = fmt.Sprintf("output-%s", shortID)
 
-	// Codec default is handled by validateOutput in the command handler
-	if output.Enabled == nil {
-		enabled := true
-		output.Enabled = &enabled
-	}
+	// New outputs are enabled by default
+	output.Enabled = true
 	output.CreatedAt = time.Now().UnixMilli()
 
 	c.Outputs = append(c.Outputs, *output)
@@ -350,22 +340,13 @@ func (c *Config) AddRecorder(recorder *types.Recorder) error {
 	}
 	recorder.ID = fmt.Sprintf("recorder-%s", shortID)
 
-	if recorder.Codec == "" {
-		recorder.Codec = types.DefaultCodec
-	}
-	if recorder.RotationMode == "" {
-		recorder.RotationMode = types.RotationHourly
-	}
-	if recorder.StorageMode == "" {
-		recorder.StorageMode = types.StorageLocal
-	}
+	// Enum types default to first value (0) automatically via JSON unmarshal
+	// Apply retention days default if not specified
 	if recorder.RetentionDays == 0 {
 		recorder.RetentionDays = types.DefaultRetentionDays
 	}
-	if recorder.Enabled == nil {
-		enabled := true
-		recorder.Enabled = &enabled
-	}
+	// New recorders are enabled by default
+	recorder.Enabled = true
 	recorder.CreatedAt = time.Now().UnixMilli()
 
 	c.Recorders = append(c.Recorders, *recorder)

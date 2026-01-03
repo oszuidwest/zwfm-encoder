@@ -69,10 +69,11 @@ func validateRecorder(recorder *types.Recorder) error {
 		return fmt.Errorf("invalid storage_mode: must be 'local', 's3', or 'both'")
 	}
 
-	// Apply defaults
-	if recorder.Codec == "" {
-		recorder.Codec = types.DefaultCodec
+	// Validate codec enum (defaults to CodecWAV if invalid/empty via JSON unmarshal)
+	if !recorder.Codec.IsValid() {
+		recorder.Codec = types.CodecWAV
 	}
+	// Apply defaults
 	if recorder.RetentionDays == 0 {
 		recorder.RetentionDays = types.DefaultRetentionDays
 	}
