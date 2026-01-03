@@ -15,7 +15,6 @@ type Manager struct {
 	mu sync.RWMutex
 
 	recorders          map[string]*GenericRecorder
-	apiKey             string
 	tempDir            string
 	ffmpegPath         string
 	maxDurationMinutes int  // Global max duration for on-demand recorders
@@ -26,7 +25,7 @@ type Manager struct {
 }
 
 // NewManager creates a new recording manager.
-func NewManager(ffmpegPath, apiKey, tempDir string, maxDurationMinutes int) (*Manager, error) {
+func NewManager(ffmpegPath, tempDir string, maxDurationMinutes int) (*Manager, error) {
 	if tempDir == "" {
 		tempDir = DefaultTempDir
 	}
@@ -38,7 +37,6 @@ func NewManager(ffmpegPath, apiKey, tempDir string, maxDurationMinutes int) (*Ma
 
 	return &Manager{
 		recorders:          make(map[string]*GenericRecorder),
-		apiKey:             apiKey,
 		tempDir:            tempDir,
 		ffmpegPath:         ffmpegPath,
 		maxDurationMinutes: maxDurationMinutes,
@@ -250,20 +248,6 @@ func (m *Manager) AllStatuses() map[string]types.ProcessStatus {
 		statuses[id] = recorder.Status()
 	}
 	return statuses
-}
-
-// APIKey returns the configured API key.
-func (m *Manager) APIKey() string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.apiKey
-}
-
-// SetAPIKey updates the API key.
-func (m *Manager) SetAPIKey(key string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.apiKey = key
 }
 
 // startHourlyRetryScheduler starts a goroutine that retries failed hourly recorders at hour boundaries.

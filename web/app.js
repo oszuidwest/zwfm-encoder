@@ -35,19 +35,6 @@ const DB_RANGE = 60;              // dB range (0 to -60)
 const CLIP_TIMEOUT_MS = 1500;     // Peak hold / clip indicator timeout
 const WS_RECONNECT_MS = 1000;     // WebSocket reconnection delay
 const TEST_FEEDBACK_MS = 2000;    // Test result display duration
-const API_KEY_LENGTH = 32;        // Length of generated API keys
-const API_KEY_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-
-/**
- * Generates a cryptographically secure API key.
- * Uses Web Crypto API for secure random generation.
- * @returns {string} 32-character alphanumeric key
- */
-const generateApiKey = () => {
-    const array = new Uint8Array(API_KEY_LENGTH);
-    crypto.getRandomValues(array);
-    return Array.from(array, byte => API_KEY_CHARS[byte % API_KEY_CHARS.length]).join('');
-};
 
 /**
  * Formats milliseconds to human-readable smart units.
@@ -404,6 +391,8 @@ document.addEventListener('alpine:init', () => {
                     this.handleRecorderResult(msg);
                 } else if (msg.type === 'output_result') {
                     this.handleOutputResult(msg);
+                } else if (msg.type === 'api_key_regenerated') {
+                    this.handleApiKeyRegenerated(msg);
                 } else if (msg.type.endsWith('_result')) {
                     this.handleCommandResult(msg);
                 }
@@ -810,13 +799,6 @@ document.addEventListener('alpine:init', () => {
                 emailUpdate.client_secret = this.settings.graph.clientSecret;
             }
             this.send('notifications/email/update', null, emailUpdate);
-
-            // Only update API key if it changed from original
-            if (this.settings.recordingApiKey !== this.originalSettings?.recordingApiKey) {
-                this.send('update_settings', null, {
-                    recording_api_key: this.settings.recordingApiKey
-                });
-            }
 
             this.saveAndClose();
         },
@@ -1251,6 +1233,22 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
+         * Handles API key regeneration result.
+         * Updates local state with new key from server.
+         * @param {Object} msg - Result with api_key or error
+         */
+        handleApiKeyRegenerated(msg) {
+            if (msg.error) {
+                this.showBanner(`Failed to regenerate API key: ${msg.error}`, 'danger', false);
+                return;
+            }
+            if (msg.api_key) {
+                this.settings.recordingApiKey = msg.api_key;
+                this.showBanner('API key regenerated successfully', 'info', false);
+            }
+        },
+
+        /**
          * Handles command result messages (slash-style API responses).
          * Extracts field-level errors and displays them on the form.
          * @param {Object} msg - Result with type, success, error, data
@@ -1281,13 +1279,11 @@ document.addEventListener('alpine:init', () => {
 
         /**
          * Regenerates the API key for recording endpoints.
-         * Generates key client-side and marks settings dirty.
-         * Key is persisted when user clicks Save.
+         * Calls backend to generate and persist new key.
          */
         regenerateApiKey() {
-            if (!confirm('Regenerate API key? Click Save to apply. Existing integrations will need to be updated.')) return;
-            this.settings.recordingApiKey = generateApiKey();
-            this.markSettingsDirty();
+            if (!confirm('Regenerate API key? Existing integrations will need to be updated.')) return;
+            this.send('recording/regenerate-key');
         },
 
         /**

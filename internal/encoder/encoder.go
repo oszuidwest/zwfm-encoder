@@ -88,9 +88,8 @@ func (e *Encoder) InitRecording() error {
 	defer e.mu.Unlock()
 
 	snap := e.config.Snapshot()
-	apiKey := e.config.GetRecordingAPIKey()
 
-	mgr, err := recording.NewManager(e.ffmpegPath, apiKey, "", snap.RecordingMaxDurationMinutes)
+	mgr, err := recording.NewManager(e.ffmpegPath, "", snap.RecordingMaxDurationMinutes)
 	if err != nil {
 		return fmt.Errorf("create recording manager: %w", err)
 	}

@@ -39,18 +39,6 @@ func (v *ValidationError) Add(field, message string, value any) {
 	})
 }
 
-// AddError adds a FieldError to the collection.
-func (v *ValidationError) AddError(err FieldError) {
-	v.Errors = append(v.Errors, err)
-}
-
-// Merge combines errors from another ValidationError.
-func (v *ValidationError) Merge(other *ValidationError) {
-	if other != nil {
-		v.Errors = append(v.Errors, other.Errors...)
-	}
-}
-
 // HasErrors returns true if there are any validation errors.
 func (v *ValidationError) HasErrors() bool {
 	return len(v.Errors) > 0
@@ -66,20 +54,4 @@ func (v *ValidationError) Error() string {
 		msgs = append(msgs, e.Error())
 	}
 	return strings.Join(msgs, "; ")
-}
-
-// FirstError returns the first error message, or empty string if no errors.
-func (v *ValidationError) FirstError() string {
-	if !v.HasErrors() {
-		return ""
-	}
-	return v.Errors[0].Message
-}
-
-// AsError returns the ValidationError as an error interface, or nil if no errors.
-func (v *ValidationError) AsError() error {
-	if !v.HasErrors() {
-		return nil
-	}
-	return v
 }

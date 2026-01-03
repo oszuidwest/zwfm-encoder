@@ -389,13 +389,6 @@ func (c *Config) UpdateOutput(output *types.Output) error {
 
 // --- Recorder management ---
 
-// ConfiguredRecorders returns a copy of all recorders.
-func (c *Config) ConfiguredRecorders() []types.Recorder {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return slices.Clone(c.Recording.Recorders)
-}
-
 // Recorder returns a copy of the recorder with the given ID, or nil if not found.
 func (c *Config) Recorder(id string) *types.Recorder {
 	c.mu.RLock()

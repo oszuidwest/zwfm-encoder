@@ -113,7 +113,7 @@
                 <div class="form">
                     <div class="group">
                         <label for="audio-input">Input Device</label>
-                        <select id="audio-input" x-model="settings.audioInput" @change="send('update_settings', null, { audio_input: settings.audioInput })">
+                        <select id="audio-input" x-model="settings.audioInput" @change="send('audio/update', null, { input: settings.audioInput })">
                             <template x-if="devices.length === 0">
                                 <option value="">No devices found</option>
                             </template>
