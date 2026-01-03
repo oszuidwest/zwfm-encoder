@@ -191,6 +191,7 @@ document.addEventListener('alpine:init', () => {
         },
         originalSettings: null,
         settingsDirty: false,
+        formErrors: {},  // Field-level validation errors keyed by field path
 
         graphSecretExpiry: { expires_at: '', expires_soon: false, days_left: 0, error: '' },
 
@@ -391,6 +392,8 @@ document.addEventListener('alpine:init', () => {
                     this.handleLevels(msg.levels);
                 } else if (msg.type === 'status') {
                     this.handleStatus(msg);
+                } else if (msg.type === 'config') {
+                    this.handleConfig(msg);
                 } else if (msg.type === 'test_result') {
                     this.handleTestResult(msg);
                 } else if (msg.type === 'silence_log_result') {
@@ -401,6 +404,8 @@ document.addEventListener('alpine:init', () => {
                     this.handleRecorderResult(msg);
                 } else if (msg.type === 'output_result') {
                     this.handleOutputResult(msg);
+                } else if (msg.type.endsWith('_result')) {
+                    this.handleCommandResult(msg);
                 }
             };
 
@@ -624,6 +629,49 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
+         * Handles config/get response from backend.
+         * Updates settings state with full configuration.
+         * Only applied when not in settings view to prevent overwriting edits.
+         *
+         * @param {Object} msg - Config message with config object
+         */
+        handleConfig(msg) {
+            if (this.view === 'settings' || !msg.config) return;
+
+            const cfg = msg.config;
+
+            // Map config blocks to settings state
+            if (cfg.audio) {
+                this.settings.audioInput = cfg.audio.input || '';
+            }
+            if (cfg.silence_detection) {
+                this.settings.silenceThreshold = cfg.silence_detection.threshold_db ?? -40;
+                this.settings.silenceDuration = msToSeconds(cfg.silence_detection.duration_ms ?? 15000);
+                this.settings.silenceRecovery = msToSeconds(cfg.silence_detection.recovery_ms ?? 5000);
+            }
+            if (cfg.notifications) {
+                if (cfg.notifications.webhook) {
+                    this.settings.silenceWebhook = cfg.notifications.webhook.url || '';
+                }
+                if (cfg.notifications.log) {
+                    this.settings.silenceLogPath = cfg.notifications.log.path || '';
+                }
+                if (cfg.notifications.email) {
+                    this.settings.graph.tenantId = cfg.notifications.email.tenant_id || '';
+                    this.settings.graph.clientId = cfg.notifications.email.client_id || '';
+                    this.settings.graph.fromAddress = cfg.notifications.email.from_address || '';
+                    this.settings.graph.recipients = cfg.notifications.email.recipients || '';
+                }
+            }
+            if (cfg.recording) {
+                this.settings.recordingApiKey = cfg.recording.api_key || '';
+            }
+            if (cfg.system) {
+                this.settings.platform = cfg.system.platform || '';
+            }
+        },
+
+        /**
          * Handles notification test result from backend.
          * Updates UI feedback and auto-clears after TEST_FEEDBACK_MS.
          *
@@ -689,6 +737,31 @@ document.addEventListener('alpine:init', () => {
          */
         markSettingsDirty() {
             this.settingsDirty = true;
+        },
+
+        /**
+         * Clears all form errors.
+         */
+        clearFormErrors() {
+            this.formErrors = {};
+        },
+
+        /**
+         * Checks if a field has an error.
+         * @param {string} field - Field path (e.g., 'silence.threshold_db')
+         * @returns {boolean} True if field has error
+         */
+        hasFieldError(field) {
+            return !!this.formErrors[field];
+        },
+
+        /**
+         * Gets error message for a field.
+         * @param {string} field - Field path
+         * @returns {string} Error message or empty string
+         */
+        getFieldError(field) {
+            return this.formErrors[field] || '';
         },
 
         /**
@@ -1174,6 +1247,35 @@ document.addEventListener('alpine:init', () => {
             if (this.view === 'output-form' && (msg.action === 'add' || msg.action === 'update')) {
                 this.view = 'dashboard';
                 this.outputFormDirty = false;
+            }
+        },
+
+        /**
+         * Handles command result messages (slash-style API responses).
+         * Extracts field-level errors and displays them on the form.
+         * @param {Object} msg - Result with type, success, error, data
+         */
+        handleCommandResult(msg) {
+            // Clear previous errors on success
+            if (msg.success) {
+                this.clearFormErrors();
+                return;
+            }
+
+            // Handle validation errors with field-level detail
+            if (msg.error?.errors) {
+                this.clearFormErrors();
+                for (const fieldError of msg.error.errors) {
+                    this.formErrors[fieldError.field] = fieldError.message;
+                }
+                // Show first error in banner
+                const firstError = msg.error.errors[0];
+                if (firstError) {
+                    this.showBanner(firstError.message, 'danger', false);
+                }
+            } else if (msg.error) {
+                // Simple error string
+                this.showBanner(msg.error, 'danger', false);
             }
         },
 

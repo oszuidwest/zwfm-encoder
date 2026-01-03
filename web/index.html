@@ -339,25 +339,28 @@
                             <div class="group">
                                 <label for="silence-threshold">Threshold</label>
                                 <div class="input-group">
-                                    <input id="silence-threshold" type="number" max="0" min="-60" step="1" x-model.number="settings.silenceThreshold" @input="markSettingsDirty()" aria-describedby="silence-threshold-hint">
+                                    <input id="silence-threshold" type="number" max="0" min="-60" step="1" x-model.number="settings.silenceThreshold" @input="markSettingsDirty()" aria-describedby="silence-threshold-hint" :class="{'field-error': hasFieldError('silence.threshold_db')}">
                                     <span class="input-unit">dB</span>
                                 </div>
-                                <span id="silence-threshold-hint" class="input-hint">Audio below this level is considered silence.</span>
+                                <span class="error-text" x-show="hasFieldError('silence.threshold_db')" x-text="getFieldError('silence.threshold_db')"></span>
+                                <span id="silence-threshold-hint" class="input-hint" x-show="!hasFieldError('silence.threshold_db')">Audio below this level is considered silence.</span>
                             </div>
                             <div class="row">
                                 <div class="group">
                                     <label for="silence-duration">Silence Duration</label>
                                     <div class="input-group">
-                                        <input id="silence-duration" type="number" max="300" min="0.5" step="0.5" x-model.number="settings.silenceDuration" @input="markSettingsDirty()" aria-describedby="silence-duration-hint">
+                                        <input id="silence-duration" type="number" max="300" min="0.5" step="0.5" x-model.number="settings.silenceDuration" @input="markSettingsDirty()" aria-describedby="silence-duration-hint" :class="{'field-error': hasFieldError('silence.duration_ms')}">
                                         <span class="input-unit">sec</span>
                                     </div>
+                                    <span class="error-text" x-show="hasFieldError('silence.duration_ms')" x-text="getFieldError('silence.duration_ms')"></span>
                                 </div>
                                 <div class="group">
                                     <label for="silence-recovery">Recovery Time</label>
                                     <div class="input-group">
-                                        <input id="silence-recovery" type="number" max="60" min="0.5" step="0.5" x-model.number="settings.silenceRecovery" @input="markSettingsDirty()" aria-describedby="silence-duration-hint">
+                                        <input id="silence-recovery" type="number" max="60" min="0.5" step="0.5" x-model.number="settings.silenceRecovery" @input="markSettingsDirty()" aria-describedby="silence-duration-hint" :class="{'field-error': hasFieldError('silence.recovery_ms')}">
                                         <span class="input-unit">sec</span>
                                     </div>
+                                    <span class="error-text" x-show="hasFieldError('silence.recovery_ms')" x-text="getFieldError('silence.recovery_ms')"></span>
                                 </div>
                             </div>
                             <span id="silence-duration-hint" class="input-hint">Silence triggers alerts. Recovery clears after audio returns.</span>
@@ -380,7 +383,8 @@
                         <div class="form">
                             <div class="group">
                                 <label for="silence-webhook">Webhook URL</label>
-                                <input id="silence-webhook" type="url" placeholder="https://hooks.example.com/..." x-model="settings.silenceWebhook" @input="markSettingsDirty()">
+                                <input id="silence-webhook" type="url" placeholder="https://hooks.example.com/..." x-model="settings.silenceWebhook" @input="markSettingsDirty()" :class="{'field-error': hasFieldError('notifications.webhook.url')}">
+                                <span class="error-text" x-show="hasFieldError('notifications.webhook.url')" x-text="getFieldError('notifications.webhook.url')"></span>
                             </div>
                         </div>
                         <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('webhook')" :disabled="testStates.webhook.pending || settingsDirty" x-text="testStates.webhook.text">Test</button>
@@ -394,8 +398,9 @@
                         <div class="form">
                             <div class="group">
                                 <label for="silence-log-path">Log File Path</label>
-                                <input id="silence-log-path" type="text" placeholder="/var/log/encoder/silence.jsonl" x-model="settings.silenceLogPath" @input="markSettingsDirty()" aria-describedby="silence-log-path-hint">
-                                <span id="silence-log-path-hint" class="input-hint">Leave empty to disable file logging.</span>
+                                <input id="silence-log-path" type="text" placeholder="/var/log/encoder/silence.jsonl" x-model="settings.silenceLogPath" @input="markSettingsDirty()" aria-describedby="silence-log-path-hint" :class="{'field-error': hasFieldError('notifications.log.path')}">
+                                <span class="error-text" x-show="hasFieldError('notifications.log.path')" x-text="getFieldError('notifications.log.path')"></span>
+                                <span id="silence-log-path-hint" class="input-hint" x-show="!hasFieldError('notifications.log.path')">Leave empty to disable file logging.</span>
                             </div>
                         </div>
                         <div class="btn-group">
@@ -419,27 +424,32 @@
                             <div class="row">
                                 <div class="group">
                                     <label for="graph-tenant-id">Tenant ID</label>
-                                    <input id="graph-tenant-id" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" x-model="settings.graph.tenantId" @input="markSettingsDirty()">
+                                    <input id="graph-tenant-id" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" x-model="settings.graph.tenantId" @input="markSettingsDirty()" :class="{'field-error': hasFieldError('notifications.email.tenant_id')}">
+                                    <span class="error-text" x-show="hasFieldError('notifications.email.tenant_id')" x-text="getFieldError('notifications.email.tenant_id')"></span>
                                 </div>
                                 <div class="group">
                                     <label for="graph-client-id">Client ID</label>
-                                    <input id="graph-client-id" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" x-model="settings.graph.clientId" @input="markSettingsDirty()">
+                                    <input id="graph-client-id" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" x-model="settings.graph.clientId" @input="markSettingsDirty()" :class="{'field-error': hasFieldError('notifications.email.client_id')}">
+                                    <span class="error-text" x-show="hasFieldError('notifications.email.client_id')" x-text="getFieldError('notifications.email.client_id')"></span>
                                 </div>
                             </div>
                             <div class="group">
                                 <label for="graph-client-secret">Client Secret</label>
-                                <input id="graph-client-secret" type="password" placeholder="Azure AD client secret" x-model="settings.graph.clientSecret" @input="markSettingsDirty()" aria-describedby="graph-secret-hint">
-                                <span id="graph-secret-hint" class="input-hint">Leave empty to keep existing secret</span>
+                                <input id="graph-client-secret" type="password" placeholder="Azure AD client secret" x-model="settings.graph.clientSecret" @input="markSettingsDirty()" aria-describedby="graph-secret-hint" :class="{'field-error': hasFieldError('notifications.email.client_secret')}">
+                                <span class="error-text" x-show="hasFieldError('notifications.email.client_secret')" x-text="getFieldError('notifications.email.client_secret')"></span>
+                                <span id="graph-secret-hint" class="input-hint" x-show="!hasFieldError('notifications.email.client_secret')">Leave empty to keep existing secret</span>
                             </div>
                             <div class="group">
                                 <label for="graph-from-address">From Address (Shared Mailbox)</label>
-                                <input id="graph-from-address" type="email" placeholder="alerts@company.com" x-model="settings.graph.fromAddress" @input="markSettingsDirty()" aria-describedby="graph-from-hint">
-                                <span id="graph-from-hint" class="input-hint">Shared mailbox that will send the emails</span>
+                                <input id="graph-from-address" type="email" placeholder="alerts@company.com" x-model="settings.graph.fromAddress" @input="markSettingsDirty()" aria-describedby="graph-from-hint" :class="{'field-error': hasFieldError('notifications.email.from_address')}">
+                                <span class="error-text" x-show="hasFieldError('notifications.email.from_address')" x-text="getFieldError('notifications.email.from_address')"></span>
+                                <span id="graph-from-hint" class="input-hint" x-show="!hasFieldError('notifications.email.from_address')">Shared mailbox that will send the emails</span>
                             </div>
                             <div class="group">
                                 <label for="graph-recipients">Recipients</label>
-                                <input id="graph-recipients" type="text" placeholder="admin@company.com, tech@company.com" x-model="settings.graph.recipients" @input="markSettingsDirty()" aria-describedby="graph-recipients-hint">
-                                <span id="graph-recipients-hint" class="input-hint">Comma-separated email addresses.</span>
+                                <input id="graph-recipients" type="text" placeholder="admin@company.com, tech@company.com" x-model="settings.graph.recipients" @input="markSettingsDirty()" aria-describedby="graph-recipients-hint" :class="{'field-error': hasFieldError('notifications.email.recipients')}">
+                                <span class="error-text" x-show="hasFieldError('notifications.email.recipients')" x-text="getFieldError('notifications.email.recipients')"></span>
+                                <span id="graph-recipients-hint" class="input-hint" x-show="!hasFieldError('notifications.email.recipients')">Comma-separated email addresses.</span>
                             </div>
                         </div>
                         <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('email')" :disabled="testStates.email.pending || settingsDirty" x-text="testStates.email.text">Test</button>

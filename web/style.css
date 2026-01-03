@@ -224,6 +224,22 @@
         border-width: 2px;
     }
 
+    input.field-error, select.field-error {
+        border-color: var(--state-danger);
+        border-width: 2px;
+    }
+
+    input.field-error:focus, select.field-error:focus {
+        border-color: var(--state-danger);
+    }
+
+    .error-text {
+        display: block;
+        color: var(--state-danger);
+        font-size: 0.75rem;
+        margin-top: var(--space-1);
+    }
+
     input::placeholder {
         color: var(--text-secondary);
     }
