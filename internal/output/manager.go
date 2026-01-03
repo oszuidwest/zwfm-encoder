@@ -28,14 +28,14 @@ type OutputContext interface {
 	IsRunning() bool
 }
 
-// Manager manages multiple output FFmpeg processes.
+// Manager orchestrates multiple output processes.
 type Manager struct {
 	ffmpegPath string
 	processes  map[string]*Process
 	mu         sync.RWMutex // Protects processes map
 }
 
-// Process tracks an individual output FFmpeg process.
+// Process represents a running output subprocess.
 type Process struct {
 	cmd         *exec.Cmd
 	ctx         context.Context
@@ -49,7 +49,7 @@ type Process struct {
 	backoff     *util.Backoff
 }
 
-// NewManager creates a new output manager with the specified FFmpeg binary path.
+// NewManager returns a new output Manager.
 func NewManager(ffmpegPath string) *Manager {
 	return &Manager{
 		ffmpegPath: ffmpegPath,
@@ -57,7 +57,7 @@ func NewManager(ffmpegPath string) *Manager {
 	}
 }
 
-// Start starts an output FFmpeg process.
+// Start launches an output process.
 func (m *Manager) Start(output *types.Output) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -121,7 +121,7 @@ func (m *Manager) Start(output *types.Output) error {
 	return nil
 }
 
-// Stop stops an output process.
+// Stop terminates an output process.
 func (m *Manager) Stop(outputID string) error {
 	m.mu.Lock()
 	proc, exists := m.processes[outputID]
@@ -173,7 +173,7 @@ func (m *Manager) Stop(outputID string) error {
 	return nil
 }
 
-// StopAll stops all outputs and returns any errors that occurred.
+// StopAll terminates all output processes.
 func (m *Manager) StopAll() error {
 	m.mu.RLock()
 	ids := slices.Collect(maps.Keys(m.processes))
@@ -194,7 +194,7 @@ func (m *Manager) StopAll() error {
 	return errors.Join(errs...)
 }
 
-// WriteAudio writes audio data to a specific output.
+// WriteAudio sends audio data to an output.
 func (m *Manager) WriteAudio(outputID string, data []byte) error {
 	// Get process under read lock
 	m.mu.RLock()
@@ -237,7 +237,7 @@ func (m *Manager) WriteAudio(outputID string, data []byte) error {
 	return nil
 }
 
-// AllStatuses returns status for all tracked outputs.
+// AllStatuses reports the status of all outputs.
 func (m *Manager) AllStatuses(getMaxRetries func(string) int) map[string]types.ProcessStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -270,7 +270,7 @@ func (m *Manager) Process(outputID string) (cmd *exec.Cmd, ctx context.Context, 
 	return proc.cmd, proc.ctx, proc.backoff, true
 }
 
-// SetError sets the last error for an output and transitions to error state.
+// SetError records an error for an output.
 func (m *Manager) SetError(outputID, errMsg string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -280,7 +280,7 @@ func (m *Manager) SetError(outputID, errMsg string) {
 	}
 }
 
-// IncrementRetry increments the retry count for an output.
+// IncrementRetry advances the retry counter for an output.
 func (m *Manager) IncrementRetry(outputID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -289,7 +289,7 @@ func (m *Manager) IncrementRetry(outputID string) {
 	}
 }
 
-// ResetRetry resets the retry count and backoff for an output.
+// ResetRetry clears the retry state for an output.
 func (m *Manager) ResetRetry(outputID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -301,7 +301,7 @@ func (m *Manager) ResetRetry(outputID string) {
 	}
 }
 
-// MarkStopped marks an output as not running.
+// MarkStopped updates an output state to stopped.
 func (m *Manager) MarkStopped(outputID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -310,14 +310,14 @@ func (m *Manager) MarkStopped(outputID string) {
 	}
 }
 
-// Remove removes an output from tracking.
+// Remove deletes an output from the manager.
 func (m *Manager) Remove(outputID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.processes, outputID)
 }
 
-// RetryCount returns the current retry count for an output.
+// RetryCount reports the retry count for an output.
 func (m *Manager) RetryCount(outputID string) int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -383,7 +383,7 @@ func (m *Manager) shouldContinueRetry(outputID string, ctx OutputContext) (shoul
 	return true, ""
 }
 
-// MonitorAndRetry monitors an output process and handles automatic retry on failure.
+// MonitorAndRetry watches an output and restarts it on failure.
 func (m *Manager) MonitorAndRetry(outputID string, ctx OutputContext, stopChan <-chan struct{}) {
 	for {
 		select {

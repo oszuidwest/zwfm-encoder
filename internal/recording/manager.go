@@ -107,7 +107,7 @@ func (m *Manager) UpdateRecorder(cfg *types.Recorder) error {
 	return recorder.UpdateConfig(cfg)
 }
 
-// StartRecorder starts a specific on-demand recorder via API.
+// StartRecorder starts an on-demand recorder.
 func (m *Manager) StartRecorder(id string) error {
 	m.mu.RLock()
 	recorder, exists := m.recorders[id]
@@ -130,7 +130,7 @@ func (m *Manager) StartRecorder(id string) error {
 	return recorder.Start()
 }
 
-// StopRecorder stops a specific on-demand recorder via API.
+// StopRecorder stops an on-demand recorder.
 func (m *Manager) StopRecorder(id string) error {
 	m.mu.RLock()
 	recorder, exists := m.recorders[id]
@@ -153,7 +153,7 @@ func (m *Manager) StopRecorder(id string) error {
 	return recorder.Stop()
 }
 
-// Start marks the manager as running and starts auto-start recorders.
+// Start begins recorder management.
 func (m *Manager) Start() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -180,7 +180,7 @@ func (m *Manager) Start() error {
 	return nil
 }
 
-// Stop stops all recorders and marks manager as not running.
+// Stop terminates all recorders.
 func (m *Manager) Stop() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -237,7 +237,7 @@ func (m *Manager) AllStatuses() map[string]types.ProcessStatus {
 	return statuses
 }
 
-// startHourlyRetryScheduler starts a goroutine that retries failed hourly recorders at hour boundaries.
+// startHourlyRetryScheduler retries failed hourly recorders.
 func (m *Manager) startHourlyRetryScheduler() {
 	go func() {
 		for {

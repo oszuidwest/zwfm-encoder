@@ -30,7 +30,7 @@ func (v *PathValidationError) Error() string {
 	return fmt.Sprintf("%s: %s", v.Field, v.Message)
 }
 
-// ValidatePath validates a file path for security. Returns nil if valid.
+// ValidatePath validates a file path for security.
 func ValidatePath(field, path string) *PathValidationError {
 	if path == "" {
 		return &PathValidationError{Field: field, Message: fmt.Sprintf("%s is required", field)}

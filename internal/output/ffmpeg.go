@@ -9,7 +9,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-// BuildFFmpegArgs returns the FFmpeg arguments for an output.
+// BuildFFmpegArgs returns FFmpeg arguments for streaming.
 func BuildFFmpegArgs(output *types.Output) []string {
 	codecArgs := output.CodecArgs()
 	format := output.Format()
@@ -23,7 +23,7 @@ func BuildFFmpegArgs(output *types.Output) []string {
 	return args
 }
 
-// BuildSRTURL constructs the SRT URL for an output.
+// BuildSRTURL constructs an SRT streaming URL.
 func BuildSRTURL(output *types.Output) string {
 	params := url.Values{}
 	params.Set("pkt_size", "1316")

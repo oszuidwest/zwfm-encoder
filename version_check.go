@@ -31,7 +31,7 @@ type VersionChecker struct {
 	stopCh chan struct{} // Close to signal goroutine to stop
 }
 
-// NewVersionChecker creates and starts a version checker.
+// NewVersionChecker returns a new VersionChecker that checks for updates.
 func NewVersionChecker() *VersionChecker {
 	vc := &VersionChecker{
 		stopCh: make(chan struct{}),
@@ -40,7 +40,7 @@ func NewVersionChecker() *VersionChecker {
 	return vc
 }
 
-// Stop gracefully stops the version checker goroutine.
+// Stop stops the version checker.
 func (vc *VersionChecker) Stop() {
 	close(vc.stopCh)
 }
@@ -93,7 +93,7 @@ type githubRelease struct {
 	Prerelease bool   `json:"prerelease"`
 }
 
-// check fetches the latest release from GitHub and reports success.
+// check retrieves the latest release information.
 func (vc *VersionChecker) check() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), versionCheckTimeout)
 	defer cancel()
@@ -187,12 +187,12 @@ func (vc *VersionChecker) Info() types.VersionInfo {
 	return info
 }
 
-// normalizeVersion returns the version without 'v' prefix and whitespace.
+// normalizeVersion returns a normalized version string.
 func normalizeVersion(v string) string {
 	return strings.TrimPrefix(strings.TrimSpace(v), "v")
 }
 
-// canonicalVersion returns the version in semver canonical form with v prefix.
+// canonicalVersion returns the version in canonical semver format.
 func canonicalVersion(v string) string {
 	v = strings.TrimSpace(v)
 	if !strings.HasPrefix(v, "v") {
@@ -201,7 +201,7 @@ func canonicalVersion(v string) string {
 	return v
 }
 
-// isNewerVersion reports whether latest is newer than current using semver comparison.
+// isNewerVersion reports whether latest is newer than current.
 func isNewerVersion(latest, current string) bool {
 	latestCanon := canonicalVersion(latest)
 	currentCanon := canonicalVersion(current)

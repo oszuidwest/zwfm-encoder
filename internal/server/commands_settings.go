@@ -9,7 +9,7 @@ import (
 
 // --- Audio handlers ---
 
-// handleAudioUpdate handles audio/update command.
+// handleAudioUpdate processes an audio/update command.
 func (h *CommandHandler) handleAudioUpdate(cmd WSCommand, send chan<- any) {
 	HandleCommand(h, cmd, send, func(req *AudioUpdateRequest) error {
 		if req.Input == "" {
@@ -43,7 +43,7 @@ func (h *CommandHandler) handleAudioUpdate(cmd WSCommand, send chan<- any) {
 
 // --- Silence detection handlers ---
 
-// handleSilenceUpdate handles silence/update command.
+// handleSilenceUpdate processes a silence/update command.
 func (h *CommandHandler) handleSilenceUpdate(cmd WSCommand, send chan<- any) {
 	HandleCommand(h, cmd, send, func(req *SilenceUpdateRequest) error {
 		if req.ThresholdDB != nil {
@@ -70,21 +70,21 @@ func (h *CommandHandler) handleSilenceUpdate(cmd WSCommand, send chan<- any) {
 
 // --- Notification handlers ---
 
-// handleWebhookUpdate handles notifications/webhook/update command.
+// handleWebhookUpdate processes a notifications/webhook/update command.
 func (h *CommandHandler) handleWebhookUpdate(cmd WSCommand, send chan<- any) {
 	HandleCommand(h, cmd, send, func(req *WebhookUpdateRequest) error {
 		return h.cfg.SetWebhookURL(req.URL)
 	})
 }
 
-// handleLogUpdate handles notifications/log/update command.
+// handleLogUpdate processes a notifications/log/update command.
 func (h *CommandHandler) handleLogUpdate(cmd WSCommand, send chan<- any) {
 	HandleCommand(h, cmd, send, func(req *LogUpdateRequest) error {
 		return h.cfg.SetLogPath(req.Path)
 	})
 }
 
-// handleEmailUpdate handles notifications/email/update command.
+// handleEmailUpdate processes a notifications/email/update command.
 func (h *CommandHandler) handleEmailUpdate(cmd WSCommand, send chan<- any) {
 	HandleCommand(h, cmd, send, func(req *EmailUpdateRequest) error {
 		if err := h.cfg.SetGraphConfig(
@@ -103,7 +103,7 @@ func (h *CommandHandler) handleEmailUpdate(cmd WSCommand, send chan<- any) {
 
 // --- Recording handlers ---
 
-// handleRegenerateAPIKey handles recording/regenerate-key command.
+// handleRegenerateAPIKey processes a recording/regenerate-key command.
 func (h *CommandHandler) handleRegenerateAPIKey(send chan<- any) {
 	HandleActionAsync(WSCommand{Type: "recording/regenerate-key"}, send, func() (any, error) {
 		newKey, err := config.GenerateAPIKey()

@@ -74,7 +74,7 @@ type GraphClient struct {
 	httpClient  *http.Client
 }
 
-// NewGraphClient creates a new Graph API client with Client Credentials flow.
+// NewGraphClient creates a new Graph API client.
 func NewGraphClient(cfg *types.GraphConfig) (*GraphClient, error) {
 	if err := validateCredentials(cfg, false); err != nil {
 		return nil, err
@@ -210,7 +210,7 @@ func (c *GraphClient) sendWithRetry(payload graphMailRequest) error {
 	return fmt.Errorf("max retries exceeded: %w", lastErr)
 }
 
-// ValidateAuth verifies that the Graph API credentials are valid and returns an error if not.
+// ValidateAuth verifies the Graph API credentials.
 func (c *GraphClient) ValidateAuth() error {
 	// The httpClient already has a token source configured.
 	// Making any request will trigger token acquisition.
@@ -248,7 +248,7 @@ func (c *GraphClient) ValidateAuth() error {
 	}
 }
 
-// ValidateConfig checks that cfg has all required fields with valid formats and returns an error if not.
+// ValidateConfig validates that cfg has all required fields.
 func ValidateConfig(cfg *types.GraphConfig) error {
 	if err := validateCredentials(cfg, true); err != nil {
 		return err

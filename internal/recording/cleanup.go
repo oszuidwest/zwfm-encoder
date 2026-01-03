@@ -18,7 +18,6 @@ import (
 var datePattern = regexp.MustCompile(`(\d{4}-\d{2}-\d{2})`)
 
 // startCleanupScheduler starts the daily cleanup scheduler.
-// Runs at 03:00 local time every day.
 func (m *Manager) startCleanupScheduler() {
 	go func() {
 		for {

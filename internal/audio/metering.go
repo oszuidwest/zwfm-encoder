@@ -26,7 +26,7 @@ type LevelData struct {
 	SampleCount int
 }
 
-// ProcessSamples processes S16LE stereo PCM data and accumulates level data.
+// ProcessSamples accumulates level data from audio samples.
 func ProcessSamples(buf []byte, n int, data *LevelData) {
 	for i := 0; i+3 < n; i += 4 {
 		leftSample := int16(binary.LittleEndian.Uint16(buf[i:]))

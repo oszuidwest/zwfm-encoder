@@ -37,7 +37,7 @@ func (n *SilenceNotifier) InvalidateGraphClient() {
 	n.mu.Unlock()
 }
 
-// getOrCreateGraphClient returns the cached Graph client, creating it if needed.
+// getOrCreateGraphClient returns the Graph client.
 func (n *SilenceNotifier) getOrCreateGraphClient(cfg *GraphConfig) (*GraphClient, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -217,7 +217,7 @@ func (n *SilenceNotifier) sendEmail(cfg *GraphConfig, subject, body string) erro
 	return nil
 }
 
-// sendSilenceEmailWithClient sends a silence alert email via Microsoft Graph.
+// sendSilenceEmailWithClient sends a silence alert email.
 func (n *SilenceNotifier) sendSilenceEmailWithClient(cfg *GraphConfig, stationName string, levelL, levelR, threshold float64) error {
 	subject := "[ALERT] Silence Detected - " + stationName
 	body := fmt.Sprintf(
@@ -231,7 +231,7 @@ func (n *SilenceNotifier) sendSilenceEmailWithClient(cfg *GraphConfig, stationNa
 	return n.sendEmail(cfg, subject, body)
 }
 
-// sendRecoveryEmailWithClient sends an audio recovery email via Microsoft Graph.
+// sendRecoveryEmailWithClient sends a recovery alert email.
 func (n *SilenceNotifier) sendRecoveryEmailWithClient(cfg *GraphConfig, stationName string, durationMs int64, levelL, levelR, threshold float64) error {
 	subject := "[OK] Audio Recovered - " + stationName
 	body := fmt.Sprintf(

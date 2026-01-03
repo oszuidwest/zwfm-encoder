@@ -8,19 +8,19 @@ type FieldError struct {
 	Value   any    `json:"value"`   // The invalid value that was provided
 }
 
-// ValidationError collects multiple field validation errors.
+// ValidationError aggregates field validation errors.
 type ValidationError struct {
 	Errors []FieldError `json:"errors"`
 }
 
-// NewValidationError creates a new empty ValidationError.
+// NewValidationError returns an empty ValidationError.
 func NewValidationError() *ValidationError {
 	return &ValidationError{
 		Errors: make([]FieldError, 0),
 	}
 }
 
-// Add adds a field error to the collection.
+// Add appends a field error.
 func (v *ValidationError) Add(field, message string, value any) {
 	v.Errors = append(v.Errors, FieldError{
 		Field:   field,

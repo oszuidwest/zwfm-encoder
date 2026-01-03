@@ -170,7 +170,7 @@ func (s *Server) runWebSocketEventLoop(send chan any, done, statusUpdate <-chan 
 	}
 }
 
-// buildWSStatus creates a WebSocket status response with current state.
+// buildWSStatus returns the current WebSocket status response.
 func (s *Server) buildWSStatus() types.WSStatusResponse {
 	cfg := s.config.Snapshot()
 	status := s.encoder.Status()
@@ -229,7 +229,7 @@ func (s *Server) SetupRoutes() http.Handler {
 	return securityHeaders(mux)
 }
 
-// securityHeaders returns middleware that adds security headers to responses.
+// securityHeaders returns middleware that wraps handlers with security headers.
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Frame-Options", "DENY")
@@ -311,7 +311,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleLogout handles logout by clearing the session and redirecting.
+// handleLogout handles user logout requests.
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	s.sessions.Logout(w, r)
 	http.Redirect(w, r, "/login", http.StatusFound)
@@ -378,7 +378,7 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-// apiKeyAuth returns middleware that validates API key authentication.
+// apiKeyAuth returns middleware for API key authentication.
 func (s *Server) apiKeyAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		apiKey := s.config.GetRecordingAPIKey()
@@ -462,7 +462,7 @@ func (s *Server) handleStopRecording(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Start begins listening and serving HTTP requests on the configured port.
+// Start begins the HTTP server.
 // Returns an *http.Server that can be used for graceful shutdown.
 func (s *Server) Start() *http.Server {
 	addr := fmt.Sprintf(":%d", s.config.Snapshot().WebPort)

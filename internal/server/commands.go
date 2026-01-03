@@ -38,8 +38,7 @@ func NewCommandHandler(cfg *config.Config, enc *encoder.Encoder, ffmpegAvailable
 	}
 }
 
-// Handle processes a WebSocket command and performs the requested action.
-// Commands use slash-style format: namespace/action (e.g., "outputs/add", "audio/update")
+// Handle processes a WebSocket command.
 func (h *CommandHandler) Handle(cmd WSCommand, send chan<- any, triggerStatusUpdate func()) {
 	// Parse command into namespace and action
 	parts := strings.SplitN(cmd.Type, "/", 3)

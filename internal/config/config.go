@@ -118,7 +118,7 @@ type Config struct {
 	filePath string
 }
 
-// New creates a new Config with default values.
+// New returns a Config with default values.
 func New(filePath string) *Config {
 	return &Config{
 		System: SystemConfig{
@@ -140,7 +140,7 @@ func New(filePath string) *Config {
 	}
 }
 
-// Load reads config from file, creating a default if none exists.
+// Load reads configuration from file or creates defaults.
 func (c *Config) Load() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -166,7 +166,6 @@ func (c *Config) Load() error {
 	return nil
 }
 
-// validate checks all configuration fields for correctness.
 func (c *Config) validate() error {
 	// Validate station name
 	name := c.Web.StationName
@@ -183,7 +182,6 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// applyDefaults sets default values for zero-value fields.
 func (c *Config) applyDefaults() {
 	// System defaults
 	if c.System.Port == 0 {
@@ -225,7 +223,6 @@ func (c *Config) applyDefaults() {
 	}
 }
 
-// saveLocked persists configuration. Caller must hold c.mu.
 func (c *Config) saveLocked() error {
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
@@ -267,7 +264,6 @@ func (c *Config) Output(id string) *types.Output {
 	return nil
 }
 
-// findOutputIndex returns the index of the output with the given ID, or -1 if not found.
 func (c *Config) findOutputIndex(id string) int {
 	for i, o := range c.Streaming.Outputs {
 		if o.ID == id {
@@ -277,7 +273,7 @@ func (c *Config) findOutputIndex(id string) int {
 	return -1
 }
 
-// AddOutput adds a new output and saves the configuration.
+// AddOutput creates a new output.
 func (c *Config) AddOutput(output *types.Output) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -297,7 +293,7 @@ func (c *Config) AddOutput(output *types.Output) error {
 	return c.saveLocked()
 }
 
-// RemoveOutput removes an output by ID and saves the configuration.
+// RemoveOutput deletes an output.
 func (c *Config) RemoveOutput(id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -311,7 +307,7 @@ func (c *Config) RemoveOutput(id string) error {
 	return c.saveLocked()
 }
 
-// UpdateOutput updates an existing output and saves the configuration.
+// UpdateOutput modifies an output.
 func (c *Config) UpdateOutput(output *types.Output) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -341,7 +337,6 @@ func (c *Config) Recorder(id string) *types.Recorder {
 	return nil
 }
 
-// findRecorderIndex returns the index of the recorder with the given ID, or -1 if not found.
 func (c *Config) findRecorderIndex(id string) int {
 	for i := range c.Recording.Recorders {
 		if c.Recording.Recorders[i].ID == id {
@@ -351,7 +346,7 @@ func (c *Config) findRecorderIndex(id string) int {
 	return -1
 }
 
-// AddRecorder adds a new recorder and saves the configuration.
+// AddRecorder creates a new recorder.
 func (c *Config) AddRecorder(recorder *types.Recorder) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -375,7 +370,7 @@ func (c *Config) AddRecorder(recorder *types.Recorder) error {
 	return c.saveLocked()
 }
 
-// RemoveRecorder removes a recorder by ID and saves the configuration.
+// RemoveRecorder deletes a recorder.
 func (c *Config) RemoveRecorder(id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -389,7 +384,7 @@ func (c *Config) RemoveRecorder(id string) error {
 	return c.saveLocked()
 }
 
-// UpdateRecorder updates an existing recorder and saves the configuration.
+// UpdateRecorder modifies a recorder.
 func (c *Config) UpdateRecorder(recorder *types.Recorder) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -448,7 +443,7 @@ func (c *Config) GetRecordingAPIKey() string {
 
 // --- Setters for individual settings ---
 
-// SetAudioInput updates the audio input device and saves the configuration.
+// SetAudioInput sets the audio input device.
 func (c *Config) SetAudioInput(input string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -456,7 +451,7 @@ func (c *Config) SetAudioInput(input string) error {
 	return c.saveLocked()
 }
 
-// SetSilenceThreshold updates the silence detection threshold and saves the configuration.
+// SetSilenceThreshold sets the silence detection threshold.
 func (c *Config) SetSilenceThreshold(threshold float64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -464,7 +459,7 @@ func (c *Config) SetSilenceThreshold(threshold float64) error {
 	return c.saveLocked()
 }
 
-// SetSilenceDurationMs updates the silence duration and saves the configuration.
+// SetSilenceDurationMs sets the silence duration.
 func (c *Config) SetSilenceDurationMs(ms int64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -472,7 +467,7 @@ func (c *Config) SetSilenceDurationMs(ms int64) error {
 	return c.saveLocked()
 }
 
-// SetSilenceRecoveryMs updates the silence recovery time and saves the configuration.
+// SetSilenceRecoveryMs sets the silence recovery time.
 func (c *Config) SetSilenceRecoveryMs(ms int64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -480,7 +475,7 @@ func (c *Config) SetSilenceRecoveryMs(ms int64) error {
 	return c.saveLocked()
 }
 
-// SetWebhookURL updates the webhook URL and saves the configuration.
+// SetWebhookURL sets the webhook URL.
 func (c *Config) SetWebhookURL(url string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -488,7 +483,7 @@ func (c *Config) SetWebhookURL(url string) error {
 	return c.saveLocked()
 }
 
-// SetLogPath updates the log file path and saves the configuration.
+// SetLogPath sets the log file path.
 func (c *Config) SetLogPath(path string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -496,7 +491,7 @@ func (c *Config) SetLogPath(path string) error {
 	return c.saveLocked()
 }
 
-// SetGraphConfig updates all Microsoft Graph/Email configuration fields and saves.
+// SetGraphConfig sets the Microsoft Graph email configuration.
 func (c *Config) SetGraphConfig(tenantID, clientID, clientSecret, fromAddress, recipients string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -508,7 +503,7 @@ func (c *Config) SetGraphConfig(tenantID, clientID, clientSecret, fromAddress, r
 	return c.saveLocked()
 }
 
-// SetRecordingAPIKey updates the API key and saves the configuration.
+// SetRecordingAPIKey sets the recording API key.
 func (c *Config) SetRecordingAPIKey(key string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -617,7 +612,7 @@ func (s *Snapshot) HasLogPath() bool {
 
 // --- Utility functions ---
 
-// GenerateAPIKey generates a new random 32-character alphanumeric API key.
+// GenerateAPIKey returns a new random API key.
 func GenerateAPIKey() (string, error) {
 	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	const length = 32
@@ -632,7 +627,6 @@ func GenerateAPIKey() (string, error) {
 	return string(result), nil
 }
 
-// generateShortID generates a random 8-character hex ID for outputs and recorders.
 func generateShortID() (string, error) {
 	b := make([]byte, 4)
 	if _, err := rand.Read(b); err != nil {

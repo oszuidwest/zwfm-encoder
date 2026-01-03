@@ -92,7 +92,7 @@ func (r *GenericRecorder) ID() string {
 	return r.id
 }
 
-// Config returns a copy of the recorder's configuration.
+// Config returns the recorder configuration.
 func (r *GenericRecorder) Config() types.Recorder {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -113,7 +113,7 @@ func (r *GenericRecorder) IsCurrentFile(path string) bool {
 	return r.currentFile == path
 }
 
-// Start begins recording asynchronously.
+// Start begins recording.
 func (r *GenericRecorder) Start() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -207,7 +207,7 @@ func (r *GenericRecorder) setError(msg string) {
 	slog.Error("recorder error", "id", r.id, "error", msg)
 }
 
-// Stop gracefully stops recording.
+// Stop ends recording.
 func (r *GenericRecorder) Stop() error {
 	r.mu.Lock()
 
@@ -259,7 +259,7 @@ func (r *GenericRecorder) Stop() error {
 	return nil
 }
 
-// WriteAudio writes PCM audio to the encoder.
+// WriteAudio writes PCM audio data.
 func (r *GenericRecorder) WriteAudio(pcm []byte) error {
 	r.mu.RLock()
 	state := r.state

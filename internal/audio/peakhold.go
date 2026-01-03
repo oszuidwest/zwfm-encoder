@@ -26,7 +26,7 @@ func NewPeakHolder() *PeakHolder {
 	}
 }
 
-// Update refreshes held peak values based on current peaks and elapsed time.
+// Update returns the current held peak values.
 func (p *PeakHolder) Update(peakL, peakR float64, now time.Time) (heldL, heldR float64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

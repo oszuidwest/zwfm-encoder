@@ -32,7 +32,7 @@ func LogSilenceEnd(logPath string, silenceDurationMs int64, levelL, levelR, thre
 	})
 }
 
-// WriteTestLog writes a test entry to verify log file configuration.
+// WriteTestLog writes a test log entry.
 func WriteTestLog(logPath string) error {
 	if logPath == "" {
 		return fmt.Errorf("log file path not configured")

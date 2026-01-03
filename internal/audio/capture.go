@@ -21,7 +21,7 @@ type CaptureConfig struct {
 	BuildArgs func(device string) []string
 }
 
-// BuildCaptureCommand returns the command and arguments for audio capture on the current platform.
+// BuildCaptureCommand returns the command and arguments for audio capture.
 func BuildCaptureCommand(device, ffmpegPath string) (cmd string, args []string, err error) {
 	cfg := getPlatformConfig()
 

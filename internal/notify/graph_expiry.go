@@ -37,7 +37,7 @@ func NewSecretExpiryChecker(cfg *types.GraphConfig) *SecretExpiryChecker {
 	}
 }
 
-// GetInfo returns the secret expiry information, fetching on-demand if cache is stale.
+// GetInfo returns the secret expiry information.
 func (c *SecretExpiryChecker) GetInfo() types.SecretExpiryInfo {
 	c.mu.RLock()
 	if time.Since(c.lastCheck) < expiryCacheTTL && c.lastCheck.After(time.Time{}) {
@@ -51,7 +51,7 @@ func (c *SecretExpiryChecker) GetInfo() types.SecretExpiryInfo {
 	return c.refresh()
 }
 
-// UpdateConfig updates the configuration and clears the cache.
+// UpdateConfig updates the configuration.
 func (c *SecretExpiryChecker) UpdateConfig(cfg *types.GraphConfig) {
 	c.mu.Lock()
 	c.cfg = cfg
