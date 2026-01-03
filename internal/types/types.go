@@ -268,13 +268,13 @@ type AudioMetrics struct {
 // WSRuntimeStatus is sent to clients with only runtime status (no config).
 // This is the lightweight status message sent every 3 seconds via WebSocket.
 type WSRuntimeStatus struct {
-	Type              string                   `json:"type"`               // Message type identifier ("status")
-	FFmpegAvailable   bool                     `json:"ffmpeg_available"`   // FFmpeg binary is available
-	Encoder           EncoderStatus            `json:"encoder"`            // Encoder status
-	OutputStatus      map[string]ProcessStatus `json:"output_status"`      // Runtime output status by ID
-	RecorderStatuses  map[string]ProcessStatus `json:"recorder_statuses"`  // Runtime recorder status by ID
+	Type              string                   `json:"type"`                // Message type identifier ("status")
+	FFmpegAvailable   bool                     `json:"ffmpeg_available"`    // FFmpeg binary is available
+	Encoder           EncoderStatus            `json:"encoder"`             // Encoder status
+	OutputStatus      map[string]ProcessStatus `json:"output_status"`       // Runtime output status by ID
+	RecorderStatuses  map[string]ProcessStatus `json:"recorder_statuses"`   // Runtime recorder status by ID
 	GraphSecretExpiry SecretExpiryInfo         `json:"graph_secret_expiry"` // Client secret expiration info
-	Version           VersionInfo              `json:"version"`            // Version information
+	Version           VersionInfo              `json:"version"`             // Version information
 }
 
 // APIConfigResponse is returned by GET /api/config with full configuration.

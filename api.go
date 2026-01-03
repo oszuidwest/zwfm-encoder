@@ -35,6 +35,28 @@ func (s *Server) readJSON(r *http.Request, v any) error {
 	return json.NewDecoder(r.Body).Decode(v)
 }
 
+// parseJSON reads and parses JSON from request body.
+// Returns parsed value and true on success, zero value and false on failure.
+func parseJSON[T any](s *Server, w http.ResponseWriter, r *http.Request) (T, bool) {
+	var v T
+	if err := s.readJSON(r, &v); err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+		return v, false
+	}
+	return v, true
+}
+
+// coalesce returns the first non-zero value from the provided values.
+func coalesce[T comparable](values ...T) T {
+	var zero T
+	for _, v := range values {
+		if v != zero {
+			return v
+		}
+	}
+	return zero
+}
+
 // handleAPIConfig returns the full configuration for the frontend.
 // GET /api/config
 func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
@@ -62,18 +84,18 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 
 		// Notifications - Webhook
 		WebhookURL:    cfg.WebhookURL,
-		WebhookEvents: s.getWebhookEvents(),
+		WebhookEvents: defaultEventConfig(),
 
 		// Notifications - Log
 		LogPath:   cfg.LogPath,
-		LogEvents: s.getLogEvents(),
+		LogEvents: defaultEventConfig(),
 
 		// Notifications - Zabbix
 		ZabbixServer: cfg.ZabbixServer,
 		ZabbixPort:   cfg.ZabbixPort,
 		ZabbixHost:   cfg.ZabbixHost,
 		ZabbixKey:    cfg.ZabbixKey,
-		ZabbixEvents: s.getZabbixEvents(),
+		ZabbixEvents: defaultEventConfig(),
 
 		// Notifications - Email
 		GraphTenantID:    cfg.GraphTenantID,
@@ -81,7 +103,7 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 		GraphFromAddress: cfg.GraphFromAddress,
 		GraphRecipients:  cfg.GraphRecipients,
 		GraphHasSecret:   cfg.GraphClientSecret != "",
-		GraphEvents:      s.getGraphEvents(),
+		GraphEvents:      defaultEventConfig(),
 
 		// Recording
 		RecordingAPIKey: cfg.RecordingAPIKey,
@@ -147,9 +169,8 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req SettingsUpdateRequest
-	if err := s.readJSON(r, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+	req, ok := parseJSON[SettingsUpdateRequest](s, w, r)
+	if !ok {
 		return
 	}
 
@@ -320,48 +341,38 @@ func (s *Server) applyGraphSettings(req *SettingsUpdateRequest, cfg *config.Snap
 	return s.config.SetGraphConfig(tenantID, clientID, clientSecret, fromAddr, recipients)
 }
 
-// handleAPIOutputs handles CRUD operations for outputs.
-// POST /api/outputs - create
-// GET /api/outputs/{id} - read
-// PUT /api/outputs/{id} - update
-// DELETE /api/outputs/{id} - delete
-func (s *Server) handleAPIOutputs(w http.ResponseWriter, r *http.Request) {
-	// Extract ID from path: /api/outputs/{id}
-	path := strings.TrimPrefix(r.URL.Path, "/api/outputs")
-	id := strings.TrimPrefix(path, "/")
+// handleListOutputs returns all outputs.
+// GET /api/outputs
+func (s *Server) handleListOutputs(w http.ResponseWriter, r *http.Request) {
+	cfg := s.config.Snapshot()
+	s.writeJSON(w, http.StatusOK, cfg.Outputs)
+}
 
-	switch r.Method {
-	case http.MethodPost:
-		if id != "" {
-			s.writeError(w, http.StatusBadRequest, "POST should not include ID in path")
-			return
-		}
-		s.createOutput(w, r)
+// handleCreateOutput creates a new output.
+// POST /api/outputs
+func (s *Server) handleCreateOutput(w http.ResponseWriter, r *http.Request) {
+	s.createOutput(w, r)
+}
 
-	case http.MethodGet:
-		if id == "" {
-			s.writeError(w, http.StatusBadRequest, "GET requires output ID")
-			return
-		}
-		s.getOutput(w, id)
+// handleGetOutput returns a single output by ID.
+// GET /api/outputs/{id}
+func (s *Server) handleGetOutput(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.getOutput(w, id)
+}
 
-	case http.MethodPut:
-		if id == "" {
-			s.writeError(w, http.StatusBadRequest, "PUT requires output ID")
-			return
-		}
-		s.updateOutput(w, r, id)
+// handleUpdateOutput updates an output by ID.
+// PUT /api/outputs/{id}
+func (s *Server) handleUpdateOutput(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.updateOutput(w, r, id)
+}
 
-	case http.MethodDelete:
-		if id == "" {
-			s.writeError(w, http.StatusBadRequest, "DELETE requires output ID")
-			return
-		}
-		s.deleteOutput(w, id)
-
-	default:
-		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
-	}
+// handleDeleteOutput deletes an output by ID.
+// DELETE /api/outputs/{id}
+func (s *Server) handleDeleteOutput(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.deleteOutput(w, id)
 }
 
 // OutputRequest is the request body for creating/updating outputs.
@@ -376,9 +387,8 @@ type OutputRequest struct {
 }
 
 func (s *Server) createOutput(w http.ResponseWriter, r *http.Request) {
-	var req OutputRequest
-	if err := s.readJSON(r, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+	req, ok := parseJSON[OutputRequest](s, w, r)
+	if !ok {
 		return
 	}
 
@@ -433,9 +443,8 @@ func (s *Server) updateOutput(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 
-	var req OutputRequest
-	if err := s.readJSON(r, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+	req, ok := parseJSON[OutputRequest](s, w, r)
+	if !ok {
 		return
 	}
 
@@ -505,71 +514,58 @@ func (s *Server) deleteOutput(w http.ResponseWriter, id string) {
 	s.writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
-// handleAPIRecorders handles CRUD operations for recorders.
-func (s *Server) handleAPIRecorders(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/api/recorders")
-	parts := strings.Split(strings.Trim(path, "/"), "/")
+// handleListRecorders returns all recorders.
+// GET /api/recorders
+func (s *Server) handleListRecorders(w http.ResponseWriter, r *http.Request) {
+	cfg := s.config.Snapshot()
+	s.writeJSON(w, http.StatusOK, cfg.Recorders)
+}
 
-	id := ""
-	action := ""
-	if len(parts) > 0 && parts[0] != "" {
-		id = parts[0]
-	}
-	if len(parts) > 1 {
-		action = parts[1]
-	}
+// handleCreateRecorder creates a new recorder.
+// POST /api/recorders
+func (s *Server) handleCreateRecorder(w http.ResponseWriter, r *http.Request) {
+	s.createRecorder(w, r)
+}
 
-	// Handle actions first
-	if action != "" {
-		switch action {
-		case "start":
-			s.startRecorderAPI(w, r, id)
-		case "stop":
-			s.stopRecorderAPI(w, r, id)
-		default:
-			s.writeError(w, http.StatusBadRequest, "Unknown action: "+action)
-		}
-		return
-	}
+// handleGetRecorder returns a single recorder by ID.
+// GET /api/recorders/{id}
+func (s *Server) handleGetRecorder(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.getRecorder(w, id)
+}
 
-	// Handle test-s3 (no ID required)
-	if id == "test-s3" {
-		s.testS3API(w, r)
-		return
-	}
+// handleUpdateRecorder updates a recorder by ID.
+// PUT /api/recorders/{id}
+func (s *Server) handleUpdateRecorder(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.updateRecorder(w, r, id)
+}
 
-	switch r.Method {
-	case http.MethodPost:
-		if id != "" {
-			s.writeError(w, http.StatusBadRequest, "POST should not include ID in path")
-			return
-		}
-		s.createRecorder(w, r)
+// handleDeleteRecorder deletes a recorder by ID.
+// DELETE /api/recorders/{id}
+func (s *Server) handleDeleteRecorder(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.deleteRecorder(w, id)
+}
 
-	case http.MethodGet:
-		if id == "" {
-			s.writeError(w, http.StatusBadRequest, "GET requires recorder ID")
-			return
-		}
-		s.getRecorder(w, id)
+// handleStartRecorder starts a recorder by ID.
+// POST /api/recorders/{id}/start
+func (s *Server) handleStartRecorder(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.startRecorderAPI(w, r, id)
+}
 
-	case http.MethodPut:
-		if id == "" {
-			s.writeError(w, http.StatusBadRequest, "PUT requires recorder ID")
-			return
-		}
-		s.updateRecorder(w, r, id)
+// handleStopRecorder stops a recorder by ID.
+// POST /api/recorders/{id}/stop
+func (s *Server) handleStopRecorder(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.stopRecorderAPI(w, r, id)
+}
 
-	case http.MethodDelete:
-		if id == "" {
-			s.writeError(w, http.StatusBadRequest, "DELETE requires recorder ID")
-			return
-		}
-		s.deleteRecorder(w, id)
-
-	default:
-		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
-	}
+// handleTestS3 tests S3 connectivity.
+// POST /api/recorders/test-s3
+func (s *Server) handleTestS3(w http.ResponseWriter, r *http.Request) {
+	s.testS3API(w, r)
 }
 
 // RecorderRequest is the request body for creating/updating recorders.
@@ -588,9 +584,8 @@ type RecorderRequest struct {
 }
 
 func (s *Server) createRecorder(w http.ResponseWriter, r *http.Request) {
-	var req RecorderRequest
-	if err := s.readJSON(r, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+	req, ok := parseJSON[RecorderRequest](s, w, r)
+	if !ok {
 		return
 	}
 
@@ -639,9 +634,8 @@ func (s *Server) updateRecorder(w http.ResponseWriter, r *http.Request, id strin
 		return
 	}
 
-	var req RecorderRequest
-	if err := s.readJSON(r, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+	req, ok := parseJSON[RecorderRequest](s, w, r)
+	if !ok {
 		return
 	}
 
@@ -705,11 +699,6 @@ func (s *Server) deleteRecorder(w http.ResponseWriter, id string) {
 }
 
 func (s *Server) startRecorderAPI(w http.ResponseWriter, r *http.Request, id string) {
-	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-
 	// Start encoder if not running
 	if s.encoder.State() == types.StateStopped {
 		if err := s.encoder.Start(); err != nil {
@@ -727,11 +716,6 @@ func (s *Server) startRecorderAPI(w http.ResponseWriter, r *http.Request, id str
 }
 
 func (s *Server) stopRecorderAPI(w http.ResponseWriter, r *http.Request, id string) {
-	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-
 	if err := s.encoder.StopRecorder(id); err != nil {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -749,14 +733,8 @@ type S3TestRequest struct {
 }
 
 func (s *Server) testS3API(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-
-	var req S3TestRequest
-	if err := s.readJSON(r, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+	req, ok := parseJSON[S3TestRequest](s, w, r)
+	if !ok {
 		return
 	}
 
@@ -822,17 +800,13 @@ func (s *Server) handleAPITestWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req NotificationTestRequest
-	if err := s.readJSON(r, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+	req, ok := parseJSON[NotificationTestRequest](s, w, r)
+	if !ok {
 		return
 	}
 
 	cfg := s.config.Snapshot()
-	url := req.WebhookURL
-	if url == "" {
-		url = cfg.WebhookURL
-	}
+	url := coalesce(req.WebhookURL, cfg.WebhookURL)
 
 	if url == "" {
 		s.writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": "No webhook URL configured"})
@@ -853,16 +827,12 @@ func (s *Server) handleAPITestLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req NotificationTestRequest
-	if err := s.readJSON(r, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+	req, ok := parseJSON[NotificationTestRequest](s, w, r)
+	if !ok {
 		return
 	}
 
-	path := req.LogPath
-	if path == "" {
-		path = s.config.Snapshot().LogPath
-	}
+	path := coalesce(req.LogPath, s.config.Snapshot().LogPath)
 
 	if path == "" {
 		s.writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": "No log path configured"})
@@ -883,37 +853,18 @@ func (s *Server) handleAPITestEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req NotificationTestRequest
-	if err := s.readJSON(r, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+	req, ok := parseJSON[NotificationTestRequest](s, w, r)
+	if !ok {
 		return
 	}
 
 	// Use request values or fall back to saved config
 	cfg := s.config.Snapshot()
-
-	tenantID := req.GraphTenantID
-	clientID := req.GraphClientID
-	clientSecret := req.GraphClientSecret
-	fromAddress := req.GraphFromAddress
-	recipients := req.GraphRecipients
-
-	// Fill in missing values from config
-	if tenantID == "" {
-		tenantID = cfg.GraphTenantID
-	}
-	if clientID == "" {
-		clientID = cfg.GraphClientID
-	}
-	if clientSecret == "" {
-		clientSecret = cfg.GraphClientSecret
-	}
-	if fromAddress == "" {
-		fromAddress = cfg.GraphFromAddress
-	}
-	if recipients == "" {
-		recipients = cfg.GraphRecipients
-	}
+	tenantID := coalesce(req.GraphTenantID, cfg.GraphTenantID)
+	clientID := coalesce(req.GraphClientID, cfg.GraphClientID)
+	clientSecret := coalesce(req.GraphClientSecret, cfg.GraphClientSecret)
+	fromAddress := coalesce(req.GraphFromAddress, cfg.GraphFromAddress)
+	recipients := coalesce(req.GraphRecipients, cfg.GraphRecipients)
 
 	if tenantID == "" || clientID == "" || clientSecret == "" {
 		s.writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Email not fully configured"})
@@ -942,31 +893,17 @@ func (s *Server) handleAPITestZabbix(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req NotificationTestRequest
-	if err := s.readJSON(r, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+	req, ok := parseJSON[NotificationTestRequest](s, w, r)
+	if !ok {
 		return
 	}
 
 	// Use request values or fall back to saved config
 	cfg := s.config.Snapshot()
-	server := req.ZabbixServer
-	port := req.ZabbixPort
-	host := req.ZabbixHost
-	key := req.ZabbixKey
-
-	if server == "" {
-		server = cfg.ZabbixServer
-	}
-	if port == 0 {
-		port = cfg.ZabbixPort
-	}
-	if host == "" {
-		host = cfg.ZabbixHost
-	}
-	if key == "" {
-		key = cfg.ZabbixKey
-	}
+	server := coalesce(req.ZabbixServer, cfg.ZabbixServer)
+	port := coalesce(req.ZabbixPort, cfg.ZabbixPort)
+	host := coalesce(req.ZabbixHost, cfg.ZabbixHost)
+	key := coalesce(req.ZabbixKey, cfg.ZabbixKey)
 
 	if server == "" || host == "" || key == "" {
 		s.writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Zabbix not fully configured"})
@@ -1075,23 +1012,8 @@ func readSilenceLog(logPath string, maxEntries int) ([]types.SilenceLogEntry, er
 	return entries, nil
 }
 
-// Placeholder functions for event configs - these need to be implemented
-// based on how events are stored in the config
-
-func (s *Server) getWebhookEvents() types.EventConfig {
-	// TODO: Implement when event storage is added to config
+// defaultEventConfig returns the default event configuration.
+// All events are enabled by default until per-channel event storage is implemented.
+func defaultEventConfig() types.EventConfig {
 	return types.EventConfig{SilenceStart: true, SilenceEnd: true, AudioDump: true}
 }
-
-func (s *Server) getLogEvents() types.EventConfig {
-	return types.EventConfig{SilenceStart: true, SilenceEnd: true, AudioDump: true}
-}
-
-func (s *Server) getZabbixEvents() types.EventConfig {
-	return types.EventConfig{SilenceStart: true, SilenceEnd: true, AudioDump: true}
-}
-
-func (s *Server) getGraphEvents() types.EventConfig {
-	return types.EventConfig{SilenceStart: true, SilenceEnd: true, AudioDump: true}
-}
-

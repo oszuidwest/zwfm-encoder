@@ -104,14 +104,19 @@ func (s *Server) unregisterWSClient(send chan any) {
 
 // broadcastConfigChanged notifies all connected WebSocket clients that config has changed.
 func (s *Server) broadcastConfigChanged() {
-	msg := map[string]string{"type": "config_changed"}
-
+	// Copy client channels while holding lock to avoid race conditions
 	s.wsClientsMu.RLock()
-	defer s.wsClientsMu.RUnlock()
+	clients := make([]chan any, 0, len(s.wsClients))
+	for ch := range s.wsClients {
+		clients = append(clients, ch)
+	}
+	s.wsClientsMu.RUnlock()
 
-	for send := range s.wsClients {
+	// Send to all clients outside the lock
+	msg := map[string]string{"type": "config_changed"}
+	for _, ch := range clients {
 		select {
-		case send <- msg:
+		case ch <- msg:
 		default:
 			// Channel full, skip this client
 		}
@@ -224,19 +229,34 @@ func (s *Server) SetupRoutes() http.Handler {
 	mux.HandleFunc("/api/recordings/stop", s.apiKeyAuth(s.handleStopRecording))
 
 	// REST API routes (session auth)
-	mux.HandleFunc("/api/config", auth(s.handleAPIConfig))
-	mux.HandleFunc("/api/devices", auth(s.handleAPIDevices))
-	mux.HandleFunc("/api/settings", auth(s.handleAPISettings))
-	mux.HandleFunc("/api/outputs/", auth(s.handleAPIOutputs))
-	mux.HandleFunc("/api/outputs", auth(s.handleAPIOutputs))
-	mux.HandleFunc("/api/recorders/", auth(s.handleAPIRecorders))
-	mux.HandleFunc("/api/recorders", auth(s.handleAPIRecorders))
-	mux.HandleFunc("/api/notifications/test/webhook", auth(s.handleAPITestWebhook))
-	mux.HandleFunc("/api/notifications/test/log", auth(s.handleAPITestLog))
-	mux.HandleFunc("/api/notifications/test/email", auth(s.handleAPITestEmail))
-	mux.HandleFunc("/api/notifications/test/zabbix", auth(s.handleAPITestZabbix))
-	mux.HandleFunc("/api/notifications/log", auth(s.handleAPIViewLog))
-	mux.HandleFunc("/api/recording/regenerate-key", auth(s.handleAPIRegenerateKey))
+	mux.HandleFunc("GET /api/config", auth(s.handleAPIConfig))
+	mux.HandleFunc("GET /api/devices", auth(s.handleAPIDevices))
+	mux.HandleFunc("POST /api/settings", auth(s.handleAPISettings))
+
+	// Output CRUD routes
+	mux.HandleFunc("GET /api/outputs", auth(s.handleListOutputs))
+	mux.HandleFunc("POST /api/outputs", auth(s.handleCreateOutput))
+	mux.HandleFunc("GET /api/outputs/{id}", auth(s.handleGetOutput))
+	mux.HandleFunc("PUT /api/outputs/{id}", auth(s.handleUpdateOutput))
+	mux.HandleFunc("DELETE /api/outputs/{id}", auth(s.handleDeleteOutput))
+
+	// Recorder CRUD routes
+	mux.HandleFunc("GET /api/recorders", auth(s.handleListRecorders))
+	mux.HandleFunc("POST /api/recorders", auth(s.handleCreateRecorder))
+	mux.HandleFunc("POST /api/recorders/test-s3", auth(s.handleTestS3))
+	mux.HandleFunc("GET /api/recorders/{id}", auth(s.handleGetRecorder))
+	mux.HandleFunc("PUT /api/recorders/{id}", auth(s.handleUpdateRecorder))
+	mux.HandleFunc("DELETE /api/recorders/{id}", auth(s.handleDeleteRecorder))
+	mux.HandleFunc("POST /api/recorders/{id}/start", auth(s.handleStartRecorder))
+	mux.HandleFunc("POST /api/recorders/{id}/stop", auth(s.handleStopRecorder))
+
+	// Notification routes
+	mux.HandleFunc("POST /api/notifications/test/webhook", auth(s.handleAPITestWebhook))
+	mux.HandleFunc("POST /api/notifications/test/log", auth(s.handleAPITestLog))
+	mux.HandleFunc("POST /api/notifications/test/email", auth(s.handleAPITestEmail))
+	mux.HandleFunc("POST /api/notifications/test/zabbix", auth(s.handleAPITestZabbix))
+	mux.HandleFunc("GET /api/notifications/log", auth(s.handleAPIViewLog))
+	mux.HandleFunc("POST /api/recording/regenerate-key", auth(s.handleAPIRegenerateKey))
 
 	// Protected routes
 	mux.HandleFunc("/ws", auth(s.handleWebSocket))
@@ -485,8 +505,12 @@ func (s *Server) Start() *http.Server {
 	slog.Info("starting web server", "addr", addr)
 
 	srv := &http.Server{
-		Addr:    addr,
-		Handler: s.SetupRoutes(),
+		Addr:           addr,
+		Handler:        s.SetupRoutes(),
+		ReadTimeout:    15 * time.Second,
+		WriteTimeout:   15 * time.Second,
+		IdleTimeout:    60 * time.Second,
+		MaxHeaderBytes: 1 << 20,
 	}
 
 	go func() {

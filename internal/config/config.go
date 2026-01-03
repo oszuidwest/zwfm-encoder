@@ -107,14 +107,14 @@ type RecordingConfig struct {
 
 // Config represents all application configuration and is safe for concurrent use.
 type Config struct {
-	System           SystemConfig           `json:"system"`
-	Web              WebConfig              `json:"web"`
-	Audio            AudioConfig            `json:"audio"`
-	SilenceDetection SilenceDetectionConfig    `json:"silence_detection"`
-	SilenceDump      types.SilenceDumpConfig   `json:"silence_dump"`
-	Notifications    NotificationsConfig       `json:"notifications"`
-	Streaming        StreamingConfig        `json:"streaming"`
-	Recording        RecordingConfig        `json:"recording"`
+	System           SystemConfig            `json:"system"`
+	Web              WebConfig               `json:"web"`
+	Audio            AudioConfig             `json:"audio"`
+	SilenceDetection SilenceDetectionConfig  `json:"silence_detection"`
+	SilenceDump      types.SilenceDumpConfig `json:"silence_dump"`
+	Notifications    NotificationsConfig     `json:"notifications"`
+	Streaming        StreamingConfig         `json:"streaming"`
+	Recording        RecordingConfig         `json:"recording"`
 
 	mu       sync.RWMutex
 	filePath string
@@ -197,6 +197,10 @@ func (c *Config) applyDefaults() {
 	c.Web.StationName = cmp.Or(c.Web.StationName, DefaultStationName)
 	c.Web.ColorLight = cmp.Or(c.Web.ColorLight, DefaultStationColorLight)
 	c.Web.ColorDark = cmp.Or(c.Web.ColorDark, DefaultStationColorDark)
+	// Silence detection defaults
+	c.SilenceDetection.ThresholdDB = cmp.Or(c.SilenceDetection.ThresholdDB, DefaultSilenceThreshold)
+	c.SilenceDetection.DurationMs = cmp.Or(c.SilenceDetection.DurationMs, DefaultSilenceDurationMs)
+	c.SilenceDetection.RecoveryMs = cmp.Or(c.SilenceDetection.RecoveryMs, DefaultSilenceRecoveryMs)
 	// Streaming defaults
 	if c.Streaming.Outputs == nil {
 		c.Streaming.Outputs = []types.Output{}
@@ -244,15 +248,14 @@ func (c *Config) ConfiguredOutputs() []types.Output {
 	return slices.Clone(c.Streaming.Outputs)
 }
 
-// Output returns a copy of the output with the given ID, or nil if not found.
+// Output returns the output with the given ID, or nil if not found.
 func (c *Config) Output(id string) *types.Output {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	for _, o := range c.Streaming.Outputs {
-		if o.ID == id {
-			output := o
-			return &output
+	for i := range c.Streaming.Outputs {
+		if c.Streaming.Outputs[i].ID == id {
+			return &c.Streaming.Outputs[i]
 		}
 	}
 	return nil
@@ -317,15 +320,14 @@ func (c *Config) UpdateOutput(output *types.Output) error {
 
 // --- Recorder management ---
 
-// Recorder returns a copy of the recorder with the given ID, or nil if not found.
+// Recorder returns the recorder with the given ID, or nil if not found.
 func (c *Config) Recorder(id string) *types.Recorder {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	for i := range c.Recording.Recorders {
 		if c.Recording.Recorders[i].ID == id {
-			recorder := c.Recording.Recorders[i]
-			return &recorder
+			return &c.Recording.Recorders[i]
 		}
 	}
 	return nil
