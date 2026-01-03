@@ -14,7 +14,7 @@ import (
 // datePattern matches date in filename: YYYY-MM-DD_HH-MM-SS.mp3
 var datePattern = regexp.MustCompile(`(\d{4}-\d{2}-\d{2})`)
 
-// Manager orchestrates silence dump capture and cleanup.
+// Manager coordinates silence dump capture and file retention.
 type Manager struct {
 	mu sync.RWMutex
 

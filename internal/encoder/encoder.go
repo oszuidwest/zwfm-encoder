@@ -24,22 +24,22 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// LevelUpdateSamples specifies how many samples to process between level updates.
+// LevelUpdateSamples is the number of samples to process between level updates.
 const LevelUpdateSamples = 12000
 
-// ErrNoAudioInput indicates no audio input device is configured.
+// ErrNoAudioInput is returned when no audio input device is configured.
 var ErrNoAudioInput = errors.New("no audio input configured")
 
-// ErrAlreadyRunning indicates the encoder is already running.
+// ErrAlreadyRunning is returned when the encoder is already running.
 var ErrAlreadyRunning = errors.New("encoder already running")
 
-// ErrNotRunning indicates the encoder is not running.
+// ErrNotRunning is returned when the encoder is not running.
 var ErrNotRunning = errors.New("encoder not running")
 
-// ErrOutputDisabled indicates the output is disabled.
+// ErrOutputDisabled is returned when the output is disabled.
 var ErrOutputDisabled = errors.New("output is disabled")
 
-// ErrOutputNotFound indicates the output was not found.
+// ErrOutputNotFound is returned when the output was not found.
 var ErrOutputNotFound = errors.New("output not found")
 
 // Encoder is the audio capture and distribution engine.

@@ -128,8 +128,7 @@ func (n *SilenceNotifier) handleSilenceStart(levelL, levelR float64) {
 	}
 }
 
-// handleSilenceEnd stores recovery data and waits for dump to be ready.
-// Recovery notifications are delayed until the dump is captured (15 sec after recovery).
+// handleSilenceEnd stores recovery data for later notification with audio dump.
 func (n *SilenceNotifier) handleSilenceEnd(totalDurationMs int64, levelL, levelR float64) {
 	cfg := n.cfg.Snapshot()
 
@@ -250,8 +249,7 @@ func (n *SilenceNotifier) logSilenceStart(cfg config.Snapshot, levelL, levelR fl
 	)
 }
 
-// OnDumpReady is called by silencedump.Manager when a dump has been encoded.
-// This triggers the recovery notifications with the audio dump attached.
+// OnDumpReady sends recovery notifications with the audio dump attached.
 func (n *SilenceNotifier) OnDumpReady(result *silencedump.EncodeResult) {
 	n.mu.Lock()
 	pending := n.pendingRecovery

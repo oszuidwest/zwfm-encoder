@@ -54,7 +54,7 @@ type EncodeResult struct {
 // DumpCallback is called when a dump is ready.
 type DumpCallback func(result *EncodeResult)
 
-// Capturer captures audio around silence events using a ring buffer.
+// Capturer captures audio context around silence events for debugging.
 type Capturer struct {
 	mu sync.Mutex
 

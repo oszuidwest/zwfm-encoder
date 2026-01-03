@@ -1,4 +1,3 @@
-// Package server provides HTTP and WebSocket handlers for the encoder web interface.
 package server
 
 // Request types for WebSocket commands with validation tags.

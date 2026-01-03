@@ -32,14 +32,14 @@ const (
 	DefaultRecordingMaxDurationMinutes = 240 // 4 hours for on-demand recorders
 )
 
-// Validation patterns define regular expressions for configuration value validation.
+// Validation patterns for configuration values.
 var (
-	// Station name: any printable characters except control chars (blocks CRLF injection in emails)
+	// stationNamePattern matches printable characters excluding control characters.
 	stationNamePattern  = regexp.MustCompile(`^[^\x00-\x1F\x7F]+$`)
 	stationColorPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 )
 
-// SystemConfig holds system-level settings that require restart.
+// SystemConfig represents system-level settings such as server port and credentials.
 type SystemConfig struct {
 	FFmpegPath string `json:"ffmpeg_path"` // Path to FFmpeg binary (empty = use PATH)
 	Port       int    `json:"port"`        // HTTP server port
@@ -47,36 +47,36 @@ type SystemConfig struct {
 	Password   string `json:"password"`    // Login password
 }
 
-// WebConfig holds station branding settings.
+// WebConfig represents station branding settings for the web interface.
 type WebConfig struct {
 	StationName string `json:"station_name"` // Station display name
 	ColorLight  string `json:"color_light"`  // Theme color for light mode (#RRGGBB)
 	ColorDark   string `json:"color_dark"`   // Theme color for dark mode (#RRGGBB)
 }
 
-// AudioConfig holds audio input device settings.
+// AudioConfig represents audio input device settings.
 type AudioConfig struct {
 	Input string `json:"input"` // Audio input device identifier
 }
 
-// SilenceDetectionConfig holds silence detection thresholds and timing parameters.
+// SilenceDetectionConfig represents silence detection thresholds and timing.
 type SilenceDetectionConfig struct {
 	ThresholdDB float64 `json:"threshold_db"` // Silence threshold in dB
 	DurationMs  int64   `json:"duration_ms"`  // Duration below threshold before silence alert
 	RecoveryMs  int64   `json:"recovery_ms"`  // Duration above threshold before recovery
 }
 
-// WebhookConfig holds webhook notification settings.
+// WebhookConfig represents webhook notification settings.
 type WebhookConfig struct {
 	URL string `json:"url"` // Webhook URL for silence alerts
 }
 
-// LogConfig holds log file notification settings.
+// LogConfig represents log file notification settings.
 type LogConfig struct {
 	Path string `json:"path"` // Log file path for silence events
 }
 
-// EmailConfig holds Microsoft Graph email notification settings.
+// EmailConfig represents Microsoft Graph email notification settings.
 type EmailConfig struct {
 	TenantID     string `json:"tenant_id"`     // Azure AD tenant ID
 	ClientID     string `json:"client_id"`     // App registration client ID
@@ -85,32 +85,32 @@ type EmailConfig struct {
 	Recipients   string `json:"recipients"`    // Comma-separated recipient addresses
 }
 
-// NotificationsConfig holds all notification channel settings.
+// NotificationsConfig represents all notification channel settings.
 type NotificationsConfig struct {
 	Webhook WebhookConfig `json:"webhook"` // Webhook settings
 	Log     LogConfig     `json:"log"`     // Log file settings
 	Email   EmailConfig   `json:"email"`   // Email settings
 }
 
-// StreamingConfig holds SRT output streaming settings.
+// StreamingConfig represents SRT output streaming settings.
 type StreamingConfig struct {
 	Outputs []types.Output `json:"outputs"` // SRT output destinations
 }
 
-// RecordingConfig holds recording settings.
+// RecordingConfig represents recording destinations and settings.
 type RecordingConfig struct {
 	APIKey             string           `json:"api_key"`              // API key for recording control
 	MaxDurationMinutes int              `json:"max_duration_minutes"` // Max duration for on-demand recorders
 	Recorders          []types.Recorder `json:"recorders"`            // Recording destinations
 }
 
-// SilenceDumpConfig holds silence dump capture settings.
+// SilenceDumpConfig represents settings for capturing audio around silence events.
 type SilenceDumpConfig struct {
 	Enabled       bool `json:"enabled"`        // Whether dump capture is active
 	RetentionDays int  `json:"retention_days"` // Days to keep dump files
 }
 
-// Config holds all application configuration. It is safe for concurrent use.
+// Config represents all application configuration and is safe for concurrent use.
 type Config struct {
 	System           SystemConfig           `json:"system"`
 	Web              WebConfig              `json:"web"`
@@ -440,7 +440,7 @@ func (c *Config) GetRecordingAPIKey() string {
 
 // --- Setters for individual settings ---
 
-// SetAudioInput sets the audio input device.
+// SetAudioInput updates the audio input device and persists the change.
 func (c *Config) SetAudioInput(input string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -448,7 +448,7 @@ func (c *Config) SetAudioInput(input string) error {
 	return c.saveLocked()
 }
 
-// SetSilenceThreshold sets the silence detection threshold.
+// SetSilenceThreshold updates the silence detection threshold in dB.
 func (c *Config) SetSilenceThreshold(threshold float64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -456,7 +456,7 @@ func (c *Config) SetSilenceThreshold(threshold float64) error {
 	return c.saveLocked()
 }
 
-// SetSilenceDurationMs sets the silence duration.
+// SetSilenceDurationMs updates the silence detection duration in milliseconds.
 func (c *Config) SetSilenceDurationMs(ms int64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -464,7 +464,7 @@ func (c *Config) SetSilenceDurationMs(ms int64) error {
 	return c.saveLocked()
 }
 
-// SetSilenceRecoveryMs sets the silence recovery time.
+// SetSilenceRecoveryMs updates the silence recovery duration in milliseconds.
 func (c *Config) SetSilenceRecoveryMs(ms int64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -472,7 +472,7 @@ func (c *Config) SetSilenceRecoveryMs(ms int64) error {
 	return c.saveLocked()
 }
 
-// SetWebhookURL sets the webhook URL.
+// SetWebhookURL updates the webhook URL for silence notifications.
 func (c *Config) SetWebhookURL(url string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -480,7 +480,7 @@ func (c *Config) SetWebhookURL(url string) error {
 	return c.saveLocked()
 }
 
-// SetLogPath sets the log file path.
+// SetLogPath updates the log file path for silence events.
 func (c *Config) SetLogPath(path string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -488,7 +488,7 @@ func (c *Config) SetLogPath(path string) error {
 	return c.saveLocked()
 }
 
-// SetGraphConfig sets the Microsoft Graph email configuration.
+// SetGraphConfig updates the Microsoft Graph email notification settings.
 func (c *Config) SetGraphConfig(tenantID, clientID, clientSecret, fromAddress, recipients string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -500,7 +500,7 @@ func (c *Config) SetGraphConfig(tenantID, clientID, clientSecret, fromAddress, r
 	return c.saveLocked()
 }
 
-// SetRecordingAPIKey sets the recording API key.
+// SetRecordingAPIKey updates the API key for recording endpoints.
 func (c *Config) SetRecordingAPIKey(key string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -508,7 +508,7 @@ func (c *Config) SetRecordingAPIKey(key string) error {
 	return c.saveLocked()
 }
 
-// SetSilenceDump sets the silence dump configuration.
+// SetSilenceDump updates the silence dump capture settings.
 func (c *Config) SetSilenceDump(enabled bool, retentionDays int) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
