@@ -191,3 +191,239 @@ func (h *CommandHandler) handleRegenerateAPIKey(send chan<- interface{}) {
 		}
 	}()
 }
+
+// --- New slash-style command handlers ---
+
+// sendResult sends a result message for a command
+func sendResult(send chan<- interface{}, cmdType string, success bool, errMsg string, data interface{}) {
+	result := map[string]interface{}{
+		"type":    cmdType + "_result",
+		"success": success,
+	}
+	if errMsg != "" {
+		result["error"] = errMsg
+	}
+	if data != nil {
+		result["data"] = data
+	}
+	select {
+	case send <- result:
+	default:
+		slog.Warn("failed to send result: channel full or closed", "type", cmdType)
+	}
+}
+
+// handleAudioUpdate handles audio/update command
+func (h *CommandHandler) handleAudioUpdate(cmd WSCommand, send chan<- interface{}) {
+	var data struct {
+		Input string `json:"input"`
+	}
+	if err := json.Unmarshal(cmd.Data, &data); err != nil {
+		sendResult(send, "audio/update", false, err.Error(), nil)
+		return
+	}
+	if data.Input != "" {
+		h.handleAudioInputChange(data.Input)
+	}
+	sendResult(send, "audio/update", true, "", nil)
+}
+
+// handleAudioGet handles audio/get command
+func (h *CommandHandler) handleAudioGet(send chan<- interface{}) {
+	snap := h.cfg.Snapshot()
+	sendResult(send, "audio/get", true, "", map[string]interface{}{
+		"input": snap.AudioInput,
+	})
+}
+
+// handleSilenceUpdate handles silence/update command
+func (h *CommandHandler) handleSilenceUpdate(cmd WSCommand, send chan<- interface{}) {
+	var data struct {
+		ThresholdDB *float64 `json:"threshold_db"`
+		DurationMs  *int64   `json:"duration_ms"`
+		RecoveryMs  *int64   `json:"recovery_ms"`
+	}
+	if err := json.Unmarshal(cmd.Data, &data); err != nil {
+		sendResult(send, "silence/update", false, err.Error(), nil)
+		return
+	}
+
+	if data.ThresholdDB != nil {
+		if err := h.cfg.SetSilenceThreshold(*data.ThresholdDB); err != nil {
+			sendResult(send, "silence/update", false, err.Error(), nil)
+			return
+		}
+	}
+	if data.DurationMs != nil {
+		if err := h.cfg.SetSilenceDurationMs(*data.DurationMs); err != nil {
+			sendResult(send, "silence/update", false, err.Error(), nil)
+			return
+		}
+	}
+	if data.RecoveryMs != nil {
+		if err := h.cfg.SetSilenceRecoveryMs(*data.RecoveryMs); err != nil {
+			sendResult(send, "silence/update", false, err.Error(), nil)
+			return
+		}
+	}
+
+	// Apply changes to encoder
+	h.encoder.UpdateSilenceConfig()
+	sendResult(send, "silence/update", true, "", nil)
+}
+
+// handleSilenceGet handles silence/get command
+func (h *CommandHandler) handleSilenceGet(send chan<- interface{}) {
+	snap := h.cfg.Snapshot()
+	sendResult(send, "silence/get", true, "", map[string]interface{}{
+		"threshold_db": snap.SilenceThreshold,
+		"duration_ms":  snap.SilenceDurationMs,
+		"recovery_ms":  snap.SilenceRecoveryMs,
+	})
+}
+
+// handleWebhookUpdate handles notifications/webhook/update command
+func (h *CommandHandler) handleWebhookUpdate(cmd WSCommand, send chan<- interface{}) {
+	var data struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(cmd.Data, &data); err != nil {
+		sendResult(send, "notifications/webhook/update", false, err.Error(), nil)
+		return
+	}
+	if err := h.cfg.SetWebhookURL(data.URL); err != nil {
+		sendResult(send, "notifications/webhook/update", false, err.Error(), nil)
+		return
+	}
+	sendResult(send, "notifications/webhook/update", true, "", nil)
+}
+
+// handleWebhookGet handles notifications/webhook/get command
+func (h *CommandHandler) handleWebhookGet(send chan<- interface{}) {
+	snap := h.cfg.Snapshot()
+	sendResult(send, "notifications/webhook/get", true, "", map[string]interface{}{
+		"url": snap.WebhookURL,
+	})
+}
+
+// handleLogUpdate handles notifications/log/update command
+func (h *CommandHandler) handleLogUpdate(cmd WSCommand, send chan<- interface{}) {
+	var data struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(cmd.Data, &data); err != nil {
+		sendResult(send, "notifications/log/update", false, err.Error(), nil)
+		return
+	}
+	if err := h.cfg.SetLogPath(data.Path); err != nil {
+		sendResult(send, "notifications/log/update", false, err.Error(), nil)
+		return
+	}
+	sendResult(send, "notifications/log/update", true, "", nil)
+}
+
+// handleLogGet handles notifications/log/get command
+func (h *CommandHandler) handleLogGet(send chan<- interface{}) {
+	snap := h.cfg.Snapshot()
+	sendResult(send, "notifications/log/get", true, "", map[string]interface{}{
+		"path": snap.LogPath,
+	})
+}
+
+// handleEmailUpdate handles notifications/email/update command
+func (h *CommandHandler) handleEmailUpdate(cmd WSCommand, send chan<- interface{}) {
+	var data struct {
+		TenantID     string `json:"tenant_id"`
+		ClientID     string `json:"client_id"`
+		ClientSecret string `json:"client_secret"`
+		FromAddress  string `json:"from_address"`
+		Recipients   string `json:"recipients"`
+	}
+	if err := json.Unmarshal(cmd.Data, &data); err != nil {
+		sendResult(send, "notifications/email/update", false, err.Error(), nil)
+		return
+	}
+	if err := h.cfg.SetGraphConfig(data.TenantID, data.ClientID, data.ClientSecret, data.FromAddress, data.Recipients); err != nil {
+		sendResult(send, "notifications/email/update", false, err.Error(), nil)
+		return
+	}
+	h.encoder.UpdateGraphConfig()
+	sendResult(send, "notifications/email/update", true, "", nil)
+}
+
+// handleEmailGet handles notifications/email/get command
+func (h *CommandHandler) handleEmailGet(send chan<- interface{}) {
+	snap := h.cfg.Snapshot()
+	sendResult(send, "notifications/email/get", true, "", map[string]interface{}{
+		"tenant_id":    snap.GraphTenantID,
+		"client_id":    snap.GraphClientID,
+		"from_address": snap.GraphFromAddress,
+		"recipients":   snap.GraphRecipients,
+		// Note: client_secret intentionally omitted for security
+	})
+}
+
+// handleRecordingGet handles recording/get command
+func (h *CommandHandler) handleRecordingGet(send chan<- interface{}) {
+	snap := h.cfg.Snapshot()
+	sendResult(send, "recording/get", true, "", map[string]interface{}{
+		"api_key":              snap.RecordingAPIKey,
+		"max_duration_minutes": snap.RecordingMaxDurationMinutes,
+	})
+}
+
+// handleConfigGet handles config/get command - returns full config
+func (h *CommandHandler) handleConfigGet(send chan<- interface{}) {
+	snap := h.cfg.Snapshot()
+	result := map[string]interface{}{
+		"type": "config",
+		"config": map[string]interface{}{
+			"system": map[string]interface{}{
+				"ffmpeg_path": snap.FFmpegPath,
+				"port":        snap.WebPort,
+				"username":    snap.WebUser,
+				// password intentionally omitted
+			},
+			"web": map[string]interface{}{
+				"station_name": snap.StationName,
+				"color_light":  snap.StationColorLight,
+				"color_dark":   snap.StationColorDark,
+			},
+			"audio": map[string]interface{}{
+				"input": snap.AudioInput,
+			},
+			"silence_detection": map[string]interface{}{
+				"threshold_db": snap.SilenceThreshold,
+				"duration_ms":  snap.SilenceDurationMs,
+				"recovery_ms":  snap.SilenceRecoveryMs,
+			},
+			"notifications": map[string]interface{}{
+				"webhook": map[string]interface{}{
+					"url": snap.WebhookURL,
+				},
+				"log": map[string]interface{}{
+					"path": snap.LogPath,
+				},
+				"email": map[string]interface{}{
+					"tenant_id":    snap.GraphTenantID,
+					"client_id":    snap.GraphClientID,
+					"from_address": snap.GraphFromAddress,
+					"recipients":   snap.GraphRecipients,
+				},
+			},
+			"streaming": map[string]interface{}{
+				"outputs": snap.Outputs,
+			},
+			"recording": map[string]interface{}{
+				"api_key":              snap.RecordingAPIKey,
+				"max_duration_minutes": snap.RecordingMaxDurationMinutes,
+				"recorders":            snap.Recorders,
+			},
+		},
+	}
+	select {
+	case send <- result:
+	default:
+		slog.Warn("failed to send config: channel full or closed")
+	}
+}
