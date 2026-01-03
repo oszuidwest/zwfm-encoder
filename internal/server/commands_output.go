@@ -15,53 +15,55 @@ func (h *CommandHandler) handleAddOutput(cmd WSCommand, send chan<- any) {
 		return
 	}
 
-	HandleCommand(h, cmd, send, func(req *OutputRequest) error {
-		output := types.Output{
-			Enabled:    true, // New outputs are enabled by default
-			Host:       req.Host,
-			Port:       req.Port,
-			Password:   req.Password,
-			StreamID:   req.StreamID,
-			Codec:      types.Codec(req.Codec),
-			MaxRetries: req.MaxRetries,
-		}
+	var req OutputRequest
+	if !DecodeAndValidate(cmd, send, &req) {
+		return
+	}
 
-		// Apply defaults
-		if output.StreamID == "" {
-			output.StreamID = "studio"
-		}
-		if output.Codec == "" {
-			output.Codec = types.CodecWAV
-		}
+	output := types.Output{
+		Enabled:    true, // New outputs are enabled by default
+		Host:       req.Host,
+		Port:       req.Port,
+		Password:   req.Password,
+		StreamID:   req.StreamID,
+		Codec:      types.Codec(req.Codec),
+		MaxRetries: req.MaxRetries,
+	}
 
-		// Check output limit
-		if len(h.cfg.ConfiguredOutputs()) >= MaxOutputs {
-			slog.Warn("outputs/add: maximum outputs reached", "max", MaxOutputs)
-			SendEntityResult(send, "output", "add", "", false, "maximum outputs reached")
-			return nil
-		}
+	// Apply defaults
+	if output.StreamID == "" {
+		output.StreamID = "studio"
+	}
+	if output.Codec == "" {
+		output.Codec = types.CodecWAV
+	}
 
-		if err := h.cfg.AddOutput(&output); err != nil {
-			slog.Error("outputs/add: failed to add", "error", err)
-			SendEntityResult(send, "output", "add", "", false, err.Error())
-			return nil
-		}
+	// Check output limit
+	if len(h.cfg.ConfiguredOutputs()) >= MaxOutputs {
+		slog.Warn("outputs/add: maximum outputs reached", "max", MaxOutputs)
+		SendEntityResult(send, "output", "add", "", false, "maximum outputs reached")
+		return
+	}
 
-		slog.Info("outputs/add: added output", "host", output.Host, "port", output.Port)
+	if err := h.cfg.AddOutput(&output); err != nil {
+		slog.Error("outputs/add: failed to add", "error", err)
+		SendEntityResult(send, "output", "add", "", false, err.Error())
+		return
+	}
 
-		// Start output if encoder is running
-		if h.encoder.State() == types.StateRunning {
-			outputs := h.cfg.ConfiguredOutputs()
-			if len(outputs) > 0 {
-				if err := h.encoder.StartOutput(outputs[len(outputs)-1].ID); err != nil {
-					slog.Error("outputs/add: failed to start output", "error", err)
-				}
+	slog.Info("outputs/add: added output", "host", output.Host, "port", output.Port)
+
+	// Start output if encoder is running
+	if h.encoder.State() == types.StateRunning {
+		outputs := h.cfg.ConfiguredOutputs()
+		if len(outputs) > 0 {
+			if err := h.encoder.StartOutput(outputs[len(outputs)-1].ID); err != nil {
+				slog.Error("outputs/add: failed to start output", "error", err)
 			}
 		}
+	}
 
-		SendEntityResult(send, "output", "add", output.ID, true, "")
-		return nil
-	})
+	SendEntityResult(send, "output", "add", output.ID, true, "")
 }
 
 // handleDeleteOutput processes an outputs/delete command.
@@ -102,66 +104,68 @@ func (h *CommandHandler) handleUpdateOutput(cmd WSCommand, send chan<- any) {
 		return
 	}
 
-	HandleCommand(h, cmd, send, func(req *OutputRequest) error {
-		updated := types.Output{
-			ID:         existing.ID,
-			CreatedAt:  existing.CreatedAt,
-			Enabled:    req.Enabled,
-			Host:       req.Host,
-			Port:       req.Port,
-			Password:   req.Password,
-			StreamID:   req.StreamID,
-			Codec:      types.Codec(req.Codec),
-			MaxRetries: req.MaxRetries,
-		}
+	var req OutputRequest
+	if !DecodeAndValidate(cmd, send, &req) {
+		return
+	}
 
-		// Apply defaults
-		if updated.StreamID == "" {
-			updated.StreamID = "studio"
-		}
-		if updated.Codec == "" {
-			updated.Codec = types.CodecWAV
-		}
+	updated := types.Output{
+		ID:         existing.ID,
+		CreatedAt:  existing.CreatedAt,
+		Enabled:    req.Enabled,
+		Host:       req.Host,
+		Port:       req.Port,
+		Password:   req.Password,
+		StreamID:   req.StreamID,
+		Codec:      types.Codec(req.Codec),
+		MaxRetries: req.MaxRetries,
+	}
 
-		// Preserve password if not provided
-		if updated.Password == "" {
-			updated.Password = existing.Password
-		}
+	// Apply defaults
+	if updated.StreamID == "" {
+		updated.StreamID = "studio"
+	}
+	if updated.Codec == "" {
+		updated.Codec = types.CodecWAV
+	}
 
-		wasEnabled := existing.IsEnabled()
-		nowEnabled := updated.IsEnabled()
-		needsRestart := outputNeedsRestart(existing, &updated)
+	// Preserve password if not provided
+	if updated.Password == "" {
+		updated.Password = existing.Password
+	}
 
-		if err := h.cfg.UpdateOutput(&updated); err != nil {
-			slog.Error("outputs/update: failed to update", "error", err)
-			SendEntityResult(send, "output", "update", cmd.ID, false, err.Error())
-			return nil
-		}
+	wasEnabled := existing.IsEnabled()
+	nowEnabled := updated.IsEnabled()
+	needsRestart := outputNeedsRestart(existing, &updated)
 
-		slog.Info("outputs/update: updated output", "output_id", updated.ID, "host", updated.Host, "port", updated.Port)
+	if err := h.cfg.UpdateOutput(&updated); err != nil {
+		slog.Error("outputs/update: failed to update", "error", err)
+		SendEntityResult(send, "output", "update", cmd.ID, false, err.Error())
+		return
+	}
 
-		// Handle output state changes when encoder is running
-		if h.encoder.State() == types.StateRunning {
-			switch {
-			case wasEnabled && !nowEnabled:
-				slog.Info("outputs/update: stopping disabled output", "output_id", updated.ID)
-				if err := h.encoder.StopOutput(updated.ID); err != nil {
-					slog.Error("outputs/update: failed to stop", "output_id", updated.ID, "error", err)
-				}
-			case !wasEnabled && nowEnabled:
-				slog.Info("outputs/update: starting enabled output", "output_id", updated.ID)
-				if err := h.encoder.StartOutput(updated.ID); err != nil {
-					slog.Error("outputs/update: failed to start", "output_id", updated.ID, "error", err)
-				}
-			case nowEnabled && needsRestart:
-				slog.Info("outputs/update: restarting output due to connection changes", "output_id", updated.ID)
-				h.restartOutput(updated.ID)
+	slog.Info("outputs/update: updated output", "output_id", updated.ID, "host", updated.Host, "port", updated.Port)
+
+	// Handle output state changes when encoder is running
+	if h.encoder.State() == types.StateRunning {
+		switch {
+		case wasEnabled && !nowEnabled:
+			slog.Info("outputs/update: stopping disabled output", "output_id", updated.ID)
+			if err := h.encoder.StopOutput(updated.ID); err != nil {
+				slog.Error("outputs/update: failed to stop", "output_id", updated.ID, "error", err)
 			}
+		case !wasEnabled && nowEnabled:
+			slog.Info("outputs/update: starting enabled output", "output_id", updated.ID)
+			if err := h.encoder.StartOutput(updated.ID); err != nil {
+				slog.Error("outputs/update: failed to start", "output_id", updated.ID, "error", err)
+			}
+		case nowEnabled && needsRestart:
+			slog.Info("outputs/update: restarting output due to connection changes", "output_id", updated.ID)
+			h.restartOutput(updated.ID)
 		}
+	}
 
-		SendEntityResult(send, "output", "update", updated.ID, true, "")
-		return nil
-	})
+	SendEntityResult(send, "output", "update", updated.ID, true, "")
 }
 
 // outputNeedsRestart reports whether an output needs restart after configuration changes.

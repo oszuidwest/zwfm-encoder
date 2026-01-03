@@ -11,45 +11,47 @@ import (
 
 // handleAddRecorder processes a recorders/add command.
 func (h *CommandHandler) handleAddRecorder(cmd WSCommand, send chan<- any) {
-	HandleCommand(h, cmd, send, func(req *RecorderRequest) error {
-		recorder := types.Recorder{
-			Name:              req.Name,
-			Enabled:           true, // New recorders are enabled by default
-			Codec:             types.Codec(req.Codec),
-			RotationMode:      types.RotationMode(req.RotationMode),
-			StorageMode:       types.StorageMode(req.StorageMode),
-			LocalPath:         req.LocalPath,
-			S3Endpoint:        req.S3Endpoint,
-			S3Bucket:          req.S3Bucket,
-			S3AccessKeyID:     req.S3AccessKeyID,
-			S3SecretAccessKey: req.S3SecretAccessKey,
-			RetentionDays:     req.RetentionDays,
-		}
+	var req RecorderRequest
+	if !DecodeAndValidate(cmd, send, &req) {
+		return
+	}
 
-		// Apply defaults
-		if recorder.Codec == "" {
-			recorder.Codec = types.CodecWAV
-		}
-		if recorder.RetentionDays == 0 {
-			recorder.RetentionDays = types.DefaultRetentionDays
-		}
+	recorder := types.Recorder{
+		Name:              req.Name,
+		Enabled:           true, // New recorders are enabled by default
+		Codec:             types.Codec(req.Codec),
+		RotationMode:      types.RotationMode(req.RotationMode),
+		StorageMode:       types.StorageMode(req.StorageMode),
+		LocalPath:         req.LocalPath,
+		S3Endpoint:        req.S3Endpoint,
+		S3Bucket:          req.S3Bucket,
+		S3AccessKeyID:     req.S3AccessKeyID,
+		S3SecretAccessKey: req.S3SecretAccessKey,
+		RetentionDays:     req.RetentionDays,
+	}
 
-		// Validate storage-specific requirements
-		if err := validateRecorderStorage(&recorder); err != nil {
-			SendEntityResult(send, "recorder", "add", "", false, err.Error())
-			return nil
-		}
+	// Apply defaults
+	if recorder.Codec == "" {
+		recorder.Codec = types.CodecWAV
+	}
+	if recorder.RetentionDays == 0 {
+		recorder.RetentionDays = types.DefaultRetentionDays
+	}
 
-		if err := h.encoder.AddRecorder(&recorder); err != nil {
-			slog.Error("recorders/add: failed to add", "error", err)
-			SendEntityResult(send, "recorder", "add", "", false, err.Error())
-			return nil
-		}
+	// Validate storage-specific requirements
+	if err := validateRecorderStorage(&recorder); err != nil {
+		SendEntityResult(send, "recorder", "add", "", false, err.Error())
+		return
+	}
 
-		slog.Info("recorders/add: added recorder", "id", recorder.ID, "name", recorder.Name)
-		SendEntityResult(send, "recorder", "add", recorder.ID, true, "")
-		return nil
-	})
+	if err := h.encoder.AddRecorder(&recorder); err != nil {
+		slog.Error("recorders/add: failed to add", "error", err)
+		SendEntityResult(send, "recorder", "add", "", false, err.Error())
+		return
+	}
+
+	slog.Info("recorders/add: added recorder", "id", recorder.ID, "name", recorder.Name)
+	SendEntityResult(send, "recorder", "add", recorder.ID, true, "")
 }
 
 // handleDeleteRecorder processes a recorders/delete command.
@@ -85,52 +87,54 @@ func (h *CommandHandler) handleUpdateRecorder(cmd WSCommand, send chan<- any) {
 		return
 	}
 
-	HandleCommand(h, cmd, send, func(req *RecorderRequest) error {
-		updated := types.Recorder{
-			ID:                existing.ID,
-			CreatedAt:         existing.CreatedAt,
-			Name:              req.Name,
-			Enabled:           req.Enabled,
-			Codec:             types.Codec(req.Codec),
-			RotationMode:      types.RotationMode(req.RotationMode),
-			StorageMode:       types.StorageMode(req.StorageMode),
-			LocalPath:         req.LocalPath,
-			S3Endpoint:        req.S3Endpoint,
-			S3Bucket:          req.S3Bucket,
-			S3AccessKeyID:     req.S3AccessKeyID,
-			S3SecretAccessKey: req.S3SecretAccessKey,
-			RetentionDays:     req.RetentionDays,
-		}
+	var req RecorderRequest
+	if !DecodeAndValidate(cmd, send, &req) {
+		return
+	}
 
-		// Apply defaults
-		if updated.Codec == "" {
-			updated.Codec = types.CodecWAV
-		}
-		if updated.RetentionDays == 0 {
-			updated.RetentionDays = types.DefaultRetentionDays
-		}
+	updated := types.Recorder{
+		ID:                existing.ID,
+		CreatedAt:         existing.CreatedAt,
+		Name:              req.Name,
+		Enabled:           req.Enabled,
+		Codec:             types.Codec(req.Codec),
+		RotationMode:      types.RotationMode(req.RotationMode),
+		StorageMode:       types.StorageMode(req.StorageMode),
+		LocalPath:         req.LocalPath,
+		S3Endpoint:        req.S3Endpoint,
+		S3Bucket:          req.S3Bucket,
+		S3AccessKeyID:     req.S3AccessKeyID,
+		S3SecretAccessKey: req.S3SecretAccessKey,
+		RetentionDays:     req.RetentionDays,
+	}
 
-		// Preserve secret if not provided
-		if updated.S3SecretAccessKey == "" {
-			updated.S3SecretAccessKey = existing.S3SecretAccessKey
-		}
+	// Apply defaults
+	if updated.Codec == "" {
+		updated.Codec = types.CodecWAV
+	}
+	if updated.RetentionDays == 0 {
+		updated.RetentionDays = types.DefaultRetentionDays
+	}
 
-		// Validate storage-specific requirements
-		if err := validateRecorderStorage(&updated); err != nil {
-			SendEntityResult(send, "recorder", "update", cmd.ID, false, err.Error())
-			return nil
-		}
+	// Preserve secret if not provided
+	if updated.S3SecretAccessKey == "" {
+		updated.S3SecretAccessKey = existing.S3SecretAccessKey
+	}
 
-		if err := h.encoder.UpdateRecorder(&updated); err != nil {
-			slog.Error("recorders/update: failed to update", "error", err)
-			SendEntityResult(send, "recorder", "update", cmd.ID, false, err.Error())
-			return nil
-		}
+	// Validate storage-specific requirements
+	if err := validateRecorderStorage(&updated); err != nil {
+		SendEntityResult(send, "recorder", "update", cmd.ID, false, err.Error())
+		return
+	}
 
-		slog.Info("recorders/update: updated recorder", "id", updated.ID, "name", updated.Name)
-		SendEntityResult(send, "recorder", "update", updated.ID, true, "")
-		return nil
-	})
+	if err := h.encoder.UpdateRecorder(&updated); err != nil {
+		slog.Error("recorders/update: failed to update", "error", err)
+		SendEntityResult(send, "recorder", "update", cmd.ID, false, err.Error())
+		return
+	}
+
+	slog.Info("recorders/update: updated recorder", "id", updated.ID, "name", updated.Name)
+	SendEntityResult(send, "recorder", "update", updated.ID, true, "")
 }
 
 // handleStartRecorder processes a recorders/start command.
@@ -171,44 +175,45 @@ func (h *CommandHandler) handleStopRecorder(cmd WSCommand, send chan<- any) {
 
 // handleTestRecorderS3 processes a recorders/test-s3 command.
 func (h *CommandHandler) handleTestRecorderS3(cmd WSCommand, send chan<- any) {
-	HandleCommand(h, cmd, send, func(req *S3TestRequest) error {
-		cfg := &types.Recorder{
-			S3Endpoint:        req.Endpoint,
-			S3Bucket:          req.Bucket,
-			S3AccessKeyID:     req.AccessKey,
-			S3SecretAccessKey: req.SecretKey,
-		}
+	var req S3TestRequest
+	if !DecodeAndValidate(cmd, send, &req) {
+		return
+	}
 
-		// Run S3 test async
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					slog.Error("panic in recorders/test-s3 handler", "panic", r)
-				}
-			}()
+	cfg := &types.Recorder{
+		S3Endpoint:        req.Endpoint,
+		S3Bucket:          req.Bucket,
+		S3AccessKeyID:     req.AccessKey,
+		S3SecretAccessKey: req.SecretKey,
+	}
 
-			result := struct {
-				Type    string `json:"type"`
-				Success bool   `json:"success"`
-				Error   string `json:"error,omitempty"`
-			}{
-				Type:    "recorder_s3_test_result",
-				Success: true,
+	// Run S3 test async - result is sent via SendData when complete
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("panic in recorders/test-s3 handler", "panic", r)
 			}
-
-			if err := recording.TestRecorderS3Connection(cfg); err != nil {
-				slog.Error("recorders/test-s3: connection test failed", "error", err)
-				result.Success = false
-				result.Error = err.Error()
-			} else {
-				slog.Info("recorders/test-s3: connection test succeeded")
-			}
-
-			SendData(send, result)
 		}()
 
-		return nil
-	})
+		result := struct {
+			Type    string `json:"type"`
+			Success bool   `json:"success"`
+			Error   string `json:"error,omitempty"`
+		}{
+			Type:    "recorder_s3_test_result",
+			Success: true,
+		}
+
+		if err := recording.TestRecorderS3Connection(cfg); err != nil {
+			slog.Error("recorders/test-s3: connection test failed", "error", err)
+			result.Success = false
+			result.Error = err.Error()
+		} else {
+			slog.Info("recorders/test-s3: connection test succeeded")
+		}
+
+		SendData(send, result)
+	}()
 }
 
 // validateRecorderStorage validates storage-specific requirements.

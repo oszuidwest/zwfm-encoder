@@ -28,19 +28,32 @@ func init() {
 	})
 }
 
-// HandleCommand is a generic command handler that decodes, validates, and processes a command.
+// DecodeAndValidate decodes JSON and validates the struct.
+// Returns true if successful, false if an error response was already sent.
+// Use this for entity handlers that need to send custom response formats.
+func DecodeAndValidate[T any](cmd WSCommand, send chan<- any, data *T) bool {
+	if err := json.Unmarshal(cmd.Data, data); err != nil {
+		SendError(send, cmd.Type, fmt.Errorf("invalid JSON: %w", err))
+		return false
+	}
+
+	if err := validate.Struct(data); err != nil {
+		SendValidationErrors(send, cmd.Type, err)
+		return false
+	}
+
+	return true
+}
+
+// HandleCommand decodes, validates, and processes a command with automatic response handling.
+// Use this for simple commands where process returns nil (success) or error (failure).
+// Do NOT use this for entity handlers that send their own response format.
 //
 // Type parameter T is the request data struct (must have validation tags).
 // The process function receives the validated data and returns an error if processing fails.
 func HandleCommand[T any](h *CommandHandler, cmd WSCommand, send chan<- any, process func(*T) error) {
 	var data T
-	if err := json.Unmarshal(cmd.Data, &data); err != nil {
-		SendError(send, cmd.Type, fmt.Errorf("invalid JSON: %w", err))
-		return
-	}
-
-	if err := validate.Struct(data); err != nil {
-		SendValidationErrors(send, cmd.Type, err)
+	if !DecodeAndValidate(cmd, send, &data) {
 		return
 	}
 
