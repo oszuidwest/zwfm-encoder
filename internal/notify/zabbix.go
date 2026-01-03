@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"time"
@@ -11,22 +12,25 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
+// zabbixTimeout is the connection and read/write timeout for Zabbix operations.
+const zabbixTimeout = 5 * time.Second
+
 // isConfigured checks required Zabbix params are present.
 func isConfiguredZabbix(server string, port int, host, key string) bool {
 	return server != "" && host != "" && key != ""
 }
 
 // sendZabbixSenderPayload sends a single trapper item via the zabbix_sender protocol.
-func sendZabbixSenderPayload(server string, port int, payload interface{}, timeoutMs int) error {
+func sendZabbixSenderPayload(server string, port int, payload interface{}) error {
 	addr := net.JoinHostPort(server, strconv.Itoa(port))
-	conn, err := net.DialTimeout("tcp", addr, time.Duration(timeoutMs)*time.Millisecond)
+	conn, err := net.DialTimeout("tcp", addr, zabbixTimeout)
 	if err != nil {
 		return util.WrapError("connect to zabbix", err)
 	}
 	defer func() { _ = conn.Close() }()
-	// set overall deadline
-	deadline := time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
-	if err := conn.SetDeadline(deadline); err != nil {
+
+	// Set overall deadline for all operations
+	if err := conn.SetDeadline(time.Now().Add(zabbixTimeout)); err != nil {
 		return util.WrapError("set deadline", err)
 	}
 
@@ -36,7 +40,7 @@ func sendZabbixSenderPayload(server string, port int, payload interface{}, timeo
 	}
 
 	// Build header: "ZBXD\1" + 8-byte little endian length
-	head := make([]byte, 5+8)
+	head := make([]byte, 13)
 	copy(head[0:5], []byte{'Z', 'B', 'X', 'D', 1})
 	binary.LittleEndian.PutUint64(head[5:], uint64(len(data)))
 
@@ -48,9 +52,9 @@ func sendZabbixSenderPayload(server string, port int, payload interface{}, timeo
 		return util.WrapError("write zabbix payload", err)
 	}
 
-	// Read reply header
+	// Read reply header (must read exactly 13 bytes)
 	replyHdr := make([]byte, 13)
-	if _, err := conn.Read(replyHdr); err != nil {
+	if _, err := io.ReadFull(conn, replyHdr); err != nil {
 		return util.WrapError("read zabbix reply header", err)
 	}
 	if string(replyHdr[0:5]) != "ZBXD\x01" {
@@ -61,8 +65,9 @@ func sendZabbixSenderPayload(server string, port int, payload interface{}, timeo
 		return fmt.Errorf("empty zabbix reply")
 	}
 
+	// Read reply body (must read exactly replyLen bytes)
 	reply := make([]byte, replyLen)
-	if _, err := conn.Read(reply); err != nil {
+	if _, err := io.ReadFull(conn, reply); err != nil {
 		return util.WrapError("read zabbix reply body", err)
 	}
 
@@ -70,9 +75,9 @@ func sendZabbixSenderPayload(server string, port int, payload interface{}, timeo
 	if err := json.Unmarshal(reply, &resp); err != nil {
 		return util.WrapError("parse zabbix reply", err)
 	}
-	// Optionally inspect resp.info for success
+
+	// Check if Zabbix processed the item
 	if info, ok := resp["info"].(string); ok {
-		// Example: "processed: 1; failed: 0; total: 1; spent: 0.000000 seconds"
 		if info == "processed: 0; failed: 0; total: 0; spent: 0.000000 seconds" {
 			return fmt.Errorf("zabbix processed no items")
 		}
@@ -82,11 +87,11 @@ func sendZabbixSenderPayload(server string, port int, payload interface{}, timeo
 }
 
 // SendSilenceZabbix sends a silence alert to Zabbix using the provided server/host/key.
-func SendSilenceZabbix(server string, port int, host, key string, levelL, levelR, threshold float64, timeoutMs int) error {
+func SendSilenceZabbix(server string, port int, host, key string, levelL, levelR, threshold float64) error {
 	if !isConfiguredZabbix(server, port, host, key) {
 		return nil
 	}
-	value := fmt.Sprintf("SILENCE L:%.1f R:%.1f threshold:%.1f", levelL, levelR, threshold)
+	value := fmt.Sprintf("event=SILENCE level_l=%.1f level_r=%.1f threshold=%.1f", levelL, levelR, threshold)
 	payload := map[string]interface{}{
 		"request": "sender data",
 		"data": []map[string]interface{}{
@@ -97,15 +102,15 @@ func SendSilenceZabbix(server string, port int, host, key string, levelL, levelR
 			},
 		},
 	}
-	return sendZabbixSenderPayload(server, port, payload, timeoutMs)
+	return sendZabbixSenderPayload(server, port, payload)
 }
 
 // SendRecoveryZabbix sends a recovery message with duration and levels.
-func SendRecoveryZabbix(server string, port int, host, key string, durationMs int64, levelL, levelR, threshold float64, timeoutMs int) error {
+func SendRecoveryZabbix(server string, port int, host, key string, durationMs int64, levelL, levelR, threshold float64) error {
 	if !isConfiguredZabbix(server, port, host, key) {
 		return nil
 	}
-	value := fmt.Sprintf("RECOVERY duration_ms:%d L:%.1f R:%.1f threshold:%.1f", durationMs, levelL, levelR, threshold)
+	value := fmt.Sprintf("event=RECOVERY duration_ms=%d level_l=%.1f level_r=%.1f threshold=%.1f", durationMs, levelL, levelR, threshold)
 	payload := map[string]interface{}{
 		"request": "sender data",
 		"data": []map[string]interface{}{
@@ -116,15 +121,15 @@ func SendRecoveryZabbix(server string, port int, host, key string, durationMs in
 			},
 		},
 	}
-	return sendZabbixSenderPayload(server, port, payload, timeoutMs)
+	return sendZabbixSenderPayload(server, port, payload)
 }
 
 // SendTestZabbix sends a test message to verify Zabbix config.
-func SendTestZabbix(server string, port int, host, key string, timeoutMs int) error {
+func SendTestZabbix(server string, port int, host, key string) error {
 	if !isConfiguredZabbix(server, port, host, key) {
 		return nil
 	}
-	value := "TEST from zwfm-encoder"
+	value := "event=TEST source=zwfm-encoder"
 	payload := map[string]interface{}{
 		"request": "sender data",
 		"data": []map[string]interface{}{
@@ -135,5 +140,5 @@ func SendTestZabbix(server string, port int, host, key string, timeoutMs int) er
 			},
 		},
 	}
-	return sendZabbixSenderPayload(server, port, payload, timeoutMs)
+	return sendZabbixSenderPayload(server, port, payload)
 }

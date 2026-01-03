@@ -160,6 +160,15 @@ func (h *CommandHandler) handleNotifications(action, subaction string, cmd WSCom
 		default:
 			slog.Warn("unknown email action", "subaction", subaction)
 		}
+	case "zabbix":
+		switch subaction {
+		case "update":
+			h.handleZabbixUpdate(cmd, send)
+		case "test":
+			h.handleTest(send, "test_zabbix")
+		default:
+			slog.Warn("unknown zabbix action", "subaction", subaction)
+		}
 	default:
 		slog.Warn("unknown notifications action", "action", action)
 	}

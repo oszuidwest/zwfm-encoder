@@ -464,21 +464,25 @@
                         <div class="form">
                             <div class="group">
                                 <label for="zabbix-server">Server</label>
-                                <input id="zabbix-server" type="text" placeholder="zabbix.example.com" x-model="settings.zabbix.server" @input="markSettingsDirty()">
+                                <input id="zabbix-server" type="text" placeholder="zabbix.example.com" x-model="settings.zabbix.server" @input="markSettingsDirty()" :class="{'field-error': hasFieldError('notifications.zabbix.server')}">
+                                <span class="error-text" x-show="hasFieldError('notifications.zabbix.server')" x-text="getFieldError('notifications.zabbix.server')"></span>
                             </div>
                             <div class="row">
                                 <div class="group">
                                     <label for="zabbix-port">Port</label>
-                                    <input id="zabbix-port" type="number" placeholder="10051" x-model.number="settings.zabbix.port" @input="markSettingsDirty()">
+                                    <input id="zabbix-port" type="number" min="1" max="65535" placeholder="10051" x-model.number="settings.zabbix.port" @input="markSettingsDirty()" :class="{'field-error': hasFieldError('notifications.zabbix.port')}">
+                                    <span class="error-text" x-show="hasFieldError('notifications.zabbix.port')" x-text="getFieldError('notifications.zabbix.port')"></span>
                                 </div>
                                 <div class="group">
                                     <label for="zabbix-host">Host</label>
-                                    <input id="zabbix-host" type="text" placeholder="encoder-host" x-model="settings.zabbix.host" @input="markSettingsDirty()">
+                                    <input id="zabbix-host" type="text" placeholder="encoder-host" x-model="settings.zabbix.host" @input="markSettingsDirty()" :class="{'field-error': hasFieldError('notifications.zabbix.host')}">
+                                    <span class="error-text" x-show="hasFieldError('notifications.zabbix.host')" x-text="getFieldError('notifications.zabbix.host')"></span>
                                 </div>
                             </div>
                             <div class="group">
                                 <label for="zabbix-key">Key</label>
-                                <input id="zabbix-key" type="text" placeholder="silence.key" x-model="settings.zabbix.key" @input="markSettingsDirty()">
+                                <input id="zabbix-key" type="text" placeholder="silence.alert" x-model="settings.zabbix.key" @input="markSettingsDirty()" :class="{'field-error': hasFieldError('notifications.zabbix.key')}">
+                                <span class="error-text" x-show="hasFieldError('notifications.zabbix.key')" x-text="getFieldError('notifications.zabbix.key')"></span>
                             </div>
                         </div>
                         <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('zabbix')" :disabled="testStates.zabbix.pending || settingsDirty" x-text="testStates.zabbix.text">Test</button>

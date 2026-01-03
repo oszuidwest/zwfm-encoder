@@ -42,6 +42,14 @@ type EmailUpdateRequest struct {
 	Recipients   string `json:"recipients" validate:"omitempty,max=1000"`
 }
 
+// ZabbixUpdateRequest is the request body for notifications/zabbix/update.
+type ZabbixUpdateRequest struct {
+	Server string `json:"server" validate:"omitempty,max=253"`
+	Port   int    `json:"port" validate:"omitempty,gte=1,lte=65535"`
+	Host   string `json:"host" validate:"omitempty,max=253"`
+	Key    string `json:"key" validate:"omitempty,max=256"`
+}
+
 // --- Output entity ---
 
 // OutputRequest is the request body for outputs/add and outputs/update.
