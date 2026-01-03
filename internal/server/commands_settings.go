@@ -68,6 +68,34 @@ func (h *CommandHandler) handleSilenceUpdate(cmd WSCommand, send chan<- any) {
 	})
 }
 
+// --- Silence dump handlers ---
+
+// handleSilenceDumpUpdate processes a silence_dump/update command.
+func (h *CommandHandler) handleSilenceDumpUpdate(cmd WSCommand, send chan<- any) {
+	HandleCommand(h, cmd, send, func(req *SilenceDumpUpdateRequest) error {
+		snap := h.cfg.Snapshot()
+
+		// Use current values as defaults if not provided
+		enabled := snap.SilenceDumpEnabled
+		retentionDays := snap.SilenceDumpRetentionDays
+
+		if req.Enabled != nil {
+			enabled = *req.Enabled
+		}
+		if req.RetentionDays != nil {
+			retentionDays = *req.RetentionDays
+		}
+
+		if err := h.cfg.SetSilenceDump(enabled, retentionDays); err != nil {
+			return err
+		}
+
+		// Apply changes to encoder
+		h.encoder.UpdateSilenceDumpConfig()
+		return nil
+	})
+}
+
 // --- Notification handlers ---
 
 // handleWebhookUpdate processes a notifications/webhook/update command.

@@ -500,8 +500,19 @@
 
     /* Segmented control */
     .segmented {
+        --seg-border: var(--warning-border);
+        --seg-text: var(--warning-text);
+        --seg-active-bg: var(--warning);
+        --seg-active-text: var(--neutral-900);
         display: flex;
         gap: 0.5rem;
+    }
+
+    .segmented--neutral {
+        --seg-border: var(--border-strong);
+        --seg-text: var(--text-secondary);
+        --seg-active-bg: var(--neutral-600);
+        --seg-active-text: var(--neutral-50);
     }
 
     .segmented-btn {
@@ -509,10 +520,10 @@
         padding: 0.875rem 1rem;
         font-size: 0.9375rem;
         font-weight: 600;
-        border: 2px solid var(--warning-border);
+        border: 2px solid var(--seg-border);
         border-radius: var(--radius-lg);
         background: transparent;
-        color: var(--warning-text);
+        color: var(--seg-text);
         cursor: pointer;
         transition: all var(--transition-fast);
         opacity: 0.6;
@@ -523,9 +534,9 @@
     }
 
     .segmented-btn[aria-pressed="true"] {
-        background: var(--warning);
-        border-color: var(--warning);
-        color: var(--neutral-900);
+        background: var(--seg-active-bg);
+        border-color: var(--seg-active-bg);
+        color: var(--seg-active-text);
         opacity: 1;
     }
 

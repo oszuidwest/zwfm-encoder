@@ -6,6 +6,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/notify"
+	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
@@ -14,23 +15,25 @@ type AudioLevelCallback func(metrics *types.AudioMetrics)
 
 // Distributor distributes PCM audio to multiple outputs.
 type Distributor struct {
-	levelData       *audio.LevelData
-	silenceDetect   *audio.SilenceDetector
-	silenceNotifier *notify.SilenceNotifier
-	peakHolder      *audio.PeakHolder
-	config          *config.Config
-	callback        AudioLevelCallback
+	levelData          *audio.LevelData
+	silenceDetect      *audio.SilenceDetector
+	silenceNotifier    *notify.SilenceNotifier
+	silenceDumpManager *silencedump.Manager
+	peakHolder         *audio.PeakHolder
+	config             *config.Config
+	callback           AudioLevelCallback
 }
 
 // NewDistributor returns a new Distributor.
-func NewDistributor(silenceDetect *audio.SilenceDetector, silenceNotifier *notify.SilenceNotifier, peakHolder *audio.PeakHolder, cfg *config.Config, callback AudioLevelCallback) *Distributor {
+func NewDistributor(silenceDetect *audio.SilenceDetector, silenceNotifier *notify.SilenceNotifier, silenceDumpManager *silencedump.Manager, peakHolder *audio.PeakHolder, cfg *config.Config, callback AudioLevelCallback) *Distributor {
 	return &Distributor{
-		levelData:       &audio.LevelData{},
-		silenceDetect:   silenceDetect,
-		silenceNotifier: silenceNotifier,
-		peakHolder:      peakHolder,
-		config:          cfg,
-		callback:        callback,
+		levelData:          &audio.LevelData{},
+		silenceDetect:      silenceDetect,
+		silenceNotifier:    silenceNotifier,
+		silenceDumpManager: silenceDumpManager,
+		peakHolder:         peakHolder,
+		config:             cfg,
+		callback:           callback,
 	}
 }
 
@@ -56,6 +59,11 @@ func (d *Distributor) ProcessSamples(buf []byte, n int) {
 
 		// Delegate notification handling to the notifier (separation of concerns)
 		d.silenceNotifier.HandleEvent(silenceEvent)
+
+		// Forward silence events to dump manager for capture
+		if d.silenceDumpManager != nil {
+			d.silenceDumpManager.HandleSilenceEvent(silenceEvent)
+		}
 
 		if d.callback != nil {
 			d.callback(&types.AudioMetrics{

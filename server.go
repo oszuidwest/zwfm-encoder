@@ -63,7 +63,7 @@ func NewServer(cfg *config.Config, enc *encoder.Encoder, ffmpegAvailable bool) *
 	}
 }
 
-// handleWebSocket handles bidirectional WebSocket communication for real-time updates.
+// handleWebSocket handles WebSocket connections for real-time updates.
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := server.UpgradeConnection(w, r)
 	if err != nil {
@@ -196,6 +196,10 @@ func (s *Server) buildWSStatus() types.WSStatusResponse {
 		GraphFromAddress:  cfg.GraphFromAddress,
 		GraphRecipients:   cfg.GraphRecipients,
 		GraphSecretExpiry: s.encoder.GraphSecretExpiry(),
+		SilenceDump: types.SilenceDumpConfig{
+			Enabled:       cfg.SilenceDumpEnabled,
+			RetentionDays: cfg.SilenceDumpRetentionDays,
+		},
 		Settings: types.WSSettings{
 			AudioInput: cfg.AudioInput,
 			Platform:   runtime.GOOS,
@@ -396,7 +400,7 @@ func (s *Server) apiKeyAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// handleStartRecording handles POST /api/recordings/start?recorder_id=xxx.
+// handleStartRecording initiates recording for the specified recorder.
 func (s *Server) handleStartRecording(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -429,7 +433,7 @@ func (s *Server) handleStartRecording(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleStopRecording handles POST /api/recordings/stop?recorder_id=xxx.
+// handleStopRecording stops recording for the specified recorder.
 func (s *Server) handleStopRecording(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

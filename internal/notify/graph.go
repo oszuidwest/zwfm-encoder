@@ -4,6 +4,7 @@ package notify
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -102,9 +103,10 @@ type graphMailRequest struct {
 }
 
 type graphMessage struct {
-	Subject      string           `json:"subject"`
-	Body         graphBody        `json:"body"`
-	ToRecipients []graphRecipient `json:"toRecipients"`
+	Subject      string            `json:"subject"`
+	Body         graphBody         `json:"body"`
+	ToRecipients []graphRecipient  `json:"toRecipients"`
+	Attachments  []graphAttachment `json:"attachments,omitempty"`
 }
 
 type graphBody struct {
@@ -120,47 +122,28 @@ type graphEmailAddress struct {
 	Address string `json:"address"`
 }
 
-// SendMail sends an email to the specified recipients via the Microsoft Graph API.
-func (c *GraphClient) SendMail(recipients []string, subject, body string) error {
-	if len(recipients) == 0 {
-		return fmt.Errorf("no recipients specified")
-	}
-
-	toRecipients := make([]graphRecipient, 0, len(recipients))
-	for _, addr := range recipients {
-		addr = strings.TrimSpace(addr)
-		if addr != "" {
-			toRecipients = append(toRecipients, graphRecipient{
-				EmailAddress: graphEmailAddress{Address: addr},
-			})
-		}
-	}
-
-	if len(toRecipients) == 0 {
-		return fmt.Errorf("no valid recipients after filtering")
-	}
-
-	payload := graphMailRequest{
-		Message: graphMessage{
-			Subject: subject,
-			Body: graphBody{
-				ContentType: "Text",
-				Content:     body,
-			},
-			ToRecipients: toRecipients,
-		},
-	}
-
-	return c.sendWithRetry(payload)
+// graphAttachment represents an email attachment for the Graph API.
+type graphAttachment struct {
+	OdataType    string `json:"@odata.type"`
+	Name         string `json:"name"`
+	ContentType  string `json:"contentType"`
+	ContentBytes string `json:"contentBytes"` // Base64-encoded
 }
 
-// sendWithRetry sends the request with automatic retries on transient failures.
-func (c *GraphClient) sendWithRetry(payload graphMailRequest) error {
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("marshal request: %w", err)
-	}
+// EmailAttachment represents an email attachment.
+type EmailAttachment struct {
+	Filename    string
+	ContentType string
+	Data        []byte
+}
 
+// SendMail sends an email to the specified recipients via the Microsoft Graph API.
+func (c *GraphClient) SendMail(recipients []string, subject, body string) error {
+	return c.SendMailWithAttachment(recipients, subject, body, nil)
+}
+
+// doWithRetry sends JSON data to the sendMail endpoint with automatic retries.
+func (c *GraphClient) doWithRetry(jsonData []byte) error {
 	apiURL := fmt.Sprintf("%s/users/%s/sendMail", graphBaseURL, url.PathEscape(c.fromAddress))
 	backoff := util.NewBackoff(initialRetryWait, maxRetryWait)
 
@@ -208,6 +191,55 @@ func (c *GraphClient) sendWithRetry(payload graphMailRequest) error {
 	}
 
 	return fmt.Errorf("max retries exceeded: %w", lastErr)
+}
+
+// SendMailWithAttachment sends an email with an optional attachment.
+func (c *GraphClient) SendMailWithAttachment(recipients []string, subject, body string, attachment *EmailAttachment) error {
+	if len(recipients) == 0 {
+		return fmt.Errorf("no recipients specified")
+	}
+
+	toRecipients := make([]graphRecipient, 0, len(recipients))
+	for _, addr := range recipients {
+		addr = strings.TrimSpace(addr)
+		if addr != "" {
+			toRecipients = append(toRecipients, graphRecipient{
+				EmailAddress: graphEmailAddress{Address: addr},
+			})
+		}
+	}
+
+	if len(toRecipients) == 0 {
+		return fmt.Errorf("no valid recipients after filtering")
+	}
+
+	message := graphMessage{
+		Subject: subject,
+		Body: graphBody{
+			ContentType: "Text",
+			Content:     body,
+		},
+		ToRecipients: toRecipients,
+	}
+
+	// Add attachment if provided and valid
+	if attachment != nil && len(attachment.Data) > 0 {
+		message.Attachments = []graphAttachment{
+			{
+				OdataType:    "#microsoft.graph.fileAttachment",
+				Name:         attachment.Filename,
+				ContentType:  attachment.ContentType,
+				ContentBytes: base64.StdEncoding.EncodeToString(attachment.Data),
+			},
+		}
+	}
+
+	payload := graphMailRequest{Message: message}
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
+	return c.doWithRetry(jsonData)
 }
 
 // ValidateAuth verifies the Graph API credentials.

@@ -181,6 +181,15 @@ const (
 // DefaultRetentionDays is the default number of days to keep recordings.
 const DefaultRetentionDays = 90
 
+// DefaultSilenceDumpRetentionDays is the default number of days to keep silence dumps.
+const DefaultSilenceDumpRetentionDays = 7
+
+// SilenceDumpConfig contains configuration for silence dump capture.
+type SilenceDumpConfig struct {
+	Enabled       bool `json:"enabled"`        // Whether dump capture is active
+	RetentionDays int  `json:"retention_days"` // Days to keep dump files (default 7)
+}
+
 // Recorder represents a recording destination configuration.
 type Recorder struct {
 	ID           string       `json:"id"`            // Unique identifier
@@ -277,6 +286,7 @@ type WSStatusResponse struct {
 	GraphFromAddress  string                   `json:"graph_from_address"`  // Shared mailbox address
 	GraphRecipients   string                   `json:"graph_recipients"`    // Comma-separated recipients
 	GraphSecretExpiry SecretExpiryInfo         `json:"graph_secret_expiry"` // Client secret expiration info
+	SilenceDump       SilenceDumpConfig        `json:"silence_dump"`        // Silence dump configuration
 	Settings          WSSettings               `json:"settings"`            // Current settings
 	Version           VersionInfo              `json:"version"`             // Version information
 }
@@ -318,6 +328,12 @@ type SilenceLogEntry struct {
 	LevelLeftDB  float64 `json:"level_left_db,omitempty"`  // Left channel RMS level in dB
 	LevelRightDB float64 `json:"level_right_db,omitempty"` // Right channel RMS level in dB
 	ThresholdDB  float64 `json:"threshold_db"`             // Threshold in dB
+
+	// Audio dump fields (silence_end only)
+	DumpPath      string `json:"dump_path,omitempty"`       // Full path to the MP3 dump file
+	DumpFilename  string `json:"dump_filename,omitempty"`   // Dump filename
+	DumpSizeBytes int64  `json:"dump_size_bytes,omitempty"` // Dump file size in bytes
+	DumpError     string `json:"dump_error,omitempty"`      // Error message if dump encoding failed
 }
 
 // AudioDevice represents an available audio input device.

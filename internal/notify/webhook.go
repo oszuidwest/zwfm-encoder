@@ -19,6 +19,12 @@ type WebhookPayload struct {
 	Threshold         float64 `json:"threshold,omitempty"`
 	Message           string  `json:"message,omitempty"`
 	Timestamp         string  `json:"timestamp"`
+
+	// Audio dump fields (silence_recovered only)
+	AudioDumpBase64    string `json:"audio_dump_base64,omitempty"`     // Base64-encoded MP3 dump
+	AudioDumpFilename  string `json:"audio_dump_filename,omitempty"`   // Dump filename
+	AudioDumpSizeBytes int64  `json:"audio_dump_size_bytes,omitempty"` // Dump file size in bytes
+	AudioDumpError     string `json:"audio_dump_error,omitempty"`      // Error message if dump encoding failed
 }
 
 // SendSilenceWebhook notifies the configured webhook of critical silence detection.
@@ -29,18 +35,6 @@ func SendSilenceWebhook(webhookURL string, levelL, levelR, threshold float64) er
 		LevelRightDB: levelR,
 		Threshold:    threshold,
 		Timestamp:    timestampUTC(),
-	})
-}
-
-// SendRecoveryWebhook notifies the configured webhook of audio recovery.
-func SendRecoveryWebhook(webhookURL string, silenceDurationMs int64, levelL, levelR, threshold float64) error {
-	return sendWebhook(webhookURL, &WebhookPayload{
-		Event:             "silence_recovered",
-		SilenceDurationMs: silenceDurationMs,
-		LevelLeftDB:       levelL,
-		LevelRightDB:      levelR,
-		Threshold:         threshold,
-		Timestamp:         timestampUTC(),
 	})
 }
 

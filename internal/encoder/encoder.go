@@ -19,26 +19,27 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/notify"
 	"github.com/oszuidwest/zwfm-encoder/internal/output"
 	"github.com/oszuidwest/zwfm-encoder/internal/recording"
+	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// LevelUpdateSamples specifies how many samples to process between level updates.
+// LevelUpdateSamples is the number of samples to process between level updates.
 const LevelUpdateSamples = 12000
 
-// ErrNoAudioInput indicates no audio input device is configured.
+// ErrNoAudioInput is returned when no audio input device is configured.
 var ErrNoAudioInput = errors.New("no audio input configured")
 
-// ErrAlreadyRunning indicates the encoder is already running.
+// ErrAlreadyRunning is returned when the encoder is already running.
 var ErrAlreadyRunning = errors.New("encoder already running")
 
-// ErrNotRunning indicates the encoder is not running.
+// ErrNotRunning is returned when the encoder is not running.
 var ErrNotRunning = errors.New("encoder not running")
 
-// ErrOutputDisabled indicates the output is disabled.
+// ErrOutputDisabled is returned when the output is disabled.
 var ErrOutputDisabled = errors.New("output is disabled")
 
-// ErrOutputNotFound indicates the output was not found.
+// ErrOutputNotFound is returned when the output was not found.
 var ErrOutputNotFound = errors.New("output not found")
 
 // Encoder is the audio capture and distribution engine.
@@ -47,6 +48,7 @@ type Encoder struct {
 	ffmpegPath          string
 	outputManager       *output.Manager
 	recordingManager    *recording.Manager
+	silenceDumpManager  *silencedump.Manager
 	sourceCmd           *exec.Cmd
 	sourceCancel        context.CancelFunc
 	sourceStdout        io.ReadCloser
@@ -68,15 +70,29 @@ type Encoder struct {
 // New creates a new Encoder with the given configuration and FFmpeg binary path.
 func New(cfg *config.Config, ffmpegPath string) *Encoder {
 	graphCfg := cfg.GraphConfig()
+	snap := cfg.Snapshot()
+
+	// Create notifier first (no dependencies)
+	notifier := notify.NewSilenceNotifier(cfg)
+
+	// Create dump manager with callback to notifier
+	dumpManager := silencedump.NewManager(
+		ffmpegPath,
+		snap.WebPort,
+		snap.SilenceDumpEnabled,
+		snap.SilenceDumpRetentionDays,
+		notifier.OnDumpReady,
+	)
 
 	return &Encoder{
 		config:              cfg,
 		ffmpegPath:          ffmpegPath,
 		outputManager:       output.NewManager(ffmpegPath),
+		silenceDumpManager:  dumpManager,
 		state:               types.StateStopped,
 		backoff:             util.NewBackoff(types.InitialRetryDelay, types.MaxRetryDelay),
 		silenceDetect:       audio.NewSilenceDetector(),
-		silenceNotifier:     notify.NewSilenceNotifier(cfg),
+		silenceNotifier:     notifier,
 		peakHolder:          audio.NewPeakHolder(),
 		secretExpiryChecker: notify.NewSecretExpiryChecker(&graphCfg),
 	}
@@ -282,6 +298,16 @@ func (e *Encoder) Stop() error {
 		errs = append(errs, fmt.Errorf("source shutdown timeout"))
 	}
 
+	// Reset silence detection and notification state
+	e.silenceDetect.Reset()
+	e.silenceNotifier.Reset()
+	e.silenceNotifier.ResetPendingRecovery()
+
+	// Stop silence dump manager
+	if e.silenceDumpManager != nil {
+		e.silenceDumpManager.Stop()
+	}
+
 	e.mu.Lock()
 	e.state = types.StateStopped
 	e.sourceCmd = nil
@@ -367,6 +393,15 @@ func (e *Encoder) UpdateGraphConfig() {
 func (e *Encoder) UpdateSilenceConfig() {
 	if e.silenceDetect != nil {
 		e.silenceDetect.Reset()
+	}
+}
+
+// UpdateSilenceDumpConfig updates the silence dump capture settings.
+func (e *Encoder) UpdateSilenceDumpConfig() {
+	snap := e.config.Snapshot()
+	if e.silenceDumpManager != nil {
+		e.silenceDumpManager.SetEnabled(snap.SilenceDumpEnabled)
+		e.silenceDumpManager.SetRetentionDays(snap.SilenceDumpRetentionDays)
 	}
 }
 
@@ -510,6 +545,11 @@ func (e *Encoder) runSource() (string, error) {
 
 // startEnabledOutputs starts the audio distributor and all enabled output processes.
 func (e *Encoder) startEnabledOutputs() {
+	// Start silence dump manager (cleanup scheduler)
+	if e.silenceDumpManager != nil {
+		e.silenceDumpManager.Start()
+	}
+
 	go e.runDistributor()
 
 	for _, out := range e.config.ConfiguredOutputs() {
@@ -535,6 +575,7 @@ func (e *Encoder) runDistributor() {
 	distributor := NewDistributor(
 		e.silenceDetect,
 		e.silenceNotifier,
+		e.silenceDumpManager,
 		e.peakHolder,
 		e.config,
 		e.updateAudioLevels,
@@ -563,6 +604,11 @@ func (e *Encoder) runDistributor() {
 		}
 		if n == 0 {
 			continue
+		}
+
+		// Feed audio to silence dump manager
+		if e.silenceDumpManager != nil {
+			e.silenceDumpManager.WriteAudio(buf[:n])
 		}
 
 		distributor.ProcessSamples(buf, n)

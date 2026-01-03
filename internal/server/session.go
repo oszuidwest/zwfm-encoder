@@ -74,18 +74,16 @@ func (sm *SessionManager) Validate(token string) bool {
 		return false
 	}
 
-	sm.mu.RLock()
-	sess, exists := sm.sessions[token]
-	sm.mu.RUnlock()
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
 
+	sess, exists := sm.sessions[token]
 	if !exists {
 		return false
 	}
 
 	if time.Now().After(sess.expiresAt) {
-		sm.mu.Lock()
 		delete(sm.sessions, token)
-		sm.mu.Unlock()
 		return false
 	}
 

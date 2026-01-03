@@ -1,4 +1,3 @@
-// Package server provides HTTP and WebSocket handlers for the encoder web interface.
 package server
 
 // Request types for WebSocket commands with validation tags.
@@ -19,6 +18,14 @@ type SilenceUpdateRequest struct {
 	ThresholdDB *float64 `json:"threshold_db" validate:"omitempty,gte=-60,lte=0"`
 	DurationMs  *int64   `json:"duration_ms" validate:"omitempty,gte=500,lte=300000"`
 	RecoveryMs  *int64   `json:"recovery_ms" validate:"omitempty,gte=500,lte=60000"`
+}
+
+// --- Silence dump settings ---
+
+// SilenceDumpUpdateRequest is the request body for silence_dump/update.
+type SilenceDumpUpdateRequest struct {
+	Enabled       *bool `json:"enabled"`
+	RetentionDays *int  `json:"retention_days" validate:"omitempty,gte=1,lte=365"`
 }
 
 // --- Notification settings ---
