@@ -12,16 +12,12 @@ import (
 // handleAddRecorder processes a recorders/add command.
 func (h *CommandHandler) handleAddRecorder(cmd WSCommand, send chan<- any) {
 	HandleCommand(h, cmd, send, func(req *RecorderRequest) error {
-		codec, _ := types.ParseCodec(req.Codec)
-		rotationMode, _ := types.ParseRotationMode(req.RotationMode)
-		storageMode, _ := types.ParseStorageMode(req.StorageMode)
-
 		recorder := types.Recorder{
 			Name:              req.Name,
 			Enabled:           true, // New recorders are enabled by default
-			Codec:             codec,
-			RotationMode:      rotationMode,
-			StorageMode:       storageMode,
+			Codec:             types.Codec(req.Codec),
+			RotationMode:      types.RotationMode(req.RotationMode),
+			StorageMode:       types.StorageMode(req.StorageMode),
 			LocalPath:         req.LocalPath,
 			S3Endpoint:        req.S3Endpoint,
 			S3Bucket:          req.S3Bucket,
@@ -31,7 +27,7 @@ func (h *CommandHandler) handleAddRecorder(cmd WSCommand, send chan<- any) {
 		}
 
 		// Apply defaults
-		if !recorder.Codec.IsValid() {
+		if recorder.Codec == "" {
 			recorder.Codec = types.CodecWAV
 		}
 		if recorder.RetentionDays == 0 {
@@ -90,18 +86,14 @@ func (h *CommandHandler) handleUpdateRecorder(cmd WSCommand, send chan<- any) {
 	}
 
 	HandleCommand(h, cmd, send, func(req *RecorderRequest) error {
-		codec, _ := types.ParseCodec(req.Codec)
-		rotationMode, _ := types.ParseRotationMode(req.RotationMode)
-		storageMode, _ := types.ParseStorageMode(req.StorageMode)
-
 		updated := types.Recorder{
 			ID:                existing.ID,
 			CreatedAt:         existing.CreatedAt,
 			Name:              req.Name,
 			Enabled:           req.Enabled,
-			Codec:             codec,
-			RotationMode:      rotationMode,
-			StorageMode:       storageMode,
+			Codec:             types.Codec(req.Codec),
+			RotationMode:      types.RotationMode(req.RotationMode),
+			StorageMode:       types.StorageMode(req.StorageMode),
 			LocalPath:         req.LocalPath,
 			S3Endpoint:        req.S3Endpoint,
 			S3Bucket:          req.S3Bucket,
@@ -111,7 +103,7 @@ func (h *CommandHandler) handleUpdateRecorder(cmd WSCommand, send chan<- any) {
 		}
 
 		// Apply defaults
-		if !updated.Codec.IsValid() {
+		if updated.Codec == "" {
 			updated.Codec = types.CodecWAV
 		}
 		if updated.RetentionDays == 0 {

@@ -16,15 +16,13 @@ func (h *CommandHandler) handleAddOutput(cmd WSCommand, send chan<- any) {
 	}
 
 	HandleCommand(h, cmd, send, func(req *OutputRequest) error {
-		codec, _ := types.ParseCodec(req.Codec)
-
 		output := types.Output{
 			Enabled:    true, // New outputs are enabled by default
 			Host:       req.Host,
 			Port:       req.Port,
 			Password:   req.Password,
 			StreamID:   req.StreamID,
-			Codec:      codec,
+			Codec:      types.Codec(req.Codec),
 			MaxRetries: req.MaxRetries,
 		}
 
@@ -32,7 +30,7 @@ func (h *CommandHandler) handleAddOutput(cmd WSCommand, send chan<- any) {
 		if output.StreamID == "" {
 			output.StreamID = "studio"
 		}
-		if !output.Codec.IsValid() {
+		if output.Codec == "" {
 			output.Codec = types.CodecWAV
 		}
 
@@ -105,8 +103,6 @@ func (h *CommandHandler) handleUpdateOutput(cmd WSCommand, send chan<- any) {
 	}
 
 	HandleCommand(h, cmd, send, func(req *OutputRequest) error {
-		codec, _ := types.ParseCodec(req.Codec)
-
 		updated := types.Output{
 			ID:         existing.ID,
 			CreatedAt:  existing.CreatedAt,
@@ -115,7 +111,7 @@ func (h *CommandHandler) handleUpdateOutput(cmd WSCommand, send chan<- any) {
 			Port:       req.Port,
 			Password:   req.Password,
 			StreamID:   req.StreamID,
-			Codec:      codec,
+			Codec:      types.Codec(req.Codec),
 			MaxRetries: req.MaxRetries,
 		}
 
@@ -123,7 +119,7 @@ func (h *CommandHandler) handleUpdateOutput(cmd WSCommand, send chan<- any) {
 		if updated.StreamID == "" {
 			updated.StreamID = "studio"
 		}
-		if !updated.Codec.IsValid() {
+		if updated.Codec == "" {
 			updated.Codec = types.CodecWAV
 		}
 

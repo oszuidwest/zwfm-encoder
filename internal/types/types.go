@@ -2,8 +2,6 @@
 package types
 
 import (
-	"encoding/json"
-	"fmt"
 	"time"
 )
 
@@ -82,74 +80,15 @@ const (
 )
 
 // Codec represents an audio codec type.
-type Codec int
+type Codec string
 
+// Supported audio codecs.
 const (
-	// CodecWAV is uncompressed PCM audio in Matroska container.
-	CodecWAV Codec = iota
-	// CodecMP3 is MPEG Audio Layer III.
-	CodecMP3
-	// CodecMP2 is MPEG Audio Layer II.
-	CodecMP2
-	// CodecOGG is Ogg Vorbis.
-	CodecOGG
+	CodecWAV Codec = "wav" // Uncompressed PCM in Matroska container
+	CodecMP3 Codec = "mp3" // MPEG Audio Layer III
+	CodecMP2 Codec = "mp2" // MPEG Audio Layer II
+	CodecOGG Codec = "ogg" // Ogg Vorbis
 )
-
-// String returns the string representation of the codec.
-func (c Codec) String() string {
-	switch c {
-	case CodecWAV:
-		return "wav"
-	case CodecMP3:
-		return "mp3"
-	case CodecMP2:
-		return "mp2"
-	case CodecOGG:
-		return "ogg"
-	default:
-		return "wav"
-	}
-}
-
-// MarshalJSON implements json.Marshaler for Codec.
-func (c Codec) MarshalJSON() ([]byte, error) {
-	return json.Marshal(c.String())
-}
-
-// UnmarshalJSON implements json.Unmarshaler for Codec.
-func (c *Codec) UnmarshalJSON(data []byte) error {
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
-		return err
-	}
-	parsed, err := ParseCodec(s)
-	if err != nil {
-		return err
-	}
-	*c = parsed
-	return nil
-}
-
-// ParseCodec parses a string into a Codec.
-func ParseCodec(s string) (Codec, error) {
-	switch s {
-	case "wav", "":
-		return CodecWAV, nil
-	case "mp3":
-		return CodecMP3, nil
-	case "mp2":
-		return CodecMP2, nil
-	case "ogg":
-		return CodecOGG, nil
-	default:
-		return CodecWAV, fmt.Errorf("unknown codec: %s", s)
-	}
-}
-
-// IsValid returns true if the codec is a known valid codec.
-func (c Codec) IsValid() bool {
-	return c >= CodecWAV && c <= CodecOGG
-}
 
 // Output represents a single SRT output destination.
 type Output struct {
@@ -224,116 +163,23 @@ func (o *Output) Format() string {
 }
 
 // RotationMode determines how recordings are split into files.
-type RotationMode int
+type RotationMode string
 
+// Supported rotation modes.
 const (
-	// RotationHourly rotates recordings at system clock hour boundaries.
-	RotationHourly RotationMode = iota
-	// RotationOnDemand allows API-controlled recording start and stop.
-	RotationOnDemand
+	RotationHourly   RotationMode = "hourly"   // Rotate at system clock hour boundaries
+	RotationOnDemand RotationMode = "ondemand" // API-controlled start/stop
 )
-
-// String returns the string representation of the rotation mode.
-func (r RotationMode) String() string {
-	switch r {
-	case RotationHourly:
-		return "hourly"
-	case RotationOnDemand:
-		return "ondemand"
-	default:
-		return "hourly"
-	}
-}
-
-// MarshalJSON implements json.Marshaler for RotationMode.
-func (r RotationMode) MarshalJSON() ([]byte, error) {
-	return json.Marshal(r.String())
-}
-
-// UnmarshalJSON implements json.Unmarshaler for RotationMode.
-func (r *RotationMode) UnmarshalJSON(data []byte) error {
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
-		return err
-	}
-	parsed, err := ParseRotationMode(s)
-	if err != nil {
-		return err
-	}
-	*r = parsed
-	return nil
-}
-
-// ParseRotationMode parses a string into a RotationMode.
-func ParseRotationMode(s string) (RotationMode, error) {
-	switch s {
-	case "hourly", "":
-		return RotationHourly, nil
-	case "ondemand":
-		return RotationOnDemand, nil
-	default:
-		return RotationHourly, fmt.Errorf("unknown rotation mode: %s", s)
-	}
-}
 
 // StorageMode determines where recordings are saved.
-type StorageMode int
+type StorageMode string
 
+// Supported storage modes.
 const (
-	// StorageLocal saves recordings only to local filesystem.
-	StorageLocal StorageMode = iota
-	// StorageS3 uploads recordings only to S3.
-	StorageS3
-	// StorageBoth saves locally AND uploads to S3.
-	StorageBoth
+	StorageLocal StorageMode = "local" // Save only to local filesystem
+	StorageS3    StorageMode = "s3"    // Upload only to S3
+	StorageBoth  StorageMode = "both"  // Save locally AND upload to S3
 )
-
-// String returns the string representation of the storage mode.
-func (s StorageMode) String() string {
-	switch s {
-	case StorageLocal:
-		return "local"
-	case StorageS3:
-		return "s3"
-	case StorageBoth:
-		return "both"
-	default:
-		return "local"
-	}
-}
-
-// MarshalJSON implements json.Marshaler for StorageMode.
-func (s StorageMode) MarshalJSON() ([]byte, error) {
-	return json.Marshal(s.String())
-}
-
-// UnmarshalJSON implements json.Unmarshaler for StorageMode.
-func (s *StorageMode) UnmarshalJSON(data []byte) error {
-	var str string
-	if err := json.Unmarshal(data, &str); err != nil {
-		return err
-	}
-	parsed, err := ParseStorageMode(str)
-	if err != nil {
-		return err
-	}
-	*s = parsed
-	return nil
-}
-
-// ParseStorageMode parses a string into a StorageMode.
-func ParseStorageMode(s string) (StorageMode, error) {
-	switch s {
-	case "local", "":
-		return StorageLocal, nil
-	case "s3":
-		return StorageS3, nil
-	case "both":
-		return StorageBoth, nil
-	default:
-		return StorageLocal, fmt.Errorf("unknown storage mode: %s", s)
-	}
-}
 
 // DefaultRetentionDays is the default number of days to keep recordings.
 const DefaultRetentionDays = 90
