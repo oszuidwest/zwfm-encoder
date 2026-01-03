@@ -81,7 +81,7 @@ type Capturer struct {
 }
 
 // NewCapturer creates a new silence dump capturer.
-func NewCapturer(ffmpegPath string, outputDir string, onDumpReady DumpCallback) *Capturer {
+func NewCapturer(ffmpegPath, outputDir string, onDumpReady DumpCallback) *Capturer {
 	return &Capturer{
 		buffer:      make([]byte, bufferCapacity),
 		ffmpegPath:  ffmpegPath,
@@ -242,7 +242,7 @@ func (c *Capturer) copyFromRing(dst []byte, startPos int64) {
 }
 
 // encodeToMP3 encodes PCM audio to an MP3 file.
-func encodeToMP3(ffmpegPath string, outputDir string, pcm []byte, silenceStart time.Time, duration time.Duration) *EncodeResult {
+func encodeToMP3(ffmpegPath, outputDir string, pcm []byte, silenceStart time.Time, duration time.Duration) *EncodeResult {
 	result := &EncodeResult{
 		Duration:  duration,
 		DumpStart: silenceStart,
