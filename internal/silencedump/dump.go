@@ -69,6 +69,10 @@ type Capturer struct {
 	silenceStart    time.Time // Time when silence started
 	capturing       bool      // True if we're waiting for recovery + 15s
 
+	// Saved pre-silence audio snapshot. Captured immediately on silence start
+	// to prevent data loss during long silences that exceed ring buffer capacity.
+	savedBefore []byte
+
 	// Configuration.
 	ffmpegPath  string
 	enabled     bool
@@ -128,12 +132,26 @@ func (c *Capturer) OnSilenceStart() {
 		c.extractAndEncode()
 	}
 
+	// Save "before" audio immediately to prevent loss during long silences.
+	// This snapshot is taken now, guaranteeing we have the pre-silence context
+	// even if silence lasts longer than the ring buffer can hold.
+	beforeBytes := int64(beforeSeconds * bytesPerSecond)
+	if c.totalWritten < beforeBytes {
+		beforeBytes = c.totalWritten
+	}
+	if beforeBytes > 0 {
+		c.savedBefore = make([]byte, beforeBytes)
+		c.copyFromRing(c.savedBefore, c.totalWritten-beforeBytes)
+	} else {
+		c.savedBefore = nil
+	}
+
 	c.silenceStartPos = c.totalWritten
 	c.silenceStart = time.Now()
 	c.silenceEndPos = 0
 	c.capturing = true
 
-	slog.Debug("silence dump capture started", "position", c.silenceStartPos)
+	slog.Debug("silence dump capture started", "position", c.silenceStartPos, "saved_before_bytes", len(c.savedBefore))
 }
 
 // OnSilenceRecover marks the position when audio recovers.
@@ -177,33 +195,52 @@ func (c *Capturer) checkAndFinalize() {
 	c.silenceStart = time.Time{}
 }
 
-// extractAndEncode extracts PCM from the ring buffer and encodes to MP3.
+// extractAndEncode extracts PCM from savedBefore + ring buffer and encodes to MP3.
 // Must be called with lock held. The lock is held during buffer extraction
 // to ensure data consistency (prevent WriteAudio from overwriting data we need).
 func (c *Capturer) extractAndEncode() {
-	// Calculate byte positions
-	beforeStart := c.silenceStartPos - int64(beforeSeconds*bytesPerSecond)
-	if beforeStart < 0 {
-		beforeStart = 0
-	}
-
 	// Cap silence duration at maxSilenceSeconds
-	actualSilenceBytes := c.silenceEndPos - c.silenceStartPos
+	silenceBytes := c.silenceEndPos - c.silenceStartPos
+	if silenceBytes < 0 {
+		silenceBytes = 0 // No recovery yet (early finalization during ongoing silence)
+	}
 	maxSilenceBytes := int64(maxSilenceSeconds * bytesPerSecond)
-	if actualSilenceBytes > maxSilenceBytes {
-		actualSilenceBytes = maxSilenceBytes
+	if silenceBytes > maxSilenceBytes {
+		silenceBytes = maxSilenceBytes
 	}
 
-	afterEnd := c.silenceEndPos + int64(afterSeconds*bytesPerSecond)
+	// Calculate "after" bytes (0 if no recovery yet)
+	afterBytes := int64(0)
+	if c.silenceEndPos > 0 {
+		afterBytes = int64(afterSeconds * bytesPerSecond)
+	}
 
-	// Extract PCM data from ring buffer (must be done under lock)
-	pcm := c.extractFromRing(beforeStart, c.silenceStartPos, c.silenceEndPos, actualSilenceBytes, afterEnd)
+	// Build PCM: savedBefore (guaranteed intact) + silence (capped) + after
+	beforeLen := int64(len(c.savedBefore))
+	totalBytes := beforeLen + silenceBytes + afterBytes
+	pcm := make([]byte, totalBytes)
+
+	// Copy "before" from saved snapshot (never lost, even for long silences)
+	copy(pcm, c.savedBefore)
+
+	// Copy silence section from ring buffer (capped at maxSilenceSeconds)
+	if silenceBytes > 0 {
+		c.copyFromRing(pcm[beforeLen:beforeLen+silenceBytes], c.silenceStartPos)
+	}
+
+	// Copy "after" section from ring buffer
+	if afterBytes > 0 {
+		c.copyFromRing(pcm[beforeLen+silenceBytes:], c.silenceEndPos)
+	}
 
 	// Capture all values needed for encoding before releasing lock
 	silenceStart := c.silenceStart
 	silenceDuration := time.Duration(c.silenceEndPos-c.silenceStartPos) * time.Second / time.Duration(bytesPerSecond)
 	ffmpegPath := c.ffmpegPath
 	callback := c.onDumpReady
+
+	// Clear savedBefore to free memory (no longer needed after extraction)
+	c.savedBefore = nil
 
 	// Encode in background to not block audio processing.
 	// All values are captured above; goroutine doesn't access Capturer fields.
@@ -213,36 +250,6 @@ func (c *Capturer) extractAndEncode() {
 			callback(result)
 		}
 	}()
-}
-
-// extractFromRing extracts audio data from the ring buffer.
-// Handles wrap-around and silence truncation.
-func (c *Capturer) extractFromRing(beforeStart, silenceStart, silenceEnd, maxSilenceBytes, afterEnd int64) []byte {
-	// Calculate total output size
-	beforeBytes := silenceStart - beforeStart
-	afterBytes := afterEnd - silenceEnd
-
-	// Use actual silence bytes (may be truncated)
-	actualSilenceBytes := silenceEnd - silenceStart
-	if actualSilenceBytes > maxSilenceBytes {
-		actualSilenceBytes = maxSilenceBytes
-	}
-
-	totalBytes := beforeBytes + actualSilenceBytes + afterBytes
-	result := make([]byte, totalBytes)
-
-	// Copy "before" section
-	c.copyFromRing(result[:beforeBytes], beforeStart)
-
-	// Copy silence section (possibly truncated)
-	if actualSilenceBytes > 0 {
-		c.copyFromRing(result[beforeBytes:beforeBytes+actualSilenceBytes], silenceStart)
-	}
-
-	// Copy "after" section
-	c.copyFromRing(result[beforeBytes+actualSilenceBytes:], silenceEnd)
-
-	return result
 }
 
 // copyFromRing copies data from the ring buffer starting at the given position.
@@ -329,11 +336,7 @@ func (c *Capturer) Reset() {
 	c.silenceEndPos = 0
 	c.silenceStart = time.Time{}
 	c.capturing = false
-
-	// Zero out the buffer
-	for i := range c.buffer {
-		c.buffer[i] = 0
-	}
+	c.savedBefore = nil // Free memory
 
 	slog.Debug("silence dump capturer reset")
 }
