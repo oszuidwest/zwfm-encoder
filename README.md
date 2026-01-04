@@ -23,7 +23,7 @@ Audio streaming software for [ZuidWest FM](https://www.zuidwestfm.nl/) and [Radi
 | macOS | Development only | FFmpeg (AVFoundation) |
 | Windows | Experimental | FFmpeg (DirectShow) |
 
-Linux on Raspberry Pi is the primary supported platform. macOS support exists for local development. Windows support is experimental and not recommended for production use.
+Linux on Raspberry Pi is the primary target. macOS works for development. Windows is experimental.
 
 ## Requirements
 
@@ -87,92 +87,23 @@ Configure via the web interface under Settings → Alerts.
 
 ### Microsoft 365 Email Setup
 
-Email notifications are sent via Microsoft Graph API using Client Credentials flow (app-only authentication).
+Email notifications use Microsoft Graph API with app-only authentication.
 
-**Step 1: Create an App Registration**
+1. [Create an App Registration](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade) → copy **Client ID** and **Tenant ID**
+2. Add API permissions: `Mail.Send` (required), `Application.Read.All` (optional, for secret expiry warnings)
+3. Grant admin consent
+4. Create a client secret → copy the value immediately (won't be shown again)
+5. [Create a shared mailbox](https://admin.exchange.microsoft.com/#/sharedmailboxes) as the sender (no license required)
 
-1. Go to [Azure Portal - App registrations](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade)
-2. Click **New registration**
-3. Enter a name (e.g., "Audio Encoder Alerts")
-4. Select **Accounts in this organizational directory only**
-5. Leave Redirect URI empty and click **Register**
-6. Copy the **Application (client) ID** and **Directory (tenant) ID** from the Overview page
-
-**Step 2: Add API Permissions**
-
-1. In your app registration, go to **API permissions**
-2. Click **Add a permission** → **Microsoft Graph** → **Application permissions**
-3. Add these permissions:
-   - `Mail.Send` - Required for sending emails
-   - `Application.Read.All` - Optional, enables secret expiry warnings in the UI
-4. Click **Grant admin consent for [your organization]** (requires admin rights)
-
-> **Tip:** If you don't have admin rights, ask your IT administrator to grant consent via [Enterprise applications](https://portal.azure.com/#view/Microsoft_AAD_IAM/StartboardApplicationsMenuBlade/~/AppAppsPreview).
-
-**Step 3: Create a Client Secret**
-
-1. Go to **Certificates & secrets** → **Client secrets**
-2. Click **New client secret**
-3. Add a description and select an expiry period (max 24 months)
-4. Click **Add** and **immediately copy the secret value** (it won't be shown again)
-
-> **Note:** Set a calendar reminder to rotate the secret before it expires. The encoder shows a warning banner when the secret expires within 30 days.
-
-**Step 4: Create or Configure a Shared Mailbox**
-
-The app sends emails "from" a shared mailbox (not a user mailbox). This is required for app-only authentication.
-
-1. Go to [Exchange Admin Center](https://admin.exchange.microsoft.com/#/sharedmailboxes)
-2. Create a new shared mailbox (e.g., `alerts@yourcompany.com`) or use an existing one
-3. No license is required for shared mailboxes
-
-**Required Configuration:**
-
-| Field | Description |
-|-------|-------------|
-| Tenant ID | Directory (tenant) ID from app registration overview |
-| Client ID | Application (client) ID from app registration overview |
-| Client Secret | Secret value created in step 3 |
-| From Address | Shared mailbox email address (e.g., `alerts@yourcompany.com`) |
-| Recipients | Comma-separated list of recipient email addresses |
-
-**Troubleshooting:**
-
-- **"Mailbox not found"**: The From Address must be a valid shared mailbox in your tenant
-- **"Access denied"**: Admin consent not granted, or wrong permission type (must be Application, not Delegated)
-- **"Invalid credentials"**: Check Tenant ID, Client ID, and Client Secret are correct
+The encoder warns when the secret expires within 30 days.
 
 ### Zabbix Setup
 
-Zabbix notifications send trapper items to a Zabbix server when silence is detected or recovered. This integrates with your existing Zabbix monitoring and alerting infrastructure.
+1. Import [`zabbix/template.xml`](https://github.com/oszuidwest/zwfm-encoder/blob/main/zabbix/template.xml) in Zabbix (**Data collection** → **Templates** → **Import**)
+2. Link the template to your encoder host
+3. Configure in the encoder: server, port (default 10051), host name (must match Zabbix exactly), and item key
 
-**Step 1: Import the Template**
-
-1. Download `zabbix/template.xml` from the [GitHub repository](https://github.com/oszuidwest/zwfm-encoder/blob/main/zabbix/template.xml)
-2. In Zabbix web interface, go to **Data collection** → **Templates**
-3. Click **Import** (top right)
-4. Select the downloaded XML file and click **Import**
-
-**Step 2: Link Template to Host**
-
-1. Go to **Data collection** → **Hosts**
-2. Select your encoder host (or create one if it doesn't exist)
-3. Go to the **Templates** tab
-4. Click **Select** and choose **ZWFM Encoder Silence Monitor**
-5. Click **Update**
-
-> **Note:** The template creates a trapper item (`silence.alert`) and triggers for SILENCE (Disaster), RECOVERY (Info), and TEST (Info) events.
-
-**Step 3: Configure the Encoder**
-
-| Field | Description |
-|-------|-------------|
-| Server | Zabbix server hostname or IP address |
-| Port | Zabbix trapper port (default: 10051) |
-| Host | Exact hostname as configured in Zabbix |
-| Key | Item key (default: `silence.alert`) |
-
-> **Tip:** The Host field must exactly match the host name in Zabbix, not the visible display name.
+The template creates triggers for SILENCE (Disaster), RECOVERY (Info), and TEST (Info) events.
 
 ## Configuration
 
@@ -180,123 +111,12 @@ Configuration is stored in `/etc/encoder/config.json` on production systems. For
 
 ```json
 {
-  "station": {
-    "name": "ZuidWest FM",
-    "color_light": "#E6007E",
-    "color_dark": "#E6007E"
-  },
-  "web": {
-    "port": 8080,
-    "username": "admin",
-    "password": "encoder"
-  },
-  "audio": {
-    "input": "default:CARD=sndrpihifiberry"
-  },
-  "silence_detection": {
-    "threshold_db": -40,
-    "duration_seconds": 15,
-    "recovery_seconds": 5
-  },
-  "notifications": {
-    "webhook_url": "https://example.com/alert",
-    "log_path": "/var/log/encoder/silence.jsonl",
-    "graph": {
-      "tenant_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-      "client_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-      "client_secret": "your-client-secret",
-      "from_address": "alerts@yourcompany.com",
-      "recipients": "admin@example.com, tech@example.com"
-    },
-    "zabbix": {
-      "server": "zabbix.example.com",
-      "port": 10051,
-      "host": "audio-encoder",
-      "key": "silence.alert"
-    }
-  },
-  "outputs": [
-    {
-      "id": "output-1",
-      "host": "srt.example.com",
-      "port": 9000,
-      "streamid": "studio",
-      "password": "secret",
-      "codec": "mp3",
-      "max_retries": 99
-    }
-  ]
+  "system": { "port": 8080, "username": "admin", "password": "encoder" },
+  "web": { "station_name": "ZuidWest FM" }
 }
 ```
 
-### Configuration Reference
-
-#### General
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `ffmpeg_path` | *(auto)* | Path to FFmpeg binary (uses PATH if not set) |
-
-#### Station (Branding)
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `station.name` | ZuidWest FM | Station name in header, title, and browser tab (1–30 characters) |
-| `station.color_light` | #E6007E | Accent color for light mode (#RRGGBB) |
-| `station.color_dark` | #E6007E | Accent color for dark mode (#RRGGBB) |
-
-Choose accent colors that contrast well with the interface background in each mode.
-
-#### Web Server
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `web.port` | 8080 | HTTP server port |
-| `web.username` | admin | Login username |
-| `web.password` | encoder | Login password |
-
-#### Audio
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `audio.input` | — | ALSA device identifier (e.g., `default:CARD=sndrpihifiberry`) |
-
-#### Silence Detection
-
-| Setting | Default | Range | Description |
-|---------|---------|-------|-------------|
-| `silence_detection.threshold_db` | -40 | -60 to 0 | Level below which audio is considered silent |
-| `silence_detection.duration_seconds` | 15 | 1–300 | Seconds of silence before alerting |
-| `silence_detection.recovery_seconds` | 5 | 1–60 | Seconds of audio before recovery alert |
-
-#### Notifications
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `notifications.webhook_url` | — | URL for POST requests on silence events |
-| `notifications.log_path` | — | Path to JSON Lines log file |
-| `notifications.graph.tenant_id` | — | Azure AD tenant ID |
-| `notifications.graph.client_id` | — | Azure AD app registration client ID |
-| `notifications.graph.client_secret` | — | Azure AD app registration client secret |
-| `notifications.graph.from_address` | — | Shared mailbox email address (sender) |
-| `notifications.graph.recipients` | — | Comma-separated email addresses |
-| `notifications.zabbix.server` | — | Zabbix server hostname or IP |
-| `notifications.zabbix.port` | 10051 | Zabbix server port |
-| `notifications.zabbix.host` | — | Zabbix host name for trapper items |
-| `notifications.zabbix.key` | — | Zabbix item key for trapper items |
-
-#### Outputs
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `outputs[].id` | *(auto)* | Unique output identifier |
-| `outputs[].enabled` | true | Whether output is active |
-| `outputs[].host` | — | SRT server hostname |
-| `outputs[].port` | — | SRT server port |
-| `outputs[].streamid` | — | SRT stream identifier |
-| `outputs[].password` | — | SRT encryption passphrase |
-| `outputs[].codec` | wav | Codec: `mp3`, `mp2`, `ogg`, or `wav` |
-| `outputs[].max_retries` | 99 | Reconnection attempts before giving up |
+The installer creates a minimal config file. All other settings are configured through the web interface.
 
 ## Architecture
 
@@ -355,82 +175,13 @@ On Linux, `arecord` captures audio from ALSA with minimal CPU overhead. The Go d
 
 On macOS and Windows, FFmpeg handles audio capture (AVFoundation and DirectShow respectively).
 
-### Component Architecture
-
-```mermaid
-graph TB
-    subgraph External Processes
-        ARECORD[arecord]
-        FFM1[FFmpeg 1]
-        FFM2[FFmpeg 2]
-        FFM3[FFmpeg n]
-    end
-
-    subgraph Go Application
-        subgraph Engine
-            ENCODER[Encoder]
-            DIST[Distributor]
-            OUTMGR[Output Manager]
-        end
-
-        subgraph Audio
-            METER[Level Metering]
-            SILENCE[Silence Detector]
-        end
-
-        subgraph Notifications
-            NOTIFIER[Silence Notifier]
-            WEBHOOK[Webhook]
-            EMAIL[Email]
-            FLOG[File Log]
-            ZABBIX[Zabbix]
-        end
-
-        subgraph HTTP
-            SERVER[Server]
-            WS[WebSocket]
-        end
-    end
-
-    subgraph Outputs
-        SRT1[SRT Server 1]
-        SRT2[SRT Server 2]
-        SRT3[SRT Server n]
-    end
-
-    ARECORD ==>|PCM| ENCODER
-    ENCODER ==> DIST
-    DIST ==> OUTMGR
-    OUTMGR ==>|PCM| FFM1
-    OUTMGR ==>|PCM| FFM2
-    OUTMGR ==>|PCM| FFM3
-    FFM1 ==>|SRT| SRT1
-    FFM2 ==>|SRT| SRT2
-    FFM3 ==>|SRT| SRT3
-
-    DIST -.-> METER
-    DIST -.-> SILENCE
-    DIST -.->|levels| WS
-    SILENCE -.-> NOTIFIER
-    NOTIFIER -.-> WEBHOOK
-    NOTIFIER -.-> EMAIL
-    NOTIFIER -.-> FLOG
-    NOTIFIER -.-> ZABBIX
-    SERVER -.-> ENCODER
-```
-
-**Legend:** `══►` PCM/audio stream | `┄┄►` control/data
-
 ## Post-installation
 
-Optional cleanup to reduce attack surface:
+Optional hardening:
 
 ```bash
-# Disable WiFi
-echo "dtoverlay=disable-wifi" >> /boot/firmware/config.txt
-
-# Remove unnecessary packages
-apt remove bolt bluez ntfs-3g rsyslog telnet
+echo "dtoverlay=disable-wifi" >> /boot/firmware/config.txt  # Disable WiFi
+apt remove bolt bluez ntfs-3g telnet                        # Remove unused packages
 ```
 
 ## SRT Resources

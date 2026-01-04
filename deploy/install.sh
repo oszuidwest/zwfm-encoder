@@ -243,8 +243,8 @@ jq -n \
   --arg password "$WEB_PASSWORD" \
   --argjson port "$WEB_PORT" \
   '{
-    station: { name: $station_name },
-    web: { port: $port, username: $username, password: $password }
+    system: { port: $port, username: $username, password: $password },
+    web: { station_name: $station_name }
   }' > "$CONFIG_FILE"
 
 # Set proper ownership and permissions
