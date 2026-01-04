@@ -1,9 +1,9 @@
-package util
+package notify
 
 import "log/slog"
 
-// LogNotifyResult logs the result of a notification attempt.
-func LogNotifyResult(fn func() error, notifyType string) {
+// logNotifyResult logs the result of a notification attempt.
+func logNotifyResult(fn func() error, notifyType string) {
 	err := fn()
 	if err != nil {
 		slog.Error("notification failed", "type", notifyType, "error", err)

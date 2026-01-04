@@ -1,5 +1,5 @@
-// Package output manages FFmpeg output processes for streaming.
-package output
+// Package streaming manages FFmpeg streaming processes.
+package streaming
 
 import (
 	"fmt"
@@ -10,12 +10,12 @@ import (
 )
 
 // BuildFFmpegArgs returns FFmpeg arguments for streaming.
-func BuildFFmpegArgs(output *types.Output) []string {
-	codecArgs := output.CodecArgs()
-	format := output.Format()
-	srtURL := BuildSRTURL(output)
+func BuildFFmpegArgs(stream *types.Stream) []string {
+	codecArgs := stream.CodecArgs()
+	format := stream.Format()
+	srtURL := BuildSRTURL(stream)
 
-	// Start with base input args, add output-specific flags
+	// Start with base input args, add stream-specific flags
 	args := ffmpeg.BaseInputArgs()
 	args = append(args, "-hide_banner", "-loglevel", "warning", "-codec:a")
 	args = append(args, codecArgs...)
@@ -24,7 +24,7 @@ func BuildFFmpegArgs(output *types.Output) []string {
 }
 
 // BuildSRTURL constructs an SRT streaming URL.
-func BuildSRTURL(output *types.Output) string {
+func BuildSRTURL(stream *types.Stream) string {
 	params := url.Values{}
 	params.Set("pkt_size", "1316")
 	params.Set("oheadbw", "100")
@@ -32,8 +32,8 @@ func BuildSRTURL(output *types.Output) string {
 	params.Set("latency", "10000000")
 	params.Set("mode", "caller")
 	params.Set("transtype", "live")
-	params.Set("streamid", output.StreamID)
-	params.Set("passphrase", output.Password)
+	params.Set("streamid", stream.StreamID)
+	params.Set("passphrase", stream.Password)
 
-	return fmt.Sprintf("srt://%s:%d?%s", output.Host, output.Port, params.Encode())
+	return fmt.Sprintf("srt://%s:%d?%s", stream.Host, stream.Port, params.Encode())
 }

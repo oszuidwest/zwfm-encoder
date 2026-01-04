@@ -7,13 +7,12 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/notify"
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
-	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-// AudioLevelCallback is a function that receives audio level metrics.
-type AudioLevelCallback func(metrics *types.AudioMetrics)
+// AudioLevelCallback is a function that receives audio level updates.
+type AudioLevelCallback func(levels *audio.AudioLevels)
 
-// Distributor distributes PCM audio to multiple outputs.
+// Distributor distributes PCM audio to multiple streams.
 type Distributor struct {
 	levelData          *audio.LevelData
 	silenceDetect      *audio.SilenceDetector
@@ -66,9 +65,9 @@ func (d *Distributor) ProcessSamples(buf []byte, n int) {
 		}
 
 		if d.callback != nil {
-			d.callback(&types.AudioMetrics{
-				RMSLeft:           levels.RMSLeft,
-				RMSRight:          levels.RMSRight,
+			d.callback(&audio.AudioLevels{
+				Left:              levels.RMSLeft,
+				Right:             levels.RMSRight,
 				PeakLeft:          heldPeakL,
 				PeakRight:         heldPeakR,
 				Silence:           silenceEvent.InSilence,

@@ -2,13 +2,13 @@ package main
 
 import (
 	"crypto/subtle"
-	"encoding/json"
 	"fmt"
 	"html/template"
 	"log/slog"
 	"maps"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -194,13 +194,13 @@ func (s *Server) runWebSocketEventLoop(send chan any, done <-chan struct{}) {
 func (s *Server) buildWSRuntime() types.WSRuntimeStatus {
 	cfg := s.config.Snapshot()
 	status := s.encoder.Status()
-	status.OutputCount = len(cfg.Outputs)
+	status.StreamCount = len(cfg.Streams)
 
 	return types.WSRuntimeStatus{
 		Type:              "status",
 		FFmpegAvailable:   s.ffmpegAvailable,
 		Encoder:           status,
-		OutputStatus:      s.encoder.AllOutputStatuses(cfg.Outputs),
+		StreamStatus:      s.encoder.AllStreamStatuses(cfg.Streams),
 		RecorderStatuses:  s.encoder.AllRecorderStatuses(),
 		GraphSecretExpiry: s.encoder.GraphSecretExpiry(),
 		Version:           s.version.Info(),
@@ -222,20 +222,20 @@ func (s *Server) SetupRoutes() http.Handler {
 	mux.HandleFunc("/favicon.svg", s.handleFavicon)
 
 	// Recording API routes (API key auth)
-	mux.HandleFunc("POST /api/recordings/start", s.apiKeyAuth(s.handleStartRecording))
-	mux.HandleFunc("POST /api/recordings/stop", s.apiKeyAuth(s.handleStopRecording))
+	mux.HandleFunc("POST /api/recordings/start", s.apiKeyAuth(s.handleExternalRecordingAction))
+	mux.HandleFunc("POST /api/recordings/stop", s.apiKeyAuth(s.handleExternalRecordingAction))
 
 	// REST API routes (session auth)
 	mux.HandleFunc("GET /api/config", auth(s.handleAPIConfig))
 	mux.HandleFunc("GET /api/devices", auth(s.handleAPIDevices))
 	mux.HandleFunc("POST /api/settings", auth(s.handleAPISettings))
 
-	// Output CRUD routes
-	mux.HandleFunc("GET /api/outputs", auth(s.handleListOutputs))
-	mux.HandleFunc("POST /api/outputs", auth(s.handleCreateOutput))
-	mux.HandleFunc("GET /api/outputs/{id}", auth(s.handleGetOutput))
-	mux.HandleFunc("PUT /api/outputs/{id}", auth(s.handleUpdateOutput))
-	mux.HandleFunc("DELETE /api/outputs/{id}", auth(s.handleDeleteOutput))
+	// Stream CRUD routes
+	mux.HandleFunc("GET /api/streams", auth(s.handleListStreams))
+	mux.HandleFunc("POST /api/streams", auth(s.handleCreateStream))
+	mux.HandleFunc("GET /api/streams/{id}", auth(s.handleGetStream))
+	mux.HandleFunc("PUT /api/streams/{id}", auth(s.handleUpdateStream))
+	mux.HandleFunc("DELETE /api/streams/{id}", auth(s.handleDeleteStream))
 
 	// Recorder CRUD routes
 	mux.HandleFunc("GET /api/recorders", auth(s.handleListRecorders))
@@ -428,60 +428,43 @@ func (s *Server) apiKeyAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// handleStartRecording initiates recording for the specified recorder.
-func (s *Server) handleStartRecording(w http.ResponseWriter, r *http.Request) {
+// handleExternalRecordingAction handles external API recording control.
+// POST /api/recordings/start?recorder_id=...
+// POST /api/recordings/stop?recorder_id=...
+func (s *Server) handleExternalRecordingAction(w http.ResponseWriter, r *http.Request) {
 	recorderID := r.URL.Query().Get("recorder_id")
 	if recorderID == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		if err := json.NewEncoder(w).Encode(map[string]string{"error": "recorder_id is required"}); err != nil {
-			slog.Error("failed to encode error response", "error", err)
-		}
+		s.writeError(w, http.StatusBadRequest, "recorder_id is required")
 		return
 	}
 
-	if err := s.encoder.StartRecorder(recorderID); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		if err := json.NewEncoder(w).Encode(map[string]string{"error": err.Error()}); err != nil {
-			slog.Error("failed to encode error response", "error", err)
+	// Determine action from path
+	isStart := strings.HasSuffix(r.URL.Path, "/start")
+
+	var err error
+	var status string
+
+	if isStart {
+		if s.encoder.State() != types.StateRunning {
+			s.writeError(w, http.StatusBadRequest, "Encoder must be running to start recorder")
+			return
 		}
+		err = s.encoder.StartRecorder(recorderID)
+		status = "recording_started"
+	} else {
+		err = s.encoder.StopRecorder(recorderID)
+		status = "recording_stopped"
+	}
+
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(map[string]string{"status": "recording_started", "recorder_id": recorderID}); err != nil {
-		slog.Error("failed to encode success response", "error", err)
-	}
-}
-
-// handleStopRecording stops recording for the specified recorder.
-func (s *Server) handleStopRecording(w http.ResponseWriter, r *http.Request) {
-	recorderID := r.URL.Query().Get("recorder_id")
-	if recorderID == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		if err := json.NewEncoder(w).Encode(map[string]string{"error": "recorder_id is required"}); err != nil {
-			slog.Error("failed to encode error response", "error", err)
-		}
-		return
-	}
-
-	if err := s.encoder.StopRecorder(recorderID); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		if err := json.NewEncoder(w).Encode(map[string]string{"error": err.Error()}); err != nil {
-			slog.Error("failed to encode error response", "error", err)
-		}
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(map[string]string{"status": "recording_stopped", "recorder_id": recorderID}); err != nil {
-		slog.Error("failed to encode success response", "error", err)
-	}
+	s.writeJSON(w, http.StatusOK, map[string]string{
+		"status":      status,
+		"recorder_id": recorderID,
+	})
 }
 
 // Start begins the HTTP server.

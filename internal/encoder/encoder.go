@@ -1,5 +1,5 @@
 // Package encoder provides the audio capture and encoding engine.
-// It manages real-time PCM audio distribution to multiple FFmpeg output
+// It manages real-time PCM audio distribution to multiple FFmpeg stream
 // processes, with automatic retry, silence detection, and level metering.
 package encoder
 
@@ -17,9 +17,9 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/notify"
-	"github.com/oszuidwest/zwfm-encoder/internal/output"
 	"github.com/oszuidwest/zwfm-encoder/internal/recording"
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
+	"github.com/oszuidwest/zwfm-encoder/internal/streaming"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
@@ -36,17 +36,17 @@ var ErrAlreadyRunning = errors.New("encoder already running")
 // ErrNotRunning is returned when the encoder is not running.
 var ErrNotRunning = errors.New("encoder not running")
 
-// ErrOutputDisabled is returned when the output is disabled.
-var ErrOutputDisabled = errors.New("output is disabled")
+// ErrStreamDisabled is returned when the stream is disabled.
+var ErrStreamDisabled = errors.New("stream is disabled")
 
-// ErrOutputNotFound is returned when the output was not found.
-var ErrOutputNotFound = errors.New("output not found")
+// ErrStreamNotFound is returned when the stream was not found.
+var ErrStreamNotFound = errors.New("stream not found")
 
 // Encoder is the audio capture and distribution engine.
 type Encoder struct {
 	config              *config.Config
 	ffmpegPath          string
-	outputManager       *output.Manager
+	streamManager       *streaming.Manager
 	recordingManager    *recording.Manager
 	silenceDumpManager  *silencedump.Manager
 	sourceCmd           *exec.Cmd
@@ -59,8 +59,8 @@ type Encoder struct {
 	startTime           time.Time
 	retryCount          int
 	backoff             *util.Backoff
-	audioLevels         types.AudioLevels
-	lastKnownLevels     types.AudioLevels // Cache for TryRLock fallback
+	audioLevels         audio.AudioLevels
+	lastKnownLevels     audio.AudioLevels // Cache for TryRLock fallback
 	silenceDetect       *audio.SilenceDetector
 	silenceNotifier     *notify.SilenceNotifier
 	peakHolder          *audio.PeakHolder
@@ -87,7 +87,7 @@ func New(cfg *config.Config, ffmpegPath string) *Encoder {
 	return &Encoder{
 		config:              cfg,
 		ffmpegPath:          ffmpegPath,
-		outputManager:       output.NewManager(ffmpegPath),
+		streamManager:       streaming.NewManager(ffmpegPath),
 		silenceDumpManager:  dumpManager,
 		state:               types.StateStopped,
 		backoff:             util.NewBackoff(types.InitialRetryDelay, types.MaxRetryDelay),
@@ -133,9 +133,9 @@ func (e *Encoder) State() types.EncoderState {
 	return e.state
 }
 
-// Output returns the output configuration for the given ID.
-func (e *Encoder) Output(outputID string) *types.Output {
-	return e.config.Output(outputID)
+// Stream returns the stream configuration for the given ID.
+func (e *Encoder) Stream(streamID string) *types.Stream {
+	return e.config.Stream(streamID)
 }
 
 // IsRunning reports whether the encoder is in running state.
@@ -146,14 +146,14 @@ func (e *Encoder) IsRunning() bool {
 }
 
 // AudioLevels returns the current audio levels.
-func (e *Encoder) AudioLevels() types.AudioLevels {
+func (e *Encoder) AudioLevels() audio.AudioLevels {
 	if !e.mu.TryRLock() {
 		return e.lastKnownLevels
 	}
 	defer e.mu.RUnlock()
 
 	if e.state != types.StateRunning {
-		return types.AudioLevels{Left: -60, Right: -60, PeakLeft: -60, PeakRight: -60}
+		return audio.AudioLevels{Left: -60, Right: -60, PeakLeft: -60, PeakRight: -60}
 	}
 	return e.audioLevels
 }
@@ -177,44 +177,44 @@ func (e *Encoder) Status() types.EncoderStatus {
 	}
 }
 
-// AllOutputStatuses returns status for all configured outputs.
-func (e *Encoder) AllOutputStatuses(outputs []types.Output) map[string]types.ProcessStatus {
-	// Get statuses for outputs with active processes
-	processStatuses := e.outputManager.AllStatuses(func(id string) int {
-		if o := e.config.Output(id); o != nil {
-			return o.MaxRetriesOrDefault()
+// AllStreamStatuses returns status for all configured streams.
+func (e *Encoder) AllStreamStatuses(streams []types.Stream) map[string]types.ProcessStatus {
+	// Get statuses for streams with active processes
+	processStatuses := e.streamManager.AllStatuses(func(id string) int {
+		if s := e.config.Stream(id); s != nil {
+			return s.MaxRetriesOrDefault()
 		}
 		return types.DefaultMaxRetries
 	})
 
-	// Build complete status map for all configured outputs
-	result := make(map[string]types.ProcessStatus, len(outputs))
-	for _, out := range outputs {
-		if status, exists := processStatuses[out.ID]; exists {
-			// Output has active process - use its status
-			// Also reflect disabled state if output was disabled while running
-			if !out.IsEnabled() {
+	// Build complete status map for all configured streams
+	result := make(map[string]types.ProcessStatus, len(streams))
+	for _, stream := range streams {
+		if status, exists := processStatuses[stream.ID]; exists {
+			// Stream has active process - use its status
+			// Also reflect disabled state if stream was disabled while running
+			if !stream.IsEnabled() {
 				status.State = types.ProcessDisabled
 			}
-			result[out.ID] = status
-		} else if !out.IsEnabled() {
-			// Output is disabled - mark explicitly
-			result[out.ID] = types.ProcessStatus{
+			result[stream.ID] = status
+		} else if !stream.IsEnabled() {
+			// Stream is disabled - mark explicitly
+			result[stream.ID] = types.ProcessStatus{
 				State:      types.ProcessDisabled,
-				MaxRetries: out.MaxRetriesOrDefault(),
+				MaxRetries: stream.MaxRetriesOrDefault(),
 			}
 		} else {
-			// Output is enabled but has no process (encoder not running)
-			result[out.ID] = types.ProcessStatus{
+			// Stream is enabled but has no process (encoder not running)
+			result[stream.ID] = types.ProcessStatus{
 				State:      types.ProcessStopped,
-				MaxRetries: out.MaxRetriesOrDefault(),
+				MaxRetries: stream.MaxRetriesOrDefault(),
 			}
 		}
 	}
 	return result
 }
 
-// Start starts audio capture and output processes.
+// Start starts audio capture and stream processes.
 func (e *Encoder) Start() error {
 	if e.config.AudioInput() == "" {
 		return ErrNoAudioInput
@@ -263,9 +263,9 @@ func (e *Encoder) Stop() error {
 	// Collect all shutdown errors
 	var errs []error
 
-	// Stop all outputs first
-	if err := e.outputManager.StopAll(); err != nil {
-		errs = append(errs, fmt.Errorf("stop outputs: %w", err))
+	// Stop all streams first
+	if err := e.streamManager.StopAll(); err != nil {
+		errs = append(errs, fmt.Errorf("stop streams: %w", err))
 	}
 
 	// Stop recording manager (note: compliance recording continues independently)
@@ -281,7 +281,10 @@ func (e *Encoder) Stop() error {
 		}
 	}
 
-	stopped := e.pollUntil(func() bool {
+	pollCtx, pollCancel := context.WithCancel(context.Background())
+	defer pollCancel()
+
+	stopped := e.pollUntil(pollCtx, func() bool {
 		e.mu.RLock()
 		defer e.mu.RUnlock()
 		return e.sourceCmd == nil
@@ -291,6 +294,7 @@ func (e *Encoder) Stop() error {
 	case <-stopped:
 		slog.Info("source capture stopped gracefully")
 	case <-time.After(types.ShutdownTimeout):
+		pollCancel() // Stop polling goroutine immediately
 		slog.Warn("source capture did not stop in time, forcing kill")
 		if sourceCancel != nil {
 			sourceCancel()
@@ -326,8 +330,8 @@ func (e *Encoder) Restart() error {
 	return e.Start()
 }
 
-// StartOutput initiates an output process.
-func (e *Encoder) StartOutput(outputID string) error {
+// StartStream initiates a streaming process.
+func (e *Encoder) StartStream(streamID string) error {
 	var stopChan chan struct{}
 
 	e.mu.RLock()
@@ -338,27 +342,27 @@ func (e *Encoder) StartOutput(outputID string) error {
 	stopChan = e.stopChan
 	e.mu.RUnlock()
 
-	out := e.config.Output(outputID)
-	if out == nil {
-		return ErrOutputNotFound
+	stream := e.config.Stream(streamID)
+	if stream == nil {
+		return ErrStreamNotFound
 	}
-	if !out.IsEnabled() {
-		return ErrOutputDisabled
+	if !stream.IsEnabled() {
+		return ErrStreamDisabled
 	}
 
 	// Start preserves existing retry state automatically
-	if err := e.outputManager.Start(out); err != nil {
-		return fmt.Errorf("failed to start output: %w", err)
+	if err := e.streamManager.Start(stream); err != nil {
+		return fmt.Errorf("failed to start stream: %w", err)
 	}
 
-	go e.outputManager.MonitorAndRetry(outputID, e, stopChan)
+	go e.streamManager.MonitorAndRetry(streamID, e, stopChan)
 
 	return nil
 }
 
-// StopOutput terminates the output with the given ID.
-func (e *Encoder) StopOutput(outputID string) error {
-	return e.outputManager.Stop(outputID)
+// StopStream terminates the stream with the given ID.
+func (e *Encoder) StopStream(streamID string) error {
+	return e.streamManager.Stop(streamID)
 }
 
 // TriggerTestEmail sends a test email.
@@ -457,8 +461,8 @@ func (e *Encoder) runSourceLoop() {
 				e.state = types.StateStopped
 				e.lastError = fmt.Sprintf("Stopped after %d failed attempts: %s", types.MaxRetries, errMsg)
 				e.mu.Unlock()
-				if err := e.outputManager.StopAll(); err != nil {
-					slog.Error("failed to stop outputs during source failure", "error", err)
+				if err := e.streamManager.StopAll(); err != nil {
+					slog.Error("failed to stop streams during source failure", "error", err)
 				}
 				return
 			}
@@ -523,17 +527,17 @@ func (e *Encoder) runSource() (string, error) {
 		e.state = types.StateRunning
 		e.startTime = time.Now()
 		e.lastError = ""
-		e.audioLevels = types.AudioLevels{Left: -60, Right: -60, PeakLeft: -60, PeakRight: -60}
+		e.audioLevels = audio.AudioLevels{Left: -60, Right: -60, PeakLeft: -60, PeakRight: -60}
 	}()
 
 	if err := cmd.Start(); err != nil {
 		return "", err
 	}
 
-	// Start distributor and outputs after brief delay
+	// Start distributor and streams after brief delay
 	go func() {
-		time.Sleep(types.OutputRestartDelay)
-		e.startEnabledOutputs()
+		time.Sleep(types.StreamRestartDelay)
+		e.startEnabledStreams()
 	}()
 
 	err = cmd.Wait()
@@ -549,8 +553,8 @@ func (e *Encoder) runSource() (string, error) {
 	return util.ExtractLastError(stderrBuf.String()), err
 }
 
-// startEnabledOutputs starts all enabled output processes.
-func (e *Encoder) startEnabledOutputs() {
+// startEnabledStreams starts all enabled streaming processes.
+func (e *Encoder) startEnabledStreams() {
 	// Start silence dump manager (cleanup scheduler)
 	if e.silenceDumpManager != nil {
 		e.silenceDumpManager.Start()
@@ -558,13 +562,13 @@ func (e *Encoder) startEnabledOutputs() {
 
 	go e.runDistributor()
 
-	for _, out := range e.config.ConfiguredOutputs() {
-		if !out.IsEnabled() {
-			slog.Info("skipping disabled output", "output_id", out.ID)
+	for _, stream := range e.config.ConfiguredStreams() {
+		if !stream.IsEnabled() {
+			slog.Info("skipping disabled stream", "stream_id", stream.ID)
 			continue
 		}
-		if err := e.StartOutput(out.ID); err != nil {
-			slog.Error("failed to start output", "output_id", out.ID, "error", err)
+		if err := e.StartStream(stream.ID); err != nil {
+			slog.Error("failed to start stream", "stream_id", stream.ID, "error", err)
 		}
 	}
 
@@ -574,7 +578,7 @@ func (e *Encoder) startEnabledOutputs() {
 	}
 }
 
-// runDistributor delivers audio from the source to all output processes.
+// runDistributor delivers audio from the source to all streaming processes.
 func (e *Encoder) runDistributor() {
 	buf := make([]byte, 19200) // ~100ms of audio at 48kHz stereo
 
@@ -619,9 +623,9 @@ func (e *Encoder) runDistributor() {
 
 		distributor.ProcessSamples(buf, n)
 
-		for _, out := range e.config.ConfiguredOutputs() {
-			// WriteAudio logs errors internally and marks output as stopped
-			_ = e.outputManager.WriteAudio(out.ID, buf[:n]) //nolint:errcheck // Errors logged internally by WriteAudio
+		for _, stream := range e.config.ConfiguredStreams() {
+			// WriteAudio logs errors internally and marks stream as stopped
+			_ = e.streamManager.WriteAudio(stream.ID, buf[:n]) //nolint:errcheck // Errors logged internally by WriteAudio
 		}
 
 		// Send audio to recording manager
@@ -630,33 +634,28 @@ func (e *Encoder) runDistributor() {
 }
 
 // updateAudioLevels updates the current audio level readings.
-func (e *Encoder) updateAudioLevels(m *types.AudioMetrics) {
-	levels := types.AudioLevels{
-		Left:              m.RMSLeft,
-		Right:             m.RMSRight,
-		PeakLeft:          m.PeakLeft,
-		PeakRight:         m.PeakRight,
-		Silence:           m.Silence,
-		SilenceDurationMs: m.SilenceDurationMs,
-		SilenceLevel:      m.SilenceLevel,
-		ClipLeft:          m.ClipLeft,
-		ClipRight:         m.ClipRight,
-	}
-
+func (e *Encoder) updateAudioLevels(levels *audio.AudioLevels) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.audioLevels = levels
-	e.lastKnownLevels = levels // Update cache for TryRLock fallback
+	e.audioLevels = *levels
+	e.lastKnownLevels = *levels // Update cache for TryRLock fallback
 }
 
 // pollUntil signals when the given condition becomes true.
-func (e *Encoder) pollUntil(condition func() bool) <-chan struct{} {
+// The goroutine exits when either the condition is met or the context is cancelled.
+func (e *Encoder) pollUntil(ctx context.Context, condition func() bool) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
+		defer close(done)
+		ticker := time.NewTicker(types.PollInterval)
+		defer ticker.Stop()
 		for !condition() {
-			time.Sleep(types.PollInterval)
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
 		}
-		close(done)
 	}()
 	return done
 }

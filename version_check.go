@@ -82,7 +82,12 @@ func (vc *VersionChecker) checkWithRetry() {
 			return
 		}
 		if attempt < versionMaxRetries-1 {
-			time.Sleep(versionRetryDelay)
+			select {
+			case <-time.After(versionRetryDelay):
+				// Continue to next retry
+			case <-vc.stopCh:
+				return
+			}
 		}
 	}
 }

@@ -7,7 +7,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -15,10 +14,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
-
-// datePattern matches the date portion in recording filenames.
-var datePattern = regexp.MustCompile(`(\d{4}-\d{2}-\d{2})`)
 
 // startCleanupScheduler starts the daily cleanup scheduler.
 func (m *Manager) startCleanupScheduler() {
@@ -105,7 +102,7 @@ func (m *Manager) cleanupLocalFiles(recorder *GenericRecorder) {
 		}
 
 		// Extract date from filename
-		fileDate, ok := extractDateFromFilename(name)
+		fileDate, ok := util.ExtractDateFromFilename(name)
 		if !ok {
 			continue
 		}
@@ -180,7 +177,7 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 			filename := filepath.Base(key)
 
 			// Extract date from filename
-			fileDate, ok := extractDateFromFilename(filename)
+			fileDate, ok := util.ExtractDateFromFilename(filename)
 			if !ok {
 				continue
 			}
@@ -209,19 +206,4 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 	if deleted > 0 {
 		slog.Info("cleanup: deleted S3 objects", "id", cfg.ID, "count", deleted)
 	}
-}
-
-// extractDateFromFilename extracts the date from a recording filename.
-func extractDateFromFilename(filename string) (time.Time, bool) {
-	matches := datePattern.FindStringSubmatch(filename)
-	if len(matches) < 2 {
-		return time.Time{}, false
-	}
-
-	date, err := time.Parse(time.DateOnly, matches[1])
-	if err != nil {
-		return time.Time{}, false
-	}
-
-	return date, true
 }

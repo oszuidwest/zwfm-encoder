@@ -180,7 +180,7 @@ func (n *SilenceNotifier) Reset() {
 //
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) sendSilenceWebhook(cfg config.Snapshot, levelL, levelR float64) {
-	util.LogNotifyResult(
+	logNotifyResult(
 		func() error { return SendSilenceWebhook(cfg.WebhookURL, levelL, levelR, cfg.SilenceThreshold) },
 		"Silence webhook",
 	)
@@ -204,7 +204,7 @@ func BuildGraphConfig(cfg config.Snapshot) *GraphConfig {
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) sendSilenceEmail(cfg config.Snapshot, levelL, levelR float64) {
 	graphCfg := BuildGraphConfig(cfg)
-	util.LogNotifyResult(
+	logNotifyResult(
 		func() error {
 			return n.sendSilenceEmailWithClient(graphCfg, cfg.StationName, levelL, levelR, cfg.SilenceThreshold)
 		},
@@ -253,7 +253,7 @@ func (n *SilenceNotifier) sendSilenceEmailWithClient(cfg *GraphConfig, stationNa
 //
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) logSilenceStart(cfg config.Snapshot, levelL, levelR float64) {
-	util.LogNotifyResult(
+	logNotifyResult(
 		func() error { return LogSilenceStart(cfg.LogPath, levelL, levelR, cfg.SilenceThreshold) },
 		"Silence log",
 	)
@@ -289,9 +289,9 @@ func (n *SilenceNotifier) OnDumpReady(result *silencedump.EncodeResult) {
 //
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) sendRecoveryWebhookWithDump(cfg config.Snapshot, durationMs int64, levelL, levelR float64, dump *silencedump.EncodeResult) {
-	util.LogNotifyResult(
+	logNotifyResult(
 		func() error {
-			return sendRecoveryWebhookWithDump(cfg.WebhookURL, durationMs, levelL, levelR, cfg.SilenceThreshold, dump)
+			return sendRecoveryWebhook(cfg.WebhookURL, durationMs, levelL, levelR, cfg.SilenceThreshold, dump)
 		},
 		"Recovery webhook with dump",
 	)
@@ -302,7 +302,7 @@ func (n *SilenceNotifier) sendRecoveryWebhookWithDump(cfg config.Snapshot, durat
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) sendRecoveryEmailWithDump(cfg config.Snapshot, durationMs int64, levelL, levelR float64, dump *silencedump.EncodeResult) {
 	graphCfg := BuildGraphConfig(cfg)
-	util.LogNotifyResult(
+	logNotifyResult(
 		func() error {
 			return n.sendRecoveryEmailWithClientAndDump(graphCfg, cfg.StationName, durationMs, levelL, levelR, cfg.SilenceThreshold, dump)
 		},
@@ -314,7 +314,7 @@ func (n *SilenceNotifier) sendRecoveryEmailWithDump(cfg config.Snapshot, duratio
 //
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) logSilenceEndWithDump(cfg config.Snapshot, durationMs int64, levelL, levelR float64, dump *silencedump.EncodeResult) {
-	util.LogNotifyResult(
+	logNotifyResult(
 		func() error {
 			return LogSilenceEndWithDump(cfg.LogPath, durationMs, levelL, levelR, cfg.SilenceThreshold, dump)
 		},
@@ -326,7 +326,7 @@ func (n *SilenceNotifier) logSilenceEndWithDump(cfg config.Snapshot, durationMs 
 //
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) sendSilenceZabbix(cfg config.Snapshot, levelL, levelR float64) {
-	util.LogNotifyResult(
+	logNotifyResult(
 		func() error {
 			return SendSilenceZabbix(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixKey, levelL, levelR, cfg.SilenceThreshold)
 		},
@@ -338,7 +338,7 @@ func (n *SilenceNotifier) sendSilenceZabbix(cfg config.Snapshot, levelL, levelR 
 //
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) sendRecoveryZabbix(cfg config.Snapshot, durationMs int64, levelL, levelR float64) {
-	util.LogNotifyResult(
+	logNotifyResult(
 		func() error {
 			return SendRecoveryZabbix(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixKey, durationMs, levelL, levelR, cfg.SilenceThreshold)
 		},
@@ -346,8 +346,8 @@ func (n *SilenceNotifier) sendRecoveryZabbix(cfg config.Snapshot, durationMs int
 	)
 }
 
-// sendRecoveryWebhookWithDump sends a recovery webhook with optional audio dump.
-func sendRecoveryWebhookWithDump(webhookURL string, durationMs int64, levelL, levelR, threshold float64, dump *silencedump.EncodeResult) error {
+// sendRecoveryWebhook sends a recovery webhook with optional audio dump.
+func sendRecoveryWebhook(webhookURL string, durationMs int64, levelL, levelR, threshold float64, dump *silencedump.EncodeResult) error {
 	payload := &WebhookPayload{
 		Event:             "silence_recovered",
 		SilenceDurationMs: durationMs,

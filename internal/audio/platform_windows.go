@@ -5,8 +5,6 @@ package audio
 import (
 	"regexp"
 	"strings"
-
-	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
 func getPlatformConfig() CaptureConfig {
@@ -22,7 +20,7 @@ func buildWindowsArgs(device string) []string {
 	return buildFFmpegCaptureArgs("dshow", device)
 }
 
-func (cfg *CaptureConfig) ListDevices() []types.AudioDevice {
+func (cfg *CaptureConfig) ListDevices() []Device {
 	return parseDeviceList(DeviceListConfig{
 		Command: []string{"ffmpeg", "-hide_banner", "-f", "dshow", "-list_devices", "true", "-i", "dummy"},
 		// No section markers - FFmpeg versions vary in output format.
@@ -32,12 +30,12 @@ func (cfg *CaptureConfig) ListDevices() []types.AudioDevice {
 		AudioStopMarker:  "",
 		// Match lines like: [dshow @ addr] "Device Name" (audio)
 		DevicePattern: regexp.MustCompile(`\[dshow[^\]]*\]\s*"([^"]+)"\s*\(audio\)`),
-		ParseDevice: func(matches []string) *types.AudioDevice {
+		ParseDevice: func(matches []string) *Device {
 			if len(matches) < 2 {
 				return nil
 			}
 			name := strings.TrimSpace(matches[1])
-			return &types.AudioDevice{
+			return &Device{
 				ID:   "audio=" + name,
 				Name: name,
 			}

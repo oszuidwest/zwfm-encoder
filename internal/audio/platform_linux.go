@@ -2,11 +2,7 @@
 
 package audio
 
-import (
-	"regexp"
-
-	"github.com/oszuidwest/zwfm-encoder/internal/types"
-)
+import "regexp"
 
 func getPlatformConfig() CaptureConfig {
 	return CaptureConfig{
@@ -28,21 +24,21 @@ func buildLinuxArgs(device string) []string {
 	}
 }
 
-func (cfg *CaptureConfig) ListDevices() []types.AudioDevice {
+func (cfg *CaptureConfig) ListDevices() []Device {
 	return parseDeviceList(DeviceListConfig{
 		Command:          []string{"arecord", "-l"},
 		AudioStartMarker: "", // No marker, parse all lines
 		DevicePattern:    regexp.MustCompile(`card\s+(\d+):\s+(\w+)\s+\[([^\]]+)\]`),
-		ParseDevice: func(matches []string) *types.AudioDevice {
+		ParseDevice: func(matches []string) *Device {
 			if len(matches) < 4 {
 				return nil
 			}
-			return &types.AudioDevice{
+			return &Device{
 				ID:   "default:CARD=" + matches[2],
 				Name: matches[3],
 			}
 		},
-		FallbackDevices: []types.AudioDevice{
+		FallbackDevices: []Device{
 			{ID: "default:CARD=sndrpihifiberry", Name: "HiFiBerry (default)"},
 		},
 	})

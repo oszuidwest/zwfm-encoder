@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 )
 
 // EncoderState represents the current state of the encoder.
@@ -22,7 +24,7 @@ const (
 	StateStopping EncoderState = "stopping"
 )
 
-// ProcessState represents the state of any managed process (output or recorder).
+// ProcessState represents the state of any managed process (stream or recorder).
 type ProcessState string
 
 const (
@@ -45,10 +47,10 @@ const (
 // ProcessStatus is the runtime status of a managed process.
 type ProcessStatus struct {
 	State      ProcessState `json:"state"`                 // Current process state
-	Stable     bool         `json:"stable,omitempty"`      // Outputs: running ≥10s
-	Exhausted  bool         `json:"exhausted,omitempty"`   // Outputs: max retries reached
-	RetryCount int          `json:"retry_count,omitempty"` // Outputs: current retry attempt
-	MaxRetries int          `json:"max_retries,omitempty"` // Outputs: max allowed retries
+	Stable     bool         `json:"stable,omitempty"`      // Streams: running ≥10s
+	Exhausted  bool         `json:"exhausted,omitempty"`   // Streams: max retries reached
+	RetryCount int          `json:"retry_count,omitempty"` // Streams: current retry attempt
+	MaxRetries int          `json:"max_retries,omitempty"` // Streams: max allowed retries
 	Error      string       `json:"error,omitempty"`       // Error message
 }
 
@@ -70,14 +72,6 @@ const (
 	ShutdownTimeout = 3000 * time.Millisecond
 	// PollInterval is the interval for polling process state.
 	PollInterval = 50 * time.Millisecond
-)
-
-// Audio format constants for PCM capture and encoding.
-const (
-	// SampleRate is the audio sample rate in Hz.
-	SampleRate = 48000
-	// Channels is the number of audio channels (stereo).
-	Channels = 2
 )
 
 // Codec represents an audio codec type.
@@ -114,10 +108,10 @@ func (c *Codec) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Output represents a single SRT output destination.
-type Output struct {
+// Stream represents a single SRT streaming destination.
+type Stream struct {
 	ID         string `json:"id"`          // Unique identifier
-	Enabled    bool   `json:"enabled"`     // Whether output is active
+	Enabled    bool   `json:"enabled"`     // Whether stream is active
 	Host       string `json:"host"`        // SRT server hostname
 	Port       int    `json:"port"`        // SRT server port
 	Password   string `json:"password"`    // SRT encryption passphrase
@@ -127,23 +121,23 @@ type Output struct {
 	CreatedAt  int64  `json:"created_at"`  // Unix timestamp of creation
 }
 
-// IsEnabled reports whether the output is enabled.
-func (o *Output) IsEnabled() bool {
-	return o.Enabled
+// IsEnabled reports whether the stream is enabled.
+func (s *Stream) IsEnabled() bool {
+	return s.Enabled
 }
 
-// DefaultMaxRetries is the default number of retry attempts for outputs.
+// DefaultMaxRetries is the default number of retry attempts for streams.
 const DefaultMaxRetries = 99
 
-// OutputRestartDelay is the delay between stopping and starting an output during restart.
-const OutputRestartDelay = 2000 * time.Millisecond
+// StreamRestartDelay is the delay between stopping and starting a stream during restart.
+const StreamRestartDelay = 2000 * time.Millisecond
 
 // MaxRetriesOrDefault returns the configured max retries or the default value.
-func (o *Output) MaxRetriesOrDefault() int {
-	if o.MaxRetries <= 0 {
+func (s *Stream) MaxRetriesOrDefault() int {
+	if s.MaxRetries <= 0 {
 		return DefaultMaxRetries
 	}
-	return o.MaxRetries
+	return s.MaxRetries
 }
 
 // CodecPreset defines FFmpeg encoding parameters for a codec.
@@ -176,26 +170,26 @@ func FormatFor(codec Codec) string {
 	return CodecPresets[CodecWAV].Format
 }
 
-// CodecArgs returns FFmpeg codec arguments for this output's codec.
-func (o *Output) CodecArgs() []string {
-	return CodecArgsFor(o.Codec)
+// CodecArgs returns FFmpeg codec arguments for this stream's codec.
+func (s *Stream) CodecArgs() []string {
+	return CodecArgsFor(s.Codec)
 }
 
-// Format returns the FFmpeg output format for this output's codec.
-func (o *Output) Format() string {
-	return FormatFor(o.Codec)
+// Format returns the FFmpeg output format for this stream's codec.
+func (s *Stream) Format() string {
+	return FormatFor(s.Codec)
 }
 
-// Validate reports an error if the output configuration is invalid.
+// Validate reports an error if the stream configuration is invalid.
 // Note: Codec validation is handled by UnmarshalJSON during parsing.
-func (o *Output) Validate() error {
-	if strings.TrimSpace(o.Host) == "" {
+func (s *Stream) Validate() error {
+	if strings.TrimSpace(s.Host) == "" {
 		return fmt.Errorf("host: is required")
 	}
-	if o.Port <= 0 || o.Port > 65535 {
+	if s.Port <= 0 || s.Port > 65535 {
 		return fmt.Errorf("port: must be between 1 and 65535")
 	}
-	if o.MaxRetries < 0 {
+	if s.MaxRetries < 0 {
 		return fmt.Errorf("max_retries: cannot be negative")
 	}
 	return nil
@@ -349,38 +343,9 @@ type EncoderStatus struct {
 	State            EncoderState `json:"state"`                       // Current encoder state
 	Uptime           string       `json:"uptime,omitzero"`             // Time since start
 	LastError        string       `json:"last_error,omitzero"`         // Most recent error
-	OutputCount      int          `json:"output_count"`                // Number of outputs
+	StreamCount      int          `json:"stream_count"`                // Number of streams
 	SourceRetryCount int          `json:"source_retry_count,omitzero"` // Source retry attempts
 	SourceMaxRetries int          `json:"source_max_retries"`          // Max source retries
-}
-
-// SilenceLevel represents the silence detection state.
-type SilenceLevel string
-
-// SilenceLevelActive indicates silence is confirmed.
-const SilenceLevelActive SilenceLevel = "active"
-
-// AudioLevels is the current audio level measurements.
-type AudioLevels struct {
-	Left              float64      `json:"left"`                         // RMS level in dB
-	Right             float64      `json:"right"`                        // RMS level in dB
-	PeakLeft          float64      `json:"peak_left"`                    // Peak level in dB
-	PeakRight         float64      `json:"peak_right"`                   // Peak level in dB
-	Silence           bool         `json:"silence,omitzero"`             // True if audio below threshold
-	SilenceDurationMs int64        `json:"silence_duration_ms,omitzero"` // Silence duration in milliseconds
-	SilenceLevel      SilenceLevel `json:"silence_level,omitzero"`       // "active" when in confirmed silence state
-	ClipLeft          int          `json:"clip_left,omitzero"`           // Clipped samples on left channel
-	ClipRight         int          `json:"clip_right,omitzero"`          // Clipped samples on right channel
-}
-
-// AudioMetrics holds audio level metrics for callback processing.
-type AudioMetrics struct {
-	RMSLeft, RMSRight   float64      // RMS levels in dB
-	PeakLeft, PeakRight float64      // Peak levels in dB
-	Silence             bool         // True if audio below threshold
-	SilenceDurationMs   int64        // Silence duration in milliseconds
-	SilenceLevel        SilenceLevel // "active" when in confirmed silence state
-	ClipLeft, ClipRight int          // Clipped sample counts
 }
 
 // WSRuntimeStatus is sent to clients with only runtime status (no config).
@@ -389,7 +354,7 @@ type WSRuntimeStatus struct {
 	Type              string                   `json:"type"`                // Message type identifier ("status")
 	FFmpegAvailable   bool                     `json:"ffmpeg_available"`    // FFmpeg binary is available
 	Encoder           EncoderStatus            `json:"encoder"`             // Encoder status
-	OutputStatus      map[string]ProcessStatus `json:"output_status"`       // Runtime output status by ID
+	StreamStatus      map[string]ProcessStatus `json:"stream_status"`       // Runtime stream status by ID
 	RecorderStatuses  map[string]ProcessStatus `json:"recorder_statuses"`   // Runtime recorder status by ID
 	GraphSecretExpiry SecretExpiryInfo         `json:"graph_secret_expiry"` // Client secret expiration info
 	Version           VersionInfo              `json:"version"`             // Version information
@@ -398,8 +363,8 @@ type WSRuntimeStatus struct {
 // APIConfigResponse is returned by GET /api/config with full configuration.
 type APIConfigResponse struct {
 	// Audio settings
-	AudioInput string        `json:"audio_input"` // Selected audio input device
-	Devices    []AudioDevice `json:"devices"`     // Available audio devices
+	AudioInput string         `json:"audio_input"` // Selected audio input device
+	Devices    []audio.Device `json:"devices"`     // Available audio devices
 	Platform   string        `json:"platform"`    // Operating system platform
 
 	// Silence detection
@@ -431,14 +396,14 @@ type APIConfigResponse struct {
 	RecordingAPIKey string `json:"recording_api_key"` // API key for recording control
 
 	// Entities
-	Outputs   []Output   `json:"outputs"`   // Output configurations
+	Streams   []Stream   `json:"streams"`   // Stream configurations
 	Recorders []Recorder `json:"recorders"` // Recorder configurations
 }
 
 // WSLevelsResponse is sent to clients with audio level updates.
 type WSLevelsResponse struct {
-	Type   string      `json:"type"`   // Message type identifier
-	Levels AudioLevels `json:"levels"` // Current audio levels
+	Type   string            `json:"type"`   // Message type identifier
+	Levels audio.AudioLevels `json:"levels"` // Current audio levels
 }
 
 // SilenceLogEntry represents a single entry in the silence log.
@@ -455,12 +420,6 @@ type SilenceLogEntry struct {
 	DumpFilename  string `json:"dump_filename,omitempty"`   // Dump filename
 	DumpSizeBytes int64  `json:"dump_size_bytes,omitempty"` // Dump file size in bytes
 	DumpError     string `json:"dump_error,omitempty"`      // Error message if dump encoding failed
-}
-
-// AudioDevice represents an available audio input device.
-type AudioDevice struct {
-	ID   string `json:"id"`   // Device identifier
-	Name string `json:"name"` // Device display name
 }
 
 // GraphConfig is the Microsoft Graph API configuration for email notifications.
