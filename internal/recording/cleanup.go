@@ -17,7 +17,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-// datePattern matches date in filename: name-YYYY-MM-DD-HH-MM.ext
+// datePattern matches the date portion in recording filenames.
 var datePattern = regexp.MustCompile(`(\d{4}-\d{2}-\d{2})`)
 
 // startCleanupScheduler starts the daily cleanup scheduler.
@@ -211,7 +211,7 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 	}
 }
 
-// extractDateFromFilename extracts the date from a filename like "name-2025-01-15-14-00.mp3".
+// extractDateFromFilename extracts the date from a recording filename.
 func extractDateFromFilename(filename string) (time.Time, bool) {
 	matches := datePattern.FindStringSubmatch(filename)
 	if len(matches) < 2 {

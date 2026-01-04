@@ -11,7 +11,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 )
 
-// datePattern matches date in filename: YYYY-MM-DD_HH-MM-SS.mp3
+// datePattern matches date strings in filenames.
 var datePattern = regexp.MustCompile(`(\d{4}-\d{2}-\d{2})`)
 
 // Manager coordinates silence dump capture and file retention.
@@ -33,7 +33,6 @@ type Manager struct {
 }
 
 // NewManager creates a new silence dump manager.
-// The port is used to create a unique output directory per encoder instance.
 func NewManager(ffmpegPath string, port int, enabled bool, retentionDays int, onDumpReady DumpCallback) *Manager {
 	outputDir := outputDirForPort(port)
 
@@ -54,7 +53,7 @@ func NewManager(ffmpegPath string, port int, enabled bool, retentionDays int, on
 	return m
 }
 
-// Start begins the cleanup scheduler.
+// Start begins automatic cleanup of old dump files.
 func (m *Manager) Start() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -70,7 +69,7 @@ func (m *Manager) Start() {
 	slog.Info("silence dump manager started", "enabled", m.enabled)
 }
 
-// Stop stops the cleanup scheduler and resets the capturer.
+// Stop stops automatic cleanup and releases resources.
 func (m *Manager) Stop() {
 	m.mu.Lock()
 	if !m.running {
@@ -93,7 +92,7 @@ func (m *Manager) Stop() {
 	slog.Info("silence dump manager stopped")
 }
 
-// WriteAudio feeds PCM audio data to the capturer.
+// WriteAudio buffers PCM audio data for potential dump capture.
 func (m *Manager) WriteAudio(pcm []byte) {
 	if m.capturer != nil {
 		m.capturer.WriteAudio(pcm)
@@ -133,7 +132,7 @@ func (m *Manager) SetRetentionDays(days int) {
 	m.mu.Unlock()
 }
 
-// startCleanupScheduler starts the daily cleanup scheduler.
+// startCleanupScheduler schedules daily cleanup of old dump files.
 func (m *Manager) startCleanupScheduler() {
 	go func() {
 		for {
@@ -219,7 +218,7 @@ func (m *Manager) runCleanup() {
 	}
 }
 
-// extractDateFromFilename extracts the date from a filename like "2025-01-15_14-32-05.mp3".
+// extractDateFromFilename extracts the date from a dump filename.
 func extractDateFromFilename(filename string) (time.Time, bool) {
 	matches := datePattern.FindStringSubmatch(filename)
 	if len(matches) < 2 {

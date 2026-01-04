@@ -91,7 +91,7 @@ const (
 	CodecOGG Codec = "ogg" // Ogg Vorbis
 )
 
-// ValidCodecs maps valid audio codec values.
+// ValidCodecs is the set of supported audio codecs.
 var ValidCodecs = map[Codec]bool{
 	CodecWAV: true, CodecMP3: true, CodecMP2: true, CodecOGG: true,
 }
@@ -152,7 +152,7 @@ type CodecPreset struct {
 	Format string   // FFmpeg output format
 }
 
-// CodecPresets maps codec types to their FFmpeg configuration.
+// CodecPresets is the FFmpeg configuration for each codec type.
 var CodecPresets = map[Codec]CodecPreset{
 	CodecMP2: {[]string{"libtwolame", "-b:a", "384k", "-psymodel", "4"}, "mp2"},
 	CodecMP3: {[]string{"libmp3lame", "-b:a", "320k"}, "mp3"},
@@ -209,7 +209,7 @@ const (
 	RotationHourly RotationMode = "hourly" // Rotate at system clock hour boundaries
 )
 
-// ValidRotationModes maps valid rotation mode values.
+// ValidRotationModes is the set of supported rotation modes.
 var ValidRotationModes = map[RotationMode]bool{
 	RotationHourly: true,
 }
@@ -242,7 +242,7 @@ const (
 	StorageBoth  StorageMode = "both"  // Save locally AND upload to S3
 )
 
-// ValidStorageModes maps valid storage mode values.
+// ValidStorageModes is the set of supported storage modes.
 var ValidStorageModes = map[StorageMode]bool{
 	StorageLocal: true, StorageS3: true, StorageBoth: true,
 }

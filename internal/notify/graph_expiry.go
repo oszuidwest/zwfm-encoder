@@ -21,7 +21,7 @@ const (
 	expiryCacheTTL = 1 * time.Hour
 )
 
-// SecretExpiryChecker checks client secret expiration on-demand with caching.
+// SecretExpiryChecker checks client secret expiration.
 type SecretExpiryChecker struct {
 	mu         sync.RWMutex
 	cfg        *types.GraphConfig
@@ -60,7 +60,7 @@ func (c *SecretExpiryChecker) UpdateConfig(cfg *types.GraphConfig) {
 	c.mu.Unlock()
 }
 
-// refresh fetches fresh expiry info from Azure AD.
+// refresh fetches fresh expiry information.
 func (c *SecretExpiryChecker) refresh() types.SecretExpiryInfo {
 	c.mu.Lock()
 	cfg := c.cfg
@@ -88,7 +88,7 @@ func (c *SecretExpiryChecker) refresh() types.SecretExpiryInfo {
 	return info
 }
 
-// applicationResponse represents the Graph API response for an application.
+// applicationResponse represents an application response.
 type applicationResponse struct {
 	PasswordCredentials []passwordCredential `json:"passwordCredentials"`
 }
@@ -97,7 +97,7 @@ type passwordCredential struct {
 	EndDateTime string `json:"endDateTime"`
 }
 
-// fetchExpiryInfo queries the Azure AD Graph API for credential expiry.
+// fetchExpiryInfo queries for credential expiry information.
 func (c *SecretExpiryChecker) fetchExpiryInfo(cfg *types.GraphConfig) (types.SecretExpiryInfo, error) {
 	ts, err := TokenSource(cfg)
 	if err != nil {

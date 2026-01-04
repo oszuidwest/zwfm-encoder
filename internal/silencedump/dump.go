@@ -99,8 +99,7 @@ func (c *Capturer) SetEnabled(enabled bool) {
 	c.mu.Unlock()
 }
 
-// WriteAudio writes PCM data to the ring buffer.
-// Called for every audio chunk while encoder is running.
+// WriteAudio buffers incoming PCM data for potential silence dump capture.
 func (c *Capturer) WriteAudio(pcm []byte) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -120,7 +119,7 @@ func (c *Capturer) WriteAudio(pcm []byte) {
 	c.checkAndFinalize()
 }
 
-// OnSilenceStart marks the position when silence is detected.
+// OnSilenceStart begins capturing audio context for a potential silence dump.
 func (c *Capturer) OnSilenceStart() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -152,7 +151,7 @@ func (c *Capturer) OnSilenceStart() {
 	slog.Debug("silence dump capture started", "position", c.silenceStartPos, "saved_before_bytes", len(c.savedBefore))
 }
 
-// OnSilenceRecover marks the position when audio recovers.
+// OnSilenceRecover signals that audio has recovered from silence.
 func (c *Capturer) OnSilenceRecover(totalDuration time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -170,8 +169,7 @@ func (c *Capturer) OnSilenceRecover(totalDuration time.Duration) {
 	)
 }
 
-// checkAndFinalize checks if enough recovery audio has been captured.
-// Must be called with lock held.
+// checkAndFinalize completes a dump capture if sufficient audio context is available.
 func (c *Capturer) checkAndFinalize() {
 	if !c.capturing || c.silenceEndPos == 0 {
 		return
@@ -193,9 +191,7 @@ func (c *Capturer) checkAndFinalize() {
 	c.silenceStart = time.Time{}
 }
 
-// extractAndEncode extracts PCM from savedBefore + ring buffer and encodes to MP3.
-// Must be called with lock held. The lock is held during buffer extraction
-// to ensure data consistency (prevent WriteAudio from overwriting data we need).
+// extractAndEncode encodes buffered audio to an MP3 file.
 func (c *Capturer) extractAndEncode() {
 	// Calculate section sizes (silence capped at maxSilenceSeconds)
 	silenceBytes := min(max(0, c.silenceEndPos-c.silenceStartPos), int64(maxSilenceSeconds*bytesPerSecond))
@@ -231,7 +227,7 @@ func (c *Capturer) extractAndEncode() {
 	}()
 }
 
-// copyFromRing copies data from the ring buffer starting at the given position.
+// copyFromRing copies buffered audio data into the destination slice.
 func (c *Capturer) copyFromRing(dst []byte, startPos int64) {
 	// Calculate start position in buffer, accounting for wrap-around
 	bufferStart := startPos % int64(bufferCapacity)

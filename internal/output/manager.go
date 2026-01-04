@@ -317,7 +317,7 @@ func (m *Manager) Remove(outputID string) {
 	delete(m.processes, outputID)
 }
 
-// RetryCount reports the retry count for an output.
+// RetryCount returns the number of retry attempts for an output.
 func (m *Manager) RetryCount(outputID string) int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -328,7 +328,6 @@ func (m *Manager) RetryCount(outputID string) int {
 }
 
 // handleProcessExit processes the result of a terminated FFmpeg process.
-// It logs errors, updates retry state, and advances the backoff if needed.
 func (m *Manager) handleProcessExit(outputID string, cmd *exec.Cmd, procCtx context.Context, backoff *util.Backoff, err error, runDuration time.Duration) {
 	// Check if this was an intentional stop - don't treat as error
 	cause := context.Cause(procCtx)
@@ -362,8 +361,7 @@ func (m *Manager) handleProcessExit(outputID string, cmd *exec.Cmd, procCtx cont
 	}
 }
 
-// shouldContinueRetry checks if the output should continue retrying.
-// Returns false with a reason if retry should stop.
+// shouldContinueRetry reports whether the output should continue retrying.
 func (m *Manager) shouldContinueRetry(outputID string, ctx OutputContext) (shouldRetry bool, reason string) {
 	if !ctx.IsRunning() {
 		return false, "encoder stopped"

@@ -268,7 +268,7 @@ func (c *Config) findOutputIndex(id string) int {
 	})
 }
 
-// AddOutput creates a new output.
+// AddOutput adds an output to the configuration and persists the change.
 func (c *Config) AddOutput(output *types.Output) error {
 	if err := output.Validate(); err != nil {
 		return err
@@ -292,7 +292,7 @@ func (c *Config) AddOutput(output *types.Output) error {
 	return c.saveLocked()
 }
 
-// RemoveOutput deletes an output.
+// RemoveOutput removes an output from the configuration and persists the change.
 func (c *Config) RemoveOutput(id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -306,7 +306,7 @@ func (c *Config) RemoveOutput(id string) error {
 	return c.saveLocked()
 }
 
-// UpdateOutput modifies an output.
+// UpdateOutput updates an output in the configuration and persists the change.
 func (c *Config) UpdateOutput(output *types.Output) error {
 	if err := output.Validate(); err != nil {
 		return err
@@ -346,7 +346,7 @@ func (c *Config) findRecorderIndex(id string) int {
 	})
 }
 
-// AddRecorder creates a new recorder.
+// AddRecorder adds a recorder to the configuration and persists the change.
 func (c *Config) AddRecorder(recorder *types.Recorder) error {
 	if err := recorder.Validate(); err != nil {
 		return err
@@ -372,7 +372,7 @@ func (c *Config) AddRecorder(recorder *types.Recorder) error {
 	return c.saveLocked()
 }
 
-// RemoveRecorder deletes a recorder.
+// RemoveRecorder removes a recorder from the configuration and persists the change.
 func (c *Config) RemoveRecorder(id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -386,7 +386,7 @@ func (c *Config) RemoveRecorder(id string) error {
 	return c.saveLocked()
 }
 
-// UpdateRecorder modifies a recorder.
+// UpdateRecorder updates a recorder in the configuration and persists the change.
 func (c *Config) UpdateRecorder(recorder *types.Recorder) error {
 	if err := recorder.Validate(); err != nil {
 		return err
@@ -457,7 +457,7 @@ func (c *Config) SetAudioInput(input string) error {
 	return c.saveLocked()
 }
 
-// SetSilenceThreshold updates the silence detection threshold in dB.
+// SetSilenceThreshold updates the silence detection threshold and persists the change.
 func (c *Config) SetSilenceThreshold(threshold float64) error {
 	if threshold > 0 || threshold < -60 {
 		return fmt.Errorf("silence_threshold: must be between -60 and 0 dB")
@@ -468,7 +468,7 @@ func (c *Config) SetSilenceThreshold(threshold float64) error {
 	return c.saveLocked()
 }
 
-// SetSilenceDurationMs updates the silence detection duration in milliseconds.
+// SetSilenceDurationMs updates the silence detection duration and persists the change.
 func (c *Config) SetSilenceDurationMs(ms int64) error {
 	if ms <= 0 {
 		return fmt.Errorf("silence_duration_ms: must be greater than 0")
@@ -479,7 +479,7 @@ func (c *Config) SetSilenceDurationMs(ms int64) error {
 	return c.saveLocked()
 }
 
-// SetSilenceRecoveryMs updates the silence recovery duration in milliseconds.
+// SetSilenceRecoveryMs updates the silence recovery duration and persists the change.
 func (c *Config) SetSilenceRecoveryMs(ms int64) error {
 	if ms <= 0 {
 		return fmt.Errorf("silence_recovery_ms: must be greater than 0")
@@ -490,7 +490,7 @@ func (c *Config) SetSilenceRecoveryMs(ms int64) error {
 	return c.saveLocked()
 }
 
-// SetWebhookURL updates the webhook URL for silence notifications.
+// SetWebhookURL updates the webhook URL and persists the change.
 func (c *Config) SetWebhookURL(url string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -498,7 +498,7 @@ func (c *Config) SetWebhookURL(url string) error {
 	return c.saveLocked()
 }
 
-// SetLogPath updates the log file path for silence events.
+// SetLogPath updates the log file path and persists the change.
 func (c *Config) SetLogPath(path string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -506,7 +506,7 @@ func (c *Config) SetLogPath(path string) error {
 	return c.saveLocked()
 }
 
-// SetGraphConfig updates the Microsoft Graph email notification settings.
+// SetGraphConfig updates the Microsoft Graph email settings and persists the change.
 func (c *Config) SetGraphConfig(tenantID, clientID, clientSecret, fromAddress, recipients string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -518,7 +518,7 @@ func (c *Config) SetGraphConfig(tenantID, clientID, clientSecret, fromAddress, r
 	return c.saveLocked()
 }
 
-// SetRecordingAPIKey updates the API key for recording endpoints.
+// SetRecordingAPIKey updates the recording API key and persists the change.
 func (c *Config) SetRecordingAPIKey(key string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -526,7 +526,7 @@ func (c *Config) SetRecordingAPIKey(key string) error {
 	return c.saveLocked()
 }
 
-// SetSilenceDump updates the silence dump capture settings.
+// SetSilenceDump updates the silence dump settings and persists the change.
 func (c *Config) SetSilenceDump(enabled bool, retentionDays int) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -688,7 +688,7 @@ func generateShortID() (string, error) {
 	return fmt.Sprintf("%x", b), nil
 }
 
-// SetZabbixConfig updates Zabbix notification settings.
+// SetZabbixConfig updates the Zabbix notification settings and persists the change.
 func (c *Config) SetZabbixConfig(server string, port int, host, key string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

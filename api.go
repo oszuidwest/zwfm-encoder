@@ -242,7 +242,6 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 // Output API endpoints
 
 // handleListOutputs returns all configured outputs.
-// This endpoint is part of the public API for external integrations.
 // GET /api/outputs
 func (s *Server) handleListOutputs(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
@@ -250,7 +249,6 @@ func (s *Server) handleListOutputs(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGetOutput returns a single output by ID.
-// This endpoint is part of the public API for external integrations.
 // GET /api/outputs/{id}
 func (s *Server) handleGetOutput(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -398,7 +396,6 @@ func (s *Server) handleDeleteOutput(w http.ResponseWriter, r *http.Request) {
 // Recorder API endpoints
 
 // handleListRecorders returns all configured recorders.
-// This endpoint is part of the public API for external integrations.
 // GET /api/recorders
 func (s *Server) handleListRecorders(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
@@ -406,7 +403,6 @@ func (s *Server) handleListRecorders(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGetRecorder returns a single recorder by ID.
-// This endpoint is part of the public API for external integrations.
 // GET /api/recorders/{id}
 func (s *Server) handleGetRecorder(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -662,7 +658,7 @@ func (s *Server) handleAPITestWebhook(w http.ResponseWriter, r *http.Request) {
 	s.writeSuccess(w)
 }
 
-// handleAPITestLog tests log file notification by writing a test entry.
+// handleAPITestLog tests log file notification.
 func (s *Server) handleAPITestLog(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[NotificationTestRequest](s, w, r)
 	if !ok {
@@ -684,7 +680,7 @@ func (s *Server) handleAPITestLog(w http.ResponseWriter, r *http.Request) {
 	s.writeSuccess(w)
 }
 
-// handleAPITestEmail tests email notification via Microsoft Graph API.
+// handleAPITestEmail tests email notification.
 func (s *Server) handleAPITestEmail(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[NotificationTestRequest](s, w, r)
 	if !ok {

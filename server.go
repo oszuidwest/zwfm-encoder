@@ -122,7 +122,7 @@ func (s *Server) broadcastConfigChanged() {
 	}
 }
 
-// runWebSocketWriter writes messages from the send channel to the connection.
+// runWebSocketWriter writes messages to the WebSocket connection.
 func (s *Server) runWebSocketWriter(conn server.WebSocketConn, send <-chan any) {
 	defer func() {
 		if err := conn.Close(); err != nil {
@@ -261,7 +261,7 @@ func (s *Server) SetupRoutes() http.Handler {
 	return securityHeaders(mux)
 }
 
-// securityHeaders returns middleware that wraps handlers with security headers.
+// securityHeaders returns middleware that adds security headers to responses.
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Frame-Options", "DENY")
@@ -349,14 +349,14 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
-// staticFile is an embedded static file with content type and data.
+// A staticFile represents an embedded static file with content type and data.
 type staticFile struct {
 	contentType string
 	content     string
 	name        string
 }
 
-// staticFiles is a map from URL paths to static file definitions.
+// staticFiles contains URL path to static file mappings.
 var staticFiles = map[string]staticFile{
 	"/style.css": {
 		contentType: "text/css",

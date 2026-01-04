@@ -18,7 +18,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// GenericRecorder handles recording to a file with optional S3 upload.
+// GenericRecorder is a recorder that saves audio to files with optional S3 upload.
 type GenericRecorder struct {
 	mu sync.RWMutex // Protects state, config, file paths
 
@@ -132,8 +132,7 @@ func (r *GenericRecorder) Start() error {
 	return nil
 }
 
-// startAsync performs path validation and starts the FFmpeg encoder.
-// Called as a goroutine from Start().
+// startAsync validates paths and starts the encoder asynchronously.
 func (r *GenericRecorder) startAsync() {
 	// Read config values we need for validation
 	r.mu.RLock()
@@ -198,7 +197,7 @@ func (r *GenericRecorder) startAsync() {
 	r.mu.Unlock()
 }
 
-// setError transitions the recorder to error state with a message.
+// setError sets the recorder to error state with the given message.
 func (r *GenericRecorder) setError(msg string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -340,7 +339,7 @@ func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 	return nil
 }
 
-// startEncoderLocked starts the FFmpeg encoder process. Must be called with lock held.
+// startEncoderLocked starts the FFmpeg encoder process.
 func (r *GenericRecorder) startEncoderLocked() error {
 	r.startTime = time.Now()
 
@@ -399,7 +398,7 @@ func (r *GenericRecorder) startEncoderLocked() error {
 	return nil
 }
 
-// stopEncoderAndUpload stops the current encoder and queues the file for upload.
+// stopEncoderAndUpload stops the current encoder and handles the recorded file.
 func (r *GenericRecorder) stopEncoderAndUpload() {
 	// Cache values under lock to prevent race conditions
 	r.mu.Lock()
@@ -471,7 +470,7 @@ func (r *GenericRecorder) stopEncoderAndUpload() {
 	}
 }
 
-// scheduleRotationLocked schedules the next hourly rotation. Must be called with lock held.
+// scheduleRotationLocked schedules the next hourly rotation.
 func (r *GenericRecorder) scheduleRotationLocked() {
 	duration := timeUntilNextHour(time.Now())
 	r.rotationTimer = time.AfterFunc(duration, r.rotateFile)
@@ -517,7 +516,7 @@ func (r *GenericRecorder) rotateFile() {
 	r.mu.Unlock()
 }
 
-// scheduleDurationLimitLocked schedules auto-stop for on-demand mode. Must be called with lock held.
+// scheduleDurationLimitLocked schedules auto-stop for on-demand recorders.
 func (r *GenericRecorder) scheduleDurationLimitLocked() {
 	duration := time.Duration(r.maxDurationMinutes) * time.Minute
 	r.durationTimer = time.AfterFunc(duration, func() {
@@ -535,7 +534,7 @@ func (r *GenericRecorder) generateFilename(t time.Time) string {
 	return fmt.Sprintf("%s-%s.%s", safeName, t.Format("2006-01-02-15-04"), ext)
 }
 
-// generateS3Key creates the S3 object key with recorder-specific prefix.
+// generateS3Key creates the S3 object key for a recording file.
 func (r *GenericRecorder) generateS3Key(filename string) string {
 	// Prefix: recordings/{sanitized-recorder-name}/filename
 	safeName := sanitizeFilename(r.config.Name)
@@ -584,7 +583,7 @@ func (r *GenericRecorder) createS3Client() (*s3.Client, error) {
 	return createS3Client(RecorderToS3Config(&r.config))
 }
 
-// sanitizeFilename removes or replaces characters that are invalid in filenames.
+// sanitizeFilename returns a safe filename from the given name.
 func sanitizeFilename(name string) string {
 	result := make([]byte, 0, len(name))
 	for i := 0; i < len(name); i++ {

@@ -46,7 +46,7 @@ func NewSilenceDetector() *SilenceDetector {
 	return &SilenceDetector{}
 }
 
-// Update returns the current silence detection state.
+// Update updates the silence detection state with new audio levels and returns the current state.
 func (d *SilenceDetector) Update(dbL, dbR float64, cfg SilenceConfig, now time.Time) SilenceEvent {
 	d.mu.Lock()
 	defer d.mu.Unlock()

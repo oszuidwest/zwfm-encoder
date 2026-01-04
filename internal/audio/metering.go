@@ -65,7 +65,7 @@ type Levels struct {
 	ClipRight int
 }
 
-// CalculateLevels computes RMS and peak levels from accumulated sample data.
+// CalculateLevels computes RMS and peak levels in dB from the given level data.
 func CalculateLevels(data *LevelData) Levels {
 	if data.SampleCount == 0 {
 		return Levels{

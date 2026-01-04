@@ -20,7 +20,7 @@ var (
 	ErrNotRecording = errors.New("recorder is not recording")
 )
 
-// S3Config holds S3-compatible storage configuration.
+// S3Config is the configuration for S3-compatible storage.
 type S3Config struct {
 	Endpoint        string `json:"endpoint,omitempty"`          // Custom S3 endpoint (empty for AWS)
 	Bucket          string `json:"bucket,omitempty"`            // S3 bucket name

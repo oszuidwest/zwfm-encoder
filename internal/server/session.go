@@ -18,12 +18,12 @@ const (
 	csrfTokenDuration = 10 * time.Minute
 )
 
-// session is an authenticated user session.
+// A session represents an authenticated user session.
 type session struct {
 	expiresAt time.Time
 }
 
-// csrfToken is a CSRF token with expiration.
+// A csrfToken represents a CSRF token with expiration.
 type csrfToken struct {
 	expiresAt time.Time
 }
@@ -43,7 +43,7 @@ func NewSessionManager() *SessionManager {
 	}
 }
 
-// generateToken creates a cryptographically secure random token.
+// generateToken returns a cryptographically secure random token.
 func generateToken() string {
 	b := make([]byte, 32)
 	if _, err := cryptorand.Read(b); err != nil {
