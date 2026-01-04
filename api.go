@@ -304,7 +304,7 @@ func (s *Server) handleCreateOutput(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusCreated, output)
 }
 
-// handleUpdateOutput updates an output by ID.
+// handleUpdateOutput replaces an output by ID.
 // PUT /api/outputs/{id}
 func (s *Server) handleUpdateOutput(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -319,28 +319,21 @@ func (s *Server) handleUpdateOutput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Merge request into existing, preserving non-zero values
-	existing.Enabled = req.Enabled
-	if req.Host != "" {
-		existing.Host = req.Host
-	}
-	if req.Port > 0 {
-		existing.Port = req.Port
-	}
-	if req.Password != "" {
-		existing.Password = req.Password
-	}
-	if req.StreamID != "" {
-		existing.StreamID = req.StreamID
-	}
-	if req.Codec != "" {
-		existing.Codec = req.Codec // Already validated by UnmarshalJSON
-	}
-	if req.MaxRetries > 0 {
-		existing.MaxRetries = req.MaxRetries
+	// Full replacement - preserve only ID and CreatedAt
+	// For password: empty string means "keep existing" (not sent from frontend for security)
+	updated := &types.Output{
+		ID:         id,
+		Enabled:    req.Enabled,
+		Host:       req.Host,
+		Port:       req.Port,
+		Password:   cmp.Or(req.Password, existing.Password),
+		StreamID:   req.StreamID,
+		Codec:      req.Codec,
+		MaxRetries: req.MaxRetries,
+		CreatedAt:  existing.CreatedAt,
 	}
 
-	if err := s.config.UpdateOutput(existing); err != nil {
+	if err := s.config.UpdateOutput(updated); err != nil {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -368,7 +361,7 @@ func (s *Server) handleUpdateOutput(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.broadcastConfigChanged()
-	s.writeJSON(w, http.StatusOK, existing)
+	s.writeJSON(w, http.StatusOK, updated)
 }
 
 // handleDeleteOutput deletes an output by ID.
@@ -460,7 +453,7 @@ func (s *Server) handleCreateRecorder(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusCreated, recorder)
 }
 
-// handleUpdateRecorder updates a recorder by ID.
+// handleUpdateRecorder replaces a recorder by ID.
 // PUT /api/recorders/{id}
 func (s *Server) handleUpdateRecorder(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -475,46 +468,31 @@ func (s *Server) handleUpdateRecorder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Merge request into existing, preserving non-zero values
-	existing.Enabled = req.Enabled
-	if req.Name != "" {
-		existing.Name = req.Name
-	}
-	if req.Codec != "" {
-		existing.Codec = req.Codec // Already validated by UnmarshalJSON
-	}
-	if req.RotationMode != "" {
-		existing.RotationMode = req.RotationMode // Already validated by UnmarshalJSON
-	}
-	if req.StorageMode != "" {
-		existing.StorageMode = req.StorageMode // Already validated by UnmarshalJSON
-	}
-	if req.LocalPath != "" {
-		existing.LocalPath = req.LocalPath
-	}
-	if req.S3Endpoint != "" {
-		existing.S3Endpoint = req.S3Endpoint
-	}
-	if req.S3Bucket != "" {
-		existing.S3Bucket = req.S3Bucket
-	}
-	if req.S3AccessKeyID != "" {
-		existing.S3AccessKeyID = req.S3AccessKeyID
-	}
-	if req.S3SecretAccessKey != "" {
-		existing.S3SecretAccessKey = req.S3SecretAccessKey
-	}
-	if req.RetentionDays > 0 {
-		existing.RetentionDays = req.RetentionDays
+	// Full replacement - preserve only ID and CreatedAt
+	// For S3 secret: empty string means "keep existing" (not sent from frontend for security)
+	updated := &types.Recorder{
+		ID:                id,
+		Name:              req.Name,
+		Enabled:           req.Enabled,
+		Codec:             req.Codec,
+		RotationMode:      req.RotationMode,
+		StorageMode:       req.StorageMode,
+		LocalPath:         req.LocalPath,
+		S3Endpoint:        req.S3Endpoint,
+		S3Bucket:          req.S3Bucket,
+		S3AccessKeyID:     req.S3AccessKeyID,
+		S3SecretAccessKey: cmp.Or(req.S3SecretAccessKey, existing.S3SecretAccessKey),
+		RetentionDays:     req.RetentionDays,
+		CreatedAt:         existing.CreatedAt,
 	}
 
-	if err := s.encoder.UpdateRecorder(existing); err != nil {
+	if err := s.encoder.UpdateRecorder(updated); err != nil {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	s.broadcastConfigChanged()
-	s.writeJSON(w, http.StatusOK, existing)
+	s.writeJSON(w, http.StatusOK, updated)
 }
 
 // handleDeleteRecorder deletes a recorder by ID.
