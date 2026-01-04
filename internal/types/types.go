@@ -42,7 +42,7 @@ const (
 	ProcessError ProcessState = "error"
 )
 
-// ProcessStatus contains runtime status for any managed process (output or recorder).
+// ProcessStatus is the runtime status of a managed process.
 type ProcessStatus struct {
 	State      ProcessState `json:"state"`                 // Current process state
 	Stable     bool         `json:"stable,omitempty"`      // Outputs: running ≥10s
@@ -91,7 +91,7 @@ const (
 	CodecOGG Codec = "ogg" // Ogg Vorbis
 )
 
-// ValidCodecs contains all valid audio codec values.
+// ValidCodecs maps valid audio codec values.
 var ValidCodecs = map[Codec]bool{
 	CodecWAV: true, CodecMP3: true, CodecMP2: true, CodecOGG: true,
 }
@@ -186,7 +186,7 @@ func (o *Output) Format() string {
 	return FormatFor(o.Codec)
 }
 
-// Validate checks if the output configuration is valid.
+// Validate reports an error if the output configuration is invalid.
 // Note: Codec validation is handled by UnmarshalJSON during parsing.
 func (o *Output) Validate() error {
 	if strings.TrimSpace(o.Host) == "" {
@@ -201,7 +201,7 @@ func (o *Output) Validate() error {
 	return nil
 }
 
-// RotationMode determines how recordings are split into files.
+// RotationMode is the strategy for splitting recordings into files.
 type RotationMode string
 
 // Supported rotation modes.
@@ -209,7 +209,7 @@ const (
 	RotationHourly RotationMode = "hourly" // Rotate at system clock hour boundaries
 )
 
-// ValidRotationModes contains all valid rotation mode values.
+// ValidRotationModes maps valid rotation mode values.
 var ValidRotationModes = map[RotationMode]bool{
 	RotationHourly: true,
 }
@@ -232,7 +232,7 @@ func (m *RotationMode) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// StorageMode determines where recordings are saved.
+// StorageMode is the storage destination type for recordings.
 type StorageMode string
 
 // Supported storage modes.
@@ -242,7 +242,7 @@ const (
 	StorageBoth  StorageMode = "both"  // Save locally AND upload to S3
 )
 
-// ValidStorageModes contains all valid storage mode values.
+// ValidStorageModes maps valid storage mode values.
 var ValidStorageModes = map[StorageMode]bool{
 	StorageLocal: true, StorageS3: true, StorageBoth: true,
 }
@@ -271,7 +271,7 @@ const DefaultRetentionDays = 90
 // DefaultSilenceDumpRetentionDays is the default number of days to keep silence dumps.
 const DefaultSilenceDumpRetentionDays = 7
 
-// SilenceDumpConfig contains configuration for silence dump capture.
+// SilenceDumpConfig is the configuration for silence dump capture.
 type SilenceDumpConfig struct {
 	Enabled       bool `json:"enabled"`        // Whether dump capture is active
 	RetentionDays int  `json:"retention_days"` // Days to keep dump files (default 7)
@@ -313,7 +313,7 @@ func (r *Recorder) Format() string {
 	return FormatFor(r.Codec)
 }
 
-// Validate checks if the recorder configuration is valid.
+// Validate reports an error if the recorder configuration is invalid.
 // Note: Codec, RotationMode, StorageMode validation is handled by UnmarshalJSON during parsing.
 func (r *Recorder) Validate() error {
 	if strings.TrimSpace(r.Name) == "" {
@@ -344,7 +344,7 @@ func (r *Recorder) Validate() error {
 	return nil
 }
 
-// EncoderStatus contains a summary of the encoder's current operational state.
+// EncoderStatus is a summary of the encoder's current operational state.
 type EncoderStatus struct {
 	State            EncoderState `json:"state"`                       // Current encoder state
 	Uptime           string       `json:"uptime,omitzero"`             // Time since start
@@ -360,7 +360,7 @@ type SilenceLevel string
 // SilenceLevelActive indicates silence is confirmed.
 const SilenceLevelActive SilenceLevel = "active"
 
-// AudioLevels contains current audio level measurements.
+// AudioLevels is the current audio level measurements.
 type AudioLevels struct {
 	Left              float64      `json:"left"`                         // RMS level in dB
 	Right             float64      `json:"right"`                        // RMS level in dB
@@ -373,7 +373,7 @@ type AudioLevels struct {
 	ClipRight         int          `json:"clip_right,omitzero"`          // Clipped samples on right channel
 }
 
-// AudioMetrics contains audio level metrics for callback processing.
+// AudioMetrics holds audio level metrics for callback processing.
 type AudioMetrics struct {
 	RMSLeft, RMSRight   float64      // RMS levels in dB
 	PeakLeft, PeakRight float64      // Peak levels in dB
@@ -463,7 +463,7 @@ type AudioDevice struct {
 	Name string `json:"name"` // Device display name
 }
 
-// GraphConfig contains Microsoft Graph API settings for email notifications.
+// GraphConfig is the Microsoft Graph API configuration for email notifications.
 type GraphConfig struct {
 	TenantID     string `json:"tenant_id,omitempty"`     // Azure AD tenant ID
 	ClientID     string `json:"client_id,omitempty"`     // App registration client ID
@@ -472,7 +472,7 @@ type GraphConfig struct {
 	Recipients   string `json:"recipients,omitempty"`    // Comma-separated recipients
 }
 
-// ZabbixConfig contains settings for sending trapper items to a Zabbix server.
+// ZabbixConfig is the configuration for sending trapper items to a Zabbix server.
 type ZabbixConfig struct {
 	Server string `json:"server,omitempty"`
 	Port   int    `json:"port,omitempty"`
@@ -480,7 +480,7 @@ type ZabbixConfig struct {
 	Key    string `json:"key,omitempty"`
 }
 
-// SecretExpiryInfo contains client secret expiration data.
+// SecretExpiryInfo is the expiration status of a client secret.
 type SecretExpiryInfo struct {
 	ExpiresAt   string `json:"expires_at,omitempty"`   // RFC3339 expiration timestamp
 	ExpiresSoon bool   `json:"expires_soon,omitempty"` // True if expires within 30 days
@@ -488,7 +488,7 @@ type SecretExpiryInfo struct {
 	Error       string `json:"error,omitempty"`        // Error message if check failed
 }
 
-// VersionInfo contains version comparison data.
+// VersionInfo is the current and latest version information.
 type VersionInfo struct {
 	Current     string `json:"current"`              // Current version
 	Latest      string `json:"latest,omitempty"`     // Latest available version

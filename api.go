@@ -19,8 +19,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-// API response helpers
-
+// writeJSON writes a JSON response with the given status code.
 func (s *Server) writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -29,14 +28,17 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, data any) {
 	}
 }
 
+// writeError writes a JSON error response with the given status code.
 func (s *Server) writeError(w http.ResponseWriter, status int, message string) {
 	s.writeJSON(w, status, map[string]string{"error": message})
 }
 
+// writeSuccess writes a JSON success response with HTTP 200.
 func (s *Server) writeSuccess(w http.ResponseWriter) {
 	s.writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
+// writeTestResult writes a JSON response with the test outcome.
 func (s *Server) writeTestResult(w http.ResponseWriter, success bool, errMsg string) {
 	if success {
 		s.writeJSON(w, http.StatusOK, map[string]bool{"success": true})
@@ -45,12 +47,12 @@ func (s *Server) writeTestResult(w http.ResponseWriter, success bool, errMsg str
 	}
 }
 
+// readJSON decodes JSON from the request body into v.
 func (s *Server) readJSON(r *http.Request, v any) error {
 	return json.NewDecoder(r.Body).Decode(v)
 }
 
-// parseJSON reads and parses JSON from request body.
-// Returns parsed value and true on success, zero value and false on failure.
+// parseJSON parses JSON from the request body into type T and reports whether parsing succeeded.
 func parseJSON[T any](s *Server, w http.ResponseWriter, r *http.Request) (T, bool) {
 	var v T
 	if err := s.readJSON(r, &v); err != nil {
@@ -152,7 +154,6 @@ type SettingsUpdateRequest struct {
 
 // handleAPISettings updates all settings atomically.
 // POST /api/settings
-// Frontend must send all fields; empty string for secrets means "keep existing".
 func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[SettingsUpdateRequest](s, w, r)
 	if !ok {
@@ -638,6 +639,7 @@ type NotificationTestRequest struct {
 	ZabbixKey    string `json:"zabbix_key,omitempty"`
 }
 
+// handleAPITestWebhook tests webhook notification connectivity.
 func (s *Server) handleAPITestWebhook(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[NotificationTestRequest](s, w, r)
 	if !ok {
@@ -660,6 +662,7 @@ func (s *Server) handleAPITestWebhook(w http.ResponseWriter, r *http.Request) {
 	s.writeSuccess(w)
 }
 
+// handleAPITestLog tests log file notification by writing a test entry.
 func (s *Server) handleAPITestLog(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[NotificationTestRequest](s, w, r)
 	if !ok {
@@ -681,6 +684,7 @@ func (s *Server) handleAPITestLog(w http.ResponseWriter, r *http.Request) {
 	s.writeSuccess(w)
 }
 
+// handleAPITestEmail tests email notification via Microsoft Graph API.
 func (s *Server) handleAPITestEmail(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[NotificationTestRequest](s, w, r)
 	if !ok {
@@ -715,6 +719,7 @@ func (s *Server) handleAPITestEmail(w http.ResponseWriter, r *http.Request) {
 	s.writeSuccess(w)
 }
 
+// handleAPITestZabbix tests Zabbix trapper notification connectivity.
 func (s *Server) handleAPITestZabbix(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[NotificationTestRequest](s, w, r)
 	if !ok {
@@ -779,7 +784,6 @@ func (s *Server) handleAPIViewLog(w http.ResponseWriter, r *http.Request) {
 }
 
 // readSilenceLog reads the last N entries from the silence log file.
-// Uses strings.Lines() iterator with ring buffer for memory efficiency.
 func readSilenceLog(logPath string, maxEntries int) ([]types.SilenceLogEntry, error) {
 	data, err := os.ReadFile(logPath)
 	if os.IsNotExist(err) {
