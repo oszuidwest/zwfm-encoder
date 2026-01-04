@@ -42,6 +42,19 @@ const CLIP_TIMEOUT_MS = 1500;     // Peak hold / clip indicator timeout
 const WS_RECONNECT_MS = 1000;     // WebSocket reconnection delay
 const TEST_FEEDBACK_MS = 2000;    // Test result display duration
 
+// === API Endpoints ===
+const API = {
+    CONFIG: '/api/config',
+    DEVICES: '/api/devices',
+    SETTINGS: '/api/settings',
+    OUTPUTS: '/api/outputs',
+    RECORDERS: '/api/recorders',
+    RECORDERS_TEST_S3: '/api/recorders/test-s3',
+    NOTIFICATIONS_TEST: '/api/notifications/test',
+    NOTIFICATIONS_LOG: '/api/notifications/log',
+    RECORDING_REGENERATE_KEY: '/api/recording/regenerate-key',
+};
+
 /** Formats milliseconds to human-readable smart units (ms/s/m). */
 const formatSmartDuration = (ms) => {
     if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -270,7 +283,7 @@ document.addEventListener('alpine:init', () => {
          */
         async loadConfig() {
             try {
-                const response = await fetch('/api/config');
+                const response = await fetch(API.CONFIG);
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}`);
                 }
@@ -294,7 +307,7 @@ document.addEventListener('alpine:init', () => {
          */
         async refreshDevices() {
             try {
-                const response = await fetch('/api/devices');
+                const response = await fetch(API.DEVICES);
                 if (response.ok) {
                     const data = await response.json();
                     this.devices = data.devices || [];
@@ -633,7 +646,7 @@ document.addEventListener('alpine:init', () => {
         async updateAudioInput() {
             const prev = this.config.audio_input;
             try {
-                const response = await fetch('/api/settings', {
+                const response = await fetch(API.SETTINGS, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -697,7 +710,7 @@ document.addEventListener('alpine:init', () => {
             };
 
             try {
-                const response = await fetch('/api/settings', {
+                const response = await fetch(API.SETTINGS, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
@@ -767,13 +780,13 @@ document.addEventListener('alpine:init', () => {
                 let response;
                 if (this.isEditMode) {
                     data.enabled = this.outputForm.enabled;
-                    response = await fetch(`/api/outputs/${this.outputForm.id}`, {
+                    response = await fetch(`${API.OUTPUTS}/${this.outputForm.id}`, {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(data)
                     });
                 } else {
-                    response = await fetch('/api/outputs', {
+                    response = await fetch(API.OUTPUTS, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(data)
@@ -818,7 +831,7 @@ document.addEventListener('alpine:init', () => {
             if (output) this.deletingOutputs[id] = output.created_at;
 
             try {
-                const response = await fetch(`/api/outputs/${id}`, {
+                const response = await fetch(`${API.OUTPUTS}/${id}`, {
                     method: 'DELETE'
                 });
 
@@ -934,13 +947,13 @@ document.addEventListener('alpine:init', () => {
             try {
                 let response;
                 if (this.isRecorderEditMode) {
-                    response = await fetch(`/api/recorders/${this.recorderForm.id}`, {
+                    response = await fetch(`${API.RECORDERS}/${this.recorderForm.id}`, {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(data)
                     });
                 } else {
-                    response = await fetch('/api/recorders', {
+                    response = await fetch(API.RECORDERS, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(data)
@@ -985,7 +998,7 @@ document.addEventListener('alpine:init', () => {
             if (recorder) this.deletingRecorders[id] = recorder.created_at;
 
             try {
-                const response = await fetch(`/api/recorders/${id}`, {
+                const response = await fetch(`${API.RECORDERS}/${id}`, {
                     method: 'DELETE'
                 });
 
@@ -1009,7 +1022,7 @@ document.addEventListener('alpine:init', () => {
          */
         async recorderAction(id, action) {
             try {
-                const response = await fetch(`/api/recorders/${id}/${action}`, {
+                const response = await fetch(`${API.RECORDERS}/${id}/${action}`, {
                     method: 'POST'
                 });
 
@@ -1029,7 +1042,7 @@ document.addEventListener('alpine:init', () => {
             this.testStates.recorderS3 = { pending: true, text: 'Testing...' };
 
             try {
-                const response = await fetch('/api/recorders/test-s3', {
+                const response = await fetch(API.RECORDERS_TEST_S3, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -1230,7 +1243,7 @@ document.addEventListener('alpine:init', () => {
             }
 
             try {
-                const response = await fetch(`/api/notifications/test/${type}`, {
+                const response = await fetch(`${API.NOTIFICATIONS_TEST}/${type}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
@@ -1263,7 +1276,7 @@ document.addEventListener('alpine:init', () => {
             if (!confirm('Regenerate API key? Existing integrations will need to be updated.')) return;
 
             try {
-                const response = await fetch('/api/recording/regenerate-key', {
+                const response = await fetch(API.RECORDING_REGENERATE_KEY, {
                     method: 'POST'
                 });
 
@@ -1324,7 +1337,7 @@ document.addEventListener('alpine:init', () => {
          */
         async fetchSilenceLog() {
             try {
-                const response = await fetch('/api/notifications/log');
+                const response = await fetch(API.NOTIFICATIONS_LOG);
                 const result = await response.json();
 
                 this.silenceLogModal.loading = false;

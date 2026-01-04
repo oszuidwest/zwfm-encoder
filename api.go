@@ -52,9 +52,14 @@ func (s *Server) readJSON(r *http.Request, v any) error {
 	return json.NewDecoder(r.Body).Decode(v)
 }
 
+// maxRequestBodySize is the maximum allowed size for JSON request bodies (1MB).
+const maxRequestBodySize = 1 << 20
+
 // parseJSON parses JSON from the request body into type T and reports whether parsing succeeded.
+// Limits request body size to prevent denial of service attacks.
 func parseJSON[T any](s *Server, w http.ResponseWriter, r *http.Request) (T, bool) {
 	var v T
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 	if err := s.readJSON(r, &v); err != nil {
 		s.writeError(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
 		return v, false
