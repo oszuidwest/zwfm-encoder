@@ -121,37 +121,38 @@ func (s *Server) handleAPIDevices(w http.ResponseWriter, r *http.Request) {
 // SettingsUpdateRequest is the request body for POST /api/settings.
 type SettingsUpdateRequest struct {
 	// Audio
-	AudioInput *string `json:"audio_input"`
+	AudioInput string `json:"audio_input"`
 
 	// Silence detection
-	SilenceThreshold         *float64 `json:"silence_threshold"`
-	SilenceDurationMs        *int64   `json:"silence_duration_ms"`
-	SilenceRecoveryMs        *int64   `json:"silence_recovery_ms"`
-	SilenceDumpEnabled       *bool    `json:"silence_dump_enabled"`
-	SilenceDumpRetentionDays *int     `json:"silence_dump_retention_days"`
+	SilenceThreshold         float64 `json:"silence_threshold"`
+	SilenceDurationMs        int64   `json:"silence_duration_ms"`
+	SilenceRecoveryMs        int64   `json:"silence_recovery_ms"`
+	SilenceDumpEnabled       bool    `json:"silence_dump_enabled"`
+	SilenceDumpRetentionDays int     `json:"silence_dump_retention_days"`
 
 	// Webhook
-	WebhookURL *string `json:"webhook_url"`
+	WebhookURL string `json:"webhook_url"`
 
 	// Log
-	LogPath *string `json:"log_path"`
+	LogPath string `json:"log_path"`
 
 	// Zabbix
-	ZabbixServer *string `json:"zabbix_server"`
-	ZabbixPort   *int    `json:"zabbix_port"`
-	ZabbixHost   *string `json:"zabbix_host"`
-	ZabbixKey    *string `json:"zabbix_key"`
+	ZabbixServer string `json:"zabbix_server"`
+	ZabbixPort   int    `json:"zabbix_port"`
+	ZabbixHost   string `json:"zabbix_host"`
+	ZabbixKey    string `json:"zabbix_key"`
 
 	// Email (Graph)
-	GraphTenantID     *string `json:"graph_tenant_id"`
-	GraphClientID     *string `json:"graph_client_id"`
-	GraphClientSecret *string `json:"graph_client_secret"`
-	GraphFromAddress  *string `json:"graph_from_address"`
-	GraphRecipients   *string `json:"graph_recipients"`
+	GraphTenantID     string `json:"graph_tenant_id"`
+	GraphClientID     string `json:"graph_client_id"`
+	GraphClientSecret string `json:"graph_client_secret"` // empty = keep existing
+	GraphFromAddress  string `json:"graph_from_address"`
+	GraphRecipients   string `json:"graph_recipients"`
 }
 
 // handleAPISettings updates all settings atomically.
 // POST /api/settings
+// Frontend must send all fields; empty string for secrets means "keep existing".
 func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[SettingsUpdateRequest](s, w, r)
 	if !ok {
@@ -159,94 +160,59 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := s.config.Snapshot()
-	audioInputChanged := req.AudioInput != nil && *req.AudioInput != cfg.AudioInput
+	audioInputChanged := req.AudioInput != cfg.AudioInput
 
 	// Apply audio settings
-	if req.AudioInput != nil {
-		if err := s.config.SetAudioInput(*req.AudioInput); err != nil {
-			s.writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
+	if err := s.config.SetAudioInput(req.AudioInput); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
-	// Apply silence settings
-	if req.SilenceThreshold != nil {
-		if err := s.config.SetSilenceThreshold(*req.SilenceThreshold); err != nil {
-			s.writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
+	// Apply silence detection settings
+	if err := s.config.SetSilenceThreshold(req.SilenceThreshold); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
-	if req.SilenceDurationMs != nil {
-		if err := s.config.SetSilenceDurationMs(*req.SilenceDurationMs); err != nil {
-			s.writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
+	if err := s.config.SetSilenceDurationMs(req.SilenceDurationMs); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
-	if req.SilenceRecoveryMs != nil {
-		if err := s.config.SetSilenceRecoveryMs(*req.SilenceRecoveryMs); err != nil {
-			s.writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
+	if err := s.config.SetSilenceRecoveryMs(req.SilenceRecoveryMs); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
-	if req.SilenceDumpEnabled != nil || req.SilenceDumpRetentionDays != nil {
-		enabled := cfg.SilenceDumpEnabled
-		retention := cfg.SilenceDumpRetentionDays
-		if req.SilenceDumpEnabled != nil {
-			enabled = *req.SilenceDumpEnabled
-		}
-		if req.SilenceDumpRetentionDays != nil {
-			retention = *req.SilenceDumpRetentionDays
-		}
-		if err := s.config.SetSilenceDump(enabled, retention); err != nil {
-			s.writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
+	if err := s.config.SetSilenceDump(req.SilenceDumpEnabled, req.SilenceDumpRetentionDays); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	// Apply notification settings
-	if req.WebhookURL != nil {
-		if err := s.config.SetWebhookURL(*req.WebhookURL); err != nil {
-			s.writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
+	if err := s.config.SetWebhookURL(req.WebhookURL); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
-	if req.LogPath != nil {
-		if err := s.config.SetLogPath(*req.LogPath); err != nil {
-			s.writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
+	if err := s.config.SetLogPath(req.LogPath); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
-	// Apply Zabbix settings if any field changed
-	if req.ZabbixServer != nil || req.ZabbixPort != nil || req.ZabbixHost != nil || req.ZabbixKey != nil {
-		server := cmp.Or(deref(req.ZabbixServer), cfg.ZabbixServer)
-		port := cmp.Or(deref(req.ZabbixPort), cfg.ZabbixPort)
-		host := cmp.Or(deref(req.ZabbixHost), cfg.ZabbixHost)
-		key := cmp.Or(deref(req.ZabbixKey), cfg.ZabbixKey)
-		if err := s.config.SetZabbixConfig(server, port, host, key); err != nil {
-			s.writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
+	// Apply Zabbix settings
+	if err := s.config.SetZabbixConfig(req.ZabbixServer, req.ZabbixPort, req.ZabbixHost, req.ZabbixKey); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
-	// Apply Graph settings if any field changed
-	if req.GraphTenantID != nil || req.GraphClientID != nil || req.GraphClientSecret != nil ||
-		req.GraphFromAddress != nil || req.GraphRecipients != nil {
-		tenantID := cmp.Or(deref(req.GraphTenantID), cfg.GraphTenantID)
-		clientID := cmp.Or(deref(req.GraphClientID), cfg.GraphClientID)
-		clientSecret := cmp.Or(deref(req.GraphClientSecret), cfg.GraphClientSecret)
-		fromAddr := cmp.Or(deref(req.GraphFromAddress), cfg.GraphFromAddress)
-		recipients := cmp.Or(deref(req.GraphRecipients), cfg.GraphRecipients)
-		if err := s.config.SetGraphConfig(tenantID, clientID, clientSecret, fromAddr, recipients); err != nil {
-			s.writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
+	// Apply Graph settings (keep existing secret if empty)
+	secret := cmp.Or(req.GraphClientSecret, cfg.GraphClientSecret)
+	if err := s.config.SetGraphConfig(req.GraphTenantID, req.GraphClientID, secret, req.GraphFromAddress, req.GraphRecipients); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	// Update encoder's silence config
 	s.encoder.UpdateSilenceConfig()
 
-	// Restart encoder if audio input changed (with timeout)
+	// Restart encoder if audio input changed
 	if audioInputChanged && s.ffmpegAvailable && s.encoder.State() == types.StateRunning {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -272,14 +238,6 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	s.writeSuccess(w)
 }
 
-// deref safely dereferences a pointer, returning zero value if nil.
-func deref[T any](p *T) T {
-	if p == nil {
-		var zero T
-		return zero
-	}
-	return *p
-}
 
 // Output API endpoints
 

@@ -651,14 +651,10 @@ document.addEventListener('alpine:init', () => {
                 zabbix_key: form.zabbix.key,
                 graph_tenant_id: form.graph.tenantId,
                 graph_client_id: form.graph.clientId,
+                graph_client_secret: form.graph.clientSecret || '', // empty = keep existing
                 graph_from_address: form.graph.fromAddress,
                 graph_recipients: form.graph.recipients
             };
-
-            // Only include client secret if user entered a new value
-            if (form.graph.clientSecret) {
-                payload.graph_client_secret = form.graph.clientSecret;
-            }
 
             try {
                 const response = await fetch('/api/settings', {
