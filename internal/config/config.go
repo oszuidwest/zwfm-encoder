@@ -93,9 +93,9 @@ type NotificationsConfig struct {
 	Zabbix  types.ZabbixConfig `json:"zabbix,omitempty"` // Zabbix settings
 }
 
-// StreamingConfig represents SRT output streaming settings.
+// StreamingConfig represents SRT streaming settings.
 type StreamingConfig struct {
-	Outputs []types.Output `json:"outputs"` // SRT output destinations
+	Streams []types.Stream `json:"streams"` // SRT streaming destinations
 }
 
 // RecordingConfig represents recording destinations and settings.
@@ -140,7 +140,7 @@ func New(filePath string) *Config {
 			RetentionDays: types.DefaultSilenceDumpRetentionDays,
 		},
 		Notifications: NotificationsConfig{},
-		Streaming:     StreamingConfig{Outputs: []types.Output{}},
+		Streaming:     StreamingConfig{Streams: []types.Stream{}},
 		Recording:     RecordingConfig{Recorders: []types.Recorder{}},
 		filePath:      filePath,
 	}
@@ -202,12 +202,12 @@ func (c *Config) applyDefaults() {
 	c.SilenceDetection.DurationMs = cmp.Or(c.SilenceDetection.DurationMs, DefaultSilenceDurationMs)
 	c.SilenceDetection.RecoveryMs = cmp.Or(c.SilenceDetection.RecoveryMs, DefaultSilenceRecoveryMs)
 	// Streaming defaults
-	if c.Streaming.Outputs == nil {
-		c.Streaming.Outputs = []types.Output{}
+	if c.Streaming.Streams == nil {
+		c.Streaming.Streams = []types.Stream{}
 	}
-	for i := range c.Streaming.Outputs {
-		if c.Streaming.Outputs[i].CreatedAt == 0 {
-			c.Streaming.Outputs[i].CreatedAt = time.Now().UnixMilli()
+	for i := range c.Streaming.Streams {
+		if c.Streaming.Streams[i].CreatedAt == 0 {
+			c.Streaming.Streams[i].CreatedAt = time.Now().UnixMilli()
 		}
 	}
 	// Recording defaults
@@ -239,38 +239,38 @@ func (c *Config) saveLocked() error {
 	return nil
 }
 
-// --- Output management ---
+// --- Stream management ---
 
-// ConfiguredOutputs returns a copy of all outputs.
-func (c *Config) ConfiguredOutputs() []types.Output {
+// ConfiguredStreams returns a copy of all streams.
+func (c *Config) ConfiguredStreams() []types.Stream {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return slices.Clone(c.Streaming.Outputs)
+	return slices.Clone(c.Streaming.Streams)
 }
 
-// Output returns the output with the given ID, or nil if not found.
-func (c *Config) Output(id string) *types.Output {
+// Stream returns the stream with the given ID, or nil if not found.
+func (c *Config) Stream(id string) *types.Stream {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	idx := slices.IndexFunc(c.Streaming.Outputs, func(o types.Output) bool {
-		return o.ID == id
+	idx := slices.IndexFunc(c.Streaming.Streams, func(s types.Stream) bool {
+		return s.ID == id
 	})
 	if idx == -1 {
 		return nil
 	}
-	return &c.Streaming.Outputs[idx]
+	return &c.Streaming.Streams[idx]
 }
 
-func (c *Config) findOutputIndex(id string) int {
-	return slices.IndexFunc(c.Streaming.Outputs, func(o types.Output) bool {
-		return o.ID == id
+func (c *Config) findStreamIndex(id string) int {
+	return slices.IndexFunc(c.Streaming.Streams, func(s types.Stream) bool {
+		return s.ID == id
 	})
 }
 
-// AddOutput adds an output to the configuration and persists the change.
-func (c *Config) AddOutput(output *types.Output) error {
-	if err := output.Validate(); err != nil {
+// AddStream adds a stream to the configuration and persists the change.
+func (c *Config) AddStream(stream *types.Stream) error {
+	if err := stream.Validate(); err != nil {
 		return err
 	}
 
@@ -282,45 +282,45 @@ func (c *Config) AddOutput(output *types.Output) error {
 	if err != nil {
 		return fmt.Errorf("failed to generate ID: %w", err)
 	}
-	output.ID = fmt.Sprintf("output-%s", shortID)
+	stream.ID = fmt.Sprintf("stream-%s", shortID)
 
-	// New outputs are enabled by default
-	output.Enabled = true
-	output.CreatedAt = time.Now().UnixMilli()
+	// New streams are enabled by default
+	stream.Enabled = true
+	stream.CreatedAt = time.Now().UnixMilli()
 
-	c.Streaming.Outputs = append(c.Streaming.Outputs, *output)
+	c.Streaming.Streams = append(c.Streaming.Streams, *stream)
 	return c.saveLocked()
 }
 
-// RemoveOutput removes an output from the configuration and persists the change.
-func (c *Config) RemoveOutput(id string) error {
+// RemoveStream removes a stream from the configuration and persists the change.
+func (c *Config) RemoveStream(id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	i := c.findOutputIndex(id)
+	i := c.findStreamIndex(id)
 	if i == -1 {
-		return fmt.Errorf("output not found: %s", id)
+		return fmt.Errorf("stream not found: %s", id)
 	}
 
-	c.Streaming.Outputs = slices.Delete(c.Streaming.Outputs, i, i+1)
+	c.Streaming.Streams = slices.Delete(c.Streaming.Streams, i, i+1)
 	return c.saveLocked()
 }
 
-// UpdateOutput updates an output in the configuration and persists the change.
-func (c *Config) UpdateOutput(output *types.Output) error {
-	if err := output.Validate(); err != nil {
+// UpdateStream updates a stream in the configuration and persists the change.
+func (c *Config) UpdateStream(stream *types.Stream) error {
+	if err := stream.Validate(); err != nil {
 		return err
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	i := c.findOutputIndex(output.ID)
+	i := c.findStreamIndex(stream.ID)
 	if i == -1 {
-		return fmt.Errorf("output not found: %s", output.ID)
+		return fmt.Errorf("stream not found: %s", stream.ID)
 	}
 
-	c.Streaming.Outputs[i] = *output
+	c.Streaming.Streams[i] = *stream
 	return c.saveLocked()
 }
 
@@ -505,7 +505,7 @@ type Snapshot struct {
 	RecordingMaxDurationMinutes int
 
 	// Entities
-	Outputs   []types.Output
+	Streams   []types.Stream
 	Recorders []types.Recorder
 }
 
@@ -559,7 +559,7 @@ func (c *Config) Snapshot() Snapshot {
 		RecordingMaxDurationMinutes: cmp.Or(c.Recording.MaxDurationMinutes, DefaultRecordingMaxDurationMinutes),
 
 		// Entities
-		Outputs:   slices.Clone(c.Streaming.Outputs),
+		Streams:   slices.Clone(c.Streaming.Streams),
 		Recorders: slices.Clone(c.Recording.Recorders),
 	}
 }

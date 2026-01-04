@@ -112,7 +112,7 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 		RecordingAPIKey: cfg.RecordingAPIKey,
 
 		// Entities
-		Outputs:   cfg.Outputs,
+		Streams:   cfg.Streams,
 		Recorders: cfg.Recorders,
 	}
 
@@ -287,29 +287,29 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	s.writeNoContent(w)
 }
 
-// Output API endpoints
+// Stream API endpoints
 
-// handleListOutputs returns all configured outputs.
-// GET /api/outputs
-func (s *Server) handleListOutputs(w http.ResponseWriter, r *http.Request) {
+// handleListStreams returns all configured streams.
+// GET /api/streams
+func (s *Server) handleListStreams(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
-	s.writeJSON(w, http.StatusOK, cfg.Outputs)
+	s.writeJSON(w, http.StatusOK, cfg.Streams)
 }
 
-// handleGetOutput returns a single output by ID.
-// GET /api/outputs/{id}
-func (s *Server) handleGetOutput(w http.ResponseWriter, r *http.Request) {
+// handleGetStream returns a single stream by ID.
+// GET /api/streams/{id}
+func (s *Server) handleGetStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	output := s.config.Output(id)
-	if output == nil {
-		s.writeError(w, http.StatusNotFound, "Output not found")
+	stream := s.config.Stream(id)
+	if stream == nil {
+		s.writeError(w, http.StatusNotFound, "Stream not found")
 		return
 	}
-	s.writeJSON(w, http.StatusOK, output)
+	s.writeJSON(w, http.StatusOK, stream)
 }
 
-// OutputRequest is the request body for creating/updating outputs.
-type OutputRequest struct {
+// StreamRequest is the request body for creating/updating streams.
+type StreamRequest struct {
 	Enabled    bool        `json:"enabled"`
 	Host       string      `json:"host"`
 	Port       int         `json:"port"`
@@ -319,15 +319,15 @@ type OutputRequest struct {
 	MaxRetries int         `json:"max_retries"`
 }
 
-// handleCreateOutput creates a new output.
-// POST /api/outputs
-func (s *Server) handleCreateOutput(w http.ResponseWriter, r *http.Request) {
-	req, ok := parseJSON[OutputRequest](s, w, r)
+// handleCreateStream creates a new stream.
+// POST /api/streams
+func (s *Server) handleCreateStream(w http.ResponseWriter, r *http.Request) {
+	req, ok := parseJSON[StreamRequest](s, w, r)
 	if !ok {
 		return
 	}
 
-	output := &types.Output{
+	stream := &types.Stream{
 		Enabled:    true,
 		Host:       req.Host,
 		Port:       req.Port,
@@ -337,39 +337,39 @@ func (s *Server) handleCreateOutput(w http.ResponseWriter, r *http.Request) {
 		MaxRetries: req.MaxRetries,
 	}
 
-	if err := s.config.AddOutput(output); err != nil {
+	if err := s.config.AddStream(stream); err != nil {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	if s.encoder.State() == types.StateRunning {
-		if err := s.encoder.StartOutput(output.ID); err != nil {
-			slog.Warn("failed to start new output", "output_id", output.ID, "error", err)
+		if err := s.encoder.StartStream(stream.ID); err != nil {
+			slog.Warn("failed to start new stream", "stream_id", stream.ID, "error", err)
 		}
 	}
 
 	s.broadcastConfigChanged()
-	s.writeJSON(w, http.StatusCreated, output)
+	s.writeJSON(w, http.StatusCreated, stream)
 }
 
-// handleUpdateOutput replaces an output by ID.
-// PUT /api/outputs/{id}
-func (s *Server) handleUpdateOutput(w http.ResponseWriter, r *http.Request) {
+// handleUpdateStream replaces a stream by ID.
+// PUT /api/streams/{id}
+func (s *Server) handleUpdateStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	existing := s.config.Output(id)
+	existing := s.config.Stream(id)
 	if existing == nil {
-		s.writeError(w, http.StatusNotFound, "Output not found")
+		s.writeError(w, http.StatusNotFound, "Stream not found")
 		return
 	}
 
-	req, ok := parseJSON[OutputRequest](s, w, r)
+	req, ok := parseJSON[StreamRequest](s, w, r)
 	if !ok {
 		return
 	}
 
 	// Full replacement - preserve only ID and CreatedAt
 	// For password: empty string means "keep existing" (not sent from frontend for security)
-	updated := &types.Output{
+	updated := &types.Stream{
 		ID:         id,
 		Enabled:    req.Enabled,
 		Host:       req.Host,
@@ -381,21 +381,21 @@ func (s *Server) handleUpdateOutput(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:  existing.CreatedAt,
 	}
 
-	if err := s.config.UpdateOutput(updated); err != nil {
+	if err := s.config.UpdateStream(updated); err != nil {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	// Restart output if encoder is running
+	// Restart stream if encoder is running
 	if s.encoder.State() == types.StateRunning {
-		if err := s.encoder.StopOutput(id); err != nil {
-			slog.Warn("failed to stop output for restart", "output_id", id, "error", err)
+		if err := s.encoder.StopStream(id); err != nil {
+			slog.Warn("failed to stop stream for restart", "stream_id", id, "error", err)
 		}
 		go func() {
-			time.Sleep(types.OutputRestartDelay)
+			time.Sleep(types.StreamRestartDelay)
 			if s.encoder.State() == types.StateRunning {
-				if err := s.encoder.StartOutput(id); err != nil {
-					slog.Warn("failed to restart output", "output_id", id, "error", err)
+				if err := s.encoder.StartStream(id); err != nil {
+					slog.Warn("failed to restart stream", "stream_id", id, "error", err)
 				}
 			}
 		}()
@@ -405,20 +405,20 @@ func (s *Server) handleUpdateOutput(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, updated)
 }
 
-// handleDeleteOutput deletes an output by ID.
-// DELETE /api/outputs/{id}
-func (s *Server) handleDeleteOutput(w http.ResponseWriter, r *http.Request) {
+// handleDeleteStream deletes a stream by ID.
+// DELETE /api/streams/{id}
+func (s *Server) handleDeleteStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if s.config.Output(id) == nil {
-		s.writeError(w, http.StatusNotFound, "Output not found")
+	if s.config.Stream(id) == nil {
+		s.writeError(w, http.StatusNotFound, "Stream not found")
 		return
 	}
 
-	if err := s.encoder.StopOutput(id); err != nil {
-		slog.Warn("failed to stop output before delete", "output_id", id, "error", err)
+	if err := s.encoder.StopStream(id); err != nil {
+		slog.Warn("failed to stop stream before delete", "stream_id", id, "error", err)
 	}
 
-	if err := s.config.RemoveOutput(id); err != nil {
+	if err := s.config.RemoveStream(id); err != nil {
 		s.writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

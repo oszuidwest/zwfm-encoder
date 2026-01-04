@@ -1,26 +1,26 @@
 /**
  * ZuidWest FM Encoder - Alpine.js Web Application
  *
- * Real-time audio monitoring, encoder control, and multi-output stream
+ * Real-time audio monitoring, encoder control, and multi-stream
  * management via WebSocket and REST API connection to Go backend.
  *
  * Architecture:
  *   - Single Alpine.js component (encoderApp) manages all UI state
- *   - REST API at /api/* for configuration (settings, outputs, recorders)
+ *   - REST API at /api/* for configuration (settings, streams, recorders)
  *   - WebSocket at /ws for real-time data (audio levels, status)
- *   - Views: dashboard, settings, output-form, recorder-form
+ *   - Views: dashboard, settings, stream-form, recorder-form
  *
  * REST API (configuration):
  *   - GET  /api/config: Full configuration snapshot
  *   - POST /api/settings: Update all settings atomically
- *   - POST/GET/PUT/DELETE /api/outputs/*: Output CRUD
+ *   - POST/GET/PUT/DELETE /api/streams/*: Stream CRUD
  *   - POST/GET/PUT/DELETE /api/recorders/*: Recorder CRUD
  *   - POST /api/notifications/test/*: Test notifications
  *   - GET  /api/notifications/log: View silence log
  *
  * WebSocket (real-time):
  *   - levels: Audio RMS/peak levels for VU meters (10fps)
- *   - status: Encoder state, output/recorder statuses (3s)
+ *   - status: Encoder state, stream/recorder statuses (3s)
  *   - config_changed: Signal to refetch /api/config
  *
  * WebSocket Commands (outgoing):
@@ -50,7 +50,7 @@ const API = {
     CONFIG: '/api/config',
     DEVICES: '/api/devices',
     SETTINGS: '/api/settings',
-    OUTPUTS: '/api/outputs',
+    STREAMS: '/api/streams',
     RECORDERS: '/api/recorders',
     RECORDERS_TEST_S3: '/api/recorders/test-s3',
     NOTIFICATIONS_TEST: '/api/notifications/test',
@@ -76,7 +76,7 @@ const secondsToMs = (sec) => Math.round(sec * 1000);
 /** Converts dB (-60 to 0) to percentage (0-100) for VU meter display. */
 window.dbToPercent = (db) => Math.max(0, Math.min(100, (db - DB_MINIMUM) / DB_RANGE * 100));
 
-const DEFAULT_OUTPUT = {
+const DEFAULT_STREAM = {
     host: '',
     port: 8080,
     stream_id: '',
@@ -126,8 +126,8 @@ document.addEventListener('alpine:init', () => {
             { id: 'about', label: 'About', icon: 'info' }
         ],
 
-        outputForm: { ...DEFAULT_OUTPUT, id: '', enabled: true },
-        outputFormDirty: false,
+        streamForm: { ...DEFAULT_STREAM, id: '', enabled: true },
+        streamFormDirty: false,
 
         encoder: {
             state: 'connecting',
@@ -137,10 +137,10 @@ document.addEventListener('alpine:init', () => {
             lastError: ''
         },
 
-        outputs: [],
-        outputStatuses: {},
-        previousOutputStatuses: {},
-        deletingOutputs: {},
+        streams: [],
+        streamStatuses: {},
+        previousStreamStatuses: {},
+        deletingStreams: {},
         connectingAnimations: {},
 
         recorders: [],
@@ -176,7 +176,7 @@ document.addEventListener('alpine:init', () => {
             graph_recipients: '',
             graph_has_secret: false,
             recording_api_key: '',
-            outputs: [],
+            streams: [],
             recorders: []
         },
         configLoaded: false,
@@ -251,7 +251,7 @@ document.addEventListener('alpine:init', () => {
         },
 
         get isEditMode() {
-            return this.outputForm.id !== '';
+            return this.streamForm.id !== '';
         },
 
         get isRecorderEditMode() {
@@ -301,7 +301,7 @@ document.addEventListener('alpine:init', () => {
                 this.configLoaded = true;
 
                 // Update derived state from config
-                this.outputs = data.outputs || [];
+                this.streams = data.streams || [];
                 this.recorders = data.recorders || [];
                 this.devices = data.devices || [];
             } catch (err) {
@@ -339,7 +339,7 @@ document.addEventListener('alpine:init', () => {
                 } else if (this.view === 'settings') {
                     this.cancelSettings();
                     event.preventDefault();
-                } else if (this.view === 'output-form' || this.view === 'recorder-form') {
+                } else if (this.view === 'stream-form' || this.view === 'recorder-form') {
                     this.showDashboard();
                     event.preventDefault();
                 }
@@ -406,7 +406,7 @@ document.addEventListener('alpine:init', () => {
                 } else if (msg.type === 'config_changed') {
                     // Config was changed (by this or another client), refetch
                     // Skip if we're currently editing (form open)
-                    if (this.view !== 'settings' && this.view !== 'output-form' && this.view !== 'recorder-form') {
+                    if (this.view !== 'settings' && this.view !== 'stream-form' && this.view !== 'recorder-form') {
                         this.loadConfig();
                     }
                 }
@@ -518,7 +518,7 @@ document.addEventListener('alpine:init', () => {
 
         /**
          * Processes encoder status updates from backend.
-         * Only handles runtime data (encoder state, output/recorder statuses).
+         * Only handles runtime data (encoder state, stream/recorder statuses).
          * Configuration is handled by loadConfig() via REST API.
          *
          * @param {Object} msg - Status message with encoder state and statuses
@@ -538,13 +538,13 @@ document.addEventListener('alpine:init', () => {
                 this.resetVuMeter();
             }
 
-            // Output statuses (not config, just runtime state)
-            const newOutputStatuses = msg.output_status || {};
+            // Stream statuses (not config, just runtime state)
+            const newStreamStatuses = msg.stream_status || {};
 
             // Detect status transitions to "connected" and trigger animation
-            for (const id in newOutputStatuses) {
-                const oldStatus = this.previousOutputStatuses[id] || {};
-                const newStatus = newOutputStatuses[id] || {};
+            for (const id in newStreamStatuses) {
+                const oldStatus = this.previousStreamStatuses[id] || {};
+                const newStatus = newStreamStatuses[id] || {};
 
                 if (!oldStatus.stable && newStatus.stable) {
                     this.connectingAnimations[id] = true;
@@ -554,8 +554,8 @@ document.addEventListener('alpine:init', () => {
                 }
             }
 
-            this.previousOutputStatuses = deepClone(newOutputStatuses);
-            this.outputStatuses = newOutputStatuses;
+            this.previousStreamStatuses = deepClone(newStreamStatuses);
+            this.streamStatuses = newStreamStatuses;
 
             // Recorder statuses
             this.recorderStatuses = msg.recorder_statuses || {};
@@ -572,11 +572,11 @@ document.addEventListener('alpine:init', () => {
                 }
             }
 
-            // Clean up deleting state for outputs that no longer exist
-            for (const id in this.deletingOutputs) {
-                const output = this.outputs.find(o => o.id === id);
-                if (!output || output.created_at !== this.deletingOutputs[id]) {
-                    delete this.deletingOutputs[id];
+            // Clean up deleting state for streams that no longer exist
+            for (const id in this.deletingStreams) {
+                const stream = this.streams.find(s => s.id === id);
+                if (!stream || stream.created_at !== this.deletingStreams[id]) {
+                    delete this.deletingStreams[id];
                 }
             }
 
@@ -595,7 +595,7 @@ document.addEventListener('alpine:init', () => {
             this.clearToasts();
             this.view = 'dashboard';
             this.settingsDirty = false;
-            this.outputFormDirty = false;
+            this.streamFormDirty = false;
             this.recorderFormDirty = false;
         },
 
@@ -764,63 +764,63 @@ document.addEventListener('alpine:init', () => {
             }
         },
 
-        showOutputForm(id = null) {
+        showStreamForm(id = null) {
             this.clearToasts();
             if (id) {
-                const output = this.outputs.find(o => o.id === id);
-                if (!output) return;
-                this.outputForm = {
-                    id: output.id,
-                    host: output.host,
-                    port: output.port,
-                    stream_id: output.stream_id || '',
+                const stream = this.streams.find(s => s.id === id);
+                if (!stream) return;
+                this.streamForm = {
+                    id: stream.id,
+                    host: stream.host,
+                    port: stream.port,
+                    stream_id: stream.stream_id || '',
                     password: '',
-                    codec: output.codec || 'wav',
-                    max_retries: output.max_retries || 99,
-                    enabled: output.enabled !== false
+                    codec: stream.codec || 'wav',
+                    max_retries: stream.max_retries || 99,
+                    enabled: stream.enabled !== false
                 };
             } else {
-                this.outputForm = { ...DEFAULT_OUTPUT, id: '', enabled: true };
+                this.streamForm = { ...DEFAULT_STREAM, id: '', enabled: true };
             }
-            this.outputFormDirty = false;
-            this.view = 'output-form';
+            this.streamFormDirty = false;
+            this.view = 'stream-form';
         },
 
         showTab(tabId) {
             this.settingsTab = tabId;
         },
 
-        // Output management (REST API)
+        // Stream management (REST API)
 
         /**
-         * Submits output form via REST API.
+         * Submits stream form via REST API.
          */
-        async submitOutputForm() {
-            if (!this.outputForm.host?.trim()) return;
+        async submitStreamForm() {
+            if (!this.streamForm.host?.trim()) return;
 
             const data = {
-                host: this.outputForm.host.trim(),
-                port: this.outputForm.port,
-                stream_id: this.outputForm.stream_id.trim() || 'studio',
-                codec: this.outputForm.codec,
-                max_retries: this.outputForm.max_retries
+                host: this.streamForm.host.trim(),
+                port: this.streamForm.port,
+                stream_id: this.streamForm.stream_id.trim() || 'studio',
+                codec: this.streamForm.codec,
+                max_retries: this.streamForm.max_retries
             };
 
-            if (this.outputForm.password) {
-                data.password = this.outputForm.password;
+            if (this.streamForm.password) {
+                data.password = this.streamForm.password;
             }
 
             try {
                 let response;
                 if (this.isEditMode) {
-                    data.enabled = this.outputForm.enabled;
-                    response = await fetch(`${API.OUTPUTS}/${this.outputForm.id}`, {
+                    data.enabled = this.streamForm.enabled;
+                    response = await fetch(`${API.STREAMS}/${this.streamForm.id}`, {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(data)
                     });
                 } else {
-                    response = await fetch(API.OUTPUTS, {
+                    response = await fetch(API.STREAMS, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(data)
@@ -835,41 +835,41 @@ document.addEventListener('alpine:init', () => {
                 // Optimistic UI update for immediate feedback
                 if (this.isEditMode) {
                     // Update status
-                    if (this.outputStatuses[this.outputForm.id]) {
-                        this.outputStatuses[this.outputForm.id].state = this.outputForm.enabled ? 'stopped' : 'disabled';
+                    if (this.streamStatuses[this.streamForm.id]) {
+                        this.streamStatuses[this.streamForm.id].state = this.streamForm.enabled ? 'stopped' : 'disabled';
                     }
-                    // Update output data in local array
-                    const index = this.outputs.findIndex(o => o.id === this.outputForm.id);
+                    // Update stream data in local array
+                    const index = this.streams.findIndex(s => s.id === this.streamForm.id);
                     if (index !== -1) {
-                        Object.assign(this.outputs[index], data);
+                        Object.assign(this.streams[index], data);
                     }
                 }
 
                 // Reload config in background to sync full state
                 this.loadConfig();
-                const toastMsg = this.isEditMode ? 'Output updated' : 'Output added';
+                const toastMsg = this.isEditMode ? 'Stream updated' : 'Stream added';
                 this.showDashboard();
                 this.showToast(toastMsg, 'success');
             } catch (err) {
-                this.showToast(`Failed to save output: ${err.message}`, 'error');
+                this.showToast(`Failed to save stream: ${err.message}`, 'error');
             }
         },
 
         /**
-         * Deletes output via REST API with confirmation.
-         * @param {string} id - Output ID to delete
+         * Deletes stream via REST API with confirmation.
+         * @param {string} id - Stream ID to delete
          * @param {boolean} [returnToDashboard=false] - Navigate to dashboard after delete
          */
-        async deleteOutput(id, returnToDashboard = false) {
-            const output = this.outputs.find(o => o.id === id);
-            if (!output) return;
+        async deleteStream(id, returnToDashboard = false) {
+            const stream = this.streams.find(s => s.id === id);
+            if (!stream) return;
 
-            if (!confirm(`Delete "${output.host}:${output.port}"? This action cannot be undone.`)) return;
+            if (!confirm(`Delete "${stream.host}:${stream.port}"? This action cannot be undone.`)) return;
 
-            this.deletingOutputs[id] = output.created_at;
+            this.deletingStreams[id] = stream.created_at;
 
             try {
-                const response = await fetch(`${API.OUTPUTS}/${id}`, {
+                const response = await fetch(`${API.STREAMS}/${id}`, {
                     method: 'DELETE'
                 });
 
@@ -880,15 +880,15 @@ document.addEventListener('alpine:init', () => {
 
                 // Success - config_changed will trigger loadConfig()
                 if (returnToDashboard) this.showDashboard();
-                this.showToast('Output deleted', 'success');
+                this.showToast('Stream deleted', 'success');
             } catch (err) {
-                delete this.deletingOutputs[id];
-                this.showToast(`Failed to delete output: ${err.message}`, 'error');
+                delete this.deletingStreams[id];
+                this.showToast(`Failed to delete stream: ${err.message}`, 'error');
             }
         },
 
-        markOutputFormDirty() {
-            this.outputFormDirty = true;
+        markStreamFormDirty() {
+            this.streamFormDirty = true;
         },
 
         // Recorder management
@@ -1175,15 +1175,15 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
-         * Computes all display data for an output in a single call.
-         * Use this method to avoid multiple getOutputStatus() calls per render.
+         * Computes all display data for a stream in a single call.
+         * Use this method to avoid multiple getStreamStatus() calls per render.
          *
-         * @param {Object} output - Output object with id and created_at
+         * @param {Object} stream - Stream object with id and created_at
          * @returns {Object} Object with stateClass, statusText, showError, and lastError
          */
-        getOutputDisplayData(output) {
-            const status = this.outputStatuses[output.id] || {};
-            const isDeleting = this.deletingOutputs[output.id] === output.created_at;
+        getStreamDisplayData(stream) {
+            const status = this.streamStatuses[stream.id] || {};
+            const isDeleting = this.deletingStreams[stream.id] === stream.created_at;
 
             let stateClass = 'state-stopped';
             let statusText = 'Offline';

@@ -3,8 +3,6 @@ package audio
 import (
 	"sync"
 	"time"
-
-	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
 // SilenceConfig holds the configurable thresholds for silence detection.
@@ -17,9 +15,9 @@ type SilenceConfig struct {
 // SilenceEvent represents the result of a silence detection update.
 type SilenceEvent struct {
 	// Current state
-	InSilence  bool               // Currently in confirmed silence state
-	DurationMs int64              // Current silence duration in ms (0 if not silent)
-	Level      types.SilenceLevel // "active" when in silence, "" otherwise
+	InSilence  bool         // Currently in confirmed silence state
+	DurationMs int64        // Current silence duration in ms (0 if not silent)
+	Level      SilenceLevel // "active" when in silence, "" otherwise
 
 	// Current audio levels (for notifications)
 	CurrentLevelL float64 // Current left channel level in dB
@@ -72,13 +70,13 @@ func (d *SilenceDetector) Update(dbL, dbR float64, cfg SilenceConfig, now time.T
 			// Already in confirmed silence state
 			event.InSilence = true
 			event.DurationMs = silenceDurationMs
-			event.Level = types.SilenceLevelActive
+			event.Level = SilenceLevelActive
 		} else if silenceDurationMs >= cfg.DurationMs {
 			// Just crossed the duration threshold - enter silence state
 			d.inSilence = true
 			event.InSilence = true
 			event.DurationMs = silenceDurationMs
-			event.Level = types.SilenceLevelActive
+			event.Level = SilenceLevelActive
 			event.JustEntered = true
 		}
 	} else {
@@ -106,7 +104,7 @@ func (d *SilenceDetector) Update(dbL, dbR float64, cfg SilenceConfig, now time.T
 			} else {
 				// Still in recovery period - remain in silence state
 				event.InSilence = true
-				event.Level = types.SilenceLevelActive
+				event.Level = SilenceLevelActive
 			}
 		}
 	}

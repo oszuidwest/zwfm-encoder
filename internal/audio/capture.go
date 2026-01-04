@@ -2,6 +2,14 @@ package audio
 
 import "errors"
 
+// Audio format constants for PCM capture and encoding.
+const (
+	// SampleRate is the audio sample rate in Hz.
+	SampleRate = 48000
+	// Channels is the number of audio channels (stereo).
+	Channels = 2
+)
+
 // ErrNoAudioDevice is returned when no audio input device is available.
 var ErrNoAudioDevice = errors.New("no audio input device found")
 

@@ -2,8 +2,27 @@ package util
 
 import (
 	"fmt"
+	"regexp"
 	"time"
 )
+
+// DatePattern matches YYYY-MM-DD in filenames.
+var DatePattern = regexp.MustCompile(`(\d{4}-\d{2}-\d{2})`)
+
+// ExtractDateFromFilename extracts a date from a filename containing YYYY-MM-DD.
+func ExtractDateFromFilename(filename string) (time.Time, bool) {
+	matches := DatePattern.FindStringSubmatch(filename)
+	if len(matches) < 2 {
+		return time.Time{}, false
+	}
+
+	date, err := time.Parse(time.DateOnly, matches[1])
+	if err != nil {
+		return time.Time{}, false
+	}
+
+	return date, true
+}
 
 // humanTimeFormat is the layout for human-readable timestamps with timezone.
 const humanTimeFormat = "2 Jan 2006 15:04 MST"

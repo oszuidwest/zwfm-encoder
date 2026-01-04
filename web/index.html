@@ -7,9 +7,9 @@
   Built with Alpine.js for reactive state management.
 
   Views:
-    - Dashboard: Live VU meter, encoder status, output/recorder management
+    - Dashboard: Live VU meter, encoder status, stream/recorder management
     - Settings: Audio input, silence detection, notifications, about info
-    - Output Form: Add/edit stream outputs
+    - Stream Form: Add/edit streams
     - Recorder Form: Add/edit audio recorders
 
   State Management:
@@ -95,7 +95,7 @@
              - Audio input device selector
              - VU meter with real-time levels
              - Source status alerts
-             - Output list with individual status indicators -->
+             - Stream list with individual status indicators -->
         <div id="dashboard-view" x-show="view === 'dashboard'" x-transition:enter.duration.200ms x-cloak>
             <header class="app-header">
                 <div class="brand">
@@ -197,10 +197,10 @@
             </div>
         </section>
 
-        <!-- === Outputs List ===
-             Displays configured stream outputs with real-time status.
+        <!-- === Streams List ===
+             Displays configured streams with real-time status.
 
-             Each output shows:
+             Each stream shows:
              - Status dot (color-coded by state)
              - Host:port and stream ID
              - Status text (Connected, Connecting, Retry N/M, Failed)
@@ -214,13 +214,13 @@
              - Gray: Encoder not running -->
         <section class="card">
             <div class="header" data-theme="slate">
-                <h2>Outputs</h2>
+                <h2>Streams</h2>
                 <div class="actions">
-                    <span class="badge" x-text="outputs.length"></span>
-                    <button class="add-btn" type="button" tabindex="0" aria-label="Add output"
+                    <span class="badge" x-text="streams.length"></span>
+                    <button class="add-btn" type="button" tabindex="0" aria-label="Add stream"
                                             :disabled="!ffmpegAvailable"
                                             :title="!ffmpegAvailable ? 'FFmpeg not available' : ''"
-                                            @click="showOutputForm()">
+                                            @click="showStreamForm()">
                         <span class="icon-container" x-html="icons.plus"></span>
                         Add
                     </button>
@@ -228,24 +228,24 @@
             </div>
             <div class="body">
                 <div class="outputs">
-                    <template x-if="outputs.length === 0">
-                        <div class="empty-state">No outputs configured</div>
+                    <template x-if="streams.length === 0">
+                        <div class="empty-state">No streams configured</div>
                     </template>
-                    <template x-for="output in outputs" :key="output.id">
+                    <template x-for="stream in streams" :key="stream.id">
                         <div class="item"
-                             x-data="{ get d() { return getOutputDisplayData(output) } }"
-                             :data-deleting="deletingOutputs[output.id] === output.created_at ? true : null">
+                             x-data="{ get d() { return getStreamDisplayData(stream) } }"
+                             :data-deleting="deletingStreams[stream.id] === stream.created_at ? true : null">
                             <div class="row">
-                                <span class="dot" :class="d.stateClass" :data-connected="connectingAnimations[output.id] ? 'true' : null"></span>
-                                <span class="host" x-text="`${output.host}:${output.port}`"></span>
-                                <button class="icon-btn" data-variant="edit" type="button" tabindex="0" title="Edit" aria-label="Edit output"
-                                        @click="showOutputForm(output.id)">
+                                <span class="dot" :class="d.stateClass" :data-connected="connectingAnimations[stream.id] ? 'true' : null"></span>
+                                <span class="host" x-text="`${stream.host}:${stream.port}`"></span>
+                                <button class="icon-btn" data-variant="edit" type="button" tabindex="0" title="Edit" aria-label="Edit stream"
+                                        @click="showStreamForm(stream.id)">
                                     <span class="icon-container" x-html="icons.edit"></span>
                                 </button>
                             </div>
                             <div class="details">
-                                <span class="codec" x-text="output.codec.toUpperCase()"></span>
-                                <span class="streamid" x-text="`#${output.stream_id}`"></span>
+                                <span class="codec" x-text="stream.codec.toUpperCase()"></span>
+                                <span class="streamid" x-text="`#${stream.stream_id}`"></span>
                                 <span class="status" :class="d.stateClass" x-text="d.statusText"></span>
                             </div>
                             <div class="alert" role="alert" x-show="d.showError">
@@ -623,16 +623,16 @@
             </div>
         </div>
 
-        <!-- === Output Form View ===
-             Unified form for creating and editing stream outputs.
-             Mode detection: isEditMode checks if outputForm.id is set -->
-        <div id="output-form-view" class="settings" x-show="view === 'output-form'" x-transition:enter.duration.200ms x-cloak>
+        <!-- === Stream Form View ===
+             Unified form for creating and editing streams.
+             Mode detection: isEditMode checks if streamForm.id is set -->
+        <div id="stream-form-view" class="settings" x-show="view === 'stream-form'" x-transition:enter.duration.200ms x-cloak>
             <header class="nav">
                 <button class="nav-btn" type="button" tabindex="0" @click="showDashboard()">Cancel</button>
-                <h2 x-text="isEditMode ? 'Edit Output' : 'New Output'">Output</h2>
+                <h2 x-text="isEditMode ? 'Edit Stream' : 'New Stream'">Stream</h2>
                 <button class="nav-btn" data-variant="save" type="button" tabindex="0"
-                        @click="submitOutputForm()"
-                        :disabled="!outputForm.host || (isEditMode && !outputFormDirty)">Save</button>
+                        @click="submitStreamForm()"
+                        :disabled="!streamForm.host || (isEditMode && !streamFormDirty)">Save</button>
             </header>
 
             <div class="panels">
@@ -646,27 +646,27 @@
                         <p class="section-desc">Configure the SRT server to stream audio to.</p>
                         <div class="form">
                             <div class="group">
-                                <label for="output-host">Host</label>
-                                <input id="output-host" type="text" placeholder="stream.example.com"
-                                       x-model="outputForm.host" @input="markOutputFormDirty()">
+                                <label for="stream-host">Host</label>
+                                <input id="stream-host" type="text" placeholder="stream.example.com"
+                                       x-model="streamForm.host" @input="markStreamFormDirty()">
                             </div>
                             <div class="row">
                                 <div class="group">
-                                    <label for="output-port">Port</label>
-                                    <input id="output-port" type="number"
-                                           x-model.number="outputForm.port" @input="markOutputFormDirty()">
+                                    <label for="stream-port">Port</label>
+                                    <input id="stream-port" type="number"
+                                           x-model.number="streamForm.port" @input="markStreamFormDirty()">
                                 </div>
                                 <div class="group">
-                                    <label for="output-streamid">Stream ID</label>
-                                    <input id="output-streamid" type="text" placeholder="studio"
-                                           x-model="outputForm.stream_id" @input="markOutputFormDirty()">
+                                    <label for="stream-streamid">Stream ID</label>
+                                    <input id="stream-streamid" type="text" placeholder="studio"
+                                           x-model="streamForm.stream_id" @input="markStreamFormDirty()">
                                 </div>
                             </div>
                             <div class="group">
-                                <label for="output-password">Password</label>
-                                <input id="output-password" type="password"
+                                <label for="stream-password">Password</label>
+                                <input id="stream-password" type="password"
                                        :placeholder="isEditMode ? 'Leave empty to keep' : 'Optional'"
-                                       x-model="outputForm.password" @input="markOutputFormDirty()">
+                                       x-model="streamForm.password" @input="markStreamFormDirty()">
                             </div>
                         </div>
                     </div>
@@ -681,8 +681,8 @@
                         <div class="form">
                             <div class="row">
                                 <div class="group">
-                                    <label for="output-codec">Codec</label>
-                                    <select id="output-codec" x-model="outputForm.codec" @change="markOutputFormDirty()">
+                                    <label for="stream-codec">Codec</label>
+                                    <select id="stream-codec" x-model="streamForm.codec" @change="markStreamFormDirty()">
                                         <option value="mp3">MP3 (320 kbit/s)</option>
                                         <option value="mp2">MP2 (384 kbit/s)</option>
                                         <option value="ogg">Ogg Vorbis (~500 kbit/s)</option>
@@ -690,30 +690,30 @@
                                     </select>
                                 </div>
                                 <div class="group">
-                                    <label for="output-retries">Max Retries</label>
-                                    <input id="output-retries" type="number" max="9999" min="1"
-                                           x-model.number="outputForm.max_retries" @input="markOutputFormDirty()">
+                                    <label for="stream-retries">Max Retries</label>
+                                    <input id="stream-retries" type="number" max="9999" min="1"
+                                           x-model.number="streamForm.max_retries" @input="markStreamFormDirty()">
                                 </div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Output Status Section - Only in edit mode (yellow/warning) -->
+                    <!-- Stream Status Section - Only in edit mode (yellow/warning) -->
                     <div class="section" data-variant="warning" x-show="isEditMode" x-cloak>
                         <div class="section-header">
                             <span class="icon-container" x-html="icons.power"></span>
-                            <h3>Output Status</h3>
+                            <h3>Stream Status</h3>
                         </div>
                         <p class="section-desc">Disabling stops the stream to this server. Changes apply on save.</p>
-                        <div class="segmented" role="group" aria-label="Output status">
+                        <div class="segmented" role="group" aria-label="Stream status">
                             <button type="button" class="segmented-btn"
-                                    :aria-pressed="!outputForm.enabled"
-                                    @click="outputForm.enabled = false; markOutputFormDirty()">
+                                    :aria-pressed="!streamForm.enabled"
+                                    @click="streamForm.enabled = false; markStreamFormDirty()">
                                 Disabled
                             </button>
                             <button type="button" class="segmented-btn"
-                                    :aria-pressed="outputForm.enabled"
-                                    @click="outputForm.enabled = true; markOutputFormDirty()">
+                                    :aria-pressed="streamForm.enabled"
+                                    @click="streamForm.enabled = true; markStreamFormDirty()">
                                 Enabled
                             </button>
                         </div>
@@ -725,10 +725,10 @@
                             <span class="icon-container" x-html="icons.warning"></span>
                             <h3>Danger Zone</h3>
                         </div>
-                        <p class="section-desc">Permanently delete this output configuration.</p>
+                        <p class="section-desc">Permanently delete this stream configuration.</p>
                         <button class="btn" data-variant="danger" data-block type="button" tabindex="0"
-                                @click="deleteOutput(outputForm.id, true)">
-                            Delete Output
+                                @click="deleteStream(streamForm.id, true)">
+                            Delete Stream
                         </button>
                     </div>
                 </div>

@@ -1,13 +1,10 @@
 package recording
 
 import (
-	"bytes"
-	"context"
+	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sync"
 	"time"
@@ -31,16 +28,8 @@ type GenericRecorder struct {
 	state     types.ProcessState
 	lastError string
 
-	// FFmpeg process
-	cmd    *exec.Cmd
-	cancel context.CancelFunc
-	stdin  io.WriteCloser
-	stderr *bytes.Buffer
-
-	// stdinMu protects stdin I/O from race conditions.
-	// WriteAudio and stopEncoderAndUpload both need access to stdin.
-	// Without this, Close() could happen while Write() is in progress.
-	stdinMu sync.Mutex
+	// FFmpeg process (encapsulates cmd, stdin, stderr with thread-safe access)
+	result *ffmpeg.StartResult
 
 	// Current recording
 	currentFile string
@@ -262,6 +251,7 @@ func (r *GenericRecorder) Stop() error {
 func (r *GenericRecorder) WriteAudio(pcm []byte) error {
 	r.mu.RLock()
 	state := r.state
+	result := r.result
 	r.mu.RUnlock()
 
 	// Accept both Running and Rotating - rotation closes stdin when ready
@@ -269,17 +259,18 @@ func (r *GenericRecorder) WriteAudio(pcm []byte) error {
 		return nil
 	}
 
-	// Hold stdinMu during write to prevent race with close
-	r.stdinMu.Lock()
-	stdin := r.stdin
-	if stdin == nil {
-		r.stdinMu.Unlock()
+	if result == nil {
 		return nil
 	}
-	_, err := stdin.Write(pcm)
-	r.stdinMu.Unlock()
 
+	// WriteStdin is thread-safe (mutex encapsulated in StartResult)
+	_, err := result.WriteStdin(pcm)
 	if err != nil {
+		// ErrStdinClosed is expected during rotation/shutdown - not a real error
+		if errors.Is(err, ffmpeg.ErrStdinClosed) {
+			return nil
+		}
+
 		r.mu.Lock()
 		r.lastError = err.Error()
 		r.mu.Unlock()
@@ -384,15 +375,12 @@ func (r *GenericRecorder) startEncoderLocked() error {
 	)
 
 	// Start FFmpeg process
-	proc, err := ffmpeg.StartProcess(r.ffmpegPath, args)
+	result, err := ffmpeg.StartProcess(r.ffmpegPath, args)
 	if err != nil {
 		return err
 	}
 
-	r.cmd = proc.Cmd
-	r.cancel = proc.Cancel
-	r.stdin = proc.Stdin
-	r.stderr = proc.Stderr
+	r.result = result
 
 	slog.Info("recorder encoding started", "id", r.id, "file", filepath.Base(r.currentFile), "codec", r.config.Codec)
 	return nil
@@ -403,64 +391,47 @@ func (r *GenericRecorder) stopEncoderAndUpload() {
 	// Cache values under lock to prevent race conditions
 	r.mu.Lock()
 	currentFile := r.currentFile
-	cmd := r.cmd
-	cancel := r.cancel
-	stderr := r.stderr
+	result := r.result
 	r.mu.Unlock()
 
-	// Close stdin under stdinMu to prevent race with WriteAudio
-	r.stdinMu.Lock()
-	stdin := r.stdin
-	r.stdin = nil
-	r.stdinMu.Unlock()
-
-	if stdin != nil {
-		if err := stdin.Close(); err != nil {
-			slog.Warn("failed to close stdin", "id", r.id, "error", err)
-		}
-	}
-
-	// Wait for FFmpeg to finish with 2-stage timeout
-	if cmd == nil {
-		slog.Error("stopEncoderAndUpload: cmd is nil", "id", r.id)
+	if result == nil {
+		slog.Error("stopEncoderAndUpload: result is nil", "id", r.id)
 		return
 	}
 
+	// Close stdin - signals FFmpeg that input is done
+	result.CloseStdin()
+
+	// Wait for FFmpeg to finish with timeout
 	done := make(chan error, 1)
 	go func() {
-		done <- cmd.Wait()
+		done <- result.Wait()
 	}()
 
 	select {
 	case err := <-done:
 		if err != nil {
 			r.mu.Lock()
-			if stderr != nil {
-				errMsg := util.ExtractLastError(stderr.String())
-				if errMsg != "" {
-					r.lastError = errMsg
-				}
+			errMsg := util.ExtractLastError(result.Stderr())
+			if errMsg != "" {
+				r.lastError = errMsg
 			}
 			r.mu.Unlock()
 		}
-	case <-time.After(10000 * time.Millisecond):
-		// Stage 1: Cancel context (sends SIGTERM)
-		slog.Warn("recorder ffmpeg did not stop in time, canceling context", "id", r.id)
-		if cancel != nil {
-			cancel()
-		}
+	case <-time.After(10 * time.Second):
+		// Stage 1: Send SIGTERM for graceful shutdown
+		slog.Warn("recorder ffmpeg did not stop in time, sending signal", "id", r.id)
+		_ = result.Signal()
 
 		// Stage 2: Wait for graceful shutdown or force kill
 		select {
 		case <-done:
-			// Process stopped after cancel
-		case <-time.After(2000 * time.Millisecond):
+			// Process stopped after signal
+		case <-time.After(2 * time.Second):
 			// Force kill if still running
-			if cmd.Process != nil {
-				slog.Error("recorder ffmpeg force killed", "id", r.id)
-				_ = cmd.Process.Kill()
-				<-done // Wait for process to exit after kill
-			}
+			slog.Error("recorder ffmpeg force killed", "id", r.id)
+			_ = result.Kill()
+			<-done // Wait for process to exit after kill
 		}
 	}
 

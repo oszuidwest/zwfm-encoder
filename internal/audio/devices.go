@@ -5,12 +5,10 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
-
-	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
 // ListDevices returns available audio input devices for the current platform.
-func ListDevices() []types.AudioDevice {
+func ListDevices() []Device {
 	cfg := getPlatformConfig()
 	return cfg.ListDevices()
 }
@@ -30,16 +28,16 @@ type DeviceListConfig struct {
 	DevicePattern *regexp.Regexp
 
 	// ParseDevice converts regex matches to a Device.
-	ParseDevice func(matches []string) *types.AudioDevice
+	ParseDevice func(matches []string) *Device
 
 	// FallbackDevices are returned if detection fails.
-	FallbackDevices []types.AudioDevice
+	FallbackDevices []Device
 }
 
 // parseDeviceList parses command output to extract audio device information.
 //
 //nolint:gocritic // hugeParam: 96 bytes is acceptable, no performance impact
-func parseDeviceList(cfg DeviceListConfig) []types.AudioDevice {
+func parseDeviceList(cfg DeviceListConfig) []Device {
 	if len(cfg.Command) == 0 {
 		return cfg.FallbackDevices
 	}
@@ -51,7 +49,7 @@ func parseDeviceList(cfg DeviceListConfig) []types.AudioDevice {
 		return cfg.FallbackDevices
 	}
 
-	var devices []types.AudioDevice
+	var devices []Device
 	lines := strings.Split(string(output), "\n")
 	inAudioSection := cfg.AudioStartMarker == "" // If no marker, always in section
 

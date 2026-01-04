@@ -29,7 +29,7 @@
  *   file      - Document icon for file logging (document)
  *   email     - Envelope for email notifications (envelope)
  *   server    - Server stack for connection settings (server-stack)
- *   power     - Power button for output enable/disable toggle
+ *   power     - Power button for stream enable/disable toggle
  *   license   - Document with text for license section (document-text)
  *   heart     - Heart for acknowledgements section
  *   warning   - Triangle alert for error states (exclamation-triangle)

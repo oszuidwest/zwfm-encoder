@@ -13,12 +13,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/oszuidwest/zwfm-encoder/internal/types"
+	"github.com/oszuidwest/zwfm-encoder/internal/audio"
+	"github.com/oszuidwest/zwfm-encoder/internal/ffmpeg"
 )
 
 const (
 	// Audio format constants (must match encoder's PCM format).
-	bytesPerSecond = types.SampleRate * types.Channels * 2 // 48kHz * 2ch * 16bit = 192000
+	bytesPerSecond = audio.SampleRate * audio.Channels * 2 // 48kHz * 2ch * 16bit = 192000
 
 	// Dump timing.
 	beforeSeconds     = 15
@@ -263,17 +264,14 @@ func encodeToMP3(ffmpegPath, outputDir string, pcm []byte, silenceStart time.Tim
 	)
 	defer cancel()
 
-	args := []string{
-		"-f", "s16le",
-		"-ar", fmt.Sprintf("%d", types.SampleRate),
-		"-ac", fmt.Sprintf("%d", types.Channels),
-		"-i", "pipe:0",
+	args := ffmpeg.BaseInputArgs()
+	args = append(args,
 		"-c:a", "libmp3lame",
 		"-b:a", mp3Bitrate,
 		"-f", "mp3",
 		"-y", // Overwrite if exists
 		result.FilePath,
-	}
+	)
 
 	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
 	cmd.Stdin = bytes.NewReader(pcm)

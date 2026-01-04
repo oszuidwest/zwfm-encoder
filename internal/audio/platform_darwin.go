@@ -2,11 +2,7 @@
 
 package audio
 
-import (
-	"regexp"
-
-	"github.com/oszuidwest/zwfm-encoder/internal/types"
-)
+import "regexp"
 
 func getPlatformConfig() CaptureConfig {
 	return CaptureConfig{
@@ -21,17 +17,17 @@ func buildDarwinArgs(device string) []string {
 	return buildFFmpegCaptureArgs("avfoundation", device)
 }
 
-func (cfg *CaptureConfig) ListDevices() []types.AudioDevice {
+func (cfg *CaptureConfig) ListDevices() []Device {
 	return parseDeviceList(DeviceListConfig{
 		Command:          []string{"ffmpeg", "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""},
 		AudioStartMarker: "AVFoundation audio devices:",
 		AudioStopMarker:  "AVFoundation video devices:",
 		DevicePattern:    regexp.MustCompile(`\[AVFoundation[^\]]*\]\s*\[(\d+)\]\s*(.+)`),
-		ParseDevice: func(matches []string) *types.AudioDevice {
+		ParseDevice: func(matches []string) *Device {
 			if len(matches) < 3 {
 				return nil
 			}
-			return &types.AudioDevice{
+			return &Device{
 				ID:   ":" + matches[1],
 				Name: matches[2],
 			}

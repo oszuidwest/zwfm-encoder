@@ -4,15 +4,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sync"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
-
-// datePattern matches date strings in filenames.
-var datePattern = regexp.MustCompile(`(\d{4}-\d{2}-\d{2})`)
 
 // Manager coordinates silence dump capture and file retention.
 type Manager struct {
@@ -196,7 +193,7 @@ func (m *Manager) runCleanup() {
 		}
 
 		// Extract date from filename
-		fileDate, ok := extractDateFromFilename(name)
+		fileDate, ok := util.ExtractDateFromFilename(name)
 		if !ok {
 			continue
 		}
@@ -216,19 +213,4 @@ func (m *Manager) runCleanup() {
 	if deleted > 0 {
 		slog.Info("silence dump cleanup: deleted old files", "count", deleted)
 	}
-}
-
-// extractDateFromFilename extracts the date from a dump filename.
-func extractDateFromFilename(filename string) (time.Time, bool) {
-	matches := datePattern.FindStringSubmatch(filename)
-	if len(matches) < 2 {
-		return time.Time{}, false
-	}
-
-	date, err := time.Parse(time.DateOnly, matches[1])
-	if err != nil {
-		return time.Time{}, false
-	}
-
-	return date, true
 }
