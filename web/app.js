@@ -1056,9 +1056,9 @@ document.addEventListener('alpine:init', () => {
                 const result = await response.json();
 
                 this.testStates.recorderS3.pending = false;
-                this.testStates.recorderS3.text = result.success ? 'Connected!' : 'Failed';
+                this.testStates.recorderS3.text = response.ok ? 'Connected!' : 'Failed';
 
-                if (!result.success) {
+                if (!response.ok) {
                     this.showBanner(`S3 test failed: ${result.error || 'Unknown error'}`, 'danger', false);
                 }
 
@@ -1252,9 +1252,9 @@ document.addEventListener('alpine:init', () => {
                 const result = await response.json();
 
                 this.testStates[type].pending = false;
-                this.testStates[type].text = result.success ? 'Sent!' : 'Failed';
+                this.testStates[type].text = response.ok ? 'Sent!' : 'Failed';
 
-                if (!result.success) {
+                if (!response.ok) {
                     const typeName = type.charAt(0).toUpperCase() + type.slice(1);
                     this.showBanner(`${typeName} test failed: ${result.error || 'Unknown error'}`, 'danger', false);
                 }
@@ -1341,7 +1341,7 @@ document.addEventListener('alpine:init', () => {
                 const result = await response.json();
 
                 this.silenceLogModal.loading = false;
-                if (result.success) {
+                if (response.ok) {
                     this.silenceLogModal.entries = result.entries || [];
                     this.silenceLogModal.path = result.path || '';
                     this.silenceLogModal.error = '';
