@@ -166,7 +166,19 @@ document.addEventListener('alpine:init', () => {
         configLoaded: false,
 
         // Form state for settings (copied from config when entering settings view)
-        settingsForm: null,
+        settingsForm: {
+            audioInput: '',
+            silenceThreshold: -40,
+            silenceDuration: 15,
+            silenceRecovery: 5,
+            silenceDump: { enabled: true, retentionDays: 7 },
+            silenceWebhook: '',
+            silenceLogPath: '',
+            zabbix: { server: '', port: 10051, host: '', key: '' },
+            graph: { tenantId: '', clientId: '', clientSecret: '', fromAddress: '', recipients: '' },
+            recordingApiKey: '',
+            platform: ''
+        },
         settingsDirty: false,
         saving: false,
 
@@ -555,26 +567,8 @@ document.addEventListener('alpine:init', () => {
         showDashboard() {
             this.view = 'dashboard';
             this.settingsDirty = false;
-            this.settingsForm = null;
-        },
-
-        // Shows save success animation via data-saved attribute, then navigates to dashboard
-        saveAndClose() {
-            const viewIds = {
-                'settings': 'settings-view',
-                'output-form': 'output-form-view'
-            };
-            const viewId = viewIds[this.view] || 'settings-view';
-            const saveBtn = document.querySelector(`#${viewId} .nav-btn[data-variant="save"]`);
-            if (saveBtn) {
-                saveBtn.dataset.saved = 'true';
-                setTimeout(() => {
-                    delete saveBtn.dataset.saved;
-                    this.showDashboard();
-                }, 600);
-            } else {
-                this.showDashboard();
-            }
+            this.outputFormDirty = false;
+            this.recorderFormDirty = false;
         },
 
         /**
@@ -678,8 +672,9 @@ document.addEventListener('alpine:init', () => {
                     throw new Error(data.error || `HTTP ${response.status}`);
                 }
 
-                // Success - config_changed will trigger loadConfig()
-                this.saveAndClose();
+                // Reload config in background to sync state
+                this.loadConfig();
+                this.showDashboard();
             } catch (err) {
                 this.showBanner(`Failed to save settings: ${err.message}`, 'danger', false);
             } finally {
@@ -754,8 +749,22 @@ document.addEventListener('alpine:init', () => {
                     throw new Error(result.error || `HTTP ${response.status}`);
                 }
 
-                // Success - config_changed will trigger loadConfig()
-                this.saveAndClose();
+                // Optimistic UI update for immediate feedback
+                if (this.isEditMode) {
+                    // Update status
+                    if (this.outputStatuses[this.outputForm.id]) {
+                        this.outputStatuses[this.outputForm.id].state = this.outputForm.enabled ? 'stopped' : 'disabled';
+                    }
+                    // Update output data in local array
+                    const index = this.outputs.findIndex(o => o.id === this.outputForm.id);
+                    if (index !== -1) {
+                        Object.assign(this.outputs[index], data);
+                    }
+                }
+
+                // Reload config in background to sync full state
+                this.loadConfig();
+                this.showDashboard();
             } catch (err) {
                 this.showBanner(`Failed to save output: ${err.message}`, 'danger', false);
             }
@@ -907,9 +916,22 @@ document.addEventListener('alpine:init', () => {
                     throw new Error(result.error || `HTTP ${response.status}`);
                 }
 
-                // Success - config_changed will trigger loadConfig()
-                this.view = 'dashboard';
-                this.recorderFormDirty = false;
+                // Optimistic UI update for immediate feedback
+                if (this.isRecorderEditMode) {
+                    // Update status
+                    if (this.recorderStatuses[this.recorderForm.id]) {
+                        this.recorderStatuses[this.recorderForm.id].state = this.recorderForm.enabled ? 'stopped' : 'disabled';
+                    }
+                    // Update recorder data in local array
+                    const index = this.recorders.findIndex(r => r.id === this.recorderForm.id);
+                    if (index !== -1) {
+                        Object.assign(this.recorders[index], data);
+                    }
+                }
+
+                // Reload config in background to sync full state
+                this.loadConfig();
+                this.showDashboard();
             } catch (err) {
                 this.showBanner(`Failed to save recorder: ${err.message}`, 'danger', false);
             }
