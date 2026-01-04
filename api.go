@@ -33,18 +33,14 @@ func (s *Server) writeError(w http.ResponseWriter, status int, message string) {
 	s.writeJSON(w, status, map[string]string{"error": message})
 }
 
-// writeSuccess writes a JSON success response with HTTP 200.
-func (s *Server) writeSuccess(w http.ResponseWriter) {
-	s.writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+// writeMessage writes a JSON response with a message.
+func (s *Server) writeMessage(w http.ResponseWriter, message string) {
+	s.writeJSON(w, http.StatusOK, map[string]string{"message": message})
 }
 
-// writeTestResult writes a JSON response with the test outcome.
-func (s *Server) writeTestResult(w http.ResponseWriter, success bool, errMsg string) {
-	if success {
-		s.writeJSON(w, http.StatusOK, map[string]bool{"success": true})
-	} else {
-		s.writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": errMsg})
-	}
+// writeNoContent writes a 204 No Content response.
+func (s *Server) writeNoContent(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // readJSON decodes JSON from the request body into v.
@@ -241,7 +237,7 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.broadcastConfigChanged()
-	s.writeSuccess(w)
+	s.writeNoContent(w)
 }
 
 // Output API endpoints
@@ -343,24 +339,17 @@ func (s *Server) handleUpdateOutput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Restart output if encoder is running (with proper synchronization)
+	// Restart output if encoder is running
 	if s.encoder.State() == types.StateRunning {
 		if err := s.encoder.StopOutput(id); err != nil {
 			slog.Warn("failed to stop output for restart", "output_id", id, "error", err)
 		}
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-
-			select {
-			case <-time.After(types.OutputRestartDelay):
-				if s.encoder.State() == types.StateRunning {
-					if err := s.encoder.StartOutput(id); err != nil {
-						slog.Warn("failed to restart output", "output_id", id, "error", err)
-					}
+			time.Sleep(types.OutputRestartDelay)
+			if s.encoder.State() == types.StateRunning {
+				if err := s.encoder.StartOutput(id); err != nil {
+					slog.Warn("failed to restart output", "output_id", id, "error", err)
 				}
-			case <-ctx.Done():
-				slog.Warn("output restart cancelled", "output_id", id)
 			}
 		}()
 	}
@@ -388,7 +377,7 @@ func (s *Server) handleDeleteOutput(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.broadcastConfigChanged()
-	s.writeSuccess(w)
+	s.writeNoContent(w)
 }
 
 // Recorder API endpoints
@@ -515,7 +504,7 @@ func (s *Server) handleDeleteRecorder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.broadcastConfigChanged()
-	s.writeSuccess(w)
+	s.writeNoContent(w)
 }
 
 // handleRecorderAction handles start/stop actions for a recorder.
@@ -535,17 +524,16 @@ func (s *Server) handleRecorderAction(w http.ResponseWriter, r *http.Request) {
 			s.writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		s.writeMessage(w, "Recorder started")
 	case "stop":
 		if err := s.encoder.StopRecorder(id); err != nil {
 			s.writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		s.writeMessage(w, "Recorder stopped")
 	default:
 		s.writeError(w, http.StatusBadRequest, "invalid action: must be start or stop")
-		return
 	}
-
-	s.writeSuccess(w)
 }
 
 // S3TestRequest is the request body for testing S3 connectivity.
@@ -585,11 +573,11 @@ func (s *Server) handleTestS3(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := recording.TestRecorderS3Connection(cfg); err != nil {
-		s.writeTestResult(w, false, err.Error())
+		s.writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
-	s.writeSuccess(w)
+	s.writeMessage(w, "S3 connection successful")
 }
 
 // Notification test endpoints
@@ -627,16 +615,16 @@ func (s *Server) handleAPITestWebhook(w http.ResponseWriter, r *http.Request) {
 	url := cmp.Or(req.WebhookURL, cfg.WebhookURL)
 
 	if url == "" {
-		s.writeTestResult(w, false, "No webhook URL configured")
+		s.writeError(w, http.StatusBadRequest, "No webhook URL configured")
 		return
 	}
 
 	if err := notify.SendTestWebhook(url, cfg.StationName); err != nil {
-		s.writeTestResult(w, false, err.Error())
+		s.writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
-	s.writeSuccess(w)
+	s.writeMessage(w, "Webhook test sent")
 }
 
 // handleAPITestLog tests log file notification.
@@ -649,16 +637,16 @@ func (s *Server) handleAPITestLog(w http.ResponseWriter, r *http.Request) {
 	path := cmp.Or(req.LogPath, s.config.Snapshot().LogPath)
 
 	if path == "" {
-		s.writeTestResult(w, false, "No log path configured")
+		s.writeError(w, http.StatusBadRequest, "No log path configured")
 		return
 	}
 
 	if err := notify.WriteTestLog(path); err != nil {
-		s.writeTestResult(w, false, err.Error())
+		s.writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	s.writeSuccess(w)
+	s.writeMessage(w, "Test log entry written")
 }
 
 // handleAPITestEmail tests email notification.
@@ -676,7 +664,7 @@ func (s *Server) handleAPITestEmail(w http.ResponseWriter, r *http.Request) {
 	recipients := cmp.Or(req.GraphRecipients, cfg.GraphRecipients)
 
 	if tenantID == "" || clientID == "" || clientSecret == "" {
-		s.writeTestResult(w, false, "Email not fully configured")
+		s.writeError(w, http.StatusBadRequest, "Email not fully configured")
 		return
 	}
 
@@ -689,11 +677,11 @@ func (s *Server) handleAPITestEmail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := notify.SendTestEmail(graphCfg, cfg.StationName); err != nil {
-		s.writeTestResult(w, false, err.Error())
+		s.writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
-	s.writeSuccess(w)
+	s.writeMessage(w, "Test email sent")
 }
 
 // handleAPITestZabbix tests Zabbix trapper notification connectivity.
@@ -710,16 +698,16 @@ func (s *Server) handleAPITestZabbix(w http.ResponseWriter, r *http.Request) {
 	key := cmp.Or(req.ZabbixKey, cfg.ZabbixKey)
 
 	if server == "" || host == "" || key == "" {
-		s.writeTestResult(w, false, "Zabbix not fully configured")
+		s.writeError(w, http.StatusBadRequest, "Zabbix not fully configured")
 		return
 	}
 
 	if err := notify.SendTestZabbix(server, port, host, key); err != nil {
-		s.writeTestResult(w, false, err.Error())
+		s.writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
-	s.writeSuccess(w)
+	s.writeMessage(w, "Zabbix test sent")
 }
 
 // handleAPIRegenerateKey generates a new recording API key.
@@ -743,18 +731,17 @@ func (s *Server) handleAPIRegenerateKey(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleAPIViewLog(w http.ResponseWriter, r *http.Request) {
 	logPath := s.config.LogPath()
 	if logPath == "" {
-		s.writeTestResult(w, false, "Log file path not configured")
+		s.writeError(w, http.StatusBadRequest, "Log file path not configured")
 		return
 	}
 
 	entries, err := readSilenceLog(logPath, 100)
 	if err != nil {
-		s.writeTestResult(w, false, err.Error())
+		s.writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"success": true,
 		"entries": entries,
 		"path":    logPath,
 	})
