@@ -365,7 +365,7 @@ type APIConfigResponse struct {
 	// Audio settings
 	AudioInput string         `json:"audio_input"` // Selected audio input device
 	Devices    []audio.Device `json:"devices"`     // Available audio devices
-	Platform   string        `json:"platform"`    // Operating system platform
+	Platform   string         `json:"platform"`    // Operating system platform
 
 	// Silence detection
 	SilenceThreshold  float64           `json:"silence_threshold"`   // Silence threshold in dB

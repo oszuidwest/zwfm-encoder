@@ -15,8 +15,8 @@ type SilenceConfig struct {
 // SilenceEvent represents the result of a silence detection update.
 type SilenceEvent struct {
 	// Current state
-	InSilence  bool               // Currently in confirmed silence state
-	DurationMs int64              // Current silence duration in ms (0 if not silent)
+	InSilence  bool         // Currently in confirmed silence state
+	DurationMs int64        // Current silence duration in ms (0 if not silent)
 	Level      SilenceLevel // "active" when in silence, "" otherwise
 
 	// Current audio levels (for notifications)
