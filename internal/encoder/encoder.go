@@ -379,14 +379,10 @@ func (e *Encoder) GraphSecretExpiry() types.SecretExpiryInfo {
 	return e.secretExpiryChecker.GetInfo()
 }
 
-// UpdateGraphConfig updates the Graph configuration.
+// UpdateGraphConfig updates the Graph secret expiry checker.
+// Note: The SilenceNotifier automatically detects config changes and recreates
+// the Graph client when needed (same pattern as S3 client in recorders).
 func (e *Encoder) UpdateGraphConfig() {
-	// Invalidate cached Graph client in silence notifier
-	if e.silenceNotifier != nil {
-		e.silenceNotifier.InvalidateGraphClient()
-	}
-
-	// Update expiry checker with new config
 	if e.secretExpiryChecker != nil {
 		graphCfg := e.config.GraphConfig()
 		e.secretExpiryChecker.UpdateConfig(&graphCfg)

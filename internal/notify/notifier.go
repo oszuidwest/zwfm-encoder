@@ -26,7 +26,8 @@ type SilenceNotifier struct {
 	zabbixSent  bool
 
 	// Cached Graph client for email notifications
-	graphClient *GraphClient
+	graphClient    *GraphClient
+	graphConfigKey string // Config key used to create cached client
 
 	// Pending recovery data (stored when recovery detected, used when dump is ready)
 	pendingRecovery *pendingRecoveryData
@@ -61,19 +62,26 @@ func (n *SilenceNotifier) ResetPendingRecovery() {
 	n.mu.Unlock()
 }
 
-// InvalidateGraphClient clears the cached Graph client.
-func (n *SilenceNotifier) InvalidateGraphClient() {
-	n.mu.Lock()
-	n.graphClient = nil
-	n.mu.Unlock()
+// graphConfigKey returns a string key for comparing Graph configurations.
+// Used to detect when credentials change and client needs recreation.
+// Includes all fields that are baked into the GraphClient at creation time:
+// - TenantID, ClientID, ClientSecret: OAuth2 token source
+// - FromAddress: stored in client for sending
+// Recipients are NOT included as they're passed to SendMail(), not stored.
+func graphConfigKeyFrom(cfg *GraphConfig) string {
+	return cfg.TenantID + "|" + cfg.ClientID + "|" + cfg.ClientSecret + "|" + cfg.FromAddress
 }
 
-// getOrCreateGraphClient returns the cached email client, creating one if needed.
+// getOrCreateGraphClient returns the cached email client, recreating if config changed.
+// This follows the same pattern as S3 client handling in recorders.
 func (n *SilenceNotifier) getOrCreateGraphClient(cfg *GraphConfig) (*GraphClient, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	if n.graphClient != nil {
+	newKey := graphConfigKeyFrom(cfg)
+
+	// Recreate client if config changed (same pattern as recorder S3 client)
+	if n.graphClient != nil && n.graphConfigKey == newKey {
 		return n.graphClient, nil
 	}
 
@@ -82,6 +90,7 @@ func (n *SilenceNotifier) getOrCreateGraphClient(cfg *GraphConfig) (*GraphClient
 		return nil, err
 	}
 	n.graphClient = client
+	n.graphConfigKey = newKey
 	return client, nil
 }
 
