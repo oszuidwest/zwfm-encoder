@@ -447,91 +447,13 @@ func (c *Config) GetRecordingAPIKey() string {
 	return c.Recording.APIKey
 }
 
-// --- Setters for individual settings ---
-
-// SetAudioInput updates the audio input device and persists the change.
-func (c *Config) SetAudioInput(input string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.Audio.Input = input
-	return c.saveLocked()
-}
-
-// SetSilenceThreshold updates the silence detection threshold and persists the change.
-func (c *Config) SetSilenceThreshold(threshold float64) error {
-	if threshold > 0 || threshold < -60 {
-		return fmt.Errorf("silence_threshold: must be between -60 and 0 dB")
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.SilenceDetection.ThresholdDB = threshold
-	return c.saveLocked()
-}
-
-// SetSilenceDurationMs updates the silence detection duration and persists the change.
-func (c *Config) SetSilenceDurationMs(ms int64) error {
-	if ms <= 0 {
-		return fmt.Errorf("silence_duration_ms: must be greater than 0")
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.SilenceDetection.DurationMs = ms
-	return c.saveLocked()
-}
-
-// SetSilenceRecoveryMs updates the silence recovery duration and persists the change.
-func (c *Config) SetSilenceRecoveryMs(ms int64) error {
-	if ms <= 0 {
-		return fmt.Errorf("silence_recovery_ms: must be greater than 0")
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.SilenceDetection.RecoveryMs = ms
-	return c.saveLocked()
-}
-
-// SetWebhookURL updates the webhook URL and persists the change.
-func (c *Config) SetWebhookURL(url string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.Notifications.Webhook.URL = url
-	return c.saveLocked()
-}
-
-// SetLogPath updates the log file path and persists the change.
-func (c *Config) SetLogPath(path string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.Notifications.Log.Path = path
-	return c.saveLocked()
-}
-
-// SetGraphConfig updates the Microsoft Graph email settings and persists the change.
-func (c *Config) SetGraphConfig(tenantID, clientID, clientSecret, fromAddress, recipients string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.Notifications.Email.TenantID = tenantID
-	c.Notifications.Email.ClientID = clientID
-	c.Notifications.Email.ClientSecret = clientSecret
-	c.Notifications.Email.FromAddress = fromAddress
-	c.Notifications.Email.Recipients = recipients
-	return c.saveLocked()
-}
+// --- Individual Setters ---
 
 // SetRecordingAPIKey updates the recording API key and persists the change.
 func (c *Config) SetRecordingAPIKey(key string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Recording.APIKey = key
-	return c.saveLocked()
-}
-
-// SetSilenceDump updates the silence dump settings and persists the change.
-func (c *Config) SetSilenceDump(enabled bool, retentionDays int) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.SilenceDump.Enabled = enabled
-	c.SilenceDump.RetentionDays = retentionDays
 	return c.saveLocked()
 }
 
@@ -663,6 +585,61 @@ func (s *Snapshot) HasZabbix() bool {
 	return s.ZabbixServer != "" && s.ZabbixHost != "" && s.ZabbixKey != ""
 }
 
+// --- Atomic Settings Update ---
+
+// SettingsUpdate contains all settings for atomic update.
+type SettingsUpdate struct {
+	AudioInput               string
+	SilenceThreshold         float64
+	SilenceDurationMs        int64
+	SilenceRecoveryMs        int64
+	SilenceDumpEnabled       bool
+	SilenceDumpRetentionDays int
+	WebhookURL               string
+	LogPath                  string
+	ZabbixServer             string
+	ZabbixPort               int
+	ZabbixHost               string
+	ZabbixKey                string
+	GraphTenantID            string
+	GraphClientID            string
+	GraphClientSecret        string
+	GraphFromAddress         string
+	GraphRecipients          string
+}
+
+// ApplySettings updates all settings atomically with a single file write.
+// Validation should be performed before calling this method.
+func (c *Config) ApplySettings(s *SettingsUpdate) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Audio
+	c.Audio.Input = s.AudioInput
+
+	// Silence detection
+	c.SilenceDetection.ThresholdDB = s.SilenceThreshold
+	c.SilenceDetection.DurationMs = s.SilenceDurationMs
+	c.SilenceDetection.RecoveryMs = s.SilenceRecoveryMs
+	c.SilenceDump.Enabled = s.SilenceDumpEnabled
+	c.SilenceDump.RetentionDays = s.SilenceDumpRetentionDays
+
+	// Notifications
+	c.Notifications.Webhook.URL = s.WebhookURL
+	c.Notifications.Log.Path = s.LogPath
+	c.Notifications.Zabbix.Server = s.ZabbixServer
+	c.Notifications.Zabbix.Port = s.ZabbixPort
+	c.Notifications.Zabbix.Host = s.ZabbixHost
+	c.Notifications.Zabbix.Key = s.ZabbixKey
+	c.Notifications.Email.TenantID = s.GraphTenantID
+	c.Notifications.Email.ClientID = s.GraphClientID
+	c.Notifications.Email.ClientSecret = s.GraphClientSecret
+	c.Notifications.Email.FromAddress = s.GraphFromAddress
+	c.Notifications.Email.Recipients = s.GraphRecipients
+
+	return c.saveLocked()
+}
+
 // --- Utility functions ---
 
 // GenerateAPIKey returns a new random API key.
@@ -686,15 +663,4 @@ func generateShortID() (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%x", b), nil
-}
-
-// SetZabbixConfig updates the Zabbix notification settings and persists the change.
-func (c *Config) SetZabbixConfig(server string, port int, host, key string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.Notifications.Zabbix.Server = server
-	c.Notifications.Zabbix.Port = port
-	c.Notifications.Zabbix.Host = host
-	c.Notifications.Zabbix.Key = key
-	return c.saveLocked()
 }

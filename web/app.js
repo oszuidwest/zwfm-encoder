@@ -687,6 +687,14 @@ document.addEventListener('alpine:init', () => {
                 });
                 if (!response.ok) {
                     const data = await response.json();
+                    // Handle multiple errors array - show each as separate toast
+                    if (data.errors && data.errors.length > 0) {
+                        this.config.audio_input = prev;
+                        for (const err of data.errors) {
+                            this.showToast(err, 'error');
+                        }
+                        return;
+                    }
                     throw new Error(data.error || `HTTP ${response.status}`);
                 }
                 this.showToast('Audio input updated', 'success');
@@ -735,6 +743,13 @@ document.addEventListener('alpine:init', () => {
 
                 if (!response.ok) {
                     const data = await response.json();
+                    // Handle multiple errors array - show each as separate toast
+                    if (data.errors && data.errors.length > 0) {
+                        for (const err of data.errors) {
+                            this.showToast(err, 'error');
+                        }
+                        return;
+                    }
                     throw new Error(data.error || `HTTP ${response.status}`);
                 }
 

@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -17,7 +19,11 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/notify"
 	"github.com/oszuidwest/zwfm-encoder/internal/recording"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
+
+// emailRegex validates email address format.
+var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
 
 // writeJSON writes a JSON response with the given status code.
 func (s *Server) writeJSON(w http.ResponseWriter, status int, data any) {
@@ -153,6 +159,59 @@ type SettingsUpdateRequest struct {
 	GraphRecipients   string `json:"graph_recipients"`
 }
 
+// Validate checks all settings fields and returns all validation errors.
+func (r *SettingsUpdateRequest) Validate() []string {
+	var errs []string
+
+	// Silence detection thresholds
+	if r.SilenceThreshold > 0 || r.SilenceThreshold < -60 {
+		errs = append(errs, "silence_threshold: must be between -60 and 0 dB")
+	}
+	if r.SilenceDurationMs <= 0 {
+		errs = append(errs, "silence_duration_ms: must be greater than 0")
+	}
+	if r.SilenceRecoveryMs <= 0 {
+		errs = append(errs, "silence_recovery_ms: must be greater than 0")
+	}
+	if r.SilenceDumpRetentionDays < 0 {
+		errs = append(errs, "silence_dump_retention_days: cannot be negative")
+	}
+
+	// Webhook URL format
+	if r.WebhookURL != "" {
+		if _, err := url.ParseRequestURI(r.WebhookURL); err != nil {
+			errs = append(errs, "webhook_url: invalid URL format")
+		}
+	}
+
+	// Log path security
+	if r.LogPath != "" {
+		if err := util.ValidatePath("log_path", r.LogPath); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+
+	// Email address validation
+	if r.GraphFromAddress != "" && !emailRegex.MatchString(r.GraphFromAddress) {
+		errs = append(errs, "graph_from_address: invalid email format")
+	}
+	if r.GraphRecipients != "" {
+		for _, email := range strings.Split(r.GraphRecipients, ",") {
+			if trimmed := strings.TrimSpace(email); trimmed != "" && !emailRegex.MatchString(trimmed) {
+				errs = append(errs, "graph_recipients: contains invalid email address")
+				break // One error for the whole field is enough
+			}
+		}
+	}
+
+	// Zabbix port range
+	if r.ZabbixPort != 0 && (r.ZabbixPort < 1 || r.ZabbixPort > 65535) {
+		errs = append(errs, "zabbix_port: must be between 1 and 65535")
+	}
+
+	return errs
+}
+
 // handleAPISettings updates all settings atomically.
 // POST /api/settings
 func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
@@ -161,57 +220,45 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate ALL settings upfront (no side effects)
+	if errs := req.Validate(); len(errs) > 0 {
+		s.writeJSON(w, http.StatusBadRequest, map[string]any{
+			"errors": errs,
+		})
+		return
+	}
+
 	cfg := s.config.Snapshot()
 	audioInputChanged := req.AudioInput != cfg.AudioInput
 
-	// Apply audio settings
-	if err := s.config.SetAudioInput(req.AudioInput); err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error())
+	// Preserve existing secret if not provided
+	graphSecret := cmp.Or(req.GraphClientSecret, cfg.GraphClientSecret)
+
+	// Apply ALL settings atomically (single lock, single file write)
+	if err := s.config.ApplySettings(&config.SettingsUpdate{
+		AudioInput:               req.AudioInput,
+		SilenceThreshold:         req.SilenceThreshold,
+		SilenceDurationMs:        req.SilenceDurationMs,
+		SilenceRecoveryMs:        req.SilenceRecoveryMs,
+		SilenceDumpEnabled:       req.SilenceDumpEnabled,
+		SilenceDumpRetentionDays: req.SilenceDumpRetentionDays,
+		WebhookURL:               req.WebhookURL,
+		LogPath:                  req.LogPath,
+		ZabbixServer:             req.ZabbixServer,
+		ZabbixPort:               req.ZabbixPort,
+		ZabbixHost:               req.ZabbixHost,
+		ZabbixKey:                req.ZabbixKey,
+		GraphTenantID:            req.GraphTenantID,
+		GraphClientID:            req.GraphClientID,
+		GraphClientSecret:        graphSecret,
+		GraphFromAddress:         req.GraphFromAddress,
+		GraphRecipients:          req.GraphRecipients,
+	}); err != nil {
+		s.writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	// Apply silence detection settings
-	if err := s.config.SetSilenceThreshold(req.SilenceThreshold); err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := s.config.SetSilenceDurationMs(req.SilenceDurationMs); err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := s.config.SetSilenceRecoveryMs(req.SilenceRecoveryMs); err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := s.config.SetSilenceDump(req.SilenceDumpEnabled, req.SilenceDumpRetentionDays); err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// Apply notification settings
-	if err := s.config.SetWebhookURL(req.WebhookURL); err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := s.config.SetLogPath(req.LogPath); err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// Apply Zabbix settings
-	if err := s.config.SetZabbixConfig(req.ZabbixServer, req.ZabbixPort, req.ZabbixHost, req.ZabbixKey); err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// Apply Graph settings (keep existing secret if empty)
-	secret := cmp.Or(req.GraphClientSecret, cfg.GraphClientSecret)
-	if err := s.config.SetGraphConfig(req.GraphTenantID, req.GraphClientID, secret, req.GraphFromAddress, req.GraphRecipients); err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// Update encoder's silence config
+	// Side effects after successful save
 	s.encoder.UpdateSilenceConfig()
 
 	// Restart encoder if audio input changed
@@ -612,14 +659,14 @@ func (s *Server) handleAPITestWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := s.config.Snapshot()
-	url := cmp.Or(req.WebhookURL, cfg.WebhookURL)
+	webhookURL := cmp.Or(req.WebhookURL, cfg.WebhookURL)
 
-	if url == "" {
+	if webhookURL == "" {
 		s.writeError(w, http.StatusBadRequest, "No webhook URL configured")
 		return
 	}
 
-	if err := notify.SendTestWebhook(url, cfg.StationName); err != nil {
+	if err := notify.SendTestWebhook(webhookURL, cfg.StationName); err != nil {
 		s.writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
