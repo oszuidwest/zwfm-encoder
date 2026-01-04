@@ -71,6 +71,18 @@
         <span class="message">FFmpeg not found. Install FFmpeg and restart the application.</span>
     </div>
 
+    <!-- Toast notifications - transient feedback for user actions -->
+    <div class="toast-container" aria-live="polite" x-cloak>
+        <template x-for="toast in toasts" :key="toast.id">
+            <div class="toast"
+                 :data-type="toast.type"
+                 x-transition:enter="toast-enter"
+                 x-transition:leave="toast-leave">
+                <span x-text="toast.message"></span>
+            </div>
+        </template>
+    </div>
+
     <main class="container">
         <noscript>
             <p class="noscript-message">This application requires JavaScript to function.</p>

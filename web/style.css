@@ -1754,6 +1754,67 @@
     }
 
     /* =========================================================================
+       Toast Notifications
+       ========================================================================= */
+    .toast-container {
+        position: fixed;
+        top: 1rem;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 100%;
+        max-width: 28rem;
+        padding: 0 1.25rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        z-index: var(--z-modal);
+        pointer-events: none;
+    }
+
+    .toast {
+        padding: 0.75rem 1rem;
+        border-radius: var(--radius-lg);
+        font-size: 0.875rem;
+        font-weight: 500;
+        text-align: center;
+        box-shadow: var(--shadow-md);
+        pointer-events: auto;
+    }
+
+    .toast[data-type="success"] {
+        background: var(--success);
+        color: var(--text-inverse);
+    }
+
+    .toast[data-type="error"] {
+        background: var(--danger);
+        color: var(--text-inverse);
+    }
+
+    .toast[data-type="info"] {
+        background: var(--brand);
+        color: var(--text-inverse);
+    }
+
+    .toast-enter {
+        animation: toastIn 0.2s var(--ease-out);
+    }
+
+    .toast-leave {
+        animation: toastOut 0.15s ease-in forwards;
+    }
+
+    @keyframes toastIn {
+        from { opacity: 0; transform: translateY(-1rem); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes toastOut {
+        from { opacity: 1; transform: translateY(0); }
+        to { opacity: 0; transform: translateY(-0.5rem); }
+    }
+
+    /* =========================================================================
        Page Layout
        ========================================================================= */
     .page[data-variant="login"] {
