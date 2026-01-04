@@ -139,7 +139,7 @@ flowchart LR
 
         subgraph Silence["Silence Detection"]
             SD[Detector<br>Hysteresis]
-            SDM[Dump Manager<br>Audio Buffer]
+            SDM[Dump Manager<br>Ring Buffer]
         end
     end
 
@@ -176,13 +176,14 @@ flowchart LR
     A ==>|S/PDIF| B ==>|PCM| D
 
     %% Metering branch
-    D -->|PCM| M -->|dB| PH
+    D ==>|PCM| M -->|dB| PH
     M -->|samples| CD
     PH -->|dB JSON| WS
+    CD -->|clip JSON| WS
 
     %% Silence detection branch
     D -->|dB| SD
-    D -->|PCM| SDM
+    D ==>|PCM| SDM
     SD -->|events| SDM
     SD -->|state JSON| WS
 
@@ -196,14 +197,14 @@ flowchart LR
 
     %% Streaming
     D ==>|PCM| OM
-    OM -->|PCM| F1 -->|SRT| S1
-    OM -->|PCM| F2 -->|SRT| S2
-    OM -->|PCM| F3 -->|SRT| S3
+    OM ==>|PCM| F1 -->|SRT| S1
+    OM ==>|PCM| F2 -->|SRT| S2
+    OM ==>|PCM| F3 -->|SRT| S3
 
     %% Recording
     D ==>|PCM| RM
-    RM -->|PCM| R1 -->|MP3| ST
-    RM -->|PCM| R2 -->|MP3| ST
+    RM ==>|PCM| R1 -->|MP3| ST
+    RM ==>|PCM| R2 -->|MP3| ST
 ```
 
 ### Audio Flow
