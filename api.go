@@ -2,6 +2,7 @@ package main
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -32,6 +33,18 @@ func (s *Server) writeError(w http.ResponseWriter, status int, message string) {
 	s.writeJSON(w, status, map[string]string{"error": message})
 }
 
+func (s *Server) writeSuccess(w http.ResponseWriter) {
+	s.writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
+func (s *Server) writeTestResult(w http.ResponseWriter, success bool, errMsg string) {
+	if success {
+		s.writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+	} else {
+		s.writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": errMsg})
+	}
+}
+
 func (s *Server) readJSON(r *http.Request, v any) error {
 	return json.NewDecoder(r.Body).Decode(v)
 }
@@ -45,6 +58,55 @@ func parseJSON[T any](s *Server, w http.ResponseWriter, r *http.Request) (T, boo
 		return v, false
 	}
 	return v, true
+}
+
+// Enum validation helpers
+
+// validCodecs contains all valid audio codec values.
+var validCodecs = map[types.Codec]bool{
+	types.CodecWAV: true,
+	types.CodecMP3: true,
+	types.CodecMP2: true,
+	types.CodecOGG: true,
+}
+
+// validRotationModes contains all valid rotation mode values.
+var validRotationModes = map[types.RotationMode]bool{
+	types.RotationHourly: true,
+}
+
+// validStorageModes contains all valid storage mode values.
+var validStorageModes = map[types.StorageMode]bool{
+	types.StorageLocal: true,
+	types.StorageS3:    true,
+	types.StorageBoth:  true,
+}
+
+// validateCodec checks if the codec string is valid.
+func validateCodec(codec string) (types.Codec, bool) {
+	c := types.Codec(codec)
+	if codec == "" {
+		return types.CodecWAV, true // default
+	}
+	return c, validCodecs[c]
+}
+
+// validateRotationMode checks if the rotation mode string is valid.
+func validateRotationMode(mode string) (types.RotationMode, bool) {
+	m := types.RotationMode(mode)
+	if mode == "" {
+		return types.RotationHourly, true // default
+	}
+	return m, validRotationModes[m]
+}
+
+// validateStorageMode checks if the storage mode string is valid.
+func validateStorageMode(mode string) (types.StorageMode, bool) {
+	m := types.StorageMode(mode)
+	if mode == "" {
+		return types.StorageLocal, true // default
+	}
+	return m, validStorageModes[m]
 }
 
 // handleAPIConfig returns the full configuration for the frontend.
@@ -68,19 +130,16 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 		},
 
 		// Notifications - Webhook
-		WebhookURL:    cfg.WebhookURL,
-		WebhookEvents: defaultEventConfig(),
+		WebhookURL: cfg.WebhookURL,
 
 		// Notifications - Log
-		LogPath:   cfg.LogPath,
-		LogEvents: defaultEventConfig(),
+		LogPath: cfg.LogPath,
 
 		// Notifications - Zabbix
 		ZabbixServer: cfg.ZabbixServer,
 		ZabbixPort:   cfg.ZabbixPort,
 		ZabbixHost:   cfg.ZabbixHost,
 		ZabbixKey:    cfg.ZabbixKey,
-		ZabbixEvents: defaultEventConfig(),
 
 		// Notifications - Email
 		GraphTenantID:    cfg.GraphTenantID,
@@ -88,7 +147,6 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 		GraphFromAddress: cfg.GraphFromAddress,
 		GraphRecipients:  cfg.GraphRecipients,
 		GraphHasSecret:   cfg.GraphClientSecret != "",
-		GraphEvents:      defaultEventConfig(),
 
 		// Recording
 		RecordingAPIKey: cfg.RecordingAPIKey,
@@ -149,76 +207,36 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Track if audio input changed (requires encoder restart)
 	cfg := s.config.Snapshot()
 	audioInputChanged := req.AudioInput != nil && *req.AudioInput != cfg.AudioInput
 
-	// Apply all settings in groups
-	if err := s.applyAudioSettings(&req); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	if err := s.applySilenceSettings(&req, &cfg); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	if err := s.applyNotificationSettings(&req, &cfg); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	// Update encoder's silence config
-	s.encoder.UpdateSilenceConfig()
-
-	// Restart encoder if audio input changed
-	if audioInputChanged && s.ffmpegAvailable {
-		go func() {
-			if s.encoder.State() == types.StateRunning {
-				if err := s.encoder.Restart(); err != nil {
-					slog.Error("failed to restart encoder after audio input change", "error", err)
-				}
-			}
-		}()
-	}
-
-	// Broadcast config change to WebSocket clients
-	s.broadcastConfigChanged()
-
-	s.writeJSON(w, http.StatusOK, map[string]bool{"success": true})
-}
-
-// applyAudioSettings applies audio-related settings from the request.
-func (s *Server) applyAudioSettings(req *SettingsUpdateRequest) error {
+	// Apply audio settings
 	if req.AudioInput != nil {
 		if err := s.config.SetAudioInput(*req.AudioInput); err != nil {
-			return err
+			s.writeError(w, http.StatusInternalServerError, err.Error())
+			return
 		}
 	}
-	return nil
-}
 
-// applySilenceSettings applies silence detection settings from the request.
-func (s *Server) applySilenceSettings(req *SettingsUpdateRequest, cfg *config.Snapshot) error {
+	// Apply silence settings
 	if req.SilenceThreshold != nil {
 		if err := s.config.SetSilenceThreshold(*req.SilenceThreshold); err != nil {
-			return err
+			s.writeError(w, http.StatusInternalServerError, err.Error())
+			return
 		}
 	}
-
 	if req.SilenceDurationMs != nil {
 		if err := s.config.SetSilenceDurationMs(*req.SilenceDurationMs); err != nil {
-			return err
+			s.writeError(w, http.StatusInternalServerError, err.Error())
+			return
 		}
 	}
-
 	if req.SilenceRecoveryMs != nil {
 		if err := s.config.SetSilenceRecoveryMs(*req.SilenceRecoveryMs); err != nil {
-			return err
+			s.writeError(w, http.StatusInternalServerError, err.Error())
+			return
 		}
 	}
-
 	if req.SilenceDumpEnabled != nil || req.SilenceDumpRetentionDays != nil {
 		enabled := cfg.SilenceDumpEnabled
 		retention := cfg.SilenceDumpRetentionDays
@@ -229,125 +247,110 @@ func (s *Server) applySilenceSettings(req *SettingsUpdateRequest, cfg *config.Sn
 			retention = *req.SilenceDumpRetentionDays
 		}
 		if err := s.config.SetSilenceDump(enabled, retention); err != nil {
-			return err
+			s.writeError(w, http.StatusInternalServerError, err.Error())
+			return
 		}
 	}
 
-	return nil
-}
-
-// applyNotificationSettings applies notification settings from the request.
-func (s *Server) applyNotificationSettings(req *SettingsUpdateRequest, cfg *config.Snapshot) error {
+	// Apply notification settings
 	if req.WebhookURL != nil {
 		if err := s.config.SetWebhookURL(*req.WebhookURL); err != nil {
-			return err
+			s.writeError(w, http.StatusInternalServerError, err.Error())
+			return
 		}
 	}
-
 	if req.LogPath != nil {
 		if err := s.config.SetLogPath(*req.LogPath); err != nil {
-			return err
+			s.writeError(w, http.StatusInternalServerError, err.Error())
+			return
 		}
 	}
 
-	if err := s.applyZabbixSettings(req, cfg); err != nil {
-		return err
+	// Apply Zabbix settings if any field changed
+	if req.ZabbixServer != nil || req.ZabbixPort != nil || req.ZabbixHost != nil || req.ZabbixKey != nil {
+		server := cmp.Or(deref(req.ZabbixServer), cfg.ZabbixServer)
+		port := cmp.Or(deref(req.ZabbixPort), cfg.ZabbixPort)
+		host := cmp.Or(deref(req.ZabbixHost), cfg.ZabbixHost)
+		key := cmp.Or(deref(req.ZabbixKey), cfg.ZabbixKey)
+		if err := s.config.SetZabbixConfig(server, port, host, key); err != nil {
+			s.writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 
-	if err := s.applyGraphSettings(req, cfg); err != nil {
-		return err
+	// Apply Graph settings if any field changed
+	if req.GraphTenantID != nil || req.GraphClientID != nil || req.GraphClientSecret != nil ||
+		req.GraphFromAddress != nil || req.GraphRecipients != nil {
+		tenantID := cmp.Or(deref(req.GraphTenantID), cfg.GraphTenantID)
+		clientID := cmp.Or(deref(req.GraphClientID), cfg.GraphClientID)
+		clientSecret := cmp.Or(deref(req.GraphClientSecret), cfg.GraphClientSecret)
+		fromAddr := cmp.Or(deref(req.GraphFromAddress), cfg.GraphFromAddress)
+		recipients := cmp.Or(deref(req.GraphRecipients), cfg.GraphRecipients)
+		if err := s.config.SetGraphConfig(tenantID, clientID, clientSecret, fromAddr, recipients); err != nil {
+			s.writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 
-	return nil
+	// Update encoder's silence config
+	s.encoder.UpdateSilenceConfig()
+
+	// Restart encoder if audio input changed (with timeout)
+	if audioInputChanged && s.ffmpegAvailable && s.encoder.State() == types.StateRunning {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			done := make(chan error, 1)
+			go func() {
+				done <- s.encoder.Restart()
+			}()
+
+			select {
+			case err := <-done:
+				if err != nil {
+					slog.Error("failed to restart encoder after audio input change", "error", err)
+				}
+			case <-ctx.Done():
+				slog.Error("encoder restart timed out after audio input change")
+			}
+		}()
+	}
+
+	s.broadcastConfigChanged()
+	s.writeSuccess(w)
 }
 
-// applyZabbixSettings applies Zabbix notification settings.
-func (s *Server) applyZabbixSettings(req *SettingsUpdateRequest, cfg *config.Snapshot) error {
-	if req.ZabbixServer == nil && req.ZabbixPort == nil && req.ZabbixHost == nil && req.ZabbixKey == nil {
-		return nil
+// deref safely dereferences a pointer, returning zero value if nil.
+func deref[T any](p *T) T {
+	if p == nil {
+		var zero T
+		return zero
 	}
-
-	server := cfg.ZabbixServer
-	port := cfg.ZabbixPort
-	host := cfg.ZabbixHost
-	key := cfg.ZabbixKey
-	if req.ZabbixServer != nil {
-		server = *req.ZabbixServer
-	}
-	if req.ZabbixPort != nil {
-		port = *req.ZabbixPort
-	}
-	if req.ZabbixHost != nil {
-		host = *req.ZabbixHost
-	}
-	if req.ZabbixKey != nil {
-		key = *req.ZabbixKey
-	}
-	return s.config.SetZabbixConfig(server, port, host, key)
+	return *p
 }
 
-// applyGraphSettings applies Microsoft Graph email settings.
-func (s *Server) applyGraphSettings(req *SettingsUpdateRequest, cfg *config.Snapshot) error {
-	if req.GraphTenantID == nil && req.GraphClientID == nil && req.GraphClientSecret == nil &&
-		req.GraphFromAddress == nil && req.GraphRecipients == nil {
-		return nil
-	}
+// Output API endpoints
 
-	tenantID := cfg.GraphTenantID
-	clientID := cfg.GraphClientID
-	clientSecret := cfg.GraphClientSecret
-	fromAddr := cfg.GraphFromAddress
-	recipients := cfg.GraphRecipients
-	if req.GraphTenantID != nil {
-		tenantID = *req.GraphTenantID
-	}
-	if req.GraphClientID != nil {
-		clientID = *req.GraphClientID
-	}
-	if req.GraphClientSecret != nil {
-		clientSecret = *req.GraphClientSecret
-	}
-	if req.GraphFromAddress != nil {
-		fromAddr = *req.GraphFromAddress
-	}
-	if req.GraphRecipients != nil {
-		recipients = *req.GraphRecipients
-	}
-	return s.config.SetGraphConfig(tenantID, clientID, clientSecret, fromAddr, recipients)
-}
-
-// handleListOutputs returns all outputs.
+// handleListOutputs returns all configured outputs.
+// This endpoint is part of the public API for external integrations.
 // GET /api/outputs
 func (s *Server) handleListOutputs(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
 	s.writeJSON(w, http.StatusOK, cfg.Outputs)
 }
 
-// handleCreateOutput creates a new output.
-// POST /api/outputs
-func (s *Server) handleCreateOutput(w http.ResponseWriter, r *http.Request) {
-	s.createOutput(w, r)
-}
-
 // handleGetOutput returns a single output by ID.
+// This endpoint is part of the public API for external integrations.
 // GET /api/outputs/{id}
 func (s *Server) handleGetOutput(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	s.getOutput(w, id)
-}
-
-// handleUpdateOutput updates an output by ID.
-// PUT /api/outputs/{id}
-func (s *Server) handleUpdateOutput(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	s.updateOutput(w, r, id)
-}
-
-// handleDeleteOutput deletes an output by ID.
-// DELETE /api/outputs/{id}
-func (s *Server) handleDeleteOutput(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	s.deleteOutput(w, id)
+	output := s.config.Output(id)
+	if output == nil {
+		s.writeError(w, http.StatusNotFound, "Output not found")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, output)
 }
 
 // OutputRequest is the request body for creating/updating outputs.
@@ -361,7 +364,9 @@ type OutputRequest struct {
 	MaxRetries int    `json:"max_retries"`
 }
 
-func (s *Server) createOutput(w http.ResponseWriter, r *http.Request) {
+// handleCreateOutput creates a new output.
+// POST /api/outputs
+func (s *Server) handleCreateOutput(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[OutputRequest](s, w, r)
 	if !ok {
 		return
@@ -376,13 +381,19 @@ func (s *Server) createOutput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	codec, valid := validateCodec(req.Codec)
+	if !valid {
+		s.writeError(w, http.StatusBadRequest, "invalid codec: must be wav, mp3, mp2, or ogg")
+		return
+	}
+
 	output := &types.Output{
-		Enabled:    true, // New outputs start enabled
+		Enabled:    true,
 		Host:       req.Host,
 		Port:       req.Port,
 		Password:   req.Password,
 		StreamID:   req.StreamID,
-		Codec:      types.Codec(req.Codec),
+		Codec:      codec,
 		MaxRetries: req.MaxRetries,
 	}
 
@@ -391,7 +402,6 @@ func (s *Server) createOutput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Start the output if encoder is running
 	if s.encoder.State() == types.StateRunning {
 		if err := s.encoder.StartOutput(output.ID); err != nil {
 			slog.Warn("failed to start new output", "output_id", output.ID, "error", err)
@@ -402,16 +412,10 @@ func (s *Server) createOutput(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusCreated, output)
 }
 
-func (s *Server) getOutput(w http.ResponseWriter, id string) {
-	output := s.config.Output(id)
-	if output == nil {
-		s.writeError(w, http.StatusNotFound, "Output not found")
-		return
-	}
-	s.writeJSON(w, http.StatusOK, output)
-}
-
-func (s *Server) updateOutput(w http.ResponseWriter, r *http.Request, id string) {
+// handleUpdateOutput updates an output by ID.
+// PUT /api/outputs/{id}
+func (s *Server) handleUpdateOutput(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
 	existing := s.config.Output(id)
 	if existing == nil {
 		s.writeError(w, http.StatusNotFound, "Output not found")
@@ -423,7 +427,16 @@ func (s *Server) updateOutput(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 
-	// Update fields
+	// Validate codec if provided
+	if req.Codec != "" {
+		codec, valid := validateCodec(req.Codec)
+		if !valid {
+			s.writeError(w, http.StatusBadRequest, "invalid codec: must be wav, mp3, mp2, or ogg")
+			return
+		}
+		existing.Codec = codec
+	}
+
 	existing.Enabled = req.Enabled
 	if req.Host != "" {
 		existing.Host = req.Host
@@ -437,9 +450,6 @@ func (s *Server) updateOutput(w http.ResponseWriter, r *http.Request, id string)
 	if req.StreamID != "" {
 		existing.StreamID = req.StreamID
 	}
-	if req.Codec != "" {
-		existing.Codec = types.Codec(req.Codec)
-	}
 	if req.MaxRetries > 0 {
 		existing.MaxRetries = req.MaxRetries
 	}
@@ -449,18 +459,24 @@ func (s *Server) updateOutput(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 
-	// Restart output if encoder is running and settings changed
+	// Restart output if encoder is running (with proper synchronization)
 	if s.encoder.State() == types.StateRunning {
-		// Stop and restart the output
 		if err := s.encoder.StopOutput(id); err != nil {
 			slog.Warn("failed to stop output for restart", "output_id", id, "error", err)
 		}
 		go func() {
-			time.Sleep(types.OutputRestartDelay)
-			if s.encoder.State() == types.StateRunning {
-				if err := s.encoder.StartOutput(id); err != nil {
-					slog.Warn("failed to restart output", "output_id", id, "error", err)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			select {
+			case <-time.After(types.OutputRestartDelay):
+				if s.encoder.State() == types.StateRunning {
+					if err := s.encoder.StartOutput(id); err != nil {
+						slog.Warn("failed to restart output", "output_id", id, "error", err)
+					}
 				}
+			case <-ctx.Done():
+				slog.Warn("output restart cancelled", "output_id", id)
 			}
 		}()
 	}
@@ -469,13 +485,15 @@ func (s *Server) updateOutput(w http.ResponseWriter, r *http.Request, id string)
 	s.writeJSON(w, http.StatusOK, existing)
 }
 
-func (s *Server) deleteOutput(w http.ResponseWriter, id string) {
+// handleDeleteOutput deletes an output by ID.
+// DELETE /api/outputs/{id}
+func (s *Server) handleDeleteOutput(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
 	if s.config.Output(id) == nil {
 		s.writeError(w, http.StatusNotFound, "Output not found")
 		return
 	}
 
-	// Stop output if running
 	if err := s.encoder.StopOutput(id); err != nil {
 		slog.Warn("failed to stop output before delete", "output_id", id, "error", err)
 	}
@@ -486,61 +504,30 @@ func (s *Server) deleteOutput(w http.ResponseWriter, id string) {
 	}
 
 	s.broadcastConfigChanged()
-	s.writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+	s.writeSuccess(w)
 }
 
-// handleListRecorders returns all recorders.
+// Recorder API endpoints
+
+// handleListRecorders returns all configured recorders.
+// This endpoint is part of the public API for external integrations.
 // GET /api/recorders
 func (s *Server) handleListRecorders(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
 	s.writeJSON(w, http.StatusOK, cfg.Recorders)
 }
 
-// handleCreateRecorder creates a new recorder.
-// POST /api/recorders
-func (s *Server) handleCreateRecorder(w http.ResponseWriter, r *http.Request) {
-	s.createRecorder(w, r)
-}
-
 // handleGetRecorder returns a single recorder by ID.
+// This endpoint is part of the public API for external integrations.
 // GET /api/recorders/{id}
 func (s *Server) handleGetRecorder(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	s.getRecorder(w, id)
-}
-
-// handleUpdateRecorder updates a recorder by ID.
-// PUT /api/recorders/{id}
-func (s *Server) handleUpdateRecorder(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	s.updateRecorder(w, r, id)
-}
-
-// handleDeleteRecorder deletes a recorder by ID.
-// DELETE /api/recorders/{id}
-func (s *Server) handleDeleteRecorder(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	s.deleteRecorder(w, id)
-}
-
-// handleStartRecorder starts a recorder by ID.
-// POST /api/recorders/{id}/start
-func (s *Server) handleStartRecorder(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	s.startRecorderAPI(w, r, id)
-}
-
-// handleStopRecorder stops a recorder by ID.
-// POST /api/recorders/{id}/stop
-func (s *Server) handleStopRecorder(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	s.stopRecorderAPI(w, r, id)
-}
-
-// handleTestS3 tests S3 connectivity.
-// POST /api/recorders/test-s3
-func (s *Server) handleTestS3(w http.ResponseWriter, r *http.Request) {
-	s.testS3API(w, r)
+	recorder := s.config.Recorder(id)
+	if recorder == nil {
+		s.writeError(w, http.StatusNotFound, "Recorder not found")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, recorder)
 }
 
 // RecorderRequest is the request body for creating/updating recorders.
@@ -558,7 +545,9 @@ type RecorderRequest struct {
 	RetentionDays     int    `json:"retention_days"`
 }
 
-func (s *Server) createRecorder(w http.ResponseWriter, r *http.Request) {
+// handleCreateRecorder creates a new recorder.
+// POST /api/recorders
+func (s *Server) handleCreateRecorder(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[RecorderRequest](s, w, r)
 	if !ok {
 		return
@@ -569,12 +558,30 @@ func (s *Server) createRecorder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	codec, valid := validateCodec(req.Codec)
+	if !valid {
+		s.writeError(w, http.StatusBadRequest, "invalid codec: must be wav, mp3, mp2, or ogg")
+		return
+	}
+
+	rotationMode, valid := validateRotationMode(req.RotationMode)
+	if !valid {
+		s.writeError(w, http.StatusBadRequest, "invalid rotation_mode: must be hourly")
+		return
+	}
+
+	storageMode, valid := validateStorageMode(req.StorageMode)
+	if !valid {
+		s.writeError(w, http.StatusBadRequest, "invalid storage_mode: must be local, s3, or both")
+		return
+	}
+
 	recorder := &types.Recorder{
 		Name:              req.Name,
 		Enabled:           true,
-		Codec:             types.Codec(req.Codec),
-		RotationMode:      types.RotationMode(req.RotationMode),
-		StorageMode:       types.StorageMode(req.StorageMode),
+		Codec:             codec,
+		RotationMode:      rotationMode,
+		StorageMode:       storageMode,
 		LocalPath:         req.LocalPath,
 		S3Endpoint:        req.S3Endpoint,
 		S3Bucket:          req.S3Bucket,
@@ -583,7 +590,6 @@ func (s *Server) createRecorder(w http.ResponseWriter, r *http.Request) {
 		RetentionDays:     req.RetentionDays,
 	}
 
-	// AddRecorder saves to config and registers with recording manager
 	if err := s.encoder.AddRecorder(recorder); err != nil {
 		s.writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -593,16 +599,10 @@ func (s *Server) createRecorder(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusCreated, recorder)
 }
 
-func (s *Server) getRecorder(w http.ResponseWriter, id string) {
-	recorder := s.config.Recorder(id)
-	if recorder == nil {
-		s.writeError(w, http.StatusNotFound, "Recorder not found")
-		return
-	}
-	s.writeJSON(w, http.StatusOK, recorder)
-}
-
-func (s *Server) updateRecorder(w http.ResponseWriter, r *http.Request, id string) {
+// handleUpdateRecorder updates a recorder by ID.
+// PUT /api/recorders/{id}
+func (s *Server) handleUpdateRecorder(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
 	existing := s.config.Recorder(id)
 	if existing == nil {
 		s.writeError(w, http.StatusNotFound, "Recorder not found")
@@ -614,19 +614,35 @@ func (s *Server) updateRecorder(w http.ResponseWriter, r *http.Request, id strin
 		return
 	}
 
-	// Update fields
+	// Validate enums if provided
+	if req.Codec != "" {
+		codec, valid := validateCodec(req.Codec)
+		if !valid {
+			s.writeError(w, http.StatusBadRequest, "invalid codec: must be wav, mp3, mp2, or ogg")
+			return
+		}
+		existing.Codec = codec
+	}
+	if req.RotationMode != "" {
+		rotationMode, valid := validateRotationMode(req.RotationMode)
+		if !valid {
+			s.writeError(w, http.StatusBadRequest, "invalid rotation_mode: must be hourly")
+			return
+		}
+		existing.RotationMode = rotationMode
+	}
+	if req.StorageMode != "" {
+		storageMode, valid := validateStorageMode(req.StorageMode)
+		if !valid {
+			s.writeError(w, http.StatusBadRequest, "invalid storage_mode: must be local, s3, or both")
+			return
+		}
+		existing.StorageMode = storageMode
+	}
+
 	existing.Enabled = req.Enabled
 	if req.Name != "" {
 		existing.Name = req.Name
-	}
-	if req.Codec != "" {
-		existing.Codec = types.Codec(req.Codec)
-	}
-	if req.RotationMode != "" {
-		existing.RotationMode = types.RotationMode(req.RotationMode)
-	}
-	if req.StorageMode != "" {
-		existing.StorageMode = types.StorageMode(req.StorageMode)
 	}
 	if req.LocalPath != "" {
 		existing.LocalPath = req.LocalPath
@@ -647,7 +663,6 @@ func (s *Server) updateRecorder(w http.ResponseWriter, r *http.Request, id strin
 		existing.RetentionDays = req.RetentionDays
 	}
 
-	// UpdateRecorder saves to config and updates recording manager
 	if err := s.encoder.UpdateRecorder(existing); err != nil {
 		s.writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -657,46 +672,54 @@ func (s *Server) updateRecorder(w http.ResponseWriter, r *http.Request, id strin
 	s.writeJSON(w, http.StatusOK, existing)
 }
 
-func (s *Server) deleteRecorder(w http.ResponseWriter, id string) {
+// handleDeleteRecorder deletes a recorder by ID.
+// DELETE /api/recorders/{id}
+func (s *Server) handleDeleteRecorder(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
 	if s.config.Recorder(id) == nil {
 		s.writeError(w, http.StatusNotFound, "Recorder not found")
 		return
 	}
 
-	// RemoveRecorder stops recording, removes from manager, and removes from config
 	if err := s.encoder.RemoveRecorder(id); err != nil {
 		s.writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	s.broadcastConfigChanged()
-	s.writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+	s.writeSuccess(w)
 }
 
-func (s *Server) startRecorderAPI(w http.ResponseWriter, r *http.Request, id string) {
-	// Start encoder if not running
-	if s.encoder.State() == types.StateStopped {
-		if err := s.encoder.Start(); err != nil {
-			s.writeError(w, http.StatusInternalServerError, "Failed to start encoder: "+err.Error())
+// handleRecorderAction handles start/stop actions for a recorder.
+// POST /api/recorders/{id}/start
+// POST /api/recorders/{id}/stop
+func (s *Server) handleRecorderAction(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	action := r.PathValue("action")
+
+	switch action {
+	case "start":
+		if s.encoder.State() == types.StateStopped {
+			if err := s.encoder.Start(); err != nil {
+				s.writeError(w, http.StatusInternalServerError, "Failed to start encoder: "+err.Error())
+				return
+			}
+		}
+		if err := s.encoder.StartRecorder(id); err != nil {
+			s.writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-	}
-
-	if err := s.encoder.StartRecorder(id); err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error())
+	case "stop":
+		if err := s.encoder.StopRecorder(id); err != nil {
+			s.writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	default:
+		s.writeError(w, http.StatusBadRequest, "invalid action: must be start or stop")
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, map[string]bool{"success": true})
-}
-
-func (s *Server) stopRecorderAPI(w http.ResponseWriter, r *http.Request, id string) {
-	if err := s.encoder.StopRecorder(id); err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	s.writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+	s.writeSuccess(w)
 }
 
 // S3TestRequest is the request body for testing S3 connectivity.
@@ -707,7 +730,9 @@ type S3TestRequest struct {
 	SecretKey string `json:"s3_secret_access_key"`
 }
 
-func (s *Server) testS3API(w http.ResponseWriter, r *http.Request) {
+// handleTestS3 tests S3 connectivity.
+// POST /api/recorders/test-s3
+func (s *Server) handleTestS3(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[S3TestRequest](s, w, r)
 	if !ok {
 		return
@@ -726,7 +751,6 @@ func (s *Server) testS3API(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Test S3 connection using recording package
 	cfg := &types.Recorder{
 		S3Endpoint:        req.Endpoint,
 		S3Bucket:          req.Bucket,
@@ -735,14 +759,11 @@ func (s *Server) testS3API(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := recording.TestRecorderS3Connection(cfg); err != nil {
-		s.writeJSON(w, http.StatusOK, map[string]any{
-			"success": false,
-			"error":   err.Error(),
-		})
+		s.writeTestResult(w, false, err.Error())
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+	s.writeSuccess(w)
 }
 
 // Notification test endpoints
@@ -779,16 +800,16 @@ func (s *Server) handleAPITestWebhook(w http.ResponseWriter, r *http.Request) {
 	url := cmp.Or(req.WebhookURL, cfg.WebhookURL)
 
 	if url == "" {
-		s.writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": "No webhook URL configured"})
+		s.writeTestResult(w, false, "No webhook URL configured")
 		return
 	}
 
 	if err := notify.SendTestWebhook(url, cfg.StationName); err != nil {
-		s.writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": err.Error()})
+		s.writeTestResult(w, false, err.Error())
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+	s.writeSuccess(w)
 }
 
 func (s *Server) handleAPITestLog(w http.ResponseWriter, r *http.Request) {
@@ -800,16 +821,16 @@ func (s *Server) handleAPITestLog(w http.ResponseWriter, r *http.Request) {
 	path := cmp.Or(req.LogPath, s.config.Snapshot().LogPath)
 
 	if path == "" {
-		s.writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": "No log path configured"})
+		s.writeTestResult(w, false, "No log path configured")
 		return
 	}
 
 	if err := notify.WriteTestLog(path); err != nil {
-		s.writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": err.Error()})
+		s.writeTestResult(w, false, err.Error())
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+	s.writeSuccess(w)
 }
 
 func (s *Server) handleAPITestEmail(w http.ResponseWriter, r *http.Request) {
@@ -818,7 +839,6 @@ func (s *Server) handleAPITestEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use request values or fall back to saved config
 	cfg := s.config.Snapshot()
 	tenantID := cmp.Or(req.GraphTenantID, cfg.GraphTenantID)
 	clientID := cmp.Or(req.GraphClientID, cfg.GraphClientID)
@@ -827,7 +847,7 @@ func (s *Server) handleAPITestEmail(w http.ResponseWriter, r *http.Request) {
 	recipients := cmp.Or(req.GraphRecipients, cfg.GraphRecipients)
 
 	if tenantID == "" || clientID == "" || clientSecret == "" {
-		s.writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Email not fully configured"})
+		s.writeTestResult(w, false, "Email not fully configured")
 		return
 	}
 
@@ -840,11 +860,11 @@ func (s *Server) handleAPITestEmail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := notify.SendTestEmail(graphCfg, cfg.StationName); err != nil {
-		s.writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": err.Error()})
+		s.writeTestResult(w, false, err.Error())
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+	s.writeSuccess(w)
 }
 
 func (s *Server) handleAPITestZabbix(w http.ResponseWriter, r *http.Request) {
@@ -853,7 +873,6 @@ func (s *Server) handleAPITestZabbix(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use request values or fall back to saved config
 	cfg := s.config.Snapshot()
 	server := cmp.Or(req.ZabbixServer, cfg.ZabbixServer)
 	port := cmp.Or(req.ZabbixPort, cfg.ZabbixPort)
@@ -861,21 +880,20 @@ func (s *Server) handleAPITestZabbix(w http.ResponseWriter, r *http.Request) {
 	key := cmp.Or(req.ZabbixKey, cfg.ZabbixKey)
 
 	if server == "" || host == "" || key == "" {
-		s.writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Zabbix not fully configured"})
+		s.writeTestResult(w, false, "Zabbix not fully configured")
 		return
 	}
 
 	if err := notify.SendTestZabbix(server, port, host, key); err != nil {
-		s.writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": err.Error()})
+		s.writeTestResult(w, false, err.Error())
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+	s.writeSuccess(w)
 }
 
 // handleAPIRegenerateKey generates a new recording API key.
 func (s *Server) handleAPIRegenerateKey(w http.ResponseWriter, r *http.Request) {
-	// Generate new API key
 	newKey, err := config.GenerateAPIKey()
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, err.Error())
@@ -888,28 +906,20 @@ func (s *Server) handleAPIRegenerateKey(w http.ResponseWriter, r *http.Request) 
 	}
 
 	s.broadcastConfigChanged()
-	s.writeJSON(w, http.StatusOK, map[string]string{
-		"api_key": newKey,
-	})
+	s.writeJSON(w, http.StatusOK, map[string]string{"api_key": newKey})
 }
 
 // handleAPIViewLog returns the silence log entries.
 func (s *Server) handleAPIViewLog(w http.ResponseWriter, r *http.Request) {
 	logPath := s.config.LogPath()
 	if logPath == "" {
-		s.writeJSON(w, http.StatusOK, map[string]any{
-			"success": false,
-			"error":   "Log file path not configured",
-		})
+		s.writeTestResult(w, false, "Log file path not configured")
 		return
 	}
 
 	entries, err := readSilenceLog(logPath, 100)
 	if err != nil {
-		s.writeJSON(w, http.StatusOK, map[string]any{
-			"success": false,
-			"error":   err.Error(),
-		})
+		s.writeTestResult(w, false, err.Error())
 		return
 	}
 
@@ -936,7 +946,6 @@ func readSilenceLog(logPath string, maxEntries int) ([]types.SilenceLogEntry, er
 		return []types.SilenceLogEntry{}, nil
 	}
 
-	// Use ring buffer to keep only last maxEntries (memory efficient)
 	ring := make([]types.SilenceLogEntry, maxEntries)
 	count := 0
 
@@ -957,7 +966,6 @@ func readSilenceLog(logPath string, maxEntries int) ([]types.SilenceLogEntry, er
 		return []types.SilenceLogEntry{}, nil
 	}
 
-	// Extract entries from ring buffer in correct order
 	size := min(count, maxEntries)
 	entries := make([]types.SilenceLogEntry, size)
 	start := count - size
@@ -965,14 +973,7 @@ func readSilenceLog(logPath string, maxEntries int) ([]types.SilenceLogEntry, er
 		entries[i] = ring[(start+i)%maxEntries]
 	}
 
-	// Reverse to show newest first
 	slices.Reverse(entries)
 
 	return entries, nil
-}
-
-// defaultEventConfig returns the default event configuration.
-// All events are enabled by default until per-channel event storage is implemented.
-func defaultEventConfig() types.EventConfig {
-	return types.EventConfig{SilenceStart: true, SilenceEnd: true, AudioDump: true}
 }

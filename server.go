@@ -246,8 +246,7 @@ func (s *Server) SetupRoutes() http.Handler {
 	mux.HandleFunc("GET /api/recorders/{id}", auth(s.handleGetRecorder))
 	mux.HandleFunc("PUT /api/recorders/{id}", auth(s.handleUpdateRecorder))
 	mux.HandleFunc("DELETE /api/recorders/{id}", auth(s.handleDeleteRecorder))
-	mux.HandleFunc("POST /api/recorders/{id}/start", auth(s.handleStartRecorder))
-	mux.HandleFunc("POST /api/recorders/{id}/stop", auth(s.handleStopRecorder))
+	mux.HandleFunc("POST /api/recorders/{id}/{action}", auth(s.handleRecorderAction))
 
 	// Notification routes
 	mux.HandleFunc("POST /api/notifications/test/webhook", auth(s.handleAPITestWebhook))

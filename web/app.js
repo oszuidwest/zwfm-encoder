@@ -945,12 +945,13 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
-         * Starts recording via REST API.
+         * Starts or stops recording via REST API.
          * @param {string} id - Recorder ID
+         * @param {string} action - 'start' or 'stop'
          */
-        async startRecorder(id) {
+        async recorderAction(id, action) {
             try {
-                const response = await fetch(`/api/recorders/${id}/start`, {
+                const response = await fetch(`/api/recorders/${id}/${action}`, {
                     method: 'POST'
                 });
 
@@ -959,26 +960,7 @@ document.addEventListener('alpine:init', () => {
                     throw new Error(result.error || `HTTP ${response.status}`);
                 }
             } catch (err) {
-                this.showBanner(`Failed to start recorder: ${err.message}`, 'danger', false);
-            }
-        },
-
-        /**
-         * Stops recording via REST API.
-         * @param {string} id - Recorder ID
-         */
-        async stopRecorder(id) {
-            try {
-                const response = await fetch(`/api/recorders/${id}/stop`, {
-                    method: 'POST'
-                });
-
-                if (!response.ok) {
-                    const result = await response.json();
-                    throw new Error(result.error || `HTTP ${response.status}`);
-                }
-            } catch (err) {
-                this.showBanner(`Failed to stop recorder: ${err.message}`, 'danger', false);
+                this.showBanner(`Failed to ${action} recorder: ${err.message}`, 'danger', false);
             }
         },
 

@@ -291,27 +291,23 @@ type APIConfigResponse struct {
 	SilenceDump       SilenceDumpConfig `json:"silence_dump"`        // Silence dump configuration
 
 	// Notifications - Webhook
-	WebhookURL    string      `json:"webhook_url"`    // Webhook URL for alerts
-	WebhookEvents EventConfig `json:"webhook_events"` // Webhook event subscriptions
+	WebhookURL string `json:"webhook_url"` // Webhook URL for alerts
 
 	// Notifications - Log
-	LogPath   string      `json:"log_path"`   // Log file path
-	LogEvents EventConfig `json:"log_events"` // Log event subscriptions
+	LogPath string `json:"log_path"` // Log file path
 
 	// Notifications - Zabbix
-	ZabbixServer string      `json:"zabbix_server"` // Zabbix server address
-	ZabbixPort   int         `json:"zabbix_port"`   // Zabbix server port
-	ZabbixHost   string      `json:"zabbix_host"`   // Zabbix host name
-	ZabbixKey    string      `json:"zabbix_key"`    // Zabbix item key
-	ZabbixEvents EventConfig `json:"zabbix_events"` // Zabbix event subscriptions
+	ZabbixServer string `json:"zabbix_server"` // Zabbix server address
+	ZabbixPort   int    `json:"zabbix_port"`   // Zabbix server port
+	ZabbixHost   string `json:"zabbix_host"`   // Zabbix host name
+	ZabbixKey    string `json:"zabbix_key"`    // Zabbix item key
 
 	// Notifications - Email (Microsoft Graph)
-	GraphTenantID    string      `json:"graph_tenant_id"`    // Azure AD tenant ID
-	GraphClientID    string      `json:"graph_client_id"`    // App registration client ID
-	GraphFromAddress string      `json:"graph_from_address"` // Shared mailbox address
-	GraphRecipients  string      `json:"graph_recipients"`   // Comma-separated recipients
-	GraphHasSecret   bool        `json:"graph_has_secret"`   // Whether client secret is configured
-	GraphEvents      EventConfig `json:"graph_events"`       // Email event subscriptions
+	GraphTenantID    string `json:"graph_tenant_id"`    // Azure AD tenant ID
+	GraphClientID    string `json:"graph_client_id"`    // App registration client ID
+	GraphFromAddress string `json:"graph_from_address"` // Shared mailbox address
+	GraphRecipients  string `json:"graph_recipients"`   // Comma-separated recipients
+	GraphHasSecret   bool   `json:"graph_has_secret"`   // Whether client secret is configured
 
 	// Recording
 	RecordingAPIKey string `json:"recording_api_key"` // API key for recording control
@@ -319,13 +315,6 @@ type APIConfigResponse struct {
 	// Entities
 	Outputs   []Output   `json:"outputs"`   // Output configurations
 	Recorders []Recorder `json:"recorders"` // Recorder configurations
-}
-
-// EventConfig controls which silence events trigger notifications for a channel.
-type EventConfig struct {
-	SilenceStart bool `json:"silence_start"` // Notify when silence is detected
-	SilenceEnd   bool `json:"silence_end"`   // Notify when audio recovers
-	AudioDump    bool `json:"audio_dump"`    // Include audio dump attachment
 }
 
 // WSLevelsResponse is sent to clients with audio level updates.
