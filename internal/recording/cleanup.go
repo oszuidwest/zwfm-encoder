@@ -2,6 +2,7 @@ package recording
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"maps"
 	"os"
@@ -149,7 +150,11 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 	safeName := sanitizeFilename(cfg.Name)
 	prefix := "recordings/" + safeName + "/"
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeoutCause(
+		context.Background(),
+		5*time.Minute,
+		errors.New("s3 cleanup timeout"),
+	)
 	defer cancel()
 
 	var deleted int
@@ -213,7 +218,7 @@ func extractDateFromFilename(filename string) (time.Time, bool) {
 		return time.Time{}, false
 	}
 
-	date, err := time.Parse("2006-01-02", matches[1])
+	date, err := time.Parse(time.DateOnly, matches[1])
 	if err != nil {
 		return time.Time{}, false
 	}

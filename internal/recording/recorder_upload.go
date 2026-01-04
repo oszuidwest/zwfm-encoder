@@ -2,6 +2,7 @@ package recording
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -77,7 +78,11 @@ func (r *GenericRecorder) uploadWorker() {
 
 // uploadFile uploads a single file to S3.
 func (r *GenericRecorder) uploadFile(req uploadRequest) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeoutCause(
+		context.Background(),
+		5*time.Minute,
+		errors.New("s3 upload timeout"),
+	)
 	defer cancel()
 
 	file, err := os.Open(req.localPath)

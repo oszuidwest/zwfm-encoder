@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -95,7 +96,11 @@ type githubRelease struct {
 
 // check retrieves the latest release information.
 func (vc *VersionChecker) check() bool {
-	ctx, cancel := context.WithTimeout(context.Background(), versionCheckTimeout)
+	ctx, cancel := context.WithTimeoutCause(
+		context.Background(),
+		versionCheckTimeout,
+		errors.New("github API request timeout"),
+	)
 	defer cancel()
 
 	url := "https://api.github.com/repos/" + githubRepo + "/releases/latest"

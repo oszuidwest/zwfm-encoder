@@ -4,6 +4,7 @@ package silencedump
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -259,7 +260,11 @@ func encodeToMP3(ffmpegPath, outputDir string, pcm []byte, silenceStart time.Tim
 	result.FilePath = filepath.Join(outputDir, result.Filename)
 
 	// Build FFmpeg command
-	ctx, cancel := context.WithTimeout(context.Background(), encodeTimeout)
+	ctx, cancel := context.WithTimeoutCause(
+		context.Background(),
+		encodeTimeout,
+		errors.New("ffmpeg encode timeout"),
+	)
 	defer cancel()
 
 	args := []string{

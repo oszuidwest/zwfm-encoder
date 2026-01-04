@@ -226,7 +226,7 @@ func extractDateFromFilename(filename string) (time.Time, bool) {
 		return time.Time{}, false
 	}
 
-	date, err := time.Parse("2006-01-02", matches[1])
+	date, err := time.Parse(time.DateOnly, matches[1])
 	if err != nil {
 		return time.Time{}, false
 	}

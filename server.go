@@ -224,8 +224,8 @@ func (s *Server) SetupRoutes() http.Handler {
 	mux.HandleFunc("/favicon.svg", s.handleFavicon)
 
 	// Recording API routes (API key auth)
-	mux.HandleFunc("/api/recordings/start", s.apiKeyAuth(s.handleStartRecording))
-	mux.HandleFunc("/api/recordings/stop", s.apiKeyAuth(s.handleStopRecording))
+	mux.HandleFunc("POST /api/recordings/start", s.apiKeyAuth(s.handleStartRecording))
+	mux.HandleFunc("POST /api/recordings/stop", s.apiKeyAuth(s.handleStopRecording))
 
 	// REST API routes (session auth)
 	mux.HandleFunc("GET /api/config", auth(s.handleAPIConfig))
@@ -433,11 +433,6 @@ func (s *Server) apiKeyAuth(next http.HandlerFunc) http.HandlerFunc {
 
 // handleStartRecording initiates recording for the specified recorder.
 func (s *Server) handleStartRecording(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	recorderID := r.URL.Query().Get("recorder_id")
 	if recorderID == "" {
 		w.Header().Set("Content-Type", "application/json")
@@ -466,11 +461,6 @@ func (s *Server) handleStartRecording(w http.ResponseWriter, r *http.Request) {
 
 // handleStopRecording stops recording for the specified recorder.
 func (s *Server) handleStopRecording(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	recorderID := r.URL.Query().Get("recorder_id")
 	if recorderID == "" {
 		w.Header().Set("Content-Type", "application/json")

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 
 	"github.com/gorilla/websocket"
@@ -52,10 +53,11 @@ func checkOrigin(r *http.Request) bool {
 		return true
 	}
 
-	// Check private IP ranges using net.IP
-	ip := net.ParseIP(host)
-	if ip != nil && (ip.IsLoopback() || ip.IsPrivate()) {
-		return true
+	// Check private IP ranges using net/netip (Go 1.18+, more efficient)
+	if addr, err := netip.ParseAddr(host); err == nil {
+		if addr.IsLoopback() || addr.IsPrivate() {
+			return true
+		}
 	}
 
 	slog.Warn("rejected WebSocket connection", "origin", origin, "host", host)

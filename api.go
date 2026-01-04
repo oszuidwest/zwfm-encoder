@@ -50,11 +50,6 @@ func parseJSON[T any](s *Server, w http.ResponseWriter, r *http.Request) (T, boo
 // handleAPIConfig returns the full configuration for the frontend.
 // GET /api/config
 func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-
 	cfg := s.config.Snapshot()
 
 	resp := types.APIConfigResponse{
@@ -109,11 +104,6 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 // handleAPIDevices returns available audio devices.
 // GET /api/devices
 func (s *Server) handleAPIDevices(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"devices": audio.ListDevices(),
 	})
@@ -154,11 +144,6 @@ type SettingsUpdateRequest struct {
 // handleAPISettings updates all settings atomically.
 // POST /api/settings
 func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-
 	req, ok := parseJSON[SettingsUpdateRequest](s, w, r)
 	if !ok {
 		return
@@ -785,11 +770,6 @@ type NotificationTestRequest struct {
 }
 
 func (s *Server) handleAPITestWebhook(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-
 	req, ok := parseJSON[NotificationTestRequest](s, w, r)
 	if !ok {
 		return
@@ -812,11 +792,6 @@ func (s *Server) handleAPITestWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPITestLog(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-
 	req, ok := parseJSON[NotificationTestRequest](s, w, r)
 	if !ok {
 		return
@@ -838,11 +813,6 @@ func (s *Server) handleAPITestLog(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPITestEmail(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-
 	req, ok := parseJSON[NotificationTestRequest](s, w, r)
 	if !ok {
 		return
@@ -878,11 +848,6 @@ func (s *Server) handleAPITestEmail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPITestZabbix(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-
 	req, ok := parseJSON[NotificationTestRequest](s, w, r)
 	if !ok {
 		return
@@ -910,11 +875,6 @@ func (s *Server) handleAPITestZabbix(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIRegenerateKey generates a new recording API key.
 func (s *Server) handleAPIRegenerateKey(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-
 	// Generate new API key
 	newKey, err := config.GenerateAPIKey()
 	if err != nil {
@@ -935,11 +895,6 @@ func (s *Server) handleAPIRegenerateKey(w http.ResponseWriter, r *http.Request) 
 
 // handleAPIViewLog returns the silence log entries.
 func (s *Server) handleAPIViewLog(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-
 	logPath := s.config.LogPath()
 	if logPath == "" {
 		s.writeJSON(w, http.StatusOK, map[string]any{
@@ -966,6 +921,7 @@ func (s *Server) handleAPIViewLog(w http.ResponseWriter, r *http.Request) {
 }
 
 // readSilenceLog reads the last N entries from the silence log file.
+// Uses strings.Lines() iterator with ring buffer for memory efficiency.
 func readSilenceLog(logPath string, maxEntries int) ([]types.SilenceLogEntry, error) {
 	data, err := os.ReadFile(logPath)
 	if os.IsNotExist(err) {
@@ -975,16 +931,16 @@ func readSilenceLog(logPath string, maxEntries int) ([]types.SilenceLogEntry, er
 		return nil, err
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) == 0 || (len(lines) == 1 && lines[0] == "") {
+	content := strings.TrimSpace(string(data))
+	if content == "" {
 		return []types.SilenceLogEntry{}, nil
 	}
 
-	start := max(0, len(lines)-maxEntries)
-	lines = lines[start:]
+	// Use ring buffer to keep only last maxEntries (memory efficient)
+	ring := make([]types.SilenceLogEntry, maxEntries)
+	count := 0
 
-	entries := make([]types.SilenceLogEntry, 0, len(lines))
-	for _, line := range lines {
+	for line := range strings.Lines(content) {
 		if line == "" {
 			continue
 		}
@@ -993,7 +949,20 @@ func readSilenceLog(logPath string, maxEntries int) ([]types.SilenceLogEntry, er
 			slog.Warn("failed to parse silence log entry", "line", line, "error", err)
 			continue
 		}
-		entries = append(entries, entry)
+		ring[count%maxEntries] = entry
+		count++
+	}
+
+	if count == 0 {
+		return []types.SilenceLogEntry{}, nil
+	}
+
+	// Extract entries from ring buffer in correct order
+	size := min(count, maxEntries)
+	entries := make([]types.SilenceLogEntry, size)
+	start := count - size
+	for i := range size {
+		entries[i] = ring[(start+i)%maxEntries]
 	}
 
 	// Reverse to show newest first
