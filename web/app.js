@@ -41,6 +41,9 @@ const DB_RANGE = 60;              // dB range (0 to -60)
 const CLIP_TIMEOUT_MS = 1500;     // Peak hold / clip indicator timeout
 const WS_RECONNECT_MS = 1000;     // WebSocket reconnection delay
 const TEST_FEEDBACK_MS = 2000;    // Test result display duration
+const TOAST_DURATION_SUCCESS = 3000;  // Success toast auto-dismiss
+const TOAST_DURATION_ERROR = 5000;    // Error toast auto-dismiss
+const MAX_TOASTS = 3;             // Maximum visible toasts
 
 // === API Endpoints ===
 const API = {
@@ -227,6 +230,9 @@ document.addEventListener('alpine:init', () => {
             type: 'info' // info, warning, danger
         },
 
+        toasts: [],
+        _toastIdCounter: 0,
+
         ws: null,
         _bannerTimeout: null,
 
@@ -406,6 +412,11 @@ document.addEventListener('alpine:init', () => {
                 }
             };
 
+            this.ws.onopen = () => {
+                // Clear stale toasts from before disconnect
+                this.clearToasts();
+            };
+
             this.ws.onclose = () => {
                 this.encoder.state = 'connecting';
                 this.resetVuMeter();
@@ -581,6 +592,7 @@ document.addEventListener('alpine:init', () => {
 
         // Navigation
         showDashboard() {
+            this.clearToasts();
             this.view = 'dashboard';
             this.settingsDirty = false;
             this.outputFormDirty = false;
@@ -592,6 +604,7 @@ document.addEventListener('alpine:init', () => {
          * Always fetches fresh data from server before opening.
          */
         async showSettings() {
+            this.clearToasts();
             // Fetch fresh config before opening settings
             await this.loadConfig();
 
@@ -676,9 +689,10 @@ document.addEventListener('alpine:init', () => {
                     const data = await response.json();
                     throw new Error(data.error || `HTTP ${response.status}`);
                 }
+                this.showToast('Audio input updated', 'success');
             } catch (err) {
                 this.config.audio_input = prev;
-                this.showBanner(`Failed to update audio input: ${err.message}`, 'danger', false);
+                this.showToast(`Failed to update audio input: ${err.message}`, 'error');
             }
         },
 
@@ -727,14 +741,16 @@ document.addEventListener('alpine:init', () => {
                 // Reload config in background to sync state
                 this.loadConfig();
                 this.showDashboard();
+                this.showToast('Settings saved', 'success');
             } catch (err) {
-                this.showBanner(`Failed to save settings: ${err.message}`, 'danger', false);
+                this.showToast(`Failed to save settings: ${err.message}`, 'error');
             } finally {
                 this.saving = false;
             }
         },
 
         showOutputForm(id = null) {
+            this.clearToasts();
             if (id) {
                 const output = this.outputs.find(o => o.id === id);
                 if (!output) return;
@@ -816,9 +832,11 @@ document.addEventListener('alpine:init', () => {
 
                 // Reload config in background to sync full state
                 this.loadConfig();
+                const toastMsg = this.isEditMode ? 'Output updated' : 'Output added';
                 this.showDashboard();
+                this.showToast(toastMsg, 'success');
             } catch (err) {
-                this.showBanner(`Failed to save output: ${err.message}`, 'danger', false);
+                this.showToast(`Failed to save output: ${err.message}`, 'error');
             }
         },
 
@@ -845,9 +863,10 @@ document.addEventListener('alpine:init', () => {
 
                 // Success - config_changed will trigger loadConfig()
                 if (returnToDashboard) this.showDashboard();
+                this.showToast('Output deleted', 'success');
             } catch (err) {
                 delete this.deletingOutputs[id];
-                this.showBanner(`Failed to delete output: ${err.message}`, 'danger', false);
+                this.showToast(`Failed to delete output: ${err.message}`, 'error');
             }
         },
 
@@ -862,6 +881,7 @@ document.addEventListener('alpine:init', () => {
          * @param {string|null} id - Recorder ID for editing, null for new
          */
         showRecorderForm(id = null) {
+            this.clearToasts();
             if (id) {
                 const recorder = this.recorders.find(r => r.id === id);
                 if (!recorder) return;
@@ -903,7 +923,7 @@ document.addEventListener('alpine:init', () => {
 
             // Validate required fields
             if (!name) {
-                this.showBanner('Name is required', 'danger', true);
+                this.showToast('Name is required', 'error');
                 return;
             }
 
@@ -912,20 +932,20 @@ document.addEventListener('alpine:init', () => {
             const needsS3 = storageMode === 's3' || storageMode === 'both';
 
             if (needsLocal && !localPath) {
-                this.showBanner('Local Path is required', 'danger', true);
+                this.showToast('Local Path is required', 'error');
                 return;
             }
             if (needsS3) {
                 if (!bucket) {
-                    this.showBanner('S3 Bucket is required', 'danger', true);
+                    this.showToast('S3 Bucket is required', 'error');
                     return;
                 }
                 if (!accessKey) {
-                    this.showBanner('S3 Access Key ID is required', 'danger', true);
+                    this.showToast('S3 Access Key ID is required', 'error');
                     return;
                 }
                 if (!this.isRecorderEditMode && !secretKey) {
-                    this.showBanner('S3 Secret Access Key is required', 'danger', true);
+                    this.showToast('S3 Secret Access Key is required', 'error');
                     return;
                 }
             }
@@ -983,9 +1003,11 @@ document.addEventListener('alpine:init', () => {
 
                 // Reload config in background to sync full state
                 this.loadConfig();
+                const toastMsg = this.isRecorderEditMode ? 'Recorder updated' : 'Recorder added';
                 this.showDashboard();
+                this.showToast(toastMsg, 'success');
             } catch (err) {
-                this.showBanner(`Failed to save recorder: ${err.message}`, 'danger', false);
+                this.showToast(`Failed to save recorder: ${err.message}`, 'error');
             }
         },
 
@@ -1012,9 +1034,10 @@ document.addEventListener('alpine:init', () => {
 
                 // Success - config_changed will trigger loadConfig()
                 if (returnToDashboard) this.showDashboard();
+                this.showToast('Recorder deleted', 'success');
             } catch (err) {
                 delete this.deletingRecorders[id];
-                this.showBanner(`Failed to delete recorder: ${err.message}`, 'danger', false);
+                this.showToast(`Failed to delete recorder: ${err.message}`, 'error');
             }
         },
 
@@ -1034,7 +1057,7 @@ document.addEventListener('alpine:init', () => {
                     throw new Error(result.error || `HTTP ${response.status}`);
                 }
             } catch (err) {
-                this.showBanner(`Failed to ${action} recorder: ${err.message}`, 'danger', false);
+                this.showToast(`Failed to ${action} recorder: ${err.message}`, 'error');
             }
         },
 
@@ -1062,7 +1085,7 @@ document.addEventListener('alpine:init', () => {
                 this.testStates.recorderS3.text = response.ok ? 'Connected!' : 'Failed';
 
                 if (!response.ok) {
-                    this.showBanner(`S3 test failed: ${result.error || 'Unknown error'}`, 'danger', false);
+                    this.showToast(`S3 test failed: ${result.error || 'Unknown error'}`, 'error');
                 }
 
                 setTimeout(() => {
@@ -1071,7 +1094,7 @@ document.addEventListener('alpine:init', () => {
             } catch (err) {
                 this.testStates.recorderS3.pending = false;
                 this.testStates.recorderS3.text = 'Failed';
-                this.showBanner(`S3 test failed: ${err.message}`, 'danger', false);
+                this.showToast(`S3 test failed: ${err.message}`, 'error');
                 setTimeout(() => {
                     this.testStates.recorderS3.text = 'Test Connection';
                 }, TEST_FEEDBACK_MS);
@@ -1259,14 +1282,14 @@ document.addEventListener('alpine:init', () => {
 
                 if (!response.ok) {
                     const typeName = type.charAt(0).toUpperCase() + type.slice(1);
-                    this.showBanner(`${typeName} test failed: ${result.error || 'Unknown error'}`, 'danger', false);
+                    this.showToast(`${typeName} test failed: ${result.error || 'Unknown error'}`, 'error');
                 }
 
                 setTimeout(() => { this.testStates[type].text = 'Test'; }, TEST_FEEDBACK_MS);
             } catch (err) {
                 this.testStates[type].pending = false;
                 this.testStates[type].text = 'Failed';
-                this.showBanner(`Test failed: ${err.message}`, 'danger', false);
+                this.showToast(`Test failed: ${err.message}`, 'error');
                 setTimeout(() => { this.testStates[type].text = 'Test'; }, TEST_FEEDBACK_MS);
             }
         },
@@ -1294,9 +1317,10 @@ document.addEventListener('alpine:init', () => {
                     if (this.settingsForm) {
                         this.settingsForm.recordingApiKey = result.api_key;
                     }
+                    this.showToast('API key regenerated', 'success');
                 }
             } catch (err) {
-                this.showBanner(`Failed to regenerate API key: ${err.message}`, 'danger', false);
+                this.showToast(`Failed to regenerate API key: ${err.message}`, 'error');
             }
         },
 
@@ -1308,9 +1332,10 @@ document.addEventListener('alpine:init', () => {
             try {
                 await navigator.clipboard.writeText(key);
                 this.apiKeyCopied = true;
+                this.showToast('Copied to clipboard', 'success');
                 setTimeout(() => { this.apiKeyCopied = false; }, TEST_FEEDBACK_MS);
             } catch {
-                this.showBanner('Failed to copy to clipboard', 'danger', false);
+                this.showToast('Failed to copy to clipboard', 'error');
             }
         },
 
@@ -1384,6 +1409,58 @@ document.addEventListener('alpine:init', () => {
                 this._bannerTimeout = null;
             }
             this.banner.visible = false;
+        },
+
+        /**
+         * Shows a toast notification for transient feedback.
+         * Toasts auto-dismiss based on type: success=3s, error=5s.
+         * Maximum 3 toasts visible; oldest removed when exceeded.
+         * @param {string} message - Message to display
+         * @param {string} type - Toast type: 'success', 'error', 'info'
+         */
+        showToast(message, type = 'success') {
+            const id = ++this._toastIdCounter;
+            const duration = type === 'error' ? TOAST_DURATION_ERROR : TOAST_DURATION_SUCCESS;
+
+            const toast = {
+                id,
+                message,
+                type,
+                timeoutId: setTimeout(() => this.removeToast(id), duration)
+            };
+
+            // Add to front (new on top due to column-reverse CSS)
+            this.toasts.unshift(toast);
+
+            // Remove oldest if exceeding max
+            while (this.toasts.length > MAX_TOASTS) {
+                const oldest = this.toasts.pop();
+                if (oldest.timeoutId) clearTimeout(oldest.timeoutId);
+            }
+        },
+
+        /**
+         * Removes a specific toast by ID.
+         * @param {number} id - Toast ID to remove
+         */
+        removeToast(id) {
+            const index = this.toasts.findIndex(t => t.id === id);
+            if (index !== -1) {
+                const toast = this.toasts[index];
+                if (toast.timeoutId) clearTimeout(toast.timeoutId);
+                this.toasts.splice(index, 1);
+            }
+        },
+
+        /**
+         * Clears all toasts and their timeouts.
+         * Called on view navigation and WebSocket reconnect.
+         */
+        clearToasts() {
+            for (const toast of this.toasts) {
+                if (toast.timeoutId) clearTimeout(toast.timeoutId);
+            }
+            this.toasts = [];
         },
 
         /**
