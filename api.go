@@ -261,7 +261,7 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	// Side effects after successful save
 	s.encoder.UpdateSilenceConfig()
 	s.encoder.UpdateSilenceDumpConfig()
-	s.encoder.UpdateGraphConfig()
+	s.encoder.InvalidateGraphSecretExpiryCache()
 
 	// Restart encoder if audio input changed
 	if audioInputChanged && s.ffmpegAvailable && s.encoder.State() == types.StateRunning {
