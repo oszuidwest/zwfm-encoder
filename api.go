@@ -238,7 +238,6 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	s.writeSuccess(w)
 }
 
-
 // Output API endpoints
 
 // handleListOutputs returns all configured outputs.
