@@ -224,6 +224,7 @@ document.addEventListener('alpine:init', () => {
             error: ''
         },
 
+
         banner: {
             visible: false,
             message: '',
@@ -846,10 +847,19 @@ document.addEventListener('alpine:init', () => {
          * @param {boolean} [returnToDashboard=false] - Navigate to dashboard after delete
          */
         async deleteOutput(id, returnToDashboard = false) {
-            if (!confirm('Delete this output? This action cannot be undone.')) return;
-
             const output = this.outputs.find(o => o.id === id);
-            if (output) this.deletingOutputs[id] = output.created_at;
+            if (!output) return;
+
+            const confirmed = await this.showConfirm({
+                title: 'Delete Output',
+                message: `Delete "${output.host}:${output.port}"?`,
+                variant: 'danger',
+                confirmLabel: 'Delete',
+                cancelLabel: 'Cancel'
+            });
+            if (!confirmed) return;
+
+            this.deletingOutputs[id] = output.created_at;
 
             try {
                 const response = await fetch(`${API.OUTPUTS}/${id}`, {
@@ -1017,10 +1027,19 @@ document.addEventListener('alpine:init', () => {
          * @param {boolean} returnToDashboard - Navigate to dashboard after delete
          */
         async deleteRecorder(id, returnToDashboard = false) {
-            if (!confirm('Delete this recorder? This action cannot be undone.')) return;
-
             const recorder = this.recorders.find(r => r.id === id);
-            if (recorder) this.deletingRecorders[id] = recorder.created_at;
+            if (!recorder) return;
+
+            const confirmed = await this.showConfirm({
+                title: 'Delete Recorder',
+                message: `Delete "${recorder.name}"?`,
+                variant: 'danger',
+                confirmLabel: 'Delete',
+                cancelLabel: 'Cancel'
+            });
+            if (!confirmed) return;
+
+            this.deletingRecorders[id] = recorder.created_at;
 
             try {
                 const response = await fetch(`${API.RECORDERS}/${id}`, {
@@ -1299,7 +1318,14 @@ document.addEventListener('alpine:init', () => {
          * Regenerates the API key for recording endpoints via REST API.
          */
         async regenerateApiKey() {
-            if (!confirm('Regenerate API key? Existing integrations will need to be updated.')) return;
+            const confirmed = await this.showConfirm({
+                title: 'Regenerate API Key',
+                message: 'Generate a new API key? Existing integrations will stop working.',
+                variant: 'warning',
+                confirmLabel: 'Regenerate',
+                cancelLabel: 'Cancel'
+            });
+            if (!confirmed) return;
 
             try {
                 const response = await fetch(API.RECORDING_REGENERATE_KEY, {
@@ -1461,6 +1487,15 @@ document.addEventListener('alpine:init', () => {
                 if (toast.timeoutId) clearTimeout(toast.timeoutId);
             }
             this.toasts = [];
+        },
+
+        /**
+         * Shows a native browser confirm dialog.
+         * @param {Object} options - Configuration with message property
+         * @returns {Promise<boolean>} Resolves true if confirmed, false if cancelled
+         */
+        showConfirm(options) {
+            return Promise.resolve(confirm(options.message || 'Are you sure?'));
         },
 
         /**
