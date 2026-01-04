@@ -2,6 +2,9 @@
 package types
 
 import (
+	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -88,6 +91,29 @@ const (
 	CodecOGG Codec = "ogg" // Ogg Vorbis
 )
 
+// ValidCodecs contains all valid audio codec values.
+var ValidCodecs = map[Codec]bool{
+	CodecWAV: true, CodecMP3: true, CodecMP2: true, CodecOGG: true,
+}
+
+// UnmarshalJSON implements json.Unmarshaler for strict parsing.
+func (c *Codec) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	if s == "" {
+		*c = CodecWAV // default
+		return nil
+	}
+	codec := Codec(s)
+	if !ValidCodecs[codec] {
+		return fmt.Errorf("codec: must be wav, mp3, mp2, or ogg")
+	}
+	*c = codec
+	return nil
+}
+
 // Output represents a single SRT output destination.
 type Output struct {
 	ID         string `json:"id"`          // Unique identifier
@@ -160,6 +186,21 @@ func (o *Output) Format() string {
 	return FormatFor(o.Codec)
 }
 
+// Validate checks if the output configuration is valid.
+// Note: Codec validation is handled by UnmarshalJSON during parsing.
+func (o *Output) Validate() error {
+	if strings.TrimSpace(o.Host) == "" {
+		return fmt.Errorf("host: is required")
+	}
+	if o.Port <= 0 || o.Port > 65535 {
+		return fmt.Errorf("port: must be between 1 and 65535")
+	}
+	if o.MaxRetries < 0 {
+		return fmt.Errorf("max_retries: cannot be negative")
+	}
+	return nil
+}
+
 // RotationMode determines how recordings are split into files.
 type RotationMode string
 
@@ -167,6 +208,29 @@ type RotationMode string
 const (
 	RotationHourly RotationMode = "hourly" // Rotate at system clock hour boundaries
 )
+
+// ValidRotationModes contains all valid rotation mode values.
+var ValidRotationModes = map[RotationMode]bool{
+	RotationHourly: true,
+}
+
+// UnmarshalJSON implements json.Unmarshaler for strict parsing.
+func (m *RotationMode) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	if s == "" {
+		*m = RotationHourly // default
+		return nil
+	}
+	mode := RotationMode(s)
+	if !ValidRotationModes[mode] {
+		return fmt.Errorf("rotation_mode: must be hourly")
+	}
+	*m = mode
+	return nil
+}
 
 // StorageMode determines where recordings are saved.
 type StorageMode string
@@ -177,6 +241,29 @@ const (
 	StorageS3    StorageMode = "s3"    // Upload only to S3
 	StorageBoth  StorageMode = "both"  // Save locally AND upload to S3
 )
+
+// ValidStorageModes contains all valid storage mode values.
+var ValidStorageModes = map[StorageMode]bool{
+	StorageLocal: true, StorageS3: true, StorageBoth: true,
+}
+
+// UnmarshalJSON implements json.Unmarshaler for strict parsing.
+func (m *StorageMode) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	if s == "" {
+		*m = StorageLocal // default
+		return nil
+	}
+	mode := StorageMode(s)
+	if !ValidStorageModes[mode] {
+		return fmt.Errorf("storage_mode: must be local, s3, or both")
+	}
+	*m = mode
+	return nil
+}
 
 // DefaultRetentionDays is the default number of days to keep recordings.
 const DefaultRetentionDays = 90
@@ -224,6 +311,37 @@ func (r *Recorder) CodecArgs() []string {
 // Format returns the FFmpeg output format for this recorder's codec.
 func (r *Recorder) Format() string {
 	return FormatFor(r.Codec)
+}
+
+// Validate checks if the recorder configuration is valid.
+// Note: Codec, RotationMode, StorageMode validation is handled by UnmarshalJSON during parsing.
+func (r *Recorder) Validate() error {
+	if strings.TrimSpace(r.Name) == "" {
+		return fmt.Errorf("name: is required")
+	}
+
+	// Conditional validation based on storage mode
+	needsLocal := r.StorageMode == StorageLocal || r.StorageMode == StorageBoth
+	needsS3 := r.StorageMode == StorageS3 || r.StorageMode == StorageBoth
+
+	if needsLocal && strings.TrimSpace(r.LocalPath) == "" {
+		return fmt.Errorf("local_path: is required for local/both storage mode")
+	}
+	if needsS3 {
+		if r.S3Bucket == "" {
+			return fmt.Errorf("s3_bucket: is required for s3/both storage mode")
+		}
+		if r.S3AccessKeyID == "" {
+			return fmt.Errorf("s3_access_key_id: is required for s3/both storage mode")
+		}
+		if r.S3SecretAccessKey == "" {
+			return fmt.Errorf("s3_secret_access_key: is required for s3/both storage mode")
+		}
+	}
+	if r.RetentionDays < 0 {
+		return fmt.Errorf("retention_days: cannot be negative")
+	}
+	return nil
 }
 
 // EncoderStatus contains a summary of the encoder's current operational state.

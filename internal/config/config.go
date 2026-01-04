@@ -270,6 +270,10 @@ func (c *Config) findOutputIndex(id string) int {
 
 // AddOutput creates a new output.
 func (c *Config) AddOutput(output *types.Output) error {
+	if err := output.Validate(); err != nil {
+		return err
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -304,6 +308,10 @@ func (c *Config) RemoveOutput(id string) error {
 
 // UpdateOutput modifies an output.
 func (c *Config) UpdateOutput(output *types.Output) error {
+	if err := output.Validate(); err != nil {
+		return err
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -340,6 +348,10 @@ func (c *Config) findRecorderIndex(id string) int {
 
 // AddRecorder creates a new recorder.
 func (c *Config) AddRecorder(recorder *types.Recorder) error {
+	if err := recorder.Validate(); err != nil {
+		return err
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -376,6 +388,10 @@ func (c *Config) RemoveRecorder(id string) error {
 
 // UpdateRecorder modifies a recorder.
 func (c *Config) UpdateRecorder(recorder *types.Recorder) error {
+	if err := recorder.Validate(); err != nil {
+		return err
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -443,6 +459,9 @@ func (c *Config) SetAudioInput(input string) error {
 
 // SetSilenceThreshold updates the silence detection threshold in dB.
 func (c *Config) SetSilenceThreshold(threshold float64) error {
+	if threshold > 0 || threshold < -60 {
+		return fmt.Errorf("silence_threshold: must be between -60 and 0 dB")
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.SilenceDetection.ThresholdDB = threshold
@@ -451,6 +470,9 @@ func (c *Config) SetSilenceThreshold(threshold float64) error {
 
 // SetSilenceDurationMs updates the silence detection duration in milliseconds.
 func (c *Config) SetSilenceDurationMs(ms int64) error {
+	if ms <= 0 {
+		return fmt.Errorf("silence_duration_ms: must be greater than 0")
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.SilenceDetection.DurationMs = ms
@@ -459,6 +481,9 @@ func (c *Config) SetSilenceDurationMs(ms int64) error {
 
 // SetSilenceRecoveryMs updates the silence recovery duration in milliseconds.
 func (c *Config) SetSilenceRecoveryMs(ms int64) error {
+	if ms <= 0 {
+		return fmt.Errorf("silence_recovery_ms: must be greater than 0")
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.SilenceDetection.RecoveryMs = ms

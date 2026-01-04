@@ -60,55 +60,6 @@ func parseJSON[T any](s *Server, w http.ResponseWriter, r *http.Request) (T, boo
 	return v, true
 }
 
-// Enum validation helpers
-
-// validCodecs contains all valid audio codec values.
-var validCodecs = map[types.Codec]bool{
-	types.CodecWAV: true,
-	types.CodecMP3: true,
-	types.CodecMP2: true,
-	types.CodecOGG: true,
-}
-
-// validRotationModes contains all valid rotation mode values.
-var validRotationModes = map[types.RotationMode]bool{
-	types.RotationHourly: true,
-}
-
-// validStorageModes contains all valid storage mode values.
-var validStorageModes = map[types.StorageMode]bool{
-	types.StorageLocal: true,
-	types.StorageS3:    true,
-	types.StorageBoth:  true,
-}
-
-// validateCodec checks if the codec string is valid.
-func validateCodec(codec string) (types.Codec, bool) {
-	c := types.Codec(codec)
-	if codec == "" {
-		return types.CodecWAV, true // default
-	}
-	return c, validCodecs[c]
-}
-
-// validateRotationMode checks if the rotation mode string is valid.
-func validateRotationMode(mode string) (types.RotationMode, bool) {
-	m := types.RotationMode(mode)
-	if mode == "" {
-		return types.RotationHourly, true // default
-	}
-	return m, validRotationModes[m]
-}
-
-// validateStorageMode checks if the storage mode string is valid.
-func validateStorageMode(mode string) (types.StorageMode, bool) {
-	m := types.StorageMode(mode)
-	if mode == "" {
-		return types.StorageLocal, true // default
-	}
-	return m, validStorageModes[m]
-}
-
 // handleAPIConfig returns the full configuration for the frontend.
 // GET /api/config
 func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
@@ -221,19 +172,19 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	// Apply silence settings
 	if req.SilenceThreshold != nil {
 		if err := s.config.SetSilenceThreshold(*req.SilenceThreshold); err != nil {
-			s.writeError(w, http.StatusInternalServerError, err.Error())
+			s.writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
 	if req.SilenceDurationMs != nil {
 		if err := s.config.SetSilenceDurationMs(*req.SilenceDurationMs); err != nil {
-			s.writeError(w, http.StatusInternalServerError, err.Error())
+			s.writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
 	if req.SilenceRecoveryMs != nil {
 		if err := s.config.SetSilenceRecoveryMs(*req.SilenceRecoveryMs); err != nil {
-			s.writeError(w, http.StatusInternalServerError, err.Error())
+			s.writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
@@ -355,13 +306,13 @@ func (s *Server) handleGetOutput(w http.ResponseWriter, r *http.Request) {
 
 // OutputRequest is the request body for creating/updating outputs.
 type OutputRequest struct {
-	Enabled    bool   `json:"enabled"`
-	Host       string `json:"host"`
-	Port       int    `json:"port"`
-	Password   string `json:"password"`
-	StreamID   string `json:"stream_id"`
-	Codec      string `json:"codec"`
-	MaxRetries int    `json:"max_retries"`
+	Enabled    bool        `json:"enabled"`
+	Host       string      `json:"host"`
+	Port       int         `json:"port"`
+	Password   string      `json:"password"`
+	StreamID   string      `json:"stream_id"`
+	Codec      types.Codec `json:"codec"`
+	MaxRetries int         `json:"max_retries"`
 }
 
 // handleCreateOutput creates a new output.
@@ -372,33 +323,18 @@ func (s *Server) handleCreateOutput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Host == "" {
-		s.writeError(w, http.StatusBadRequest, "host is required")
-		return
-	}
-	if req.Port <= 0 || req.Port > 65535 {
-		s.writeError(w, http.StatusBadRequest, "port must be between 1 and 65535")
-		return
-	}
-
-	codec, valid := validateCodec(req.Codec)
-	if !valid {
-		s.writeError(w, http.StatusBadRequest, "invalid codec: must be wav, mp3, mp2, or ogg")
-		return
-	}
-
 	output := &types.Output{
 		Enabled:    true,
 		Host:       req.Host,
 		Port:       req.Port,
 		Password:   req.Password,
 		StreamID:   req.StreamID,
-		Codec:      codec,
+		Codec:      req.Codec, // Already validated by UnmarshalJSON
 		MaxRetries: req.MaxRetries,
 	}
 
 	if err := s.config.AddOutput(output); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -427,16 +363,7 @@ func (s *Server) handleUpdateOutput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate codec if provided
-	if req.Codec != "" {
-		codec, valid := validateCodec(req.Codec)
-		if !valid {
-			s.writeError(w, http.StatusBadRequest, "invalid codec: must be wav, mp3, mp2, or ogg")
-			return
-		}
-		existing.Codec = codec
-	}
-
+	// Merge request into existing, preserving non-zero values
 	existing.Enabled = req.Enabled
 	if req.Host != "" {
 		existing.Host = req.Host
@@ -450,12 +377,15 @@ func (s *Server) handleUpdateOutput(w http.ResponseWriter, r *http.Request) {
 	if req.StreamID != "" {
 		existing.StreamID = req.StreamID
 	}
+	if req.Codec != "" {
+		existing.Codec = req.Codec // Already validated by UnmarshalJSON
+	}
 	if req.MaxRetries > 0 {
 		existing.MaxRetries = req.MaxRetries
 	}
 
 	if err := s.config.UpdateOutput(existing); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -532,17 +462,17 @@ func (s *Server) handleGetRecorder(w http.ResponseWriter, r *http.Request) {
 
 // RecorderRequest is the request body for creating/updating recorders.
 type RecorderRequest struct {
-	Name              string `json:"name"`
-	Enabled           bool   `json:"enabled"`
-	Codec             string `json:"codec"`
-	RotationMode      string `json:"rotation_mode"`
-	StorageMode       string `json:"storage_mode"`
-	LocalPath         string `json:"local_path"`
-	S3Endpoint        string `json:"s3_endpoint"`
-	S3Bucket          string `json:"s3_bucket"`
-	S3AccessKeyID     string `json:"s3_access_key_id"`
-	S3SecretAccessKey string `json:"s3_secret_access_key"`
-	RetentionDays     int    `json:"retention_days"`
+	Name              string             `json:"name"`
+	Enabled           bool               `json:"enabled"`
+	Codec             types.Codec        `json:"codec"`
+	RotationMode      types.RotationMode `json:"rotation_mode"`
+	StorageMode       types.StorageMode  `json:"storage_mode"`
+	LocalPath         string             `json:"local_path"`
+	S3Endpoint        string             `json:"s3_endpoint"`
+	S3Bucket          string             `json:"s3_bucket"`
+	S3AccessKeyID     string             `json:"s3_access_key_id"`
+	S3SecretAccessKey string             `json:"s3_secret_access_key"`
+	RetentionDays     int                `json:"retention_days"`
 }
 
 // handleCreateRecorder creates a new recorder.
@@ -553,35 +483,12 @@ func (s *Server) handleCreateRecorder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Name == "" {
-		s.writeError(w, http.StatusBadRequest, "name is required")
-		return
-	}
-
-	codec, valid := validateCodec(req.Codec)
-	if !valid {
-		s.writeError(w, http.StatusBadRequest, "invalid codec: must be wav, mp3, mp2, or ogg")
-		return
-	}
-
-	rotationMode, valid := validateRotationMode(req.RotationMode)
-	if !valid {
-		s.writeError(w, http.StatusBadRequest, "invalid rotation_mode: must be hourly")
-		return
-	}
-
-	storageMode, valid := validateStorageMode(req.StorageMode)
-	if !valid {
-		s.writeError(w, http.StatusBadRequest, "invalid storage_mode: must be local, s3, or both")
-		return
-	}
-
 	recorder := &types.Recorder{
 		Name:              req.Name,
 		Enabled:           true,
-		Codec:             codec,
-		RotationMode:      rotationMode,
-		StorageMode:       storageMode,
+		Codec:             req.Codec,        // Already validated by UnmarshalJSON
+		RotationMode:      req.RotationMode, // Already validated by UnmarshalJSON
+		StorageMode:       req.StorageMode,  // Already validated by UnmarshalJSON
 		LocalPath:         req.LocalPath,
 		S3Endpoint:        req.S3Endpoint,
 		S3Bucket:          req.S3Bucket,
@@ -591,7 +498,7 @@ func (s *Server) handleCreateRecorder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.encoder.AddRecorder(recorder); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -614,35 +521,19 @@ func (s *Server) handleUpdateRecorder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate enums if provided
-	if req.Codec != "" {
-		codec, valid := validateCodec(req.Codec)
-		if !valid {
-			s.writeError(w, http.StatusBadRequest, "invalid codec: must be wav, mp3, mp2, or ogg")
-			return
-		}
-		existing.Codec = codec
-	}
-	if req.RotationMode != "" {
-		rotationMode, valid := validateRotationMode(req.RotationMode)
-		if !valid {
-			s.writeError(w, http.StatusBadRequest, "invalid rotation_mode: must be hourly")
-			return
-		}
-		existing.RotationMode = rotationMode
-	}
-	if req.StorageMode != "" {
-		storageMode, valid := validateStorageMode(req.StorageMode)
-		if !valid {
-			s.writeError(w, http.StatusBadRequest, "invalid storage_mode: must be local, s3, or both")
-			return
-		}
-		existing.StorageMode = storageMode
-	}
-
+	// Merge request into existing, preserving non-zero values
 	existing.Enabled = req.Enabled
 	if req.Name != "" {
 		existing.Name = req.Name
+	}
+	if req.Codec != "" {
+		existing.Codec = req.Codec // Already validated by UnmarshalJSON
+	}
+	if req.RotationMode != "" {
+		existing.RotationMode = req.RotationMode // Already validated by UnmarshalJSON
+	}
+	if req.StorageMode != "" {
+		existing.StorageMode = req.StorageMode // Already validated by UnmarshalJSON
 	}
 	if req.LocalPath != "" {
 		existing.LocalPath = req.LocalPath
@@ -664,7 +555,7 @@ func (s *Server) handleUpdateRecorder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.encoder.UpdateRecorder(existing); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
