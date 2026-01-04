@@ -114,7 +114,7 @@
                 <div class="form">
                     <div class="group">
                         <label for="audio-input">Input Device</label>
-                        <select id="audio-input" x-model="config.audio_input" @focus="refreshDevices()" @change="fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ audio_input: config.audio_input }) })">
+                        <select id="audio-input" x-model="config.audio_input" @focus="refreshDevices()" @change="updateAudioInput()">
                             <template x-if="devices.length === 0">
                                 <option value="">No devices found</option>
                             </template>

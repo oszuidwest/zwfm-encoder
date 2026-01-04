@@ -627,6 +627,46 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
+         * Updates audio input device immediately when changed in dashboard.
+         * Reverts to server state on error.
+         */
+        async updateAudioInput() {
+            const prev = this.config.audio_input;
+            try {
+                const response = await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        audio_input: this.config.audio_input,
+                        silence_threshold: this.config.silence_threshold,
+                        silence_duration_ms: this.config.silence_duration_ms,
+                        silence_recovery_ms: this.config.silence_recovery_ms,
+                        silence_dump_enabled: this.config.silence_dump.enabled,
+                        silence_dump_retention_days: this.config.silence_dump.retention_days,
+                        webhook_url: this.config.webhook_url,
+                        log_path: this.config.log_path,
+                        zabbix_server: this.config.zabbix_server,
+                        zabbix_port: this.config.zabbix_port,
+                        zabbix_host: this.config.zabbix_host,
+                        zabbix_key: this.config.zabbix_key,
+                        graph_tenant_id: this.config.graph_tenant_id,
+                        graph_client_id: this.config.graph_client_id,
+                        graph_client_secret: '',
+                        graph_from_address: this.config.graph_from_address,
+                        graph_recipients: this.config.graph_recipients
+                    })
+                });
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || `HTTP ${response.status}`);
+                }
+            } catch (err) {
+                this.config.audio_input = prev;
+                this.showBanner(`Failed to update audio input: ${err.message}`, 'danger', false);
+            }
+        },
+
+        /**
          * Persists all settings to backend via REST API.
          * Sends single atomic POST to /api/settings.
          */
