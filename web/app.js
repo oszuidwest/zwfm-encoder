@@ -210,6 +210,9 @@ document.addEventListener('alpine:init', () => {
             recorderS3: { pending: false, text: 'Test Connection' }
         },
 
+        // API key copy feedback
+        apiKeyCopied: false,
+
         silenceLogModal: {
             visible: false,
             loading: false,
@@ -1287,11 +1290,10 @@ document.addEventListener('alpine:init', () => {
                 }
 
                 if (result.api_key) {
-                    // Update form if open
+                    // Update form if open - field update is the feedback
                     if (this.settingsForm) {
                         this.settingsForm.recordingApiKey = result.api_key;
                     }
-                    this.showBanner('API key regenerated successfully', 'info', false);
                 }
             } catch (err) {
                 this.showBanner(`Failed to regenerate API key: ${err.message}`, 'danger', false);
@@ -1305,7 +1307,8 @@ document.addEventListener('alpine:init', () => {
             const key = this.settingsForm?.recordingApiKey || this.config.recording_api_key;
             try {
                 await navigator.clipboard.writeText(key);
-                this.showBanner('API key copied to clipboard', 'info', false);
+                this.apiKeyCopied = true;
+                setTimeout(() => { this.apiKeyCopied = false; }, TEST_FEEDBACK_MS);
             } catch {
                 this.showBanner('Failed to copy to clipboard', 'danger', false);
             }

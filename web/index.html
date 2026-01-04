@@ -521,7 +521,8 @@
                         <div class="btn-group">
                             <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0"
                                     @click="copyApiKey()"
-                                    :disabled="!settingsForm?.recordingApiKey">Copy</button>
+                                    :disabled="!settingsForm?.recordingApiKey"
+                                    x-text="apiKeyCopied ? 'Copied!' : 'Copy'"></button>
                             <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0"
                                     @click="regenerateApiKey()">Regenerate</button>
                         </div>
