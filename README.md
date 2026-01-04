@@ -122,58 +122,99 @@ The installer creates a minimal config file. All other settings are configured t
 
 ```mermaid
 flowchart LR
-    subgraph Input
-        A[S/PDIF Audio]
-    end
+    A[Audio Input]
 
-    subgraph Capture
+    subgraph Capture["Capture"]
         B[arecord]
     end
 
-    subgraph Processing
-        C[Distributor]
-        SD[Silence Detector]
+    subgraph Processing["Audio Processing"]
+        D[Distributor]
+
+        subgraph Metering["Metering"]
+            M[RMS/Peak<br>Calculator]
+            PH[Peak Hold<br>1.5s Decay]
+            CD[Clip<br>Detect]
+        end
+
+        subgraph Silence["Silence Detection"]
+            SD[Detector<br>Hysteresis]
+            SDM[Dump Manager<br>Audio Buffer]
+        end
+    end
+
+    subgraph Outputs["Streaming Outputs"]
+        OM[Output Manager<br>Retry + Backoff]
+        F1[FFmpeg MP3]
+        F2[FFmpeg MP2]
+        F3[FFmpeg OGG]
+        S1[SRT 1]
+        S2[SRT 2]
+        S3[SRT 3]
+    end
+
+    subgraph Recording["Recording"]
+        RM[Recording Manager]
+        R1[Hourly]
+        R2[On-Demand]
+        ST[(Storage)]
+    end
+
+    subgraph Alerts["Alerting"]
         SN[Silence Notifier]
+        N1[Webhook]
+        N2[Email]
+        N3[Log]
+        N4[Zabbix]
     end
 
-    subgraph Encoding
-        D1[FFmpeg MP3]
-        D2[FFmpeg MP2]
-        D3[FFmpeg OGG]
+    subgraph UI["Web UI"]
+        WS[WebSocket<br>10fps]
     end
 
-    subgraph Output
-        E1[SRT Server 1]
-        E2[SRT Server 2]
-        E3[SRT Server 3]
-    end
+    %% Main audio flow
+    A ==>|S/PDIF| B ==>|PCM| D
 
-    subgraph Monitoring
-        F[WebSocket]
-    end
+    %% Metering branch
+    D -->|PCM| M -->|dB| PH
+    M -->|samples| CD
+    PH -->|dB JSON| WS
 
-    subgraph Alerts
-        G1[Webhook]
-        G2[Email]
-        G3[File Log]
-        G4[Zabbix]
-    end
+    %% Silence detection branch
+    D -->|dB| SD
+    D -->|PCM| SDM
+    SD -->|events| SDM
+    SD -->|state JSON| WS
 
-    A ==> B ==> C
-    C ==> D1 ==> E1
-    C ==> D2 ==> E2
-    C ==> D3 ==> E3
-    C -.-> SD -.-> SN
-    SN -.-> G1
-    SN -.-> G2
-    SN -.-> G3
-    SN -.-> G4
-    C -.->|levels| F
+    %% Alerting
+    SD -->|event| SN
+    SDM -->|MP3| SN
+    SN -->|HTTP| N1
+    SN -->|Graph API| N2
+    SN -->|file| N3
+    SN -->|trapper| N4
+
+    %% Streaming
+    D ==>|PCM| OM
+    OM -->|PCM| F1 -->|SRT| S1
+    OM -->|PCM| F2 -->|SRT| S2
+    OM -->|PCM| F3 -->|SRT| S3
+
+    %% Recording
+    D ==>|PCM| RM
+    RM -->|PCM| R1 -->|MP3| ST
+    RM -->|PCM| R2 -->|MP3| ST
 ```
 
-On Linux, `arecord` captures audio from ALSA with minimal CPU overhead. The Go distributor calculates RMS/peak audio levels directly from the PCM stream, runs silence detection, and fans out the audio to multiple FFmpeg encoder processes. Each encoder streams to its own SRT destination. Audio levels are sent to the web interface via WebSocket, and silence events trigger configured alerts.
+### Audio Flow
 
-On macOS and Windows, FFmpeg handles audio capture (AVFoundation and DirectShow respectively).
+1. **Capture**: `arecord` (Linux) or FFmpeg (macOS/Windows) captures 48kHz 16-bit stereo PCM
+2. **Distributor**: Processes PCM in ~100ms chunks, fans out to all consumers
+3. **Metering**: Calculates RMS/peak levels in Go (no FFmpeg filters), holds peaks for 1.5s, detects clipping at ±32760
+4. **Silence Detection**: Hysteresis-based detection with configurable threshold/duration/recovery. Buffers 15s audio context before/after silence events
+5. **Alerting**: Silence triggers webhook, email (MS Graph), log (JSON Lines), and/or Zabbix. Recovery includes MP3 dump attachment
+6. **Streaming**: Per-output FFmpeg processes with automatic retry and exponential backoff
+7. **Recording**: Hourly rotation or on-demand, with optional S3 upload
 
 ## Post-installation
 
