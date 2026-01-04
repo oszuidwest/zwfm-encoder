@@ -137,7 +137,12 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 		return
 	}
 
-	client := recorder.S3Client()
+	// Get S3 client (recreates if config changed - same pattern as Graph client)
+	client, err := recorder.getOrCreateS3Client()
+	if err != nil {
+		slog.Error("cleanup: failed to create S3 client", "id", cfg.ID, "error", err)
+		return
+	}
 	if client == nil {
 		slog.Warn("cleanup: no S3 client available", "id", cfg.ID)
 		return

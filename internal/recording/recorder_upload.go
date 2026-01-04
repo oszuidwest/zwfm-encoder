@@ -96,15 +96,20 @@ func (r *GenericRecorder) uploadFile(req uploadRequest) {
 		}
 	}()
 
-	r.mu.RLock()
-	client := r.s3Client
-	bucket := r.config.S3Bucket
-	r.mu.RUnlock()
-
+	// Get S3 client (recreates if config changed - same pattern as Graph client)
+	client, err := r.getOrCreateS3Client()
+	if err != nil {
+		slog.Error("failed to create S3 client", "id", r.id, "error", err)
+		return
+	}
 	if client == nil {
 		slog.Warn("no S3 client available", "id", r.id)
 		return
 	}
+
+	r.mu.RLock()
+	bucket := r.config.S3Bucket
+	r.mu.RUnlock()
 
 	contentType := r.getContentType()
 

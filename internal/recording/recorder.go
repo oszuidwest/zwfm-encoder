@@ -35,8 +35,9 @@ type GenericRecorder struct {
 	currentFile string
 	startTime   time.Time
 
-	// S3 client
-	s3Client *s3.Client
+	// S3 client (cached, recreated when config changes)
+	s3Client    *s3.Client
+	s3ConfigKey string // Config key used to create cached client
 
 	// Upload queue
 	uploadQueue  chan uploadRequest
@@ -52,6 +53,7 @@ type GenericRecorder struct {
 }
 
 // NewGenericRecorder creates a new recorder with the given configuration.
+// S3 client is created lazily on first use (same pattern as Graph client).
 func NewGenericRecorder(cfg *types.Recorder, ffmpegPath, tempDir string, maxDurationMinutes int) (*GenericRecorder, error) {
 	r := &GenericRecorder{
 		id:                 cfg.ID,
@@ -62,15 +64,6 @@ func NewGenericRecorder(cfg *types.Recorder, ffmpegPath, tempDir string, maxDura
 		state:              types.ProcessStopped,
 		uploadQueue:        make(chan uploadRequest, 100),
 		uploadStopCh:       make(chan struct{}),
-	}
-
-	// Create S3 client if configured
-	if r.isS3Configured() {
-		client, err := r.createS3Client()
-		if err != nil {
-			return nil, fmt.Errorf("create S3 client: %w", err)
-		}
-		r.s3Client = client
 	}
 
 	return r, nil
@@ -88,11 +81,40 @@ func (r *GenericRecorder) Config() types.Recorder {
 	return r.config
 }
 
-// S3Client returns the S3 client for this recorder.
-func (r *GenericRecorder) S3Client() *s3.Client {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.s3Client
+// s3ConfigKeyFrom returns a string key for comparing S3 configurations.
+// Used to detect when credentials change and client needs recreation.
+// Includes all fields baked into the S3 client at creation time:
+// - Endpoint, AccessKeyID, SecretAccessKey: client configuration
+// Bucket is NOT included as it's passed per-operation, not stored in client.
+func s3ConfigKeyFrom(cfg *types.Recorder) string {
+	return cfg.S3Endpoint + "|" + cfg.S3AccessKeyID + "|" + cfg.S3SecretAccessKey
+}
+
+// getOrCreateS3Client returns the cached S3 client, recreating if config changed.
+// This follows the same pattern as Graph client handling in notifications.
+func (r *GenericRecorder) getOrCreateS3Client() (*s3.Client, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if !r.isS3Configured() {
+		return nil, nil
+	}
+
+	newKey := s3ConfigKeyFrom(&r.config)
+
+	// Reuse cached client if config unchanged
+	if r.s3Client != nil && r.s3ConfigKey == newKey {
+		return r.s3Client, nil
+	}
+
+	// Recreate client with new config
+	client, err := r.createS3Client()
+	if err != nil {
+		return nil, err
+	}
+	r.s3Client = client
+	r.s3ConfigKey = newKey
+	return client, nil
 }
 
 // IsCurrentFile reports whether the given path is the currently recording file.
@@ -299,6 +321,7 @@ func (r *GenericRecorder) IsRecording() bool {
 }
 
 // UpdateConfig updates the recorder configuration.
+// S3 client recreation is handled lazily by getOrCreateS3Client on next use.
 func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -309,23 +332,9 @@ func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 		r.lastError = ""
 	}
 
-	oldS3 := r.config.S3Bucket + r.config.S3Endpoint + r.config.S3AccessKeyID
-	newS3 := cfg.S3Bucket + cfg.S3Endpoint + cfg.S3AccessKeyID
-
 	r.config = *cfg
-
-	// Recreate S3 client if config changed
-	if oldS3 != newS3 || cfg.S3SecretAccessKey != "" {
-		if r.isS3Configured() {
-			client, err := r.createS3Client()
-			if err != nil {
-				return fmt.Errorf("recreate S3 client: %w", err)
-			}
-			r.s3Client = client
-		} else {
-			r.s3Client = nil
-		}
-	}
+	// Note: S3 client will be recreated on next use if config changed
+	// (same pattern as Graph client in notifications)
 
 	return nil
 }
