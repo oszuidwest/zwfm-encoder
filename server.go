@@ -137,7 +137,6 @@ func (s *Server) runWebSocketWriter(conn server.WebSocketConn, send <-chan any) 
 }
 
 // runWebSocketReader reads from the connection to keep it alive.
-// All commands are now handled via REST API.
 func (s *Server) runWebSocketReader(conn server.WebSocketConn, done chan<- struct{}) {
 	defer close(done)
 
@@ -192,7 +191,6 @@ func (s *Server) runWebSocketEventLoop(send chan any, done <-chan struct{}) {
 }
 
 // buildWSRuntime returns runtime-only status for WebSocket clients.
-// Config data is fetched separately via GET /api/config.
 func (s *Server) buildWSRuntime() types.WSRuntimeStatus {
 	cfg := s.config.Snapshot()
 	status := s.encoder.Status()
