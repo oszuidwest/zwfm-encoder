@@ -78,6 +78,7 @@
                  :data-type="toast.type"
                  x-transition:enter="toast-enter"
                  x-transition:leave="toast-leave">
+                <span class="toast-icon" x-html="toast.type === 'success' ? icons.check : toast.type === 'error' ? icons.warning : icons.info"></span>
                 <span x-text="toast.message"></span>
             </div>
         </template>
