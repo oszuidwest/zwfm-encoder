@@ -527,11 +527,9 @@ func (s *Server) handleRecorderAction(w http.ResponseWriter, r *http.Request) {
 
 	switch action {
 	case "start":
-		if s.encoder.State() == types.StateStopped {
-			if err := s.encoder.Start(); err != nil {
-				s.writeError(w, http.StatusInternalServerError, "Failed to start encoder: "+err.Error())
-				return
-			}
+		if s.encoder.State() != types.StateRunning {
+			s.writeError(w, http.StatusBadRequest, "Encoder must be running to start recorder")
+			return
 		}
 		if err := s.encoder.StartRecorder(id); err != nil {
 			s.writeError(w, http.StatusBadRequest, err.Error())
