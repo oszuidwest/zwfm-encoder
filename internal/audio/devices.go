@@ -36,7 +36,7 @@ type DeviceListConfig struct {
 	FallbackDevices []types.AudioDevice
 }
 
-// parseDeviceList is a shared helper for parsing device list output.
+// parseDeviceList parses command output to extract audio device information.
 //
 //nolint:gocritic // hugeParam: 96 bytes is acceptable, no performance impact
 func parseDeviceList(cfg DeviceListConfig) []types.AudioDevice {

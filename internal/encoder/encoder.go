@@ -416,7 +416,7 @@ func (e *Encoder) TriggerTestLog() error {
 	return notify.WriteTestLog(e.config.Snapshot().LogPath)
 }
 
-// TriggerTestZabbix sends a test Zabbix trapper item to verify configuration.
+// TriggerTestZabbix sends a test notification to the configured Zabbix server.
 func (e *Encoder) TriggerTestZabbix() error {
 	cfg := e.config.Snapshot()
 	return notify.SendTestZabbix(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixKey)
@@ -549,7 +549,7 @@ func (e *Encoder) runSource() (string, error) {
 	return util.ExtractLastError(stderrBuf.String()), err
 }
 
-// startEnabledOutputs starts the audio distributor and all enabled output processes.
+// startEnabledOutputs starts all enabled output processes.
 func (e *Encoder) startEnabledOutputs() {
 	// Start silence dump manager (cleanup scheduler)
 	if e.silenceDumpManager != nil {
@@ -629,7 +629,7 @@ func (e *Encoder) runDistributor() {
 	}
 }
 
-// updateAudioLevels updates audio levels from calculated metrics.
+// updateAudioLevels updates the current audio level readings.
 func (e *Encoder) updateAudioLevels(m *types.AudioMetrics) {
 	levels := types.AudioLevels{
 		Left:              m.RMSLeft,

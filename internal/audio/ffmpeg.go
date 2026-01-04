@@ -3,7 +3,6 @@
 package audio
 
 // buildFFmpegCaptureArgs constructs FFmpeg arguments for audio capture.
-// Used by Darwin and Windows platforms that use FFmpeg for audio capture.
 func buildFFmpegCaptureArgs(inputFormat, device string) []string {
 	return []string{
 		"-f", inputFormat,

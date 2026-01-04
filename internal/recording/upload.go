@@ -3,6 +3,7 @@ package recording
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -48,7 +49,11 @@ func TestS3Connection(cfg *S3Config) error {
 		return fmt.Errorf("create S3 client: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30000*time.Millisecond)
+	ctx, cancel := context.WithTimeoutCause(
+		context.Background(),
+		30*time.Second,
+		errors.New("s3 connection test timeout"),
+	)
 	defer cancel()
 
 	testKey := fmt.Sprintf("test-connection-%d.txt", time.Now().UnixNano())

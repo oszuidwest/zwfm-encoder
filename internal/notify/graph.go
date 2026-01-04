@@ -35,10 +35,10 @@ const (
 	httpTimeout = 30 * time.Second
 )
 
-// guidPattern is a regular expression that matches Azure AD GUID format.
+// guidPattern matches the standard GUID format.
 var guidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-// validateCredentials checks Graph API credentials.
+// validateCredentials checks that required credential fields are present.
 // If strict is true, validates GUID format for TenantID and ClientID.
 func validateCredentials(cfg *types.GraphConfig, strict bool) error {
 	if cfg.TenantID == "" {
@@ -59,7 +59,7 @@ func validateCredentials(cfg *types.GraphConfig, strict bool) error {
 	return nil
 }
 
-// newCredentialsConfig creates a clientcredentials.Config for the given GraphConfig.
+// newCredentialsConfig creates an OAuth2 credentials configuration.
 func newCredentialsConfig(cfg *types.GraphConfig) *clientcredentials.Config {
 	return &clientcredentials.Config{
 		ClientID:     cfg.ClientID,
@@ -69,13 +69,13 @@ func newCredentialsConfig(cfg *types.GraphConfig) *clientcredentials.Config {
 	}
 }
 
-// GraphClient handles Microsoft Graph API email operations.
+// GraphClient sends emails for silence notifications.
 type GraphClient struct {
 	fromAddress string
 	httpClient  *http.Client
 }
 
-// NewGraphClient creates a new Graph API client.
+// NewGraphClient creates a new email client.
 func NewGraphClient(cfg *types.GraphConfig) (*GraphClient, error) {
 	if err := validateCredentials(cfg, false); err != nil {
 		return nil, err
@@ -97,7 +97,7 @@ func NewGraphClient(cfg *types.GraphConfig) (*GraphClient, error) {
 	}, nil
 }
 
-// graphMailRequest represents the Graph API sendMail request body.
+// graphMailRequest represents a send email request.
 type graphMailRequest struct {
 	Message graphMessage `json:"message"`
 }
@@ -122,7 +122,7 @@ type graphEmailAddress struct {
 	Address string `json:"address"`
 }
 
-// graphAttachment represents an email attachment for the Graph API.
+// graphAttachment represents an email attachment.
 type graphAttachment struct {
 	OdataType    string `json:"@odata.type"`
 	Name         string `json:"name"`
@@ -137,12 +137,12 @@ type EmailAttachment struct {
 	Data        []byte
 }
 
-// SendMail sends an email to the specified recipients via the Microsoft Graph API.
+// SendMail sends an email to the specified recipients.
 func (c *GraphClient) SendMail(recipients []string, subject, body string) error {
 	return c.SendMailWithAttachment(recipients, subject, body, nil)
 }
 
-// doWithRetry sends JSON data to the sendMail endpoint with automatic retries.
+// doWithRetry sends the email request with automatic retries.
 func (c *GraphClient) doWithRetry(jsonData []byte) error {
 	apiURL := fmt.Sprintf("%s/users/%s/sendMail", graphBaseURL, url.PathEscape(c.fromAddress))
 	backoff := util.NewBackoff(initialRetryWait, maxRetryWait)
@@ -242,7 +242,7 @@ func (c *GraphClient) SendMailWithAttachment(recipients []string, subject, body 
 	return c.doWithRetry(jsonData)
 }
 
-// ValidateAuth verifies the Graph API credentials.
+// ValidateAuth verifies that the email credentials are valid.
 func (c *GraphClient) ValidateAuth() error {
 	// The httpClient already has a token source configured.
 	// Making any request will trigger token acquisition.
@@ -311,7 +311,7 @@ func ParseRecipients(recipients string) []string {
 	return result
 }
 
-// TokenSource returns an OAuth2 token source for the given config.
+// TokenSource returns a token source for the given config.
 func TokenSource(cfg *types.GraphConfig) (oauth2.TokenSource, error) {
 	if err := validateCredentials(cfg, false); err != nil {
 		return nil, err

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// Backoff calculates exponential backoff delays.
+// Backoff provides retry delay calculation with exponential growth.
 type Backoff struct {
 	mu           sync.Mutex
 	current      time.Duration
@@ -27,7 +27,7 @@ func NewBackoff(initial, maxDelay time.Duration) *Backoff {
 	}
 }
 
-// Next returns the current delay with jitter and advances to the next backoff value.
+// Next returns the current delay and advances to the next value.
 func (b *Backoff) Next() time.Duration {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -44,14 +44,14 @@ func (b *Backoff) Next() time.Duration {
 	return delay
 }
 
-// Current returns the current delay without advancing.
+// Current returns the current delay.
 func (b *Backoff) Current() time.Duration {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.current
 }
 
-// Reset sets the backoff back to the initial delay.
+// Reset restores the delay to its initial value.
 func (b *Backoff) Reset() {
 	b.mu.Lock()
 	defer b.mu.Unlock()

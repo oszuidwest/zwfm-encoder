@@ -34,10 +34,7 @@ func DarkenColor(hex string, percent int) string {
 		return hex
 	}
 
-	factor := 1.0 - float64(percent)/100.0
-	if factor < 0 {
-		factor = 0
-	}
+	factor := max(1.0-float64(percent)/100.0, 0.0)
 
 	return RGBToHex(
 		uint8(float64(r)*factor),

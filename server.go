@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"html/template"
 	"log/slog"
+	"maps"
 	"net/http"
-	"runtime"
+	"slices"
+	"sync"
 	"time"
 
-	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
 	"github.com/oszuidwest/zwfm-encoder/internal/server"
@@ -43,23 +44,23 @@ type Server struct {
 	config          *config.Config
 	encoder         *encoder.Encoder
 	sessions        *server.SessionManager
-	commands        *server.CommandHandler
 	version         *VersionChecker
 	ffmpegAvailable bool
+
+	// WebSocket broadcast channels
+	wsClients   map[chan any]struct{}
+	wsClientsMu sync.RWMutex
 }
 
 // NewServer returns a new Server configured with the provided config and encoder.
 func NewServer(cfg *config.Config, enc *encoder.Encoder, ffmpegAvailable bool) *Server {
-	sessions := server.NewSessionManager()
-	commands := server.NewCommandHandler(cfg, enc, ffmpegAvailable)
-
 	return &Server{
 		config:          cfg,
 		encoder:         enc,
-		sessions:        sessions,
-		commands:        commands,
+		sessions:        server.NewSessionManager(),
 		version:         NewVersionChecker(),
 		ffmpegAvailable: ffmpegAvailable,
+		wsClients:       make(map[chan any]struct{}),
 	}
 }
 
@@ -75,18 +76,53 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Only the writer goroutine writes to the connection, preventing race conditions.
 	send := make(chan any, 16)
 	done := make(chan struct{})
-	statusUpdate := make(chan struct{}, 1)
+
+	// Register this client for broadcasts
+	s.registerWSClient(send)
+	defer s.unregisterWSClient(send)
 
 	// Writer goroutine - sole writer to the connection
 	go s.runWebSocketWriter(conn, send)
 
-	// Reader goroutine - handles incoming commands
-	go s.runWebSocketReader(conn, send, done, statusUpdate)
+	// Reader goroutine - keeps connection alive
+	go s.runWebSocketReader(conn, done)
 
-	s.runWebSocketEventLoop(send, done, statusUpdate)
+	s.runWebSocketEventLoop(send, done)
 }
 
-// runWebSocketWriter writes messages from the send channel to the connection.
+// registerWSClient adds a client's send channel to the broadcast list.
+func (s *Server) registerWSClient(send chan any) {
+	s.wsClientsMu.Lock()
+	s.wsClients[send] = struct{}{}
+	s.wsClientsMu.Unlock()
+}
+
+// unregisterWSClient removes a client's send channel from the broadcast list.
+func (s *Server) unregisterWSClient(send chan any) {
+	s.wsClientsMu.Lock()
+	delete(s.wsClients, send)
+	s.wsClientsMu.Unlock()
+}
+
+// broadcastConfigChanged notifies all connected WebSocket clients that config has changed.
+func (s *Server) broadcastConfigChanged() {
+	// Copy client channels while holding lock to avoid race conditions
+	s.wsClientsMu.RLock()
+	clients := slices.Collect(maps.Keys(s.wsClients))
+	s.wsClientsMu.RUnlock()
+
+	// Send to all clients outside the lock
+	msg := map[string]string{"type": "config_changed"}
+	for _, ch := range clients {
+		select {
+		case ch <- msg:
+		default:
+			// Channel full, skip this client
+		}
+	}
+}
+
+// runWebSocketWriter writes messages to the WebSocket connection.
 func (s *Server) runWebSocketWriter(conn server.WebSocketConn, send <-chan any) {
 	defer func() {
 		if err := conn.Close(); err != nil {
@@ -100,31 +136,20 @@ func (s *Server) runWebSocketWriter(conn server.WebSocketConn, send <-chan any) 
 	}
 }
 
-// runWebSocketReader reads commands from the connection and dispatches them.
-func (s *Server) runWebSocketReader(conn server.WebSocketConn, send chan<- any, done, statusUpdate chan<- struct{}) {
-	defer func() {
-		if r := recover(); r != nil {
-			slog.Error("panic in WebSocket reader", "panic", r)
-		}
-		close(done)
-	}()
+// runWebSocketReader reads from the connection to keep it alive.
+func (s *Server) runWebSocketReader(conn server.WebSocketConn, done chan<- struct{}) {
+	defer close(done)
 
 	for {
-		var cmd server.WSCommand
-		if err := conn.ReadJSON(&cmd); err != nil {
+		// Read messages to keep connection alive and detect disconnects
+		if _, _, err := conn.ReadMessage(); err != nil {
 			return
 		}
-		s.commands.Handle(cmd, send, func() {
-			select {
-			case statusUpdate <- struct{}{}:
-			default:
-			}
-		})
 	}
 }
 
 // runWebSocketEventLoop handles periodic status and level updates.
-func (s *Server) runWebSocketEventLoop(send chan any, done, statusUpdate <-chan struct{}) {
+func (s *Server) runWebSocketEventLoop(send chan any, done <-chan struct{}) {
 	levelsTicker := time.NewTicker(100 * time.Millisecond)  // 10 fps for VU meters
 	statusTicker := time.NewTicker(3000 * time.Millisecond) // Status updates every 3s
 	defer levelsTicker.Stop()
@@ -141,7 +166,7 @@ func (s *Server) runWebSocketEventLoop(send chan any, done, statusUpdate <-chan 
 	}
 
 	// Send initial status
-	if !trySend(s.buildWSStatus()) {
+	if !trySend(s.buildWSRuntime()) {
 		close(send)
 		return
 	}
@@ -151,18 +176,13 @@ func (s *Server) runWebSocketEventLoop(send chan any, done, statusUpdate <-chan 
 		case <-done:
 			close(send)
 			return
-		case <-statusUpdate:
-			if !trySend(s.buildWSStatus()) {
-				close(send)
-				return
-			}
 		case <-levelsTicker.C:
 			if !trySend(types.WSLevelsResponse{Type: "levels", Levels: s.encoder.AudioLevels()}) {
 				close(send)
 				return
 			}
 		case <-statusTicker.C:
-			if !trySend(s.buildWSStatus()) {
+			if !trySend(s.buildWSRuntime()) {
 				close(send)
 				return
 			}
@@ -170,45 +190,20 @@ func (s *Server) runWebSocketEventLoop(send chan any, done, statusUpdate <-chan 
 	}
 }
 
-// buildWSStatus returns the current WebSocket status response.
-func (s *Server) buildWSStatus() types.WSStatusResponse {
+// buildWSRuntime returns runtime-only status for WebSocket clients.
+func (s *Server) buildWSRuntime() types.WSRuntimeStatus {
 	cfg := s.config.Snapshot()
 	status := s.encoder.Status()
 	status.OutputCount = len(cfg.Outputs)
 
-	return types.WSStatusResponse{
-		Type:                "status",
-		FFmpegAvailable:     s.ffmpegAvailable,
-		Encoder:             status,
-		Outputs:             cfg.Outputs,
-		OutputStatus:        s.encoder.AllOutputStatuses(cfg.Outputs),
-		Recorders:           cfg.Recorders,
-		RecorderStatuses:    s.encoder.AllRecorderStatuses(),
-		RecordingAPIKey:     cfg.RecordingAPIKey,
-		Devices:             audio.ListDevices(),
-		SilenceThreshold:    cfg.SilenceThreshold,
-		SilenceDurationMs:   cfg.SilenceDurationMs,
-		SilenceRecoveryMs:   cfg.SilenceRecoveryMs,
-		SilenceWebhook:      cfg.WebhookURL,
-		SilenceLogPath:      cfg.LogPath,
-		SilenceZabbixServer: cfg.ZabbixServer,
-		SilenceZabbixPort:   cfg.ZabbixPort,
-		SilenceZabbixHost:   cfg.ZabbixHost,
-		SilenceZabbixKey:    cfg.ZabbixKey,
-		GraphTenantID:       cfg.GraphTenantID,
-		GraphClientID:       cfg.GraphClientID,
-		GraphFromAddress:    cfg.GraphFromAddress,
-		GraphRecipients:     cfg.GraphRecipients,
-		GraphSecretExpiry:   s.encoder.GraphSecretExpiry(),
-		SilenceDump: types.SilenceDumpConfig{
-			Enabled:       cfg.SilenceDumpEnabled,
-			RetentionDays: cfg.SilenceDumpRetentionDays,
-		},
-		Settings: types.WSSettings{
-			AudioInput: cfg.AudioInput,
-			Platform:   runtime.GOOS,
-		},
-		Version: s.version.Info(),
+	return types.WSRuntimeStatus{
+		Type:              "status",
+		FFmpegAvailable:   s.ffmpegAvailable,
+		Encoder:           status,
+		OutputStatus:      s.encoder.AllOutputStatuses(cfg.Outputs),
+		RecorderStatuses:  s.encoder.AllRecorderStatuses(),
+		GraphSecretExpiry: s.encoder.GraphSecretExpiry(),
+		Version:           s.version.Info(),
 	}
 }
 
@@ -227,8 +222,37 @@ func (s *Server) SetupRoutes() http.Handler {
 	mux.HandleFunc("/favicon.svg", s.handleFavicon)
 
 	// Recording API routes (API key auth)
-	mux.HandleFunc("/api/recordings/start", s.apiKeyAuth(s.handleStartRecording))
-	mux.HandleFunc("/api/recordings/stop", s.apiKeyAuth(s.handleStopRecording))
+	mux.HandleFunc("POST /api/recordings/start", s.apiKeyAuth(s.handleStartRecording))
+	mux.HandleFunc("POST /api/recordings/stop", s.apiKeyAuth(s.handleStopRecording))
+
+	// REST API routes (session auth)
+	mux.HandleFunc("GET /api/config", auth(s.handleAPIConfig))
+	mux.HandleFunc("GET /api/devices", auth(s.handleAPIDevices))
+	mux.HandleFunc("POST /api/settings", auth(s.handleAPISettings))
+
+	// Output CRUD routes
+	mux.HandleFunc("GET /api/outputs", auth(s.handleListOutputs))
+	mux.HandleFunc("POST /api/outputs", auth(s.handleCreateOutput))
+	mux.HandleFunc("GET /api/outputs/{id}", auth(s.handleGetOutput))
+	mux.HandleFunc("PUT /api/outputs/{id}", auth(s.handleUpdateOutput))
+	mux.HandleFunc("DELETE /api/outputs/{id}", auth(s.handleDeleteOutput))
+
+	// Recorder CRUD routes
+	mux.HandleFunc("GET /api/recorders", auth(s.handleListRecorders))
+	mux.HandleFunc("POST /api/recorders", auth(s.handleCreateRecorder))
+	mux.HandleFunc("POST /api/recorders/test-s3", auth(s.handleTestS3))
+	mux.HandleFunc("GET /api/recorders/{id}", auth(s.handleGetRecorder))
+	mux.HandleFunc("PUT /api/recorders/{id}", auth(s.handleUpdateRecorder))
+	mux.HandleFunc("DELETE /api/recorders/{id}", auth(s.handleDeleteRecorder))
+	mux.HandleFunc("POST /api/recorders/{id}/{action}", auth(s.handleRecorderAction))
+
+	// Notification routes
+	mux.HandleFunc("POST /api/notifications/test/webhook", auth(s.handleAPITestWebhook))
+	mux.HandleFunc("POST /api/notifications/test/log", auth(s.handleAPITestLog))
+	mux.HandleFunc("POST /api/notifications/test/email", auth(s.handleAPITestEmail))
+	mux.HandleFunc("POST /api/notifications/test/zabbix", auth(s.handleAPITestZabbix))
+	mux.HandleFunc("GET /api/notifications/log", auth(s.handleAPIViewLog))
+	mux.HandleFunc("POST /api/recording/regenerate-key", auth(s.handleAPIRegenerateKey))
 
 	// Protected routes
 	mux.HandleFunc("/ws", auth(s.handleWebSocket))
@@ -237,7 +261,7 @@ func (s *Server) SetupRoutes() http.Handler {
 	return securityHeaders(mux)
 }
 
-// securityHeaders returns middleware that wraps handlers with security headers.
+// securityHeaders returns middleware that adds security headers to responses.
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Frame-Options", "DENY")
@@ -325,14 +349,14 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
-// staticFile is an embedded static file with content type and data.
+// A staticFile represents an embedded static file with content type and data.
 type staticFile struct {
 	contentType string
 	content     string
 	name        string
 }
 
-// staticFiles is a map from URL paths to static file definitions.
+// staticFiles contains URL path to static file mappings.
 var staticFiles = map[string]staticFile{
 	"/style.css": {
 		contentType: "text/css",
@@ -406,11 +430,6 @@ func (s *Server) apiKeyAuth(next http.HandlerFunc) http.HandlerFunc {
 
 // handleStartRecording initiates recording for the specified recorder.
 func (s *Server) handleStartRecording(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	recorderID := r.URL.Query().Get("recorder_id")
 	if recorderID == "" {
 		w.Header().Set("Content-Type", "application/json")
@@ -439,11 +458,6 @@ func (s *Server) handleStartRecording(w http.ResponseWriter, r *http.Request) {
 
 // handleStopRecording stops recording for the specified recorder.
 func (s *Server) handleStopRecording(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	recorderID := r.URL.Query().Get("recorder_id")
 	if recorderID == "" {
 		w.Header().Set("Content-Type", "application/json")
@@ -477,8 +491,12 @@ func (s *Server) Start() *http.Server {
 	slog.Info("starting web server", "addr", addr)
 
 	srv := &http.Server{
-		Addr:    addr,
-		Handler: s.SetupRoutes(),
+		Addr:           addr,
+		Handler:        s.SetupRoutes(),
+		ReadTimeout:    15 * time.Second,
+		WriteTimeout:   15 * time.Second,
+		IdleTimeout:    60 * time.Second,
+		MaxHeaderBytes: 1 << 20,
 	}
 
 	go func() {

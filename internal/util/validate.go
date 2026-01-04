@@ -19,27 +19,16 @@ func IsConfigured(values ...string) bool {
 	return true
 }
 
-// PathValidationError represents a path validation failure.
-type PathValidationError struct {
-	Field   string
-	Message string
-}
-
-// Error returns a formatted validation error message.
-func (v *PathValidationError) Error() string {
-	return fmt.Sprintf("%s: %s", v.Field, v.Message)
-}
-
 // ValidatePath validates a file path for security.
-func ValidatePath(field, path string) *PathValidationError {
+func ValidatePath(field, path string) error {
 	if path == "" {
-		return &PathValidationError{Field: field, Message: fmt.Sprintf("%s is required", field)}
+		return fmt.Errorf("%s: is required", field)
 	}
 
 	// Reject path traversal attempts before cleaning
 	// This catches both explicit "../" and encoded variants
 	if strings.Contains(path, "..") {
-		return &PathValidationError{Field: field, Message: "path cannot contain '..'"}
+		return fmt.Errorf("%s: path cannot contain '..'", field)
 	}
 
 	// Clean the path to normalize it
@@ -48,7 +37,7 @@ func ValidatePath(field, path string) *PathValidationError {
 	// After cleaning, verify no traversal components remain
 	// (filepath.Clean converts "a/../b" to "b", but we already rejected "..")
 	if strings.Contains(cleaned, "..") {
-		return &PathValidationError{Field: field, Message: "invalid path"}
+		return fmt.Errorf("%s: invalid path", field)
 	}
 
 	return nil

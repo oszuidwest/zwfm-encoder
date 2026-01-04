@@ -41,7 +41,7 @@ type zabbixResponse struct {
 	Info     string `json:"info"`
 }
 
-// sendZabbixPayload sends a payload via the zabbix_sender protocol.
+// sendZabbixPayload sends a payload to the Zabbix server.
 func sendZabbixPayload(server string, port int, payload zabbixRequest) error {
 	addr := net.JoinHostPort(server, strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", addr, zabbixTimeout)

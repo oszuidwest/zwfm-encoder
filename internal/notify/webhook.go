@@ -10,7 +10,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// WebhookPayload represents the JSON structure sent to webhook endpoints.
+// WebhookPayload represents the data sent to webhook endpoints.
 type WebhookPayload struct {
 	Event             string  `json:"event"`
 	SilenceDurationMs int64   `json:"silence_duration_ms,omitempty"`

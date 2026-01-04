@@ -2,6 +2,9 @@
 package types
 
 import (
+	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -39,7 +42,7 @@ const (
 	ProcessError ProcessState = "error"
 )
 
-// ProcessStatus contains runtime status for any managed process (output or recorder).
+// ProcessStatus is the runtime status of a managed process.
 type ProcessStatus struct {
 	State      ProcessState `json:"state"`                 // Current process state
 	Stable     bool         `json:"stable,omitempty"`      // Outputs: running ≥10s
@@ -88,6 +91,29 @@ const (
 	CodecOGG Codec = "ogg" // Ogg Vorbis
 )
 
+// ValidCodecs is the set of supported audio codecs.
+var ValidCodecs = map[Codec]bool{
+	CodecWAV: true, CodecMP3: true, CodecMP2: true, CodecOGG: true,
+}
+
+// UnmarshalJSON implements json.Unmarshaler for strict parsing.
+func (c *Codec) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	if s == "" {
+		*c = CodecWAV // default
+		return nil
+	}
+	codec := Codec(s)
+	if !ValidCodecs[codec] {
+		return fmt.Errorf("codec: must be wav, mp3, mp2, or ogg")
+	}
+	*c = codec
+	return nil
+}
+
 // Output represents a single SRT output destination.
 type Output struct {
 	ID         string `json:"id"`          // Unique identifier
@@ -126,7 +152,7 @@ type CodecPreset struct {
 	Format string   // FFmpeg output format
 }
 
-// CodecPresets maps codec types to their FFmpeg configuration.
+// CodecPresets is the FFmpeg configuration for each codec type.
 var CodecPresets = map[Codec]CodecPreset{
 	CodecMP2: {[]string{"libtwolame", "-b:a", "384k", "-psymodel", "4"}, "mp2"},
 	CodecMP3: {[]string{"libmp3lame", "-b:a", "320k"}, "mp3"},
@@ -160,7 +186,22 @@ func (o *Output) Format() string {
 	return FormatFor(o.Codec)
 }
 
-// RotationMode determines how recordings are split into files.
+// Validate reports an error if the output configuration is invalid.
+// Note: Codec validation is handled by UnmarshalJSON during parsing.
+func (o *Output) Validate() error {
+	if strings.TrimSpace(o.Host) == "" {
+		return fmt.Errorf("host: is required")
+	}
+	if o.Port <= 0 || o.Port > 65535 {
+		return fmt.Errorf("port: must be between 1 and 65535")
+	}
+	if o.MaxRetries < 0 {
+		return fmt.Errorf("max_retries: cannot be negative")
+	}
+	return nil
+}
+
+// RotationMode is the strategy for splitting recordings into files.
 type RotationMode string
 
 // Supported rotation modes.
@@ -168,7 +209,30 @@ const (
 	RotationHourly RotationMode = "hourly" // Rotate at system clock hour boundaries
 )
 
-// StorageMode determines where recordings are saved.
+// ValidRotationModes is the set of supported rotation modes.
+var ValidRotationModes = map[RotationMode]bool{
+	RotationHourly: true,
+}
+
+// UnmarshalJSON implements json.Unmarshaler for strict parsing.
+func (m *RotationMode) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	if s == "" {
+		*m = RotationHourly // default
+		return nil
+	}
+	mode := RotationMode(s)
+	if !ValidRotationModes[mode] {
+		return fmt.Errorf("rotation_mode: must be hourly")
+	}
+	*m = mode
+	return nil
+}
+
+// StorageMode is the storage destination type for recordings.
 type StorageMode string
 
 // Supported storage modes.
@@ -178,13 +242,36 @@ const (
 	StorageBoth  StorageMode = "both"  // Save locally AND upload to S3
 )
 
+// ValidStorageModes is the set of supported storage modes.
+var ValidStorageModes = map[StorageMode]bool{
+	StorageLocal: true, StorageS3: true, StorageBoth: true,
+}
+
+// UnmarshalJSON implements json.Unmarshaler for strict parsing.
+func (m *StorageMode) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	if s == "" {
+		*m = StorageLocal // default
+		return nil
+	}
+	mode := StorageMode(s)
+	if !ValidStorageModes[mode] {
+		return fmt.Errorf("storage_mode: must be local, s3, or both")
+	}
+	*m = mode
+	return nil
+}
+
 // DefaultRetentionDays is the default number of days to keep recordings.
 const DefaultRetentionDays = 90
 
 // DefaultSilenceDumpRetentionDays is the default number of days to keep silence dumps.
 const DefaultSilenceDumpRetentionDays = 7
 
-// SilenceDumpConfig contains configuration for silence dump capture.
+// SilenceDumpConfig is the configuration for silence dump capture.
 type SilenceDumpConfig struct {
 	Enabled       bool `json:"enabled"`        // Whether dump capture is active
 	RetentionDays int  `json:"retention_days"` // Days to keep dump files (default 7)
@@ -226,7 +313,38 @@ func (r *Recorder) Format() string {
 	return FormatFor(r.Codec)
 }
 
-// EncoderStatus contains a summary of the encoder's current operational state.
+// Validate reports an error if the recorder configuration is invalid.
+// Note: Codec, RotationMode, StorageMode validation is handled by UnmarshalJSON during parsing.
+func (r *Recorder) Validate() error {
+	if strings.TrimSpace(r.Name) == "" {
+		return fmt.Errorf("name: is required")
+	}
+
+	// Conditional validation based on storage mode
+	needsLocal := r.StorageMode == StorageLocal || r.StorageMode == StorageBoth
+	needsS3 := r.StorageMode == StorageS3 || r.StorageMode == StorageBoth
+
+	if needsLocal && strings.TrimSpace(r.LocalPath) == "" {
+		return fmt.Errorf("local_path: is required for local/both storage mode")
+	}
+	if needsS3 {
+		if r.S3Bucket == "" {
+			return fmt.Errorf("s3_bucket: is required for s3/both storage mode")
+		}
+		if r.S3AccessKeyID == "" {
+			return fmt.Errorf("s3_access_key_id: is required for s3/both storage mode")
+		}
+		if r.S3SecretAccessKey == "" {
+			return fmt.Errorf("s3_secret_access_key: is required for s3/both storage mode")
+		}
+	}
+	if r.RetentionDays < 0 {
+		return fmt.Errorf("retention_days: cannot be negative")
+	}
+	return nil
+}
+
+// EncoderStatus is a summary of the encoder's current operational state.
 type EncoderStatus struct {
 	State            EncoderState `json:"state"`                       // Current encoder state
 	Uptime           string       `json:"uptime,omitzero"`             // Time since start
@@ -242,7 +360,7 @@ type SilenceLevel string
 // SilenceLevelActive indicates silence is confirmed.
 const SilenceLevelActive SilenceLevel = "active"
 
-// AudioLevels contains current audio level measurements.
+// AudioLevels is the current audio level measurements.
 type AudioLevels struct {
 	Left              float64      `json:"left"`                         // RMS level in dB
 	Right             float64      `json:"right"`                        // RMS level in dB
@@ -255,7 +373,7 @@ type AudioLevels struct {
 	ClipRight         int          `json:"clip_right,omitzero"`          // Clipped samples on right channel
 }
 
-// AudioMetrics contains audio level metrics for callback processing.
+// AudioMetrics holds audio level metrics for callback processing.
 type AudioMetrics struct {
 	RMSLeft, RMSRight   float64      // RMS levels in dB
 	PeakLeft, PeakRight float64      // Peak levels in dB
@@ -265,63 +383,62 @@ type AudioMetrics struct {
 	ClipLeft, ClipRight int          // Clipped sample counts
 }
 
-// WSStatusResponse is sent to clients with full encoder and output status.
-type WSStatusResponse struct {
-	Type                string                   `json:"type"`                  // Message type identifier
-	FFmpegAvailable     bool                     `json:"ffmpeg_available"`      // FFmpeg binary is available
-	Encoder             EncoderStatus            `json:"encoder"`               // Encoder status
-	Outputs             []Output                 `json:"outputs"`               // Output configurations
-	OutputStatus        map[string]ProcessStatus `json:"output_status"`         // Runtime output status
-	Recorders           []Recorder               `json:"recorders"`             // Recorder configurations
-	RecorderStatuses    map[string]ProcessStatus `json:"recorder_statuses"`     // Runtime recorder status
-	RecordingAPIKey     string                   `json:"recording_api_key"`     // API key for recording control
-	Devices             []AudioDevice            `json:"devices"`               // Available audio devices
-	SilenceThreshold    float64                  `json:"silence_threshold"`     // Silence threshold in dB
-	SilenceDurationMs   int64                    `json:"silence_duration_ms"`   // Silence duration in milliseconds
-	SilenceRecoveryMs   int64                    `json:"silence_recovery_ms"`   // Recovery duration in milliseconds
-	SilenceWebhook      string                   `json:"silence_webhook"`       // Webhook URL for alerts
-	SilenceLogPath      string                   `json:"silence_log_path"`      // Log file path
-	SilenceZabbixServer string                   `json:"silence_zabbix_server"` // Zabbix server address
-	SilenceZabbixPort   int                      `json:"silence_zabbix_port"`   // Zabbix server port
-	SilenceZabbixHost   string                   `json:"silence_zabbix_host"`   // Zabbix host name
-	SilenceZabbixKey    string                   `json:"silence_zabbix_key"`    // Zabbix item key
-	GraphTenantID       string                   `json:"graph_tenant_id"`       // Azure AD tenant ID
-	GraphClientID       string                   `json:"graph_client_id"`       // App registration client ID
-	GraphFromAddress    string                   `json:"graph_from_address"`    // Shared mailbox address
-	GraphRecipients     string                   `json:"graph_recipients"`      // Comma-separated recipients
-	GraphSecretExpiry   SecretExpiryInfo         `json:"graph_secret_expiry"`   // Client secret expiration info
-	SilenceDump         SilenceDumpConfig        `json:"silence_dump"`          // Silence dump configuration
-	Settings            WSSettings               `json:"settings"`              // Current settings
-	Version             VersionInfo              `json:"version"`               // Version information
+// WSRuntimeStatus is sent to clients with only runtime status (no config).
+// This is the lightweight status message sent every 3 seconds via WebSocket.
+type WSRuntimeStatus struct {
+	Type              string                   `json:"type"`                // Message type identifier ("status")
+	FFmpegAvailable   bool                     `json:"ffmpeg_available"`    // FFmpeg binary is available
+	Encoder           EncoderStatus            `json:"encoder"`             // Encoder status
+	OutputStatus      map[string]ProcessStatus `json:"output_status"`       // Runtime output status by ID
+	RecorderStatuses  map[string]ProcessStatus `json:"recorder_statuses"`   // Runtime recorder status by ID
+	GraphSecretExpiry SecretExpiryInfo         `json:"graph_secret_expiry"` // Client secret expiration info
+	Version           VersionInfo              `json:"version"`             // Version information
 }
 
-// WSSettings contains the settings sub-object in status responses.
-type WSSettings struct {
-	AudioInput string `json:"audio_input"` // Selected audio input device
-	Platform   string `json:"platform"`    // Operating system platform
+// APIConfigResponse is returned by GET /api/config with full configuration.
+type APIConfigResponse struct {
+	// Audio settings
+	AudioInput string        `json:"audio_input"` // Selected audio input device
+	Devices    []AudioDevice `json:"devices"`     // Available audio devices
+	Platform   string        `json:"platform"`    // Operating system platform
+
+	// Silence detection
+	SilenceThreshold  float64           `json:"silence_threshold"`   // Silence threshold in dB
+	SilenceDurationMs int64             `json:"silence_duration_ms"` // Silence duration in milliseconds
+	SilenceRecoveryMs int64             `json:"silence_recovery_ms"` // Recovery duration in milliseconds
+	SilenceDump       SilenceDumpConfig `json:"silence_dump"`        // Silence dump configuration
+
+	// Notifications - Webhook
+	WebhookURL string `json:"webhook_url"` // Webhook URL for alerts
+
+	// Notifications - Log
+	LogPath string `json:"log_path"` // Log file path
+
+	// Notifications - Zabbix
+	ZabbixServer string `json:"zabbix_server"` // Zabbix server address
+	ZabbixPort   int    `json:"zabbix_port"`   // Zabbix server port
+	ZabbixHost   string `json:"zabbix_host"`   // Zabbix host name
+	ZabbixKey    string `json:"zabbix_key"`    // Zabbix item key
+
+	// Notifications - Email (Microsoft Graph)
+	GraphTenantID    string `json:"graph_tenant_id"`    // Azure AD tenant ID
+	GraphClientID    string `json:"graph_client_id"`    // App registration client ID
+	GraphFromAddress string `json:"graph_from_address"` // Shared mailbox address
+	GraphRecipients  string `json:"graph_recipients"`   // Comma-separated recipients
+	GraphHasSecret   bool   `json:"graph_has_secret"`   // Whether client secret is configured
+
+	// Recording
+	RecordingAPIKey string `json:"recording_api_key"` // API key for recording control
+
+	// Entities
+	Outputs   []Output   `json:"outputs"`   // Output configurations
+	Recorders []Recorder `json:"recorders"` // Recorder configurations
 }
 
 // WSLevelsResponse is sent to clients with audio level updates.
 type WSLevelsResponse struct {
 	Type   string      `json:"type"`   // Message type identifier
 	Levels AudioLevels `json:"levels"` // Current audio levels
-}
-
-// WSTestResult is sent to clients after a test operation completes.
-type WSTestResult struct {
-	Type     string `json:"type"`            // Message type identifier
-	TestType string `json:"test_type"`       // Type of test performed
-	Success  bool   `json:"success"`         // Test succeeded
-	Error    string `json:"error,omitempty"` // Error message if failed
-}
-
-// WSSilenceLogResult is sent to clients with silence log entries.
-type WSSilenceLogResult struct {
-	Type    string            `json:"type"`              // Message type identifier
-	Success bool              `json:"success"`           // Operation succeeded
-	Error   string            `json:"error,omitempty"`   // Error message if failed
-	Entries []SilenceLogEntry `json:"entries,omitempty"` // Log entries
-	Path    string            `json:"path,omitempty"`    // Log file path
 }
 
 // SilenceLogEntry represents a single entry in the silence log.
@@ -346,7 +463,7 @@ type AudioDevice struct {
 	Name string `json:"name"` // Device display name
 }
 
-// GraphConfig contains Microsoft Graph API settings for email notifications.
+// GraphConfig is the Microsoft Graph API configuration for email notifications.
 type GraphConfig struct {
 	TenantID     string `json:"tenant_id,omitempty"`     // Azure AD tenant ID
 	ClientID     string `json:"client_id,omitempty"`     // App registration client ID
@@ -355,7 +472,7 @@ type GraphConfig struct {
 	Recipients   string `json:"recipients,omitempty"`    // Comma-separated recipients
 }
 
-// ZabbixConfig contains settings for sending trapper items to a Zabbix server.
+// ZabbixConfig is the configuration for sending trapper items to a Zabbix server.
 type ZabbixConfig struct {
 	Server string `json:"server,omitempty"`
 	Port   int    `json:"port,omitempty"`
@@ -363,7 +480,7 @@ type ZabbixConfig struct {
 	Key    string `json:"key,omitempty"`
 }
 
-// SecretExpiryInfo contains client secret expiration data.
+// SecretExpiryInfo is the expiration status of a client secret.
 type SecretExpiryInfo struct {
 	ExpiresAt   string `json:"expires_at,omitempty"`   // RFC3339 expiration timestamp
 	ExpiresSoon bool   `json:"expires_soon,omitempty"` // True if expires within 30 days
@@ -371,7 +488,7 @@ type SecretExpiryInfo struct {
 	Error       string `json:"error,omitempty"`        // Error message if check failed
 }
 
-// VersionInfo contains version comparison data.
+// VersionInfo is the current and latest version information.
 type VersionInfo struct {
 	Current     string `json:"current"`              // Current version
 	Latest      string `json:"latest,omitempty"`     // Latest available version

@@ -6,7 +6,7 @@ import (
 	"log/slog"
 )
 
-// SafeClose closes an io.Closer and logs any error that occurs.
+// SafeClose closes an io.Closer, logging any error.
 func SafeClose(closer io.Closer, name string) {
 	if closer == nil {
 		return

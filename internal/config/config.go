@@ -105,22 +105,16 @@ type RecordingConfig struct {
 	Recorders          []types.Recorder `json:"recorders"`            // Recording destinations
 }
 
-// SilenceDumpConfig represents settings for capturing audio around silence events.
-type SilenceDumpConfig struct {
-	Enabled       bool `json:"enabled"`        // Whether dump capture is active
-	RetentionDays int  `json:"retention_days"` // Days to keep dump files
-}
-
 // Config represents all application configuration and is safe for concurrent use.
 type Config struct {
-	System           SystemConfig           `json:"system"`
-	Web              WebConfig              `json:"web"`
-	Audio            AudioConfig            `json:"audio"`
-	SilenceDetection SilenceDetectionConfig `json:"silence_detection"`
-	SilenceDump      SilenceDumpConfig      `json:"silence_dump"`
-	Notifications    NotificationsConfig    `json:"notifications"`
-	Streaming        StreamingConfig        `json:"streaming"`
-	Recording        RecordingConfig        `json:"recording"`
+	System           SystemConfig            `json:"system"`
+	Web              WebConfig               `json:"web"`
+	Audio            AudioConfig             `json:"audio"`
+	SilenceDetection SilenceDetectionConfig  `json:"silence_detection"`
+	SilenceDump      types.SilenceDumpConfig `json:"silence_dump"`
+	Notifications    NotificationsConfig     `json:"notifications"`
+	Streaming        StreamingConfig         `json:"streaming"`
+	Recording        RecordingConfig         `json:"recording"`
 
 	mu       sync.RWMutex
 	filePath string
@@ -141,7 +135,7 @@ func New(filePath string) *Config {
 		},
 		Audio:            AudioConfig{},
 		SilenceDetection: SilenceDetectionConfig{},
-		SilenceDump: SilenceDumpConfig{
+		SilenceDump: types.SilenceDumpConfig{
 			Enabled:       true, // Enabled by default when FFmpeg is available
 			RetentionDays: types.DefaultSilenceDumpRetentionDays,
 		},
@@ -203,6 +197,10 @@ func (c *Config) applyDefaults() {
 	c.Web.StationName = cmp.Or(c.Web.StationName, DefaultStationName)
 	c.Web.ColorLight = cmp.Or(c.Web.ColorLight, DefaultStationColorLight)
 	c.Web.ColorDark = cmp.Or(c.Web.ColorDark, DefaultStationColorDark)
+	// Silence detection defaults
+	c.SilenceDetection.ThresholdDB = cmp.Or(c.SilenceDetection.ThresholdDB, DefaultSilenceThreshold)
+	c.SilenceDetection.DurationMs = cmp.Or(c.SilenceDetection.DurationMs, DefaultSilenceDurationMs)
+	c.SilenceDetection.RecoveryMs = cmp.Or(c.SilenceDetection.RecoveryMs, DefaultSilenceRecoveryMs)
 	// Streaming defaults
 	if c.Streaming.Outputs == nil {
 		c.Streaming.Outputs = []types.Output{}
@@ -250,31 +248,32 @@ func (c *Config) ConfiguredOutputs() []types.Output {
 	return slices.Clone(c.Streaming.Outputs)
 }
 
-// Output returns a copy of the output with the given ID, or nil if not found.
+// Output returns the output with the given ID, or nil if not found.
 func (c *Config) Output(id string) *types.Output {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	for _, o := range c.Streaming.Outputs {
-		if o.ID == id {
-			output := o
-			return &output
-		}
+	idx := slices.IndexFunc(c.Streaming.Outputs, func(o types.Output) bool {
+		return o.ID == id
+	})
+	if idx == -1 {
+		return nil
 	}
-	return nil
+	return &c.Streaming.Outputs[idx]
 }
 
 func (c *Config) findOutputIndex(id string) int {
-	for i, o := range c.Streaming.Outputs {
-		if o.ID == id {
-			return i
-		}
-	}
-	return -1
+	return slices.IndexFunc(c.Streaming.Outputs, func(o types.Output) bool {
+		return o.ID == id
+	})
 }
 
-// AddOutput creates a new output.
+// AddOutput adds an output to the configuration and persists the change.
 func (c *Config) AddOutput(output *types.Output) error {
+	if err := output.Validate(); err != nil {
+		return err
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -293,7 +292,7 @@ func (c *Config) AddOutput(output *types.Output) error {
 	return c.saveLocked()
 }
 
-// RemoveOutput deletes an output.
+// RemoveOutput removes an output from the configuration and persists the change.
 func (c *Config) RemoveOutput(id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -303,12 +302,16 @@ func (c *Config) RemoveOutput(id string) error {
 		return fmt.Errorf("output not found: %s", id)
 	}
 
-	c.Streaming.Outputs = append(c.Streaming.Outputs[:i], c.Streaming.Outputs[i+1:]...)
+	c.Streaming.Outputs = slices.Delete(c.Streaming.Outputs, i, i+1)
 	return c.saveLocked()
 }
 
-// UpdateOutput modifies an output.
+// UpdateOutput updates an output in the configuration and persists the change.
 func (c *Config) UpdateOutput(output *types.Output) error {
+	if err := output.Validate(); err != nil {
+		return err
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -323,31 +326,32 @@ func (c *Config) UpdateOutput(output *types.Output) error {
 
 // --- Recorder management ---
 
-// Recorder returns a copy of the recorder with the given ID, or nil if not found.
+// Recorder returns the recorder with the given ID, or nil if not found.
 func (c *Config) Recorder(id string) *types.Recorder {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	for i := range c.Recording.Recorders {
-		if c.Recording.Recorders[i].ID == id {
-			recorder := c.Recording.Recorders[i]
-			return &recorder
-		}
+	idx := slices.IndexFunc(c.Recording.Recorders, func(r types.Recorder) bool {
+		return r.ID == id
+	})
+	if idx == -1 {
+		return nil
 	}
-	return nil
+	return &c.Recording.Recorders[idx]
 }
 
 func (c *Config) findRecorderIndex(id string) int {
-	for i := range c.Recording.Recorders {
-		if c.Recording.Recorders[i].ID == id {
-			return i
-		}
-	}
-	return -1
+	return slices.IndexFunc(c.Recording.Recorders, func(r types.Recorder) bool {
+		return r.ID == id
+	})
 }
 
-// AddRecorder creates a new recorder.
+// AddRecorder adds a recorder to the configuration and persists the change.
 func (c *Config) AddRecorder(recorder *types.Recorder) error {
+	if err := recorder.Validate(); err != nil {
+		return err
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -368,7 +372,7 @@ func (c *Config) AddRecorder(recorder *types.Recorder) error {
 	return c.saveLocked()
 }
 
-// RemoveRecorder deletes a recorder.
+// RemoveRecorder removes a recorder from the configuration and persists the change.
 func (c *Config) RemoveRecorder(id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -378,12 +382,16 @@ func (c *Config) RemoveRecorder(id string) error {
 		return fmt.Errorf("recorder not found: %s", id)
 	}
 
-	c.Recording.Recorders = append(c.Recording.Recorders[:i], c.Recording.Recorders[i+1:]...)
+	c.Recording.Recorders = slices.Delete(c.Recording.Recorders, i, i+1)
 	return c.saveLocked()
 }
 
-// UpdateRecorder modifies a recorder.
+// UpdateRecorder updates a recorder in the configuration and persists the change.
 func (c *Config) UpdateRecorder(recorder *types.Recorder) error {
+	if err := recorder.Validate(); err != nil {
+		return err
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -449,31 +457,40 @@ func (c *Config) SetAudioInput(input string) error {
 	return c.saveLocked()
 }
 
-// SetSilenceThreshold updates the silence detection threshold in dB.
+// SetSilenceThreshold updates the silence detection threshold and persists the change.
 func (c *Config) SetSilenceThreshold(threshold float64) error {
+	if threshold > 0 || threshold < -60 {
+		return fmt.Errorf("silence_threshold: must be between -60 and 0 dB")
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.SilenceDetection.ThresholdDB = threshold
 	return c.saveLocked()
 }
 
-// SetSilenceDurationMs updates the silence detection duration in milliseconds.
+// SetSilenceDurationMs updates the silence detection duration and persists the change.
 func (c *Config) SetSilenceDurationMs(ms int64) error {
+	if ms <= 0 {
+		return fmt.Errorf("silence_duration_ms: must be greater than 0")
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.SilenceDetection.DurationMs = ms
 	return c.saveLocked()
 }
 
-// SetSilenceRecoveryMs updates the silence recovery duration in milliseconds.
+// SetSilenceRecoveryMs updates the silence recovery duration and persists the change.
 func (c *Config) SetSilenceRecoveryMs(ms int64) error {
+	if ms <= 0 {
+		return fmt.Errorf("silence_recovery_ms: must be greater than 0")
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.SilenceDetection.RecoveryMs = ms
 	return c.saveLocked()
 }
 
-// SetWebhookURL updates the webhook URL for silence notifications.
+// SetWebhookURL updates the webhook URL and persists the change.
 func (c *Config) SetWebhookURL(url string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -481,7 +498,7 @@ func (c *Config) SetWebhookURL(url string) error {
 	return c.saveLocked()
 }
 
-// SetLogPath updates the log file path for silence events.
+// SetLogPath updates the log file path and persists the change.
 func (c *Config) SetLogPath(path string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -489,7 +506,7 @@ func (c *Config) SetLogPath(path string) error {
 	return c.saveLocked()
 }
 
-// SetGraphConfig updates the Microsoft Graph email notification settings.
+// SetGraphConfig updates the Microsoft Graph email settings and persists the change.
 func (c *Config) SetGraphConfig(tenantID, clientID, clientSecret, fromAddress, recipients string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -501,7 +518,7 @@ func (c *Config) SetGraphConfig(tenantID, clientID, clientSecret, fromAddress, r
 	return c.saveLocked()
 }
 
-// SetRecordingAPIKey updates the API key for recording endpoints.
+// SetRecordingAPIKey updates the recording API key and persists the change.
 func (c *Config) SetRecordingAPIKey(key string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -509,7 +526,7 @@ func (c *Config) SetRecordingAPIKey(key string) error {
 	return c.saveLocked()
 }
 
-// SetSilenceDump updates the silence dump capture settings.
+// SetSilenceDump updates the silence dump settings and persists the change.
 func (c *Config) SetSilenceDump(enabled bool, retentionDays int) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -671,7 +688,7 @@ func generateShortID() (string, error) {
 	return fmt.Sprintf("%x", b), nil
 }
 
-// SetZabbixConfig updates Zabbix notification settings.
+// SetZabbixConfig updates the Zabbix notification settings and persists the change.
 func (c *Config) SetZabbixConfig(server string, port int, host, key string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

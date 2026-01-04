@@ -13,8 +13,6 @@ import (
 )
 
 // SilenceNotifier manages notifications for silence detection events.
-// Audio dump capture is handled by silencedump.Manager; this notifier
-// receives dump results via OnDumpReady callback.
 type SilenceNotifier struct {
 	cfg *config.Config
 
@@ -70,7 +68,7 @@ func (n *SilenceNotifier) InvalidateGraphClient() {
 	n.mu.Unlock()
 }
 
-// getOrCreateGraphClient returns the Graph client.
+// getOrCreateGraphClient returns the cached email client, creating one if needed.
 func (n *SilenceNotifier) getOrCreateGraphClient(cfg *GraphConfig) (*GraphClient, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -88,7 +86,6 @@ func (n *SilenceNotifier) getOrCreateGraphClient(cfg *GraphConfig) (*GraphClient
 }
 
 // HandleEvent processes a silence event and triggers notifications.
-// Note: Silence dump capture is handled separately by silencedump.Manager.
 func (n *SilenceNotifier) HandleEvent(event audio.SilenceEvent) {
 	if event.JustEntered {
 		n.handleSilenceStart(event.CurrentLevelL, event.CurrentLevelR)

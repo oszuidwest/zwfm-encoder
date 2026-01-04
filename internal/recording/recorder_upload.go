@@ -2,6 +2,7 @@ package recording
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,14 +13,14 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-// uploadRequest represents a file ready for S3 upload.
+// uploadRequest is a request to upload a file to S3.
 type uploadRequest struct {
 	localPath string
 	s3Key     string
 	fileSize  int64
 }
 
-// queueForUpload adds a completed file to the upload queue based on storage mode.
+// queueForUpload adds a completed file to the upload queue.
 func (r *GenericRecorder) queueForUpload(filePath string) {
 	info, err := os.Stat(filePath)
 	if err != nil {
@@ -53,7 +54,7 @@ func (r *GenericRecorder) queueForUpload(filePath string) {
 	}
 }
 
-// uploadWorker processes the upload queue in a background goroutine.
+// uploadWorker processes the upload queue.
 func (r *GenericRecorder) uploadWorker() {
 	defer r.uploadWg.Done()
 
@@ -77,7 +78,11 @@ func (r *GenericRecorder) uploadWorker() {
 
 // uploadFile uploads a single file to S3.
 func (r *GenericRecorder) uploadFile(req uploadRequest) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeoutCause(
+		context.Background(),
+		5*time.Minute,
+		errors.New("s3 upload timeout"),
+	)
 	defer cancel()
 
 	file, err := os.Open(req.localPath)

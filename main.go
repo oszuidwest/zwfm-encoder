@@ -90,7 +90,7 @@ func main() {
 	srv.version.Stop()
 
 	// Shut down HTTP server.
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5000*time.Millisecond)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {

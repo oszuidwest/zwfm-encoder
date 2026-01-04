@@ -10,7 +10,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-// Manager orchestrates multiple GenericRecorders.
+// Manager is a coordinator for multiple GenericRecorders.
 type Manager struct {
 	mu sync.RWMutex
 
@@ -237,7 +237,7 @@ func (m *Manager) AllStatuses() map[string]types.ProcessStatus {
 	return statuses
 }
 
-// startHourlyRetryScheduler retries failed hourly recorders.
+// startHourlyRetryScheduler starts the hourly retry scheduler for failed recorders.
 func (m *Manager) startHourlyRetryScheduler() {
 	go func() {
 		for {
@@ -252,7 +252,7 @@ func (m *Manager) startHourlyRetryScheduler() {
 	}()
 }
 
-// retryFailedHourlyRecorders attempts to restart any hourly recorders that are in error state.
+// retryFailedHourlyRecorders restarts failed hourly recorders.
 func (m *Manager) retryFailedHourlyRecorders() {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

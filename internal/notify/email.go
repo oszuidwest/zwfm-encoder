@@ -8,10 +8,10 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// GraphConfig is the Microsoft Graph configuration for email notifications.
+// GraphConfig is the configuration for email notifications.
 type GraphConfig = types.GraphConfig
 
-// SendTestEmail sends a test email to verify Microsoft Graph configuration.
+// SendTestEmail sends a test email to verify email configuration.
 func SendTestEmail(cfg *GraphConfig, stationName string) error {
 	if err := ValidateConfig(cfg); err != nil {
 		return fmt.Errorf("configuration error: %w", err)

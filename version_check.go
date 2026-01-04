@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -23,7 +24,7 @@ const (
 	versionRetryDelay    = 1 * time.Minute          // Delay between retries
 )
 
-// VersionChecker periodically checks GitHub for new releases. It is safe for concurrent use.
+// VersionChecker checks for new releases and reports update availability. It is safe for concurrent use.
 type VersionChecker struct {
 	mu     sync.RWMutex
 	latest string
@@ -45,7 +46,7 @@ func (vc *VersionChecker) Stop() {
 	close(vc.stopCh)
 }
 
-// run executes the periodic version check loop.
+// run executes the version check loop.
 func (vc *VersionChecker) run() {
 	defer func() {
 		if r := recover(); r != nil {
@@ -74,7 +75,7 @@ func (vc *VersionChecker) run() {
 	}
 }
 
-// checkWithRetry performs the version check with automatic retries.
+// checkWithRetry performs the version check with retries on failure.
 func (vc *VersionChecker) checkWithRetry() {
 	for attempt := range versionMaxRetries {
 		if vc.check() {
@@ -86,16 +87,20 @@ func (vc *VersionChecker) checkWithRetry() {
 	}
 }
 
-// githubRelease is the GitHub API response structure for a release.
+// githubRelease represents a release with version and status information.
 type githubRelease struct {
 	TagName    string `json:"tag_name"`
 	Draft      bool   `json:"draft"`
 	Prerelease bool   `json:"prerelease"`
 }
 
-// check retrieves the latest release information.
+// check retrieves the latest release information and reports whether the check succeeded.
 func (vc *VersionChecker) check() bool {
-	ctx, cancel := context.WithTimeout(context.Background(), versionCheckTimeout)
+	ctx, cancel := context.WithTimeoutCause(
+		context.Background(),
+		versionCheckTimeout,
+		errors.New("github API request timeout"),
+	)
 	defer cancel()
 
 	url := "https://api.github.com/repos/" + githubRepo + "/releases/latest"

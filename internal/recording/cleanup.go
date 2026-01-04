@@ -2,10 +2,13 @@ package recording
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,7 +17,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-// datePattern matches date in filename: name-YYYY-MM-DD-HH-MM.ext
+// datePattern matches the date portion in recording filenames.
 var datePattern = regexp.MustCompile(`(\d{4}-\d{2}-\d{2})`)
 
 // startCleanupScheduler starts the daily cleanup scheduler.
@@ -45,10 +48,7 @@ func (m *Manager) startCleanupScheduler() {
 // runCleanup performs cleanup for all recorders.
 func (m *Manager) runCleanup() {
 	m.mu.RLock()
-	recorders := make([]*GenericRecorder, 0, len(m.recorders))
-	for _, r := range m.recorders {
-		recorders = append(recorders, r)
-	}
+	recorders := slices.Collect(maps.Values(m.recorders))
 	m.mu.RUnlock()
 
 	slog.Info("cleanup: starting daily cleanup", "recorders", len(recorders))
@@ -150,7 +150,11 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 	safeName := sanitizeFilename(cfg.Name)
 	prefix := "recordings/" + safeName + "/"
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeoutCause(
+		context.Background(),
+		5*time.Minute,
+		errors.New("s3 cleanup timeout"),
+	)
 	defer cancel()
 
 	var deleted int
@@ -207,14 +211,14 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 	}
 }
 
-// extractDateFromFilename extracts the date from a filename like "name-2025-01-15-14-00.mp3".
+// extractDateFromFilename extracts the date from a recording filename.
 func extractDateFromFilename(filename string) (time.Time, bool) {
 	matches := datePattern.FindStringSubmatch(filename)
 	if len(matches) < 2 {
 		return time.Time{}, false
 	}
 
-	date, err := time.Parse("2006-01-02", matches[1])
+	date, err := time.Parse(time.DateOnly, matches[1])
 	if err != nil {
 		return time.Time{}, false
 	}
