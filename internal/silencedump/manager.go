@@ -107,7 +107,10 @@ func (m *Manager) HandleSilenceEvent(event audio.SilenceEvent) {
 	}
 
 	if event.JustRecovered {
-		m.capturer.OnSilenceRecover(time.Duration(event.TotalDurationMs) * time.Millisecond)
+		m.capturer.OnSilenceRecover(
+			time.Duration(event.TotalDurationMs)*time.Millisecond,
+			time.Duration(event.RecoveryDurationMs)*time.Millisecond,
+		)
 	}
 }
 

@@ -153,7 +153,9 @@ func (c *Capturer) OnSilenceStart() {
 }
 
 // OnSilenceRecover signals that audio has recovered from silence.
-func (c *Capturer) OnSilenceRecover(totalDuration time.Duration) {
+// recoveryDuration is how long audio was good before recovery was confirmed.
+// We backdate silenceEndPos by this amount to capture when audio actually returned.
+func (c *Capturer) OnSilenceRecover(totalDuration, recoveryDuration time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -161,12 +163,17 @@ func (c *Capturer) OnSilenceRecover(totalDuration time.Duration) {
 		return
 	}
 
-	c.silenceEndPos = c.totalWritten
+	// Backdate silenceEndPos to when audio actually returned, not when recovery was confirmed.
+	// The JustRecovered event fires after recoveryDuration has elapsed, so we need to
+	// subtract that amount to capture the moment audio came back.
+	recoveryBytes := int64(recoveryDuration.Seconds() * float64(bytesPerSecond))
+	c.silenceEndPos = c.totalWritten - recoveryBytes
 
 	slog.Debug("silence dump recovery detected",
 		"start_pos", c.silenceStartPos,
 		"end_pos", c.silenceEndPos,
 		"duration", totalDuration,
+		"recovery_duration", recoveryDuration,
 	)
 }
 
