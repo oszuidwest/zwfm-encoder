@@ -25,7 +25,7 @@ func ExtractDateFromFilename(filename string) (time.Time, bool) {
 }
 
 // humanTimeFormat is the layout for human-readable timestamps with timezone.
-const humanTimeFormat = "2 Jan 2006 15:04 MST"
+const humanTimeFormat = "2 Jan 2006 15:04:05 MST"
 
 // HumanTime returns the current local time in a human-readable format.
 func HumanTime() string {
