@@ -7,10 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,13 +31,6 @@ const (
 	DefaultStationColorLight           = "#E6007E"
 	DefaultStationColorDark            = "#E6007E"
 	DefaultRecordingMaxDurationMinutes = 240 // 4 hours for on-demand recorders
-)
-
-// Validation patterns for configuration values.
-var (
-	// stationNamePattern matches printable characters excluding control characters.
-	stationNamePattern  = regexp.MustCompile(`^[^\x00-\x1F\x7F]+$`)
-	stationColorPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 )
 
 // SystemConfig represents system-level settings such as server port and credentials.
@@ -175,14 +169,14 @@ func (c *Config) Load() error {
 func (c *Config) validate() error {
 	// Validate station name
 	name := c.Web.StationName
-	if name == "" || len(name) > 30 || !stationNamePattern.MatchString(name) {
+	if name == "" || len(name) > 30 || !util.StationNamePattern.MatchString(name) {
 		return fmt.Errorf("invalid station_name %q: must be 1-30 printable characters", name)
 	}
 	// Validate station colors
-	if !stationColorPattern.MatchString(c.Web.ColorLight) {
+	if !util.StationColorPattern.MatchString(c.Web.ColorLight) {
 		return fmt.Errorf("invalid color_light %q: must be hex format (#RRGGBB)", c.Web.ColorLight)
 	}
-	if !stationColorPattern.MatchString(c.Web.ColorDark) {
+	if !util.StationColorPattern.MatchString(c.Web.ColorDark) {
 		return fmt.Errorf("invalid color_dark %q: must be hex format (#RRGGBB)", c.Web.ColorDark)
 	}
 	return nil
@@ -588,24 +582,78 @@ func (s *Snapshot) HasZabbix() bool {
 // --- Atomic Settings Update ---
 
 // SettingsUpdate contains all settings for atomic update.
+// Used both for API requests (with json tags) and internal updates.
 type SettingsUpdate struct {
-	AudioInput               string
-	SilenceThreshold         float64
-	SilenceDurationMs        int64
-	SilenceRecoveryMs        int64
-	SilenceDumpEnabled       bool
-	SilenceDumpRetentionDays int
-	WebhookURL               string
-	LogPath                  string
-	ZabbixServer             string
-	ZabbixPort               int
-	ZabbixHost               string
-	ZabbixKey                string
-	GraphTenantID            string
-	GraphClientID            string
-	GraphClientSecret        string
-	GraphFromAddress         string
-	GraphRecipients          string
+	AudioInput               string  `json:"audio_input"`
+	SilenceThreshold         float64 `json:"silence_threshold"`
+	SilenceDurationMs        int64   `json:"silence_duration_ms"`
+	SilenceRecoveryMs        int64   `json:"silence_recovery_ms"`
+	SilenceDumpEnabled       bool    `json:"silence_dump_enabled"`
+	SilenceDumpRetentionDays int     `json:"silence_dump_retention_days"`
+	WebhookURL               string  `json:"webhook_url"`
+	LogPath                  string  `json:"log_path"`
+	ZabbixServer             string  `json:"zabbix_server"`
+	ZabbixPort               int     `json:"zabbix_port"`
+	ZabbixHost               string  `json:"zabbix_host"`
+	ZabbixKey                string  `json:"zabbix_key"`
+	GraphTenantID            string  `json:"graph_tenant_id"`
+	GraphClientID            string  `json:"graph_client_id"`
+	GraphClientSecret        string  `json:"graph_client_secret"`
+	GraphFromAddress         string  `json:"graph_from_address"`
+	GraphRecipients          string  `json:"graph_recipients"`
+}
+
+// Validate checks all settings fields and returns all validation errors.
+func (s *SettingsUpdate) Validate() []string {
+	var errs []string
+
+	// Silence detection thresholds
+	if s.SilenceThreshold > 0 || s.SilenceThreshold < -60 {
+		errs = append(errs, "silence_threshold: must be between -60 and 0 dB")
+	}
+	if s.SilenceDurationMs <= 0 {
+		errs = append(errs, "silence_duration_ms: must be greater than 0")
+	}
+	if s.SilenceRecoveryMs <= 0 {
+		errs = append(errs, "silence_recovery_ms: must be greater than 0")
+	}
+	if s.SilenceDumpRetentionDays < 0 {
+		errs = append(errs, "silence_dump_retention_days: cannot be negative")
+	}
+
+	// Webhook URL format
+	if s.WebhookURL != "" {
+		if _, err := url.ParseRequestURI(s.WebhookURL); err != nil {
+			errs = append(errs, "webhook_url: invalid URL format")
+		}
+	}
+
+	// Log path security
+	if s.LogPath != "" {
+		if err := util.ValidatePath("log_path", s.LogPath); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+
+	// Email address validation
+	if s.GraphFromAddress != "" && !util.EmailPattern.MatchString(s.GraphFromAddress) {
+		errs = append(errs, "graph_from_address: invalid email format")
+	}
+	if s.GraphRecipients != "" {
+		for _, email := range strings.Split(s.GraphRecipients, ",") {
+			if trimmed := strings.TrimSpace(email); trimmed != "" && !util.EmailPattern.MatchString(trimmed) {
+				errs = append(errs, "graph_recipients: contains invalid email address")
+				break
+			}
+		}
+	}
+
+	// Zabbix port range
+	if s.ZabbixPort != 0 && (s.ZabbixPort < 1 || s.ZabbixPort > 65535) {
+		errs = append(errs, "zabbix_port: must be between 1 and 65535")
+	}
+
+	return errs
 }
 
 // ApplySettings updates all settings atomically with a single file write.

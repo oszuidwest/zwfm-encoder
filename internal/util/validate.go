@@ -5,8 +5,21 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
+)
+
+// Shared validation patterns used across config and API validation.
+var (
+	// StationNamePattern matches printable characters excluding control characters.
+	StationNamePattern = regexp.MustCompile(`^[^\x00-\x1F\x7F]+$`)
+
+	// StationColorPattern matches hex color format (#RRGGBB).
+	StationColorPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
+
+	// EmailPattern validates email address format.
+	EmailPattern = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
 )
 
 // IsConfigured reports whether all provided values are non-empty.
