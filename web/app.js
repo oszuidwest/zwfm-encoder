@@ -1511,17 +1511,17 @@ document.addEventListener('alpine:init', () => {
             if (isStart) stateClass = 'state-warning';
             else if (isEnd) stateClass = 'state-success';
 
-            // Format audio levels if present
+            // Format audio levels with context
             const hasLevels = entry.level_left_db !== undefined && entry.level_right_db !== undefined;
             const levels = hasLevels
-                ? `L ${entry.level_left_db.toFixed(1)} / R ${entry.level_right_db.toFixed(1)} dB`
+                ? `Level: L ${entry.level_left_db.toFixed(1)} / R ${entry.level_right_db.toFixed(1)} dB`
                 : '';
 
             return {
                 time: date.toLocaleString(),
                 event: eventText,
                 stateClass,
-                threshold: `${entry.threshold_db.toFixed(0)} dB`,
+                threshold: `Threshold: ${entry.threshold_db.toFixed(0)} dB`,
                 levels
             };
         }
