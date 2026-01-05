@@ -248,12 +248,11 @@ func (n *SilenceNotifier) sendEmail(cfg *GraphConfig, subject, body string) erro
 func (n *SilenceNotifier) sendSilenceEmailWithClient(cfg *GraphConfig, stationName string, levelL, levelR, threshold float64) error {
 	subject := "[ALERT] Silence Detected - " + stationName
 	body := fmt.Sprintf(
-		"Silence detected on the audio encoder.\n\n"+
-			"Level:     L %.1f dB / R %.1f dB\n"+
-			"Threshold: %.1f dB\n"+
-			"Time:      %s\n\n"+
+		"The encoder detected silence at %s.\n\n"+
+			"Audio level dropped below the %.0f dB threshold.\n"+
+			"Current level: Left %.1f dB / Right %.1f dB\n\n"+
 			"Silence is ongoing. Please check the audio source.",
-		levelL, levelR, threshold, util.HumanTime(),
+		util.HumanTime(), threshold, levelL, levelR,
 	)
 	return n.sendEmail(cfg, subject, body)
 }
@@ -392,24 +391,22 @@ func (n *SilenceNotifier) sendRecoveryEmailWithClientAndDump(cfg *GraphConfig, s
 		return nil
 	}
 
-	subject := "[OK] Audio Recovered - " + stationName
+	subject := "[OK] Audio Restored - " + stationName
 
 	// Build body with dump info
 	body := fmt.Sprintf(
-		"Audio recovered on the encoder.\n\n"+
-			"Level:     L %.1f dB / R %.1f dB\n"+
-			"Duration:  %s\n"+
-			"Threshold: %.1f dB\n"+
-			"Time:      %s",
-		levelL, levelR, util.FormatDuration(durationMs), threshold, util.HumanTime(),
+		"Audio was restored at %s.\n\n"+
+			"The silence lasted %s.\n"+
+			"Level: Left %.1f dB / Right %.1f dB",
+		util.HumanTime(), util.FormatDuration(durationMs), levelL, levelR,
 	)
 
 	// Add dump info to body
 	if dump != nil {
 		if dump.Error != nil {
-			body += fmt.Sprintf("\n\nAudio dump: Failed to capture (%s)", dump.Error.Error())
+			body += fmt.Sprintf("\n\nAudio recording: Failed to capture (%s)", dump.Error.Error())
 		} else {
-			body += fmt.Sprintf("\n\nAudio dump attached: %s (15s before, silence, 15s after)", dump.Filename)
+			body += "\n\nAudio recording attached (15s before and after the silence)."
 		}
 	}
 
