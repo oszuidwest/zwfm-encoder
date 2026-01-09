@@ -78,6 +78,7 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 		SilenceThreshold:  cfg.SilenceThreshold,
 		SilenceDurationMs: cfg.SilenceDurationMs,
 		SilenceRecoveryMs: cfg.SilenceRecoveryMs,
+		PeakHoldMs:        cfg.PeakHoldMs,
 		SilenceDump: types.SilenceDumpConfig{
 			Enabled:       cfg.SilenceDumpEnabled,
 			RetentionDays: cfg.SilenceDumpRetentionDays,
