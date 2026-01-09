@@ -346,7 +346,7 @@ func (r *GenericRecorder) startEncoderLocked() error {
 	// Generate filename based on rotation mode
 	var filename string
 	if r.config.RotationMode == types.RotationHourly {
-		hourStart := truncateToHour(r.startTime)
+		hourStart := r.startTime.Truncate(time.Hour)
 		filename = r.generateFilename(hourStart)
 	} else {
 		filename = r.generateFilename(r.startTime)
@@ -452,7 +452,7 @@ func (r *GenericRecorder) stopEncoderAndUpload() {
 
 // scheduleRotationLocked schedules the next hourly rotation.
 func (r *GenericRecorder) scheduleRotationLocked() {
-	duration := timeUntilNextHour(time.Now())
+	duration := util.TimeUntilNextHour(time.Now())
 	r.rotationTimer = time.AfterFunc(duration, r.rotateFile)
 }
 

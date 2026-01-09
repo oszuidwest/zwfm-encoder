@@ -3,7 +3,6 @@ package recording
 
 import (
 	"errors"
-	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
@@ -35,17 +34,6 @@ func (c *S3Config) IsConfigured() bool {
 
 // DefaultTempDir is the default temporary directory for recordings.
 const DefaultTempDir = "/tmp/encoder-recordings"
-
-// truncateToHour truncates a time to the start of its hour.
-func truncateToHour(t time.Time) time.Time {
-	return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), 0, 0, 0, t.Location())
-}
-
-// timeUntilNextHour returns the duration until the next hour boundary.
-func timeUntilNextHour(t time.Time) time.Duration {
-	nextHour := truncateToHour(t).Add(time.Hour)
-	return nextHour.Sub(t)
-}
 
 // RecorderToS3Config extracts S3 configuration from a Recorder.
 func RecorderToS3Config(r *types.Recorder) *S3Config {

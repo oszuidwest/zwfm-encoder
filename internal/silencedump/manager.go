@@ -132,19 +132,13 @@ func (m *Manager) SetRetentionDays(days int) {
 	m.mu.Unlock()
 }
 
-// startCleanupScheduler schedules daily cleanup of old dump files.
+// startCleanupScheduler schedules hourly cleanup of old dump files.
 func (m *Manager) startCleanupScheduler() {
 	go func() {
 		for {
-			// Calculate duration until next 03:00
-			now := time.Now()
-			next := time.Date(now.Year(), now.Month(), now.Day(), 3, 0, 0, 0, now.Location())
-			if now.After(next) {
-				next = next.Add(24 * time.Hour)
-			}
-			duration := next.Sub(now)
+			duration := util.TimeUntilNextHour(time.Now())
 
-			slog.Debug("silence dump cleanup: next run scheduled", "at", next.Format(time.DateTime))
+			slog.Debug("silence dump cleanup: next run scheduled", "in", duration.Round(time.Second))
 
 			select {
 			case <-time.After(duration):
@@ -180,7 +174,7 @@ func (m *Manager) runCleanup() {
 		return
 	}
 
-	cutoff := time.Now().AddDate(0, 0, -retentionDays)
+	cutoff := util.RetentionCutoff(retentionDays)
 	var deleted int
 
 	for _, entry := range entries {

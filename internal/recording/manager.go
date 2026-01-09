@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 // Manager is a coordinator for multiple GenericRecorders.
@@ -241,7 +242,7 @@ func (m *Manager) AllStatuses() map[string]types.ProcessStatus {
 func (m *Manager) startHourlyRetryScheduler() {
 	go func() {
 		for {
-			duration := timeUntilNextHour(time.Now())
+			duration := util.TimeUntilNextHour(time.Now())
 			select {
 			case <-m.hourlyRetryStopCh:
 				return

@@ -9,6 +9,35 @@ import (
 // DatePattern matches YYYY-MM-DD in filenames.
 var DatePattern = regexp.MustCompile(`(\d{4}-\d{2}-\d{2})`)
 
+// RetentionCutoff returns the cutoff time for retention-based cleanup.
+// Files with dates before this cutoff should be deleted.
+//
+// The cutoff is calculated as midnight (00:00:00) such that exactly N days
+// of files are kept (today plus N-1 previous days).
+//
+// Example with retention=1, cleanup on Jan 10:
+//
+//	Cutoff = Jan 10 00:00:00
+//	File from Jan 10 → kept (today)
+//	File from Jan 9  → deleted (older than 1 day)
+//
+// Example with retention=7, cleanup on Jan 10:
+//
+//	Cutoff = Jan 4 00:00:00
+//	Files from Jan 4-10 → kept (7 days)
+//	Files from Jan 3 or earlier → deleted
+func RetentionCutoff(days int) time.Time {
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	return today.AddDate(0, 0, -days+1)
+}
+
+// TimeUntilNextHour returns the duration until the next hour boundary.
+func TimeUntilNextHour(t time.Time) time.Duration {
+	nextHour := t.Truncate(time.Hour).Add(time.Hour)
+	return nextHour.Sub(t)
+}
+
 // ExtractDateFromFilename extracts a date from a filename containing YYYY-MM-DD.
 func ExtractDateFromFilename(filename string) (time.Time, bool) {
 	matches := DatePattern.FindStringSubmatch(filename)
