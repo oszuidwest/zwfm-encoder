@@ -45,10 +45,14 @@ func (d *Distributor) ProcessSamples(buf []byte, n int) {
 		levels := audio.CalculateLevels(d.levelData)
 
 		now := time.Now()
+
+		// Update peak hold duration from config (allows dynamic updates)
+		cfg := d.config.Snapshot()
+		d.peakHolder.SetHoldDuration(time.Duration(cfg.PeakHoldMs) * time.Millisecond)
+
 		heldPeakL, heldPeakR := d.peakHolder.Update(levels.PeakLeft, levels.PeakRight, now)
 
 		// Silence detection (fresh config snapshot for dynamic updates)
-		cfg := d.config.Snapshot()
 		silenceCfg := audio.SilenceConfig{
 			Threshold:  cfg.SilenceThreshold,
 			DurationMs: cfg.SilenceDurationMs,

@@ -846,10 +846,14 @@
             color: var(--text-secondary);
         }
 
-        .track {
+        .track-wrapper {
             flex: 1;
+            position: relative;
+        }
+
+        .track {
             height: 1.125rem;
-            border-radius: var(--radius-md);
+            border-radius: 2px;
             overflow: hidden;
             position: relative;
             box-shadow: var(--shadow-inset);
@@ -895,21 +899,6 @@
             opacity: 1;
         }
 
-        .peak::after {
-            content: '';
-            position: absolute;
-            top: -4px;
-            left: 50%;
-            transform: translateX(-50%);
-            border-left: 4px solid transparent;
-            border-right: 4px solid transparent;
-            border-bottom: 4px solid var(--vu-peak);
-            transition: filter 75ms ease;
-        }
-
-        .peak[data-danger]::after {
-            filter: drop-shadow(0 0 3px var(--danger)) drop-shadow(0 0 5px var(--danger));
-        }
 
         .db {
             width: 3.5rem;

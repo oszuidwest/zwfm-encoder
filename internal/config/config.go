@@ -27,6 +27,7 @@ const (
 	DefaultSilenceThreshold            = -40.0
 	DefaultSilenceDurationMs           = 15000 // 15 seconds in milliseconds
 	DefaultSilenceRecoveryMs           = 5000  // 5 seconds in milliseconds
+	DefaultPeakHoldMs                  = 3000  // 3 seconds peak hold duration
 	DefaultStationName                 = "ZuidWest FM"
 	DefaultStationColorLight           = "#E6007E"
 	DefaultStationColorDark            = "#E6007E"
@@ -58,6 +59,7 @@ type SilenceDetectionConfig struct {
 	ThresholdDB float64 `json:"threshold_db"` // Silence threshold in dB
 	DurationMs  int64   `json:"duration_ms"`  // Duration below threshold before silence alert
 	RecoveryMs  int64   `json:"recovery_ms"`  // Duration above threshold before recovery
+	PeakHoldMs  int64   `json:"peak_hold_ms"` // Duration to hold peak values in VU meter
 }
 
 // WebhookConfig represents webhook notification settings.
@@ -195,6 +197,7 @@ func (c *Config) applyDefaults() {
 	c.SilenceDetection.ThresholdDB = cmp.Or(c.SilenceDetection.ThresholdDB, DefaultSilenceThreshold)
 	c.SilenceDetection.DurationMs = cmp.Or(c.SilenceDetection.DurationMs, DefaultSilenceDurationMs)
 	c.SilenceDetection.RecoveryMs = cmp.Or(c.SilenceDetection.RecoveryMs, DefaultSilenceRecoveryMs)
+	c.SilenceDetection.PeakHoldMs = cmp.Or(c.SilenceDetection.PeakHoldMs, DefaultPeakHoldMs)
 	// Streaming defaults
 	if c.Streaming.Streams == nil {
 		c.Streaming.Streams = []types.Stream{}
@@ -472,6 +475,7 @@ type Snapshot struct {
 	SilenceThreshold  float64
 	SilenceDurationMs int64
 	SilenceRecoveryMs int64
+	PeakHoldMs        int64
 
 	// Silence Dump
 	SilenceDumpEnabled       bool
@@ -526,6 +530,7 @@ func (c *Config) Snapshot() Snapshot {
 		SilenceThreshold:  cmp.Or(c.SilenceDetection.ThresholdDB, DefaultSilenceThreshold),
 		SilenceDurationMs: cmp.Or(c.SilenceDetection.DurationMs, DefaultSilenceDurationMs),
 		SilenceRecoveryMs: cmp.Or(c.SilenceDetection.RecoveryMs, DefaultSilenceRecoveryMs),
+		PeakHoldMs:        cmp.Or(c.SilenceDetection.PeakHoldMs, DefaultPeakHoldMs),
 
 		// Silence Dump
 		SilenceDumpEnabled:       c.SilenceDump.Enabled,
@@ -604,6 +609,8 @@ type SettingsUpdate struct {
 }
 
 // Validate checks all settings fields and returns all validation errors.
+//
+//nolint:gocyclo // Validation functions naturally have many branches - one per field
 func (s *SettingsUpdate) Validate() []string {
 	var errs []string
 

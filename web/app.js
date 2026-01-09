@@ -45,6 +45,12 @@ const TOAST_DURATION_SUCCESS = 3000;  // Success toast auto-dismiss
 const TOAST_DURATION_ERROR = 5000;    // Error toast auto-dismiss
 const MAX_TOASTS = 3;             // Maximum visible toasts
 
+// === PPM Ballistics ===
+// IEC 60268-10 Type I: 20dB fallback in 1.7 seconds
+const PPM_DECAY_DB_PER_SEC = 20 / 1.7;  // ~11.76 dB/sec
+const PPM_FRAME_INTERVAL_MS = 100;       // 10 fps from WebSocket
+const PPM_DECAY_PER_FRAME = PPM_DECAY_DB_PER_SEC * (PPM_FRAME_INTERVAL_MS / 1000);  // ~1.18 dB per frame
+
 // === API Endpoints ===
 const API = {
     CONFIG: '/api/config',
@@ -104,7 +110,15 @@ const DEFAULT_LEVELS = {
     right: -60,
     peak_left: -60,
     peak_right: -60,
-    silence_level: null
+    silence_level: null,
+    // PPM display levels (with ballistics applied)
+    display_left: -60,
+    display_right: -60,
+    // Frontend peak hold (tracks highest display level)
+    hold_left: -60,
+    hold_right: -60,
+    hold_left_time: 0,
+    hold_right_time: 0
 };
 
 const deepClone = (obj) => JSON.parse(JSON.stringify(obj));
@@ -115,8 +129,8 @@ document.addEventListener('alpine:init', () => {
         settingsTab: 'audio',
 
         vuChannels: [
-            { label: 'L', level: 'left', peak: 'peak_left' },
-            { label: 'R', level: 'right', peak: 'peak_right' }
+            { label: 'L', level: 'left', display: 'display_left', hold: 'hold_left' },
+            { label: 'R', level: 'right', display: 'display_right', hold: 'hold_right' }
         ],
 
         settingsTabs: [
@@ -429,8 +443,8 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
-         * Processes incoming audio level data.
-         * Updates VU meter display and manages clip detection state.
+         * Processes incoming audio level data with PPM ballistics.
+         * PPM meters have instant attack and slow decay (~20dB in 1.7s).
          * Clip indicator activates when levels exceed threshold and holds
          * for CLIP_TIMEOUT_MS before auto-clearing.
          *
@@ -438,6 +452,47 @@ document.addEventListener('alpine:init', () => {
          */
         handleLevels(levels) {
             const prevSilenceState = this.getSilenceState();
+
+            // Apply PPM ballistics to peak values: instant attack, slow decay
+            // This creates the characteristic PPM "slow fallback" behavior
+            const applyPPM = (newPeak, displayLevel) => {
+                if (newPeak >= displayLevel) {
+                    return newPeak; // Instant attack - jump up to new peak
+                }
+                // Slow decay: reduce by PPM_DECAY_PER_FRAME, but not below new peak
+                return Math.max(newPeak, displayLevel - PPM_DECAY_PER_FRAME);
+            };
+
+            const now = Date.now();
+            const peakHoldMs = 3000; // 3 second peak hold (broadcast industry standard)
+
+            levels.display_left = applyPPM(levels.peak_left, this.levels.display_left ?? -60);
+            levels.display_right = applyPPM(levels.peak_right, this.levels.display_right ?? -60);
+
+            // Frontend peak hold: track highest display level, hold for configured duration
+            // After hold expires, smoothly decay (faster than PPM bar decay)
+            const HOLD_DECAY_PER_FRAME = PPM_DECAY_PER_FRAME * 2; // 2x faster decay for peak marker
+
+            const updateHold = (display, prevHold, prevTime, key) => {
+                if (display >= prevHold) {
+                    // New peak - update hold and reset timer
+                    levels[`hold_${key}`] = display;
+                    levels[`hold_${key}_time`] = now;
+                } else if (now - prevTime < peakHoldMs) {
+                    // Within hold time - keep previous hold
+                    levels[`hold_${key}`] = prevHold;
+                    levels[`hold_${key}_time`] = prevTime;
+                } else {
+                    // Hold expired - smooth decay towards display level
+                    const decayed = prevHold - HOLD_DECAY_PER_FRAME;
+                    levels[`hold_${key}`] = Math.max(display, decayed);
+                    levels[`hold_${key}_time`] = prevTime; // Keep original time
+                }
+            };
+
+            updateHold(levels.display_left, this.levels.hold_left ?? -60, this.levels.hold_left_time ?? 0, 'left');
+            updateHold(levels.display_right, this.levels.hold_right ?? -60, this.levels.hold_right_time ?? 0, 'right');
+
             this.levels = levels;
             const newSilenceState = this.getSilenceState();
 
