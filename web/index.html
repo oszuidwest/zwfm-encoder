@@ -163,12 +163,14 @@
                     <template x-for="ch in vuChannels" :key="ch.label">
                         <div class="channel">
                             <span class="label" x-text="ch.label"></span>
-                            <div class="track">
-                                <div class="gradient"></div>
-                                <div class="cover" :style="{ width: `${100 - dbToPercent(vuMode === 'peak' ? levels[ch.peak] : levels[ch.level])}%` }"></div>
-                                <div class="peak" :style="{ left: `${dbToPercent(levels[ch.peak])}%` }" :data-visible="vuMode === 'peak' && dbToPercent(levels[ch.peak]) > 0 ? true : null" :data-danger="dbToPercent(levels[ch.peak]) >= 90 ? true : null"></div>
+                            <div class="track-wrapper">
+                                <div class="track">
+                                    <div class="gradient"></div>
+                                    <div class="cover" :style="{ width: `${100 - dbToPercent(vuMode === 'peak' ? levels[ch.display] : levels[ch.level])}%` }"></div>
+                                </div>
+                                <div class="peak" :style="{ left: `${dbToPercent(levels[ch.hold])}%` }" :data-visible="vuMode === 'peak' && levels[ch.hold] > -59 ? true : null"></div>
                             </div>
-                            <span class="db" x-text="`${(vuMode === 'peak' ? levels[ch.peak] : levels[ch.level]).toFixed(1)} dB`"></span>
+                            <span class="db" x-text="`${(vuMode === 'peak' ? levels[ch.hold] : levels[ch.level]).toFixed(1)} dB`"></span>
                         </div>
                     </template>
                     <div class="scale">
