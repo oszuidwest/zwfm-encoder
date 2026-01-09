@@ -42,7 +42,7 @@ func (m *Manager) runCleanup() {
 	recorders := slices.Collect(maps.Values(m.recorders))
 	m.mu.RUnlock()
 
-	slog.Info("cleanup: starting daily cleanup", "recorders", len(recorders))
+	slog.Info("cleanup: starting", "recorders", len(recorders))
 
 	for _, recorder := range recorders {
 		cfg := recorder.Config()
@@ -63,7 +63,7 @@ func (m *Manager) runCleanup() {
 		}
 	}
 
-	slog.Info("cleanup: daily cleanup completed")
+	slog.Info("cleanup: completed")
 }
 
 // cleanupLocalFiles removes local files older than retention days.
