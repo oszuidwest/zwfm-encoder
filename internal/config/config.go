@@ -593,7 +593,6 @@ type SettingsUpdate struct {
 	SilenceThreshold         float64 `json:"silence_threshold"`
 	SilenceDurationMs        int64   `json:"silence_duration_ms"`
 	SilenceRecoveryMs        int64   `json:"silence_recovery_ms"`
-	PeakHoldMs               int64   `json:"peak_hold_ms"`
 	SilenceDumpEnabled       bool    `json:"silence_dump_enabled"`
 	SilenceDumpRetentionDays int     `json:"silence_dump_retention_days"`
 	WebhookURL               string  `json:"webhook_url"`
@@ -624,9 +623,6 @@ func (s *SettingsUpdate) Validate() []string {
 	}
 	if s.SilenceRecoveryMs <= 0 {
 		errs = append(errs, "silence_recovery_ms: must be greater than 0")
-	}
-	if s.PeakHoldMs != 0 && (s.PeakHoldMs < 500 || s.PeakHoldMs > 10000) {
-		errs = append(errs, "peak_hold_ms: must be between 500 and 10000")
 	}
 	if s.SilenceDumpRetentionDays < 0 {
 		errs = append(errs, "silence_dump_retention_days: cannot be negative")
@@ -680,9 +676,6 @@ func (c *Config) ApplySettings(s *SettingsUpdate) error {
 	c.SilenceDetection.ThresholdDB = s.SilenceThreshold
 	c.SilenceDetection.DurationMs = s.SilenceDurationMs
 	c.SilenceDetection.RecoveryMs = s.SilenceRecoveryMs
-	if s.PeakHoldMs > 0 {
-		c.SilenceDetection.PeakHoldMs = s.PeakHoldMs
-	}
 	c.SilenceDump.Enabled = s.SilenceDumpEnabled
 	c.SilenceDump.RetentionDays = s.SilenceDumpRetentionDays
 

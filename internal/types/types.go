@@ -371,7 +371,6 @@ type APIConfigResponse struct {
 	SilenceThreshold  float64           `json:"silence_threshold"`   // Silence threshold in dB
 	SilenceDurationMs int64             `json:"silence_duration_ms"` // Silence duration in milliseconds
 	SilenceRecoveryMs int64             `json:"silence_recovery_ms"` // Recovery duration in milliseconds
-	PeakHoldMs        int64             `json:"peak_hold_ms"`        // Peak hold duration in milliseconds
 	SilenceDump       SilenceDumpConfig `json:"silence_dump"`        // Silence dump configuration
 
 	// Notifications - Webhook
