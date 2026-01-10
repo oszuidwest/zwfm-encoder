@@ -32,6 +32,18 @@ const (
 	SilenceEnd   EventType = "silence_end"
 )
 
+// Recorder event types.
+const (
+	RecorderStarted   EventType = "recorder_started"
+	RecorderStopped   EventType = "recorder_stopped"
+	RecorderError     EventType = "recorder_error"
+	RecorderFile      EventType = "recorder_file"
+	UploadQueued      EventType = "upload_queued"
+	UploadCompleted   EventType = "upload_completed"
+	UploadFailed      EventType = "upload_failed"
+	CleanupCompleted  EventType = "cleanup_completed"
+)
+
 // Event represents a single log entry with type-specific details.
 type Event struct {
 	Timestamp time.Time `json:"ts"`
@@ -59,6 +71,19 @@ type SilenceDetails struct {
 	DumpFilename  string  `json:"dump_filename,omitempty"`
 	DumpSizeBytes int64   `json:"dump_size_bytes,omitempty"`
 	DumpError     string  `json:"dump_error,omitempty"`
+}
+
+// RecorderDetails contains recorder-specific event details.
+type RecorderDetails struct {
+	RecorderName  string `json:"recorder_name,omitempty"`
+	Filename      string `json:"filename,omitempty"`
+	Codec         string `json:"codec,omitempty"`
+	StorageMode   string `json:"storage_mode,omitempty"`
+	S3Key         string `json:"s3_key,omitempty"`
+	Error         string `json:"error,omitempty"`
+	RetryCount    int    `json:"retry,omitempty"`
+	FilesDeleted  int    `json:"files_deleted,omitempty"`
+	StorageType   string `json:"storage_type,omitempty"` // "local" or "s3" for cleanup
 }
 
 // Logger writes events to a JSON lines file.
@@ -165,6 +190,26 @@ func (l *Logger) LogSilenceEnd(durationMs int64, levelL, levelR, threshold float
 	})
 }
 
+// LogRecorder logs a recorder event.
+func (l *Logger) LogRecorder(eventType EventType, recorderName, filename, codec, storageMode, s3Key, errMsg string, retryCount, filesDeleted int, storageType string) error {
+	return l.Log(&Event{
+		Timestamp: time.Now(),
+		Type:      eventType,
+		Message:   "",
+		Details: &RecorderDetails{
+			RecorderName: recorderName,
+			Filename:     filename,
+			Codec:        codec,
+			StorageMode:  storageMode,
+			S3Key:        s3Key,
+			Error:        errMsg,
+			RetryCount:   retryCount,
+			FilesDeleted: filesDeleted,
+			StorageType:  storageType,
+		},
+	})
+}
+
 // Close closes the log file.
 func (l *Logger) Close() error {
 	l.mu.Lock()
@@ -186,19 +231,22 @@ type TypeFilter string
 
 // Filter constants for ReadLast.
 const (
-	FilterAll     TypeFilter = ""
-	FilterStream  TypeFilter = "stream"
-	FilterSilence TypeFilter = "silence"
+	FilterAll      TypeFilter = ""
+	FilterStream   TypeFilter = "stream"
+	FilterSilence  TypeFilter = "silence"
+	FilterRecorder TypeFilter = "recorder"
 )
 
-// ReadLast reads the last n events from the log file, optionally filtered by type.
-func ReadLast(filePath string, n int, filter TypeFilter) ([]Event, error) {
+// ReadLast reads events from the log file with pagination support.
+// Returns up to n events starting from offset, filtered by type.
+// Events are returned in reverse chronological order (newest first).
+func ReadLast(filePath string, n, offset int, filter TypeFilter) ([]Event, bool, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return []Event{}, nil
+			return []Event{}, false, nil
 		}
-		return nil, err
+		return nil, false, err
 	}
 	defer file.Close() //nolint:errcheck // Read-only operation, close error not critical
 
@@ -209,12 +257,13 @@ func ReadLast(filePath string, n int, filter TypeFilter) ([]Event, error) {
 		lines = append(lines, scanner.Text())
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	// Parse events in reverse order (newest first), applying filter
 	events := make([]Event, 0, n)
-	for i := len(lines) - 1; i >= 0 && len(events) < n; i-- {
+	skipped := 0
+	for i := len(lines) - 1; i >= 0; i-- {
 		var event Event
 		if err := json.Unmarshal([]byte(lines[i]), &event); err != nil {
 			continue // Skip malformed lines
@@ -224,6 +273,7 @@ func ReadLast(filePath string, n int, filter TypeFilter) ([]Event, error) {
 		if filter != FilterAll {
 			isStream := IsStreamEvent(event.Type)
 			isSilence := IsSilenceEvent(event.Type)
+			isRecorder := IsRecorderEvent(event.Type)
 
 			if filter == FilterStream && !isStream {
 				continue
@@ -231,12 +281,51 @@ func ReadLast(filePath string, n int, filter TypeFilter) ([]Event, error) {
 			if filter == FilterSilence && !isSilence {
 				continue
 			}
+			if filter == FilterRecorder && !isRecorder {
+				continue
+			}
+		}
+
+		// Skip events until we reach the offset
+		if skipped < offset {
+			skipped++
+			continue
 		}
 
 		events = append(events, event)
+
+		// Stop if we have enough events
+		if len(events) >= n {
+			break
+		}
 	}
 
-	return events, nil
+	// Check if there are more events available
+	hasMore := false
+	if len(events) == n {
+		// Continue scanning to see if there's at least one more event
+		for i := len(lines) - 1 - offset - n; i >= 0; i-- {
+			var event Event
+			if err := json.Unmarshal([]byte(lines[i]), &event); err != nil {
+				continue
+			}
+			if filter != FilterAll {
+				if filter == FilterStream && !IsStreamEvent(event.Type) {
+					continue
+				}
+				if filter == FilterSilence && !IsSilenceEvent(event.Type) {
+					continue
+				}
+				if filter == FilterRecorder && !IsRecorderEvent(event.Type) {
+					continue
+				}
+			}
+			hasMore = true
+			break
+		}
+	}
+
+	return events, hasMore, nil
 }
 
 // IsStreamEvent returns true if the event type is a stream event.
@@ -247,4 +336,11 @@ func IsStreamEvent(t EventType) bool {
 // IsSilenceEvent returns true if the event type is a silence event.
 func IsSilenceEvent(t EventType) bool {
 	return t == SilenceStart || t == SilenceEnd
+}
+
+// IsRecorderEvent returns true if the event type is a recorder event.
+func IsRecorderEvent(t EventType) bool {
+	return t == RecorderStarted || t == RecorderStopped || t == RecorderError ||
+		t == RecorderFile || t == UploadQueued || t == UploadCompleted ||
+		t == UploadFailed || t == CleanupCompleted
 }

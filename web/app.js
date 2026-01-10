@@ -135,7 +135,7 @@ document.addEventListener('alpine:init', () => {
         settingsTabs: [
             { id: 'audio', label: 'Audio', icon: 'audio' },
             { id: 'notifications', label: 'Notifications', icon: 'email' },
-            { id: 'recording', label: 'Recording', icon: 'microphone' },
+            { id: 'events', label: 'Events', icon: 'list' },
             { id: 'about', label: 'About', icon: 'info' }
         ],
 
@@ -164,8 +164,10 @@ document.addEventListener('alpine:init', () => {
 
         // Event history (all event types: stream_* and silence_*)
         events: [],
-        loadingEvents: false,
-        eventsLoaded: false,
+        eventFilter: '',
+        eventsLoading: false,
+        eventsHasMore: false,
+        eventsOffset: 0,
 
         devices: [],
         levels: { ...DEFAULT_LEVELS },
@@ -1297,21 +1299,43 @@ document.addEventListener('alpine:init', () => {
 
         /**
          * Loads events from the API (all types: stream_* and silence_*).
+         * @param {boolean} reset - If true, resets pagination and replaces events
          */
-        async loadEvents() {
-            this.loadingEvents = true;
+        async loadEvents(reset = true) {
+            if (reset) {
+                this.eventsOffset = 0;
+                this.events = [];
+            }
+            this.eventsLoading = true;
             try {
-                const response = await fetch('/api/events?limit=50');
+                const params = new URLSearchParams({ limit: '50', offset: this.eventsOffset.toString() });
+                if (this.eventFilter) {
+                    params.set('type', this.eventFilter);
+                }
+                const response = await fetch(`/api/events?${params}`);
                 if (response.ok) {
                     const data = await response.json();
-                    this.events = data.events || [];
-                    this.eventsLoaded = true;
+                    const newEvents = (data.events || []).map(e => ({ ...e, expanded: false }));
+                    if (reset) {
+                        this.events = newEvents;
+                    } else {
+                        this.events = [...this.events, ...newEvents];
+                    }
+                    this.eventsHasMore = data.has_more || false;
                 }
             } catch (error) {
                 console.error('Failed to load events:', error);
             } finally {
-                this.loadingEvents = false;
+                this.eventsLoading = false;
             }
+        },
+
+        /**
+         * Loads more events (pagination).
+         */
+        async loadMoreEvents() {
+            this.eventsOffset += 50;
+            await this.loadEvents(false);
         },
 
         /**
@@ -1322,86 +1346,164 @@ document.addEventListener('alpine:init', () => {
         formatEventTime(ts) {
             if (!ts) return '';
             const date = new Date(ts);
-            return date.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            return date.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                + ' ' + date.toLocaleDateString('nl-NL', { day: '2-digit', month: '2-digit' });
         },
 
         /**
-         * Checks if an event is a stream event.
+         * Formats a timestamp as relative time (e.g., "2m ago", "1h ago").
+         * @param {string} ts - ISO timestamp
+         * @returns {string} Relative time string
+         */
+        formatRelativeTime(ts) {
+            if (!ts) return '';
+            const now = Date.now();
+            const then = new Date(ts).getTime();
+            const diff = now - then;
+
+            const seconds = Math.floor(diff / 1000);
+            const minutes = Math.floor(seconds / 60);
+            const hours = Math.floor(minutes / 60);
+            const days = Math.floor(hours / 24);
+
+            if (seconds < 60) return 'just now';
+            if (minutes < 60) return `${minutes}m ago`;
+            if (hours < 24) return `${hours}h ago`;
+            if (days === 1) return 'yesterday';
+            return `${days}d ago`;
+        },
+
+        /**
+         * Gets the severity level for an event type.
          * @param {string} type - Event type
-         * @returns {boolean} True if stream event
+         * @returns {string} Severity: 'error', 'warning', 'success', or 'info'
          */
-        isStreamEvent(type) {
-            return type?.startsWith('stream_');
+        getEventSeverity(type) {
+            if (type === 'stream_error') return 'error';
+            if (type === 'stream_retry') return 'warning';
+            if (type === 'stream_stable') return 'success';
+            if (type === 'silence_start') return 'warning';
+            if (type === 'silence_end') return 'success';
+            if (type === 'recorder_error' || type === 'upload_failed') return 'error';
+            if (type === 'upload_completed' || type === 'cleanup_completed') return 'success';
+            return 'info';
         },
 
         /**
-         * Checks if an event is a silence event.
+         * Gets a short label for an event type.
          * @param {string} type - Event type
-         * @returns {boolean} True if silence event
+         * @returns {string} Short label
          */
-        isSilenceEvent(type) {
-            return type?.startsWith('silence_');
-        },
-
-        /**
-         * Formats an event for display.
-         * Handles both stream_* and silence_* events.
-         * @param {Object} event - Event object with type, details, etc.
-         * @returns {Object} Formatted event for display
-         */
-        formatEvent(event) {
-            const isStream = this.isStreamEvent(event.type);
-            const isSilence = this.isSilenceEvent(event.type);
-            const details = event.details || {};
-
-            // Determine display type (remove prefix for cleaner display)
-            const displayType = event.type.replace('stream_', '').replace('silence_', '');
-
-            // For stream events
-            if (isStream) {
-                return {
-                    category: 'stream',
-                    name: details.stream_name || event.stream_id || 'Stream',
-                    type: displayType,
-                    message: event.msg || '',
-                    error: details.error || '',
-                    retry: details.retry && details.max_retries ? `${details.retry}/${details.max_retries}` : ''
-                };
-            }
-
-            // For silence events
-            if (isSilence) {
-                const levels = details.level_left_db !== undefined && details.level_right_db !== undefined
-                    ? `L ${details.level_left_db.toFixed(1)} / R ${details.level_right_db.toFixed(1)} dB`
-                    : '';
-                const threshold = details.threshold_db !== undefined ? `${details.threshold_db.toFixed(0)} dB threshold` : '';
-                const duration = details.duration_ms ? formatSmartDuration(details.duration_ms) : '';
-
-                let message = '';
-                if (event.type === 'silence_start') {
-                    message = `Audio below ${threshold}`;
-                } else if (event.type === 'silence_end') {
-                    message = duration ? `Lasted ${duration}` : 'Audio restored';
-                }
-
-                return {
-                    category: 'silence',
-                    name: 'Silence Detection',
-                    type: displayType,
-                    message: message,
-                    error: details.dump_error || '',
-                    levels: levels
-                };
-            }
-
-            // Unknown event type
-            return {
-                category: 'unknown',
-                name: 'Unknown',
-                type: event.type,
-                message: event.msg || '',
-                error: ''
+        getEventLabel(type) {
+            const labels = {
+                'stream_started': 'Started',
+                'stream_stable': 'Connected',
+                'stream_error': 'Error',
+                'stream_retry': 'Retry',
+                'stream_stopped': 'Stopped',
+                'silence_start': 'Silence',
+                'silence_end': 'Recovered',
+                'recorder_started': 'Started',
+                'recorder_stopped': 'Stopped',
+                'recorder_error': 'Error',
+                'recorder_file': 'New File',
+                'upload_queued': 'Upload Queued',
+                'upload_completed': 'Uploaded',
+                'upload_failed': 'Upload Failed',
+                'cleanup_completed': 'Cleanup'
             };
+            return labels[type] || type;
+        },
+
+        /**
+         * Gets the detail text for an event (error message, stream name, etc.).
+         * @param {Object} event - Event object
+         * @returns {string} Detail text
+         */
+        getEventDetail(event) {
+            const details = event.details || {};
+            const streamName = details.stream_name || '';
+
+            if (event.type === 'stream_error') {
+                return details.error || 'Unknown error';
+            }
+            if (event.type === 'stream_retry') {
+                const retryNum = details.retry ? `Retry #${details.retry}` : '';
+                const error = details.error || '';
+                return [retryNum, error].filter(Boolean).join(' — ');
+            }
+            if (event.type === 'silence_start') {
+                if (details.level_left_db !== undefined) {
+                    return `L: ${details.level_left_db.toFixed(1)}dB  R: ${details.level_right_db.toFixed(1)}dB`;
+                }
+                return '';
+            }
+            if (event.type === 'silence_end') {
+                return details.duration_ms ? `Duration: ${formatSmartDuration(details.duration_ms)}` : '';
+            }
+            // Recorder events
+            if (event.type === 'recorder_error' || event.type === 'upload_failed') {
+                return details.error || 'Unknown error';
+            }
+            if (event.type === 'recorder_file' || event.type === 'upload_queued' || event.type === 'upload_completed') {
+                const filename = details.filename || '';
+                const codec = details.codec || '';
+                return [filename, codec.toUpperCase()].filter(Boolean).join(' — ');
+            }
+            if (event.type === 'cleanup_completed') {
+                const count = details.files_deleted || 0;
+                const storage = details.storage_type || '';
+                return `${count} files deleted (${storage})`;
+            }
+            if (event.type === 'recorder_started' || event.type === 'recorder_stopped') {
+                const codec = details.codec ? details.codec.toUpperCase() : '';
+                const mode = details.storage_mode || '';
+                const modeLabel = mode === 'both' ? 'Local + S3' : mode === 's3' ? 'S3' : mode === 'local' ? 'Local' : '';
+                return [codec, modeLabel].filter(Boolean).join(' — ');
+            }
+            // For started/stable/stopped, show stream name
+            return streamName;
+        },
+
+        /**
+         * Gets the text for stream badge.
+         * @param {Object} event - Event object
+         * @returns {string} Short stream identifier
+         */
+        getStreamBadgeText(event) {
+            // Silence events show "Audio" (they're system-wide, not stream-specific)
+            if (event.type?.startsWith('silence_')) {
+                return 'Audio';
+            }
+            // Recorder events show recorder name
+            if (event.type?.startsWith('recorder_') || event.type?.startsWith('upload_') || event.type === 'cleanup_completed') {
+                const details = event.details || {};
+                const name = details.recorder_name || 'Recorder';
+                return name.length > 8 ? name.slice(0, 8) : name;
+            }
+            // Stream events show stream name (shortened if needed)
+            const details = event.details || {};
+            const name = details.stream_name || event.stream_id || 'Stream';
+            // Return first part if it's a compound name, or truncate
+            return name.length > 8 ? name.slice(0, 8) : name;
+        },
+
+        /**
+         * Gets inline style for stream badge.
+         * @param {Object} event - Event object
+         * @returns {string} CSS style string
+         */
+        getStreamBadgeStyle(event) {
+            // Silence events get neutral gray style
+            if (event.type?.startsWith('silence_')) {
+                return 'background: var(--neutral-200); color: var(--neutral-600);';
+            }
+            // Recorder events get purple/violet color
+            if (event.type?.startsWith('recorder_') || event.type?.startsWith('upload_') || event.type === 'cleanup_completed') {
+                return 'background: color-mix(in srgb, #8b5cf6 15%, transparent); color: #7c3aed;';
+            }
+            // Stream events get brand color
+            return 'background: color-mix(in srgb, var(--brand) 15%, transparent); color: var(--brand);';
         },
 
         /**

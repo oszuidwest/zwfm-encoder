@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
@@ -20,13 +21,14 @@ type Manager struct {
 	ffmpegPath         string
 	maxDurationMinutes int  // Global max duration for on-demand recorders
 	running            bool // Whether encoder is running (recorders should be active)
+	eventLogger        *eventlog.Logger
 
 	cleanupStopCh     chan struct{} // Stop signal for cleanup scheduler
 	hourlyRetryStopCh chan struct{} // Stop signal for hourly retry scheduler
 }
 
 // NewManager creates a new recording manager.
-func NewManager(ffmpegPath, tempDir string, maxDurationMinutes int) (*Manager, error) {
+func NewManager(ffmpegPath, tempDir string, maxDurationMinutes int, eventLogger *eventlog.Logger) (*Manager, error) {
 	if tempDir == "" {
 		tempDir = DefaultTempDir
 	}
@@ -41,6 +43,7 @@ func NewManager(ffmpegPath, tempDir string, maxDurationMinutes int) (*Manager, e
 		tempDir:            tempDir,
 		ffmpegPath:         ffmpegPath,
 		maxDurationMinutes: maxDurationMinutes,
+		eventLogger:        eventLogger,
 		cleanupStopCh:      make(chan struct{}),
 		hourlyRetryStopCh:  make(chan struct{}),
 	}, nil
@@ -55,7 +58,7 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 		return fmt.Errorf("recorder already exists: %s", cfg.ID)
 	}
 
-	recorder, err := NewGenericRecorder(cfg, m.ffmpegPath, m.tempDir, m.maxDurationMinutes)
+	recorder, err := NewGenericRecorder(cfg, m.ffmpegPath, m.tempDir, m.maxDurationMinutes, m.eventLogger)
 	if err != nil {
 		return fmt.Errorf("create recorder: %w", err)
 	}

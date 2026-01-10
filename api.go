@@ -639,11 +639,11 @@ func (s *Server) handleAPIRegenerateKey(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleAPIEvents returns events from the event log.
-// GET /api/events?limit=50&type=stream|silence
+// GET /api/events?limit=50&offset=0&type=stream|silence
 func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 	emptyResponse := map[string]any{
-		"events": []eventlog.Event{},
-		"total":  0,
+		"events":   []eventlog.Event{},
+		"has_more": false,
 	}
 
 	// Parse limit parameter (default 50, max 500)
@@ -654,6 +654,14 @@ func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Parse offset parameter (default 0)
+	offset := 0
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		if parsed, err := strconv.Atoi(offsetStr); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
 	// Parse type filter parameter
 	var filter eventlog.TypeFilter
 	switch r.URL.Query().Get("type") {
@@ -661,6 +669,8 @@ func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 		filter = eventlog.FilterStream
 	case "silence":
 		filter = eventlog.FilterSilence
+	case "recorder":
+		filter = eventlog.FilterRecorder
 	default:
 		filter = eventlog.FilterAll
 	}
@@ -673,7 +683,7 @@ func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Read events from log file
-	eventList, err := eventlog.ReadLast(logPath, limit, filter)
+	eventList, hasMore, err := eventlog.ReadLast(logPath, limit, offset, filter)
 	if err != nil {
 		slog.Warn("failed to read events", "error", err)
 		s.writeJSON(w, http.StatusOK, emptyResponse)
@@ -681,7 +691,7 @@ func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"events": eventList,
-		"total":  len(eventList),
+		"events":   eventList,
+		"has_more": hasMore,
 	})
 }

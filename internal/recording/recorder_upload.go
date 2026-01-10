@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
@@ -49,9 +50,35 @@ func (r *GenericRecorder) queueForUpload(filePath string) {
 		fileSize:  info.Size(),
 	}:
 		slog.Info("queued file for upload", "id", r.id, "file", filepath.Base(filePath))
+		r.logUploadEvent(eventlog.UploadQueued, filepath.Base(filePath), s3Key, "", 0)
 	default:
 		slog.Warn("upload queue full", "id", r.id)
 	}
+}
+
+// logUploadEvent logs an upload-related event to the event log.
+func (r *GenericRecorder) logUploadEvent(eventType eventlog.EventType, filename, s3Key, errMsg string, retryCount int) {
+	if r.eventLogger == nil {
+		return
+	}
+	r.mu.RLock()
+	recorderName := r.config.Name
+	codec := string(r.config.Codec)
+	storageMode := string(r.config.StorageMode)
+	r.mu.RUnlock()
+
+	_ = r.eventLogger.LogRecorder(
+		eventType,
+		recorderName,
+		filename,
+		codec,
+		storageMode,
+		s3Key,
+		errMsg,
+		retryCount,
+		0,
+		"",
+	)
 }
 
 // uploadWorker processes the upload queue.
@@ -123,6 +150,7 @@ func (r *GenericRecorder) uploadFile(req uploadRequest) {
 
 	if err != nil {
 		slog.Error("upload failed", "id", r.id, "s3_key", req.s3Key, "error", err)
+		r.logUploadEvent(eventlog.UploadFailed, filepath.Base(req.localPath), req.s3Key, err.Error(), 0)
 		return
 	}
 
@@ -131,6 +159,7 @@ func (r *GenericRecorder) uploadFile(req uploadRequest) {
 	r.mu.RUnlock()
 
 	slog.Info("upload completed", "id", r.id, "s3_key", req.s3Key)
+	r.logUploadEvent(eventlog.UploadCompleted, filepath.Base(req.localPath), req.s3Key, "", 0)
 
 	// Handle local file based on storage mode
 	if storageMode == types.StorageS3 {

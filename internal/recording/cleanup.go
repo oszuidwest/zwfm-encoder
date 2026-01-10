@@ -13,6 +13,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
@@ -121,6 +122,7 @@ func (m *Manager) cleanupLocalFiles(recorder *GenericRecorder) {
 
 	if deleted > 0 {
 		slog.Info("cleanup: deleted local files", "id", cfg.ID, "count", deleted)
+		m.logCleanupEvent(cfg.Name, deleted, "local")
 	}
 }
 
@@ -204,5 +206,25 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 
 	if deleted > 0 {
 		slog.Info("cleanup: deleted S3 objects", "id", cfg.ID, "count", deleted)
+		m.logCleanupEvent(cfg.Name, deleted, "s3")
 	}
+}
+
+// logCleanupEvent logs a cleanup event to the event log.
+func (m *Manager) logCleanupEvent(recorderName string, filesDeleted int, storageType string) {
+	if m.eventLogger == nil {
+		return
+	}
+	_ = m.eventLogger.LogRecorder(
+		eventlog.CleanupCompleted,
+		recorderName,
+		"",
+		"",
+		"",
+		"",
+		"",
+		0,
+		filesDeleted,
+		storageType,
+	)
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/ffmpeg"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
@@ -23,6 +24,7 @@ type GenericRecorder struct {
 	config             types.Recorder
 	ffmpegPath         string
 	maxDurationMinutes int // For on-demand mode (from global config)
+	eventLogger        *eventlog.Logger
 
 	tempDir   string
 	state     types.ProcessState
@@ -54,12 +56,13 @@ type GenericRecorder struct {
 
 // NewGenericRecorder creates a new recorder with the given configuration.
 // S3 client is created lazily on first use (same pattern as Graph client).
-func NewGenericRecorder(cfg *types.Recorder, ffmpegPath, tempDir string, maxDurationMinutes int) (*GenericRecorder, error) {
+func NewGenericRecorder(cfg *types.Recorder, ffmpegPath, tempDir string, maxDurationMinutes int, eventLogger *eventlog.Logger) (*GenericRecorder, error) {
 	r := &GenericRecorder{
 		id:                 cfg.ID,
 		config:             *cfg,
 		ffmpegPath:         ffmpegPath,
 		maxDurationMinutes: maxDurationMinutes,
+		eventLogger:        eventLogger,
 		tempDir:            tempDir,
 		state:              types.ProcessStopped,
 		uploadQueue:        make(chan uploadRequest, 100),
@@ -205,7 +208,10 @@ func (r *GenericRecorder) startAsync() {
 	r.state = types.ProcessRunning
 
 	slog.Info("recorder started", "id", r.id, "name", r.config.Name, "mode", r.config.RotationMode)
+
+	// Log started event (need to unlock first since logEvent reads config)
 	r.mu.Unlock()
+	r.logEvent(eventlog.RecorderStarted, "", "", 0, 0, "")
 }
 
 // setError sets the recorder to error state with the given message.
@@ -215,6 +221,28 @@ func (r *GenericRecorder) setError(msg string) {
 	r.state = types.ProcessError
 	r.lastError = msg
 	slog.Error("recorder error", "id", r.id, "error", msg)
+
+	// Log to event log
+	r.logEvent(eventlog.RecorderError, "", msg, 0, 0, "")
+}
+
+// logEvent logs a recorder event to the event log.
+func (r *GenericRecorder) logEvent(eventType eventlog.EventType, filename, errMsg string, retryCount, filesDeleted int, storageType string) {
+	if r.eventLogger == nil {
+		return
+	}
+	_ = r.eventLogger.LogRecorder(
+		eventType,
+		r.config.Name,
+		filename,
+		string(r.config.Codec),
+		string(r.config.StorageMode),
+		"", // s3Key - set separately for upload events
+		errMsg,
+		retryCount,
+		filesDeleted,
+		storageType,
+	)
 }
 
 // Stop ends recording.
@@ -266,6 +294,7 @@ func (r *GenericRecorder) Stop() error {
 	r.mu.Unlock()
 
 	slog.Info("recorder stopped", "id", r.id, "name", r.config.Name)
+	r.logEvent(eventlog.RecorderStopped, "", "", 0, 0, "")
 	return nil
 }
 
@@ -392,6 +421,18 @@ func (r *GenericRecorder) startEncoderLocked() error {
 	r.result = result
 
 	slog.Info("recorder encoding started", "id", r.id, "file", filepath.Base(r.currentFile), "codec", r.config.Codec)
+
+	// Log new file event (eventLogger is thread-safe)
+	if r.eventLogger != nil {
+		_ = r.eventLogger.LogRecorder(
+			eventlog.RecorderFile,
+			r.config.Name,
+			filepath.Base(r.currentFile),
+			string(r.config.Codec),
+			string(r.config.StorageMode),
+			"", "", 0, 0, "",
+		)
+	}
 	return nil
 }
 

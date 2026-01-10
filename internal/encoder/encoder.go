@@ -154,7 +154,7 @@ func (e *Encoder) InitRecording() error {
 
 	snap := e.config.Snapshot()
 
-	mgr, err := recording.NewManager(e.ffmpegPath, "", snap.RecordingMaxDurationMinutes)
+	mgr, err := recording.NewManager(e.ffmpegPath, "", snap.RecordingMaxDurationMinutes, e.eventLogger)
 	if err != nil {
 		return fmt.Errorf("create recording manager: %w", err)
 	}
