@@ -1259,7 +1259,7 @@ document.addEventListener('alpine:init', () => {
                     case 'running':
                         if (status.stable) {
                             stateClass = 'state-success';
-                            statusText = 'Connected';
+                            statusText = status.uptime ? `Connected (${status.uptime})` : 'Connected';
                         } else {
                             stateClass = 'state-warning';
                             statusText = 'Connecting...';
