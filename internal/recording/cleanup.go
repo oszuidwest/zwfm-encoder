@@ -18,7 +18,6 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// startCleanupScheduler starts the hourly cleanup scheduler.
 func (m *Manager) startCleanupScheduler() {
 	go func() {
 		for {
@@ -37,7 +36,6 @@ func (m *Manager) startCleanupScheduler() {
 	}()
 }
 
-// runCleanup performs cleanup for all recorders.
 func (m *Manager) runCleanup() {
 	m.mu.RLock()
 	recorders := slices.Collect(maps.Values(m.recorders))
@@ -126,7 +124,7 @@ func (m *Manager) cleanupLocalFiles(recorder *GenericRecorder) {
 	}
 }
 
-// cleanupS3Files removes S3 objects older than retention days.
+// cleanupS3Files removes S3 objects older than retention days using pagination.
 func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 	cfg := recorder.Config()
 	if cfg.S3Bucket == "" {
@@ -210,7 +208,6 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 	}
 }
 
-// logCleanupEvent logs a cleanup event to the event log.
 func (m *Manager) logCleanupEvent(recorderName string, filesDeleted int, storageType string) {
 	if m.eventLogger == nil {
 		return

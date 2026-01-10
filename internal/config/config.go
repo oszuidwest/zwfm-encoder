@@ -19,7 +19,6 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// Configuration defaults are used when values are not specified.
 const (
 	DefaultWebPort                     = 8080
 	DefaultWebUsername                 = "admin"
@@ -34,7 +33,6 @@ const (
 	DefaultRecordingMaxDurationMinutes = 240 // 4 hours for on-demand recorders
 )
 
-// SystemConfig represents system-level settings such as server port and credentials.
 type SystemConfig struct {
 	FFmpegPath string `json:"ffmpeg_path"` // Path to FFmpeg binary (empty = use PATH)
 	Port       int    `json:"port"`        // HTTP server port
@@ -42,19 +40,16 @@ type SystemConfig struct {
 	Password   string `json:"password"`    // Login password
 }
 
-// WebConfig represents station branding settings for the web interface.
 type WebConfig struct {
 	StationName string `json:"station_name"` // Station display name
 	ColorLight  string `json:"color_light"`  // Theme color for light mode (#RRGGBB)
 	ColorDark   string `json:"color_dark"`   // Theme color for dark mode (#RRGGBB)
 }
 
-// AudioConfig represents audio input device settings.
 type AudioConfig struct {
 	Input string `json:"input"` // Audio input device identifier
 }
 
-// SilenceDetectionConfig represents silence detection thresholds and timing.
 type SilenceDetectionConfig struct {
 	ThresholdDB float64 `json:"threshold_db"` // Silence threshold in dB
 	DurationMs  int64   `json:"duration_ms"`  // Duration below threshold before silence alert
@@ -62,12 +57,10 @@ type SilenceDetectionConfig struct {
 	PeakHoldMs  int64   `json:"peak_hold_ms"` // Duration to hold peak values in VU meter
 }
 
-// WebhookConfig represents webhook notification settings.
 type WebhookConfig struct {
 	URL string `json:"url"` // Webhook URL for silence alerts
 }
 
-// EmailConfig represents Microsoft Graph email notification settings.
 type EmailConfig struct {
 	TenantID     string `json:"tenant_id"`     // Azure AD tenant ID
 	ClientID     string `json:"client_id"`     // App registration client ID
@@ -76,26 +69,23 @@ type EmailConfig struct {
 	Recipients   string `json:"recipients"`    // Comma-separated recipient addresses
 }
 
-// NotificationsConfig represents all notification channel settings.
 type NotificationsConfig struct {
 	Webhook WebhookConfig      `json:"webhook"`          // Webhook settings
 	Email   EmailConfig        `json:"email"`            // Email settings
 	Zabbix  types.ZabbixConfig `json:"zabbix,omitempty"` // Zabbix settings
 }
 
-// StreamingConfig represents SRT streaming settings.
 type StreamingConfig struct {
 	Streams []types.Stream `json:"streams"` // SRT streaming destinations
 }
 
-// RecordingConfig represents recording destinations and settings.
 type RecordingConfig struct {
 	APIKey             string           `json:"api_key"`              // API key for recording control
 	MaxDurationMinutes int              `json:"max_duration_minutes"` // Max duration for on-demand recorders
 	Recorders          []types.Recorder `json:"recorders"`            // Recording destinations
 }
 
-// Config represents all application configuration and is safe for concurrent use.
+// Config is safe for concurrent use.
 type Config struct {
 	System           SystemConfig            `json:"system"`
 	Web              WebConfig               `json:"web"`
@@ -567,7 +557,6 @@ func (s *Snapshot) HasZabbix() bool {
 // --- Atomic Settings Update ---
 
 // SettingsUpdate contains all settings for atomic update.
-// Used both for API requests (with json tags) and internal updates.
 type SettingsUpdate struct {
 	AudioInput               string  `json:"audio_input"`
 	SilenceThreshold         float64 `json:"silence_threshold"`

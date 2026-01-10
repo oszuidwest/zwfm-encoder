@@ -39,7 +39,7 @@ type indexData struct {
 	PrimaryCSS  template.CSS
 }
 
-// Server is an HTTP server that provides the web interface for the audio encoder.
+// Server handles HTTP requests and WebSocket connections.
 type Server struct {
 	config          *config.Config
 	encoder         *encoder.Encoder
@@ -52,7 +52,7 @@ type Server struct {
 	wsClientsMu sync.RWMutex
 }
 
-// NewServer returns a new Server configured with the provided config and encoder.
+// NewServer creates a Server with the given configuration and encoder.
 func NewServer(cfg *config.Config, enc *encoder.Encoder, ffmpegAvailable bool) *Server {
 	return &Server{
 		config:          cfg,
@@ -64,7 +64,6 @@ func NewServer(cfg *config.Config, enc *encoder.Encoder, ffmpegAvailable bool) *
 	}
 }
 
-// handleWebSocket handles WebSocket connections for real-time updates.
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := server.UpgradeConnection(w, r)
 	if err != nil {
@@ -90,14 +89,12 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	s.runWebSocketEventLoop(send, done)
 }
 
-// registerWSClient adds a client's send channel to the broadcast list.
 func (s *Server) registerWSClient(send chan any) {
 	s.wsClientsMu.Lock()
 	s.wsClients[send] = struct{}{}
 	s.wsClientsMu.Unlock()
 }
 
-// unregisterWSClient removes a client's send channel from the broadcast list.
 func (s *Server) unregisterWSClient(send chan any) {
 	s.wsClientsMu.Lock()
 	delete(s.wsClients, send)
@@ -122,7 +119,7 @@ func (s *Server) broadcastConfigChanged() {
 	}
 }
 
-// runWebSocketWriter writes messages to the WebSocket connection.
+// runWebSocketWriter is the sole writer goroutine for a WebSocket connection.
 func (s *Server) runWebSocketWriter(conn server.WebSocketConn, send <-chan any) {
 	defer func() {
 		if err := conn.Close(); err != nil {
@@ -136,7 +133,6 @@ func (s *Server) runWebSocketWriter(conn server.WebSocketConn, send <-chan any) 
 	}
 }
 
-// runWebSocketReader reads from the connection to keep it alive.
 func (s *Server) runWebSocketReader(conn server.WebSocketConn, done chan<- struct{}) {
 	defer close(done)
 
@@ -148,7 +144,7 @@ func (s *Server) runWebSocketReader(conn server.WebSocketConn, done chan<- struc
 	}
 }
 
-// runWebSocketEventLoop handles periodic status and level updates.
+// runWebSocketEventLoop sends periodic level and status updates to the client.
 func (s *Server) runWebSocketEventLoop(send chan any, done <-chan struct{}) {
 	levelsTicker := time.NewTicker(100 * time.Millisecond)  // 10 fps for VU meters
 	statusTicker := time.NewTicker(3000 * time.Millisecond) // Status updates every 3s
@@ -190,7 +186,6 @@ func (s *Server) runWebSocketEventLoop(send chan any, done <-chan struct{}) {
 	}
 }
 
-// buildWSRuntime returns runtime-only status for WebSocket clients.
 func (s *Server) buildWSRuntime() types.WSRuntimeStatus {
 	cfg := s.config.Snapshot()
 	status := s.encoder.Status()
@@ -207,7 +202,7 @@ func (s *Server) buildWSRuntime() types.WSRuntimeStatus {
 	}
 }
 
-// SetupRoutes returns an [http.Handler] configured with all application routes.
+// SetupRoutes configures and returns the HTTP handler with all routes.
 func (s *Server) SetupRoutes() http.Handler {
 	mux := http.NewServeMux()
 	auth := s.sessions.AuthMiddleware()
@@ -264,7 +259,7 @@ func (s *Server) SetupRoutes() http.Handler {
 	return securityHeaders(mux)
 }
 
-// securityHeaders returns middleware that adds security headers to responses.
+// securityHeaders wraps a handler to add security headers to responses.
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Frame-Options", "DENY")
@@ -274,14 +269,14 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// handlePublicStatic handles requests for static files without authentication.
+// handlePublicStatic serves style.css and icons.js without authentication.
 func (s *Server) handlePublicStatic(w http.ResponseWriter, r *http.Request) {
 	if !serveStaticFile(w, r.URL.Path) {
 		http.NotFound(w, r)
 	}
 }
 
-// handleFavicon serves the favicon with the configured station color.
+// handleFavicon generates an SVG favicon with the configured station color.
 func (s *Server) handleFavicon(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
 	w.Header().Set("Content-Type", "image/svg+xml")
@@ -290,7 +285,7 @@ func (s *Server) handleFavicon(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// serveStaticFile serves a static file by path and reports whether it was found.
+// serveStaticFile reports whether the path was found and served.
 func serveStaticFile(w http.ResponseWriter, path string) bool {
 	file, ok := staticFiles[path]
 	if !ok {
@@ -303,7 +298,7 @@ func serveStaticFile(w http.ResponseWriter, path string) bool {
 	return true
 }
 
-// handleLogin handles login page display and form submission.
+// handleLogin serves the login page and processes form submissions.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie("encoder_session"); err == nil {
 		if s.sessions.Validate(cookie.Value) {
@@ -346,20 +341,18 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleLogout handles user logout requests.
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	s.sessions.Logout(w, r)
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
-// A staticFile represents an embedded static file with content type and data.
+// staticFile holds an embedded static file with its content type and data.
 type staticFile struct {
 	contentType string
 	content     string
 	name        string
 }
 
-// staticFiles contains URL path to static file mappings.
 var staticFiles = map[string]staticFile{
 	"/style.css": {
 		contentType: "text/css",
@@ -384,7 +377,7 @@ var staticFiles = map[string]staticFile{
 	// favicon.svg is served dynamically via handleFavicon
 }
 
-// handleStatic handles requests for embedded static web interface files.
+// handleStatic serves embedded static files for authenticated users.
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	if path == "/" {
@@ -413,7 +406,7 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-// apiKeyAuth returns middleware for API key authentication.
+// apiKeyAuth wraps a handler with API key authentication.
 func (s *Server) apiKeyAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		apiKey := s.config.GetRecordingAPIKey()
@@ -431,9 +424,6 @@ func (s *Server) apiKeyAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// handleExternalRecordingAction handles external API recording control.
-// POST /api/recordings/start?recorder_id=...
-// POST /api/recordings/stop?recorder_id=...
 func (s *Server) handleExternalRecordingAction(w http.ResponseWriter, r *http.Request) {
 	recorderID := r.URL.Query().Get("recorder_id")
 	if recorderID == "" {
@@ -470,8 +460,7 @@ func (s *Server) handleExternalRecordingAction(w http.ResponseWriter, r *http.Re
 	})
 }
 
-// Start begins the HTTP server.
-// Returns an *http.Server that can be used for graceful shutdown.
+// Start begins the HTTP server and returns it for graceful shutdown.
 func (s *Server) Start() *http.Server {
 	addr := fmt.Sprintf(":%d", s.config.Snapshot().WebPort)
 	slog.Info("starting web server", "addr", addr)

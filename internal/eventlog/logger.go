@@ -15,10 +15,10 @@ import (
 	"time"
 )
 
-// EventType represents the type of event.
+// EventType identifies the category of a logged event.
 type EventType string
 
-// Stream event types.
+// Stream event types: started, stable, error, retry, stopped.
 const (
 	StreamStarted EventType = "stream_started"
 	StreamStable  EventType = "stream_stable"
@@ -27,13 +27,13 @@ const (
 	StreamStopped EventType = "stream_stopped"
 )
 
-// Silence event types.
+// Silence event types: start and end.
 const (
 	SilenceStart EventType = "silence_start"
 	SilenceEnd   EventType = "silence_end"
 )
 
-// Recorder event types.
+// Recorder event types: lifecycle, upload, and cleanup events.
 const (
 	RecorderStarted  EventType = "recorder_started"
 	RecorderStopped  EventType = "recorder_stopped"
@@ -45,7 +45,7 @@ const (
 	CleanupCompleted EventType = "cleanup_completed"
 )
 
-// Event represents a single log entry with type-specific details.
+// Event is a single log entry with type-specific details.
 type Event struct {
 	Timestamp time.Time `json:"ts"`
 	Type      EventType `json:"type"`
@@ -54,7 +54,7 @@ type Event struct {
 	Details   any       `json:"details,omitempty"`
 }
 
-// StreamDetails contains stream-specific event details.
+// StreamDetails holds stream event information.
 type StreamDetails struct {
 	StreamName string `json:"stream_name,omitempty"`
 	Error      string `json:"error,omitempty"`
@@ -62,7 +62,7 @@ type StreamDetails struct {
 	MaxRetries int    `json:"max_retries,omitempty"`
 }
 
-// SilenceDetails contains silence-specific event details.
+// SilenceDetails holds silence event information.
 type SilenceDetails struct {
 	LevelLeftDB   float64 `json:"level_left_db"`
 	LevelRightDB  float64 `json:"level_right_db"`
@@ -74,7 +74,7 @@ type SilenceDetails struct {
 	DumpError     string  `json:"dump_error,omitempty"`
 }
 
-// RecorderDetails contains recorder-specific event details.
+// RecorderDetails holds recorder event information.
 type RecorderDetails struct {
 	RecorderName string `json:"recorder_name,omitempty"`
 	Filename     string `json:"filename,omitempty"`
@@ -87,8 +87,7 @@ type RecorderDetails struct {
 	StorageType  string `json:"storage_type,omitempty"` // "local" or "s3" for cleanup
 }
 
-// RecorderEventParams is the input struct for LogRecorder.
-// All fields are optional; only non-zero values appear in the log.
+// RecorderEventParams provides optional fields for [Logger.LogRecorder].
 type RecorderEventParams struct {
 	RecorderName string
 	Filename     string
@@ -101,7 +100,7 @@ type RecorderEventParams struct {
 	StorageType  string
 }
 
-// Logger writes events to a JSON lines file.
+// Logger records events to a JSON lines file.
 type Logger struct {
 	mu       sync.Mutex
 	filePath string
@@ -147,7 +146,7 @@ func NewLogger(filePath string) (*Logger, error) {
 	}, nil
 }
 
-// Log writes an event to the log file.
+// Log writes an event, using the current time if Timestamp is zero.
 func (l *Logger) Log(event *Event) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -159,7 +158,7 @@ func (l *Logger) Log(event *Event) error {
 	return l.encoder.Encode(event)
 }
 
-// LogStream logs a stream event.
+// LogStream records a stream event with error and retry details.
 func (l *Logger) LogStream(eventType EventType, streamID, streamName, message, errMsg string, retryCount, maxRetries int) error {
 	return l.Log(&Event{
 		Type:     eventType,
@@ -174,7 +173,7 @@ func (l *Logger) LogStream(eventType EventType, streamID, streamName, message, e
 	})
 }
 
-// LogSilenceStart logs a silence start event.
+// LogSilenceStart records when silence is first detected.
 func (l *Logger) LogSilenceStart(levelL, levelR, threshold float64) error {
 	return l.Log(&Event{
 		Type: SilenceStart,
@@ -186,7 +185,7 @@ func (l *Logger) LogSilenceStart(levelL, levelR, threshold float64) error {
 	})
 }
 
-// LogSilenceEnd logs a silence end event with optional dump info.
+// LogSilenceEnd records when silence ends, including duration and debug dump information.
 func (l *Logger) LogSilenceEnd(durationMs int64, levelL, levelR, threshold float64, dumpPath, dumpFilename string, dumpSize int64, dumpError string) error {
 	return l.Log(&Event{
 		Type: SilenceEnd,
@@ -203,7 +202,7 @@ func (l *Logger) LogSilenceEnd(durationMs int64, levelL, levelR, threshold float
 	})
 }
 
-// LogRecorder logs a recorder event.
+// LogRecorder records a recorder lifecycle or upload event.
 func (l *Logger) LogRecorder(eventType EventType, p *RecorderEventParams) error {
 	return l.Log(&Event{
 		Type: eventType,
@@ -221,7 +220,7 @@ func (l *Logger) LogRecorder(eventType EventType, p *RecorderEventParams) error 
 	})
 }
 
-// Close closes the log file.
+// Close releases the log file handle.
 func (l *Logger) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -232,15 +231,15 @@ func (l *Logger) Close() error {
 	return nil
 }
 
-// Path returns the path to the log file.
+// Path returns the log file location.
 func (l *Logger) Path() string {
 	return l.filePath
 }
 
-// TypeFilter specifies which event types to include when reading.
+// TypeFilter selects event categories for [ReadLast].
 type TypeFilter string
 
-// Filter constants for ReadLast.
+// TypeFilter values for [ReadLast].
 const (
 	FilterAll      TypeFilter = ""
 	FilterStream   TypeFilter = "stream"
@@ -248,14 +247,12 @@ const (
 	FilterRecorder TypeFilter = "recorder"
 )
 
-// MaxReadLimit is the maximum number of events that can be read at once.
-// This prevents denial-of-service via excessive memory allocation.
+// MaxReadLimit caps the number of events returned by [ReadLast].
 const MaxReadLimit = 500
 
-// ReadLast reads events from the log file with pagination support.
-// Returns up to n events starting from offset, filtered by type.
+// ReadLast returns up to n events starting from offset, filtered by type.
 // Events are returned in reverse chronological order (newest first).
-// The n parameter is capped at MaxReadLimit to prevent excessive memory allocation.
+// The second return value reports whether more events are available.
 func ReadLast(filePath string, n, offset int, filter TypeFilter) ([]Event, bool, error) {
 	// Cap n to prevent excessive memory allocation (defense in depth)
 	if n > MaxReadLimit {
@@ -316,7 +313,7 @@ func ReadLast(filePath string, n, offset int, filter TypeFilter) ([]Event, bool,
 	return events, hasMore, nil
 }
 
-// matchesFilter returns true if the event type matches the given filter.
+// matchesFilter reports whether t matches the given filter.
 func matchesFilter(t EventType, filter TypeFilter) bool {
 	switch filter {
 	case FilterAll:
@@ -332,7 +329,7 @@ func matchesFilter(t EventType, filter TypeFilter) bool {
 	}
 }
 
-// IsStreamEvent returns true if the event type is a stream event.
+// IsStreamEvent reports whether t is a stream event type.
 func IsStreamEvent(t EventType) bool {
 	switch t {
 	case StreamStarted, StreamStable, StreamError, StreamRetry, StreamStopped:
@@ -342,7 +339,7 @@ func IsStreamEvent(t EventType) bool {
 	}
 }
 
-// IsSilenceEvent returns true if the event type is a silence event.
+// IsSilenceEvent reports whether t is a silence event type.
 func IsSilenceEvent(t EventType) bool {
 	switch t {
 	case SilenceStart, SilenceEnd:
@@ -352,7 +349,7 @@ func IsSilenceEvent(t EventType) bool {
 	}
 }
 
-// IsRecorderEvent returns true if the event type is a recorder event.
+// IsRecorderEvent reports whether t is a recorder event type.
 func IsRecorderEvent(t EventType) bool {
 	switch t {
 	case RecorderStarted, RecorderStopped, RecorderError, RecorderFile,

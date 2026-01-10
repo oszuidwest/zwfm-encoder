@@ -14,14 +14,13 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-// uploadRequest is a request to upload a file to S3.
+// uploadRequest represents a file to be uploaded to S3.
 type uploadRequest struct {
 	localPath string
 	s3Key     string
 	fileSize  int64
 }
 
-// queueForUpload adds a completed file to the upload queue.
 func (r *GenericRecorder) queueForUpload(filePath string) {
 	info, err := os.Stat(filePath)
 	if err != nil {
@@ -56,7 +55,6 @@ func (r *GenericRecorder) queueForUpload(filePath string) {
 	}
 }
 
-// logUploadEventLocked logs an upload-related event, acquiring the lock to capture config.
 func (r *GenericRecorder) logUploadEventLocked(eventType eventlog.EventType, filename, s3Key, errMsg string) {
 	if r.eventLogger == nil {
 		return
@@ -71,7 +69,7 @@ func (r *GenericRecorder) logUploadEventLocked(eventType eventlog.EventType, fil
 	r.logEvent(eventType, p)
 }
 
-// uploadWorker processes the upload queue.
+// uploadWorker processes the upload queue, draining remaining items on shutdown.
 func (r *GenericRecorder) uploadWorker() {
 	defer r.uploadWg.Done()
 
@@ -93,7 +91,7 @@ func (r *GenericRecorder) uploadWorker() {
 	}
 }
 
-// uploadFile uploads a single file to S3.
+// uploadFile uploads to S3 and deletes temp files in S3-only mode.
 func (r *GenericRecorder) uploadFile(req uploadRequest) {
 	ctx, cancel := context.WithTimeoutCause(
 		context.Background(),

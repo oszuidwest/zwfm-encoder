@@ -26,7 +26,7 @@ type StreamContext interface {
 	IsRunning() bool
 }
 
-// EventCallback is called when stream events occur.
+// EventCallback handles stream event notifications.
 type EventCallback func(streamID, streamName string, event string, message string, err string, retryCount, maxRetries int)
 
 // Manager orchestrates multiple streams.
@@ -48,7 +48,7 @@ type Stream struct {
 	backoff    *util.Backoff
 }
 
-// NewManager returns a new stream Manager.
+// NewManager creates a Manager with the given FFmpeg path.
 func NewManager(ffmpegPath string) *Manager {
 	return &Manager{
 		ffmpegPath: ffmpegPath,
@@ -56,7 +56,7 @@ func NewManager(ffmpegPath string) *Manager {
 	}
 }
 
-// SetEventCallback sets the callback for stream events.
+// SetEventCallback configures the event handler and stream name resolver.
 func (m *Manager) SetEventCallback(cb EventCallback, getStreamName func(string) string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -64,7 +64,6 @@ func (m *Manager) SetEventCallback(cb EventCallback, getStreamName func(string) 
 	m.getStreamName = getStreamName
 }
 
-// emitEvent calls the event callback if set.
 func (m *Manager) emitEvent(streamID, event, message, errMsg string, retryCount, maxRetries int) {
 	m.mu.RLock()
 	cb := m.onEvent
@@ -82,7 +81,8 @@ func (m *Manager) emitEvent(streamID, event, message, errMsg string, retryCount,
 	cb(streamID, name, event, message, errMsg, retryCount, maxRetries)
 }
 
-// Start launches a stream.
+// Start launches a stream. On success, a goroutine emits a "stream_stable"
+// event after the stability threshold is reached.
 func (m *Manager) Start(stream *types.Stream) error {
 	m.mu.Lock()
 
@@ -200,7 +200,7 @@ func (m *Manager) Stop(streamID string) error {
 	return nil
 }
 
-// StopAll terminates all streams.
+// StopAll terminates all streams and returns any errors joined together.
 func (m *Manager) StopAll() error {
 	m.mu.RLock()
 	ids := slices.Collect(maps.Keys(m.streams))
@@ -221,7 +221,8 @@ func (m *Manager) StopAll() error {
 	return errors.Join(errs...)
 }
 
-// WriteAudio sends audio data to a stream.
+// WriteAudio sends audio data to a stream. Errors from closed stdin during
+// shutdown are silently ignored.
 func (m *Manager) WriteAudio(streamID string, data []byte) error {
 	// Get stream under read lock
 	m.mu.RLock()
@@ -254,7 +255,7 @@ func (m *Manager) WriteAudio(streamID string, data []byte) error {
 	return nil
 }
 
-// AllStatuses reports the status of all streams.
+// AllStatuses returns status information for all managed streams.
 func (m *Manager) AllStatuses(getMaxRetries func(string) int) map[string]types.ProcessStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -283,7 +284,8 @@ func (m *Manager) AllStatuses(getMaxRetries func(string) int) map[string]types.P
 	return statuses
 }
 
-// StreamInfo returns stream info for monitoring.
+// StreamInfo returns the FFmpeg result and backoff state for a stream.
+// The exists return value is false if the stream is not found.
 func (m *Manager) StreamInfo(streamID string) (result *ffmpeg.StartResult, backoff *util.Backoff, exists bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -294,7 +296,7 @@ func (m *Manager) StreamInfo(streamID string) (result *ffmpeg.StartResult, backo
 	return stream.result, stream.backoff, true
 }
 
-// SetError records an error for a stream.
+// SetError records an error message and sets the stream state to error.
 func (m *Manager) SetError(streamID, errMsg string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -313,7 +315,7 @@ func (m *Manager) IncrementRetry(streamID string) {
 	}
 }
 
-// ResetRetry clears the retry state for a stream.
+// ResetRetry clears the retry counter and backoff delay for a stream.
 func (m *Manager) ResetRetry(streamID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -325,7 +327,7 @@ func (m *Manager) ResetRetry(streamID string) {
 	}
 }
 
-// MarkStopped updates a stream state to stopped.
+// MarkStopped updates the stream state to stopped without terminating the process.
 func (m *Manager) MarkStopped(streamID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -334,14 +336,14 @@ func (m *Manager) MarkStopped(streamID string) {
 	}
 }
 
-// Remove deletes a stream from the manager.
+// Remove deletes a stream from the manager without stopping the process.
 func (m *Manager) Remove(streamID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.streams, streamID)
 }
 
-// RetryCount returns the number of retry attempts for a stream.
+// RetryCount returns the number of retry attempts for a stream, or 0 if not found.
 func (m *Manager) RetryCount(streamID string) int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -351,7 +353,6 @@ func (m *Manager) RetryCount(streamID string) int {
 	return 0
 }
 
-// handleStreamExit processes the result of a terminated FFmpeg stream.
 func (m *Manager) handleStreamExit(streamID string, result *ffmpeg.StartResult, backoff *util.Backoff, err error, runDuration time.Duration) {
 	// Check if this was an intentional stop - don't treat as error
 	cause := context.Cause(result.Context())
@@ -385,7 +386,6 @@ func (m *Manager) handleStreamExit(streamID string, result *ffmpeg.StartResult, 
 	}
 }
 
-// shouldContinueRetry reports whether the stream should continue retrying.
 func (m *Manager) shouldContinueRetry(streamID string, ctx StreamContext) (shouldRetry bool, reason string) {
 	if !ctx.IsRunning() {
 		return false, "encoder stopped"
@@ -405,7 +405,8 @@ func (m *Manager) shouldContinueRetry(streamID string, ctx StreamContext) (shoul
 	return true, ""
 }
 
-// MonitorAndRetry watches a stream and restarts it on failure.
+// MonitorAndRetry watches a stream and restarts it on failure. This method
+// blocks until the stream is stopped or retry limits are exceeded.
 func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <-chan struct{}) {
 	for {
 		select {

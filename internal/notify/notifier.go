@@ -1,3 +1,4 @@
+// Package notify handles silence detection notifications.
 package notify
 
 import (
@@ -14,7 +15,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// SilenceNotifier manages notifications for silence detection events.
+// SilenceNotifier sends alerts when audio silence is detected and recovered.
 type SilenceNotifier struct {
 	cfg         *config.Config
 	eventLogger *eventlog.Logger
@@ -36,7 +37,7 @@ type SilenceNotifier struct {
 	pendingRecovery *pendingRecoveryData
 }
 
-// pendingRecoveryData stores recovery event data while waiting for dump.
+// pendingRecoveryData holds recovery event data while waiting for the audio dump.
 type pendingRecoveryData struct {
 	durationMs int64
 	levelL     float64
@@ -45,7 +46,7 @@ type pendingRecoveryData struct {
 	sentFlags  recoveryFlags
 }
 
-// recoveryFlags tracks which recovery notifications should be sent.
+// recoveryFlags tracks which notification channels were used for silence start.
 type recoveryFlags struct {
 	webhook bool
 	email   bool
@@ -53,35 +54,24 @@ type recoveryFlags struct {
 	zabbix  bool
 }
 
-// NewSilenceNotifier returns a SilenceNotifier configured with the given config.
 func NewSilenceNotifier(cfg *config.Config) *SilenceNotifier {
 	return &SilenceNotifier{cfg: cfg}
 }
 
-// SetEventLogger sets the event logger for silence events.
 func (n *SilenceNotifier) SetEventLogger(logger *eventlog.Logger) {
 	n.eventLogger = logger
 }
 
-// ResetPendingRecovery clears any pending recovery notification state.
 func (n *SilenceNotifier) ResetPendingRecovery() {
 	n.mu.Lock()
 	n.pendingRecovery = nil
 	n.mu.Unlock()
 }
 
-// graphConfigKey returns a string key for comparing Graph configurations.
-// Used to detect when credentials change and client needs recreation.
-// Includes all fields that are baked into the GraphClient at creation time:
-// - TenantID, ClientID, ClientSecret: OAuth2 token source
-// - FromAddress: stored in client for sending
-// Recipients are NOT included as they're passed to SendMail(), not stored.
 func graphConfigKeyFrom(cfg *GraphConfig) string {
 	return cfg.TenantID + "|" + cfg.ClientID + "|" + cfg.ClientSecret + "|" + cfg.FromAddress
 }
 
-// getOrCreateGraphClient returns the cached email client, recreating if config changed.
-// This follows the same pattern as S3 client handling in recorders.
 func (n *SilenceNotifier) getOrCreateGraphClient(cfg *GraphConfig) (*GraphClient, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -102,7 +92,7 @@ func (n *SilenceNotifier) getOrCreateGraphClient(cfg *GraphConfig) (*GraphClient
 	return client, nil
 }
 
-// HandleEvent processes a silence event and triggers notifications.
+// HandleEvent dispatches silence start and recovery notifications based on the event.
 func (n *SilenceNotifier) HandleEvent(event audio.SilenceEvent) {
 	if event.JustEntered {
 		n.handleSilenceStart(event.CurrentLevelL, event.CurrentLevelR)
@@ -113,7 +103,6 @@ func (n *SilenceNotifier) HandleEvent(event audio.SilenceEvent) {
 	}
 }
 
-// handleSilenceStart triggers notifications when silence is first detected.
 func (n *SilenceNotifier) handleSilenceStart(levelL, levelR float64) {
 	cfg := n.cfg.Snapshot()
 
@@ -151,7 +140,6 @@ func (n *SilenceNotifier) handleSilenceStart(levelL, levelR float64) {
 	}
 }
 
-// handleSilenceEnd stores recovery data for later notification with audio dump.
 func (n *SilenceNotifier) handleSilenceEnd(totalDurationMs int64, levelL, levelR float64) {
 	cfg := n.cfg.Snapshot()
 
@@ -183,7 +171,6 @@ func (n *SilenceNotifier) handleSilenceEnd(totalDurationMs int64, levelL, levelR
 	n.mu.Unlock()
 }
 
-// Reset clears the notification state.
 func (n *SilenceNotifier) Reset() {
 	n.mu.Lock()
 	n.webhookSent = false
@@ -193,8 +180,6 @@ func (n *SilenceNotifier) Reset() {
 	n.mu.Unlock()
 }
 
-// sendSilenceWebhook sends a silence detection webhook notification.
-//
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) sendSilenceWebhook(cfg config.Snapshot, levelL, levelR float64) {
 	logNotifyResult(
@@ -203,8 +188,6 @@ func (n *SilenceNotifier) sendSilenceWebhook(cfg config.Snapshot, levelL, levelR
 	)
 }
 
-// BuildGraphConfig creates a GraphConfig from the config snapshot.
-//
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func BuildGraphConfig(cfg config.Snapshot) *GraphConfig {
 	return &GraphConfig{
@@ -216,8 +199,6 @@ func BuildGraphConfig(cfg config.Snapshot) *GraphConfig {
 	}
 }
 
-// sendSilenceEmail sends a silence detection email notification.
-//
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) sendSilenceEmail(cfg config.Snapshot, levelL, levelR float64) {
 	graphCfg := BuildGraphConfig(cfg)
@@ -229,7 +210,6 @@ func (n *SilenceNotifier) sendSilenceEmail(cfg config.Snapshot, levelL, levelR f
 	)
 }
 
-// sendEmail sends an email using the given configuration.
 func (n *SilenceNotifier) sendEmail(cfg *GraphConfig, subject, body string) error {
 	if !IsConfigured(cfg) {
 		return nil
@@ -252,7 +232,6 @@ func (n *SilenceNotifier) sendEmail(cfg *GraphConfig, subject, body string) erro
 	return nil
 }
 
-// sendSilenceEmailWithClient sends a silence alert email.
 func (n *SilenceNotifier) sendSilenceEmailWithClient(cfg *GraphConfig, stationName string, levelL, levelR, threshold float64) error {
 	subject := "[ALERT] Silence Detected - " + stationName
 	body := fmt.Sprintf(
@@ -265,8 +244,6 @@ func (n *SilenceNotifier) sendSilenceEmailWithClient(cfg *GraphConfig, stationNa
 	return n.sendEmail(cfg, subject, body)
 }
 
-// logSilenceStart logs the start of a silence event.
-//
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) logSilenceStart(cfg config.Snapshot, levelL, levelR float64) {
 	if n.eventLogger == nil {
@@ -277,7 +254,7 @@ func (n *SilenceNotifier) logSilenceStart(cfg config.Snapshot, levelL, levelR fl
 	}
 }
 
-// OnDumpReady sends recovery notifications with the audio dump attached.
+// OnDumpReady completes pending recovery notifications with the audio dump attached.
 func (n *SilenceNotifier) OnDumpReady(result *silencedump.EncodeResult) {
 	n.mu.Lock()
 	pending := n.pendingRecovery
@@ -303,8 +280,6 @@ func (n *SilenceNotifier) OnDumpReady(result *silencedump.EncodeResult) {
 	}
 }
 
-// sendRecoveryWebhookWithDump sends a recovery webhook with audio dump.
-//
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) sendRecoveryWebhookWithDump(cfg config.Snapshot, durationMs int64, levelL, levelR float64, dump *silencedump.EncodeResult) {
 	logNotifyResult(
@@ -315,8 +290,6 @@ func (n *SilenceNotifier) sendRecoveryWebhookWithDump(cfg config.Snapshot, durat
 	)
 }
 
-// sendRecoveryEmailWithDump sends a recovery email with audio dump attachment.
-//
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) sendRecoveryEmailWithDump(cfg config.Snapshot, durationMs int64, levelL, levelR float64, dump *silencedump.EncodeResult) {
 	graphCfg := BuildGraphConfig(cfg)
@@ -328,8 +301,6 @@ func (n *SilenceNotifier) sendRecoveryEmailWithDump(cfg config.Snapshot, duratio
 	)
 }
 
-// logSilenceEndWithDump logs the end of a silence event with dump info.
-//
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) logSilenceEndWithDump(cfg config.Snapshot, durationMs int64, levelL, levelR float64, dump *silencedump.EncodeResult) {
 	if n.eventLogger == nil {
@@ -343,7 +314,6 @@ func (n *SilenceNotifier) logSilenceEndWithDump(cfg config.Snapshot, durationMs 
 	}
 }
 
-// extractDumpInfo extracts path, filename, size, and error string from a dump result.
 func extractDumpInfo(dump *silencedump.EncodeResult) (path, filename string, size int64, errStr string) {
 	if dump == nil {
 		return "", "", 0, ""
@@ -354,8 +324,6 @@ func extractDumpInfo(dump *silencedump.EncodeResult) (path, filename string, siz
 	return dump.FilePath, dump.Filename, dump.FileSize, ""
 }
 
-// sendSilenceZabbix sends a silence alert to Zabbix.
-//
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) sendSilenceZabbix(cfg config.Snapshot, levelL, levelR float64) {
 	logNotifyResult(
@@ -366,8 +334,6 @@ func (n *SilenceNotifier) sendSilenceZabbix(cfg config.Snapshot, levelL, levelR 
 	)
 }
 
-// sendRecoveryZabbix sends a recovery message to Zabbix.
-//
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) sendRecoveryZabbix(cfg config.Snapshot, durationMs int64, levelL, levelR float64) {
 	logNotifyResult(
@@ -378,7 +344,6 @@ func (n *SilenceNotifier) sendRecoveryZabbix(cfg config.Snapshot, durationMs int
 	)
 }
 
-// sendRecoveryWebhook sends a recovery webhook with optional audio dump.
 func sendRecoveryWebhook(webhookURL string, durationMs int64, levelL, levelR, threshold float64, dump *silencedump.EncodeResult) error {
 	payload := &WebhookPayload{
 		Event:             "silence_recovered",
@@ -409,7 +374,6 @@ func sendRecoveryWebhook(webhookURL string, durationMs int64, levelL, levelR, th
 	return sendWebhook(webhookURL, payload)
 }
 
-// sendRecoveryEmailWithClientAndDump sends a recovery email with optional audio dump attachment.
 func (n *SilenceNotifier) sendRecoveryEmailWithClientAndDump(cfg *GraphConfig, stationName string, durationMs int64, levelL, levelR, threshold float64, dump *silencedump.EncodeResult) error {
 	if !IsConfigured(cfg) {
 		return nil

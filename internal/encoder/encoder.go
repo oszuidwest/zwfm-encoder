@@ -25,7 +25,6 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// LevelUpdateSamples is the number of samples to process between level updates.
 const LevelUpdateSamples = 12000
 
 // ErrNoAudioInput is returned when no audio input device is configured.
@@ -119,7 +118,6 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 	return e, nil
 }
 
-// onStreamEvent handles stream events from the streaming manager.
 func (e *Encoder) onStreamEvent(streamID, streamName, eventType, message, errMsg string, retryCount, maxRetries int) {
 	if e.eventLogger == nil {
 		return
@@ -130,7 +128,6 @@ func (e *Encoder) onStreamEvent(streamID, streamName, eventType, message, errMsg
 	}
 }
 
-// getStreamName returns a display name for a stream by ID.
 func (e *Encoder) getStreamName(streamID string) string {
 	stream := e.config.Stream(streamID)
 	if stream == nil {
@@ -370,7 +367,6 @@ func (e *Encoder) Stop() error {
 	return errors.Join(errs...)
 }
 
-// Restart restarts the encoder.
 func (e *Encoder) Restart() error {
 	if err := e.Stop(); err != nil {
 		return fmt.Errorf("stop: %w", err)
@@ -429,8 +425,6 @@ func (e *Encoder) GraphSecretExpiry() types.SecretExpiryInfo {
 }
 
 // InvalidateGraphSecretExpiryCache clears the cached secret expiry info.
-// Note: The Graph client in SilenceNotifier automatically detects config changes
-// and recreates itself when needed (same pattern as S3 client in recorders).
 func (e *Encoder) InvalidateGraphSecretExpiryCache() {
 	if e.secretExpiryChecker != nil {
 		graphCfg := e.config.GraphConfig()
@@ -438,14 +432,12 @@ func (e *Encoder) InvalidateGraphSecretExpiryCache() {
 	}
 }
 
-// UpdateSilenceConfig updates the silence detection settings.
 func (e *Encoder) UpdateSilenceConfig() {
 	if e.silenceDetect != nil {
 		e.silenceDetect.Reset()
 	}
 }
 
-// UpdateSilenceDumpConfig updates the silence dump capture settings.
 func (e *Encoder) UpdateSilenceDumpConfig() {
 	snap := e.config.Snapshot()
 	if e.silenceDumpManager != nil {
@@ -466,7 +458,7 @@ func (e *Encoder) TriggerTestZabbix() error {
 	return notify.SendTestZabbix(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixKey)
 }
 
-// runSourceLoop runs the audio capture process.
+// runSourceLoop manages the audio capture lifecycle with automatic retry and backoff.
 func (e *Encoder) runSourceLoop() {
 	for {
 		e.mu.Lock()
@@ -530,7 +522,7 @@ func (e *Encoder) runSourceLoop() {
 	}
 }
 
-// runSource executes the audio capture process.
+// runSource starts the audio capture process and blocks until it exits.
 func (e *Encoder) runSource() (string, error) {
 	audioInput := e.config.Snapshot().AudioInput
 	cmdName, args, err := audio.BuildCaptureCommand(audioInput, e.ffmpegPath)
@@ -593,7 +585,6 @@ func (e *Encoder) runSource() (string, error) {
 	return util.ExtractLastError(stderrBuf.String()), err
 }
 
-// startEnabledStreams starts all enabled streaming processes.
 func (e *Encoder) startEnabledStreams() {
 	// Start silence dump manager (cleanup scheduler)
 	if e.silenceDumpManager != nil {
@@ -618,7 +609,7 @@ func (e *Encoder) startEnabledStreams() {
 	}
 }
 
-// runDistributor delivers audio from the source to all streaming processes.
+// runDistributor reads PCM audio and distributes it to streams, recorders, and silence detection.
 func (e *Encoder) runDistributor() {
 	buf := make([]byte, 19200) // ~100ms of audio at 48kHz stereo
 
@@ -673,7 +664,6 @@ func (e *Encoder) runDistributor() {
 	}
 }
 
-// updateAudioLevels updates the current audio level readings.
 func (e *Encoder) updateAudioLevels(levels *audio.AudioLevels) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

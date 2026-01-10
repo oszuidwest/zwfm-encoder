@@ -1,4 +1,4 @@
-// Package types provides shared type definitions used across the encoder.
+// Package types defines shared types and constants used across the encoder.
 package types
 
 import (
@@ -10,7 +10,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 )
 
-// EncoderState represents the current state of the encoder.
+// EncoderState describes the encoder lifecycle phase.
 type EncoderState string
 
 const (
@@ -24,7 +24,7 @@ const (
 	StateStopping EncoderState = "stopping"
 )
 
-// ProcessState represents the state of any managed process (stream or recorder).
+// ProcessState describes the lifecycle phase of a stream or recorder.
 type ProcessState string
 
 const (
@@ -44,7 +44,7 @@ const (
 	ProcessError ProcessState = "error"
 )
 
-// ProcessStatus is the runtime status of a managed process.
+// ProcessStatus holds runtime status for a stream or recorder.
 type ProcessStatus struct {
 	State      ProcessState `json:"state"`                 // Current process state
 	Stable     bool         `json:"stable,omitempty"`      // Streams: running ≥10s
@@ -75,7 +75,7 @@ const (
 	PollInterval = 50 * time.Millisecond
 )
 
-// Codec represents an audio codec type.
+// Codec identifies an audio encoding format.
 type Codec string
 
 // Supported audio codecs.
@@ -91,7 +91,7 @@ var ValidCodecs = map[Codec]bool{
 	CodecWAV: true, CodecMP3: true, CodecMP2: true, CodecOGG: true,
 }
 
-// UnmarshalJSON implements json.Unmarshaler for strict parsing.
+// UnmarshalJSON validates the codec value during JSON parsing.
 func (c *Codec) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
@@ -109,7 +109,7 @@ func (c *Codec) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Stream represents a single SRT streaming destination.
+// Stream defines an SRT streaming destination.
 type Stream struct {
 	ID         string `json:"id"`          // Unique identifier
 	Enabled    bool   `json:"enabled"`     // Whether stream is active
@@ -133,7 +133,7 @@ const DefaultMaxRetries = 99
 // StreamRestartDelay is the delay between stopping and starting a stream during restart.
 const StreamRestartDelay = 2000 * time.Millisecond
 
-// MaxRetriesOrDefault returns the configured max retries or the default value.
+// MaxRetriesOrDefault returns MaxRetries, or [DefaultMaxRetries] if not set.
 func (s *Stream) MaxRetriesOrDefault() int {
 	if s.MaxRetries <= 0 {
 		return DefaultMaxRetries
@@ -141,13 +141,13 @@ func (s *Stream) MaxRetriesOrDefault() int {
 	return s.MaxRetries
 }
 
-// CodecPreset defines FFmpeg encoding parameters for a codec.
+// CodecPreset defines encoding parameters for a codec.
 type CodecPreset struct {
-	Args   []string // FFmpeg codec arguments
-	Format string   // FFmpeg output format
+	Args   []string // Encoder arguments
+	Format string   // Output format
 }
 
-// CodecPresets is the FFmpeg configuration for each codec type.
+// CodecPresets maps codecs to their encoding parameters.
 var CodecPresets = map[Codec]CodecPreset{
 	CodecMP2: {[]string{"libtwolame", "-b:a", "384k", "-psymodel", "4"}, "mp2"},
 	CodecMP3: {[]string{"libmp3lame", "-b:a", "320k"}, "mp3"},
@@ -155,7 +155,7 @@ var CodecPresets = map[Codec]CodecPreset{
 	CodecWAV: {[]string{"pcm_s16le"}, "matroska"},
 }
 
-// CodecArgsFor returns FFmpeg codec arguments for the given codec.
+// CodecArgsFor returns the encoder arguments for the given codec.
 func CodecArgsFor(codec Codec) []string {
 	if preset, ok := CodecPresets[codec]; ok {
 		return preset.Args
@@ -163,7 +163,7 @@ func CodecArgsFor(codec Codec) []string {
 	return CodecPresets[CodecWAV].Args
 }
 
-// FormatFor returns the FFmpeg output format for the given codec.
+// FormatFor returns the output format for the given codec.
 func FormatFor(codec Codec) string {
 	if preset, ok := CodecPresets[codec]; ok {
 		return preset.Format
@@ -171,18 +171,17 @@ func FormatFor(codec Codec) string {
 	return CodecPresets[CodecWAV].Format
 }
 
-// CodecArgs returns FFmpeg codec arguments for this stream's codec.
+// CodecArgs returns the encoder arguments for this stream's codec.
 func (s *Stream) CodecArgs() []string {
 	return CodecArgsFor(s.Codec)
 }
 
-// Format returns the FFmpeg output format for this stream's codec.
+// Format returns the output format for this stream's codec.
 func (s *Stream) Format() string {
 	return FormatFor(s.Codec)
 }
 
 // Validate reports an error if the stream configuration is invalid.
-// Note: Codec validation is handled by UnmarshalJSON during parsing.
 func (s *Stream) Validate() error {
 	if strings.TrimSpace(s.Host) == "" {
 		return fmt.Errorf("host: is required")
@@ -196,7 +195,7 @@ func (s *Stream) Validate() error {
 	return nil
 }
 
-// RotationMode is the strategy for splitting recordings into files.
+// RotationMode defines how recordings are split into files.
 type RotationMode string
 
 // Supported rotation modes.
@@ -209,7 +208,7 @@ var ValidRotationModes = map[RotationMode]bool{
 	RotationHourly: true,
 }
 
-// UnmarshalJSON implements json.Unmarshaler for strict parsing.
+// UnmarshalJSON validates the rotation mode during JSON parsing.
 func (m *RotationMode) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
@@ -227,7 +226,7 @@ func (m *RotationMode) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// StorageMode is the storage destination type for recordings.
+// StorageMode defines where recordings are stored.
 type StorageMode string
 
 // Supported storage modes.
@@ -242,7 +241,7 @@ var ValidStorageModes = map[StorageMode]bool{
 	StorageLocal: true, StorageS3: true, StorageBoth: true,
 }
 
-// UnmarshalJSON implements json.Unmarshaler for strict parsing.
+// UnmarshalJSON validates the storage mode during JSON parsing.
 func (m *StorageMode) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
@@ -266,13 +265,13 @@ const DefaultRetentionDays = 90
 // DefaultSilenceDumpRetentionDays is the default number of days to keep silence dumps.
 const DefaultSilenceDumpRetentionDays = 7
 
-// SilenceDumpConfig is the configuration for silence dump capture.
+// SilenceDumpConfig defines settings for capturing audio around silence events.
 type SilenceDumpConfig struct {
 	Enabled       bool `json:"enabled"`        // Whether dump capture is active
 	RetentionDays int  `json:"retention_days"` // Days to keep dump files (default 7)
 }
 
-// Recorder represents a recording destination configuration.
+// Recorder defines a recording destination configuration.
 type Recorder struct {
 	ID           string       `json:"id"`            // Unique identifier
 	Name         string       `json:"name"`          // Display name
@@ -298,18 +297,17 @@ func (r *Recorder) IsEnabled() bool {
 	return r.Enabled
 }
 
-// CodecArgs returns FFmpeg codec arguments for this recorder's codec.
+// CodecArgs returns the encoder arguments for this recorder's codec.
 func (r *Recorder) CodecArgs() []string {
 	return CodecArgsFor(r.Codec)
 }
 
-// Format returns the FFmpeg output format for this recorder's codec.
+// Format returns the output format for this recorder's codec.
 func (r *Recorder) Format() string {
 	return FormatFor(r.Codec)
 }
 
 // Validate reports an error if the recorder configuration is invalid.
-// Note: Codec, RotationMode, StorageMode validation is handled by UnmarshalJSON during parsing.
 func (r *Recorder) Validate() error {
 	if strings.TrimSpace(r.Name) == "" {
 		return fmt.Errorf("name: is required")
@@ -339,7 +337,7 @@ func (r *Recorder) Validate() error {
 	return nil
 }
 
-// EncoderStatus is a summary of the encoder's current operational state.
+// EncoderStatus summarizes the encoder's current operational state.
 type EncoderStatus struct {
 	State            EncoderState `json:"state"`                       // Current encoder state
 	Uptime           string       `json:"uptime,omitzero"`             // Time since start
@@ -349,8 +347,7 @@ type EncoderStatus struct {
 	SourceMaxRetries int          `json:"source_max_retries"`          // Max source retries
 }
 
-// WSRuntimeStatus is sent to clients with only runtime status (no config).
-// This is the lightweight status message sent every 3 seconds via WebSocket.
+// WSRuntimeStatus contains runtime status sent to clients periodically.
 type WSRuntimeStatus struct {
 	Type              string                   `json:"type"`                // Message type identifier ("status")
 	FFmpegAvailable   bool                     `json:"ffmpeg_available"`    // FFmpeg binary is available
@@ -361,7 +358,7 @@ type WSRuntimeStatus struct {
 	Version           VersionInfo              `json:"version"`             // Version information
 }
 
-// APIConfigResponse is returned by GET /api/config with full configuration.
+// APIConfigResponse contains the complete encoder configuration for API responses.
 type APIConfigResponse struct {
 	// Audio settings
 	AudioInput string         `json:"audio_input"` // Selected audio input device
@@ -398,13 +395,13 @@ type APIConfigResponse struct {
 	Recorders []Recorder `json:"recorders"` // Recorder configurations
 }
 
-// WSLevelsResponse is sent to clients with audio level updates.
+// WSLevelsResponse contains audio level data sent to clients.
 type WSLevelsResponse struct {
 	Type   string            `json:"type"`   // Message type identifier
 	Levels audio.AudioLevels `json:"levels"` // Current audio levels
 }
 
-// GraphConfig is the Microsoft Graph API configuration for email notifications.
+// GraphConfig holds credentials for email notifications.
 type GraphConfig struct {
 	TenantID     string `json:"tenant_id,omitempty"`     // Azure AD tenant ID
 	ClientID     string `json:"client_id,omitempty"`     // App registration client ID
@@ -413,7 +410,7 @@ type GraphConfig struct {
 	Recipients   string `json:"recipients,omitempty"`    // Comma-separated recipients
 }
 
-// ZabbixConfig is the configuration for sending trapper items to a Zabbix server.
+// ZabbixConfig holds settings for external monitoring alerts.
 type ZabbixConfig struct {
 	Server string `json:"server,omitempty"`
 	Port   int    `json:"port,omitempty"`
@@ -421,7 +418,7 @@ type ZabbixConfig struct {
 	Key    string `json:"key,omitempty"`
 }
 
-// SecretExpiryInfo is the expiration status of a client secret.
+// SecretExpiryInfo holds expiration details for a client secret.
 type SecretExpiryInfo struct {
 	ExpiresAt   string `json:"expires_at,omitempty"`   // RFC3339 expiration timestamp
 	ExpiresSoon bool   `json:"expires_soon,omitempty"` // True if expires within 30 days
@@ -429,7 +426,7 @@ type SecretExpiryInfo struct {
 	Error       string `json:"error,omitempty"`        // Error message if check failed
 }
 
-// VersionInfo is the current and latest version information.
+// VersionInfo holds current and latest version details.
 type VersionInfo struct {
 	Current     string `json:"current"`              // Current version
 	Latest      string `json:"latest,omitempty"`     // Latest available version

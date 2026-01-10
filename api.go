@@ -18,7 +18,6 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-// writeJSON writes a JSON response with the given status code.
 func (s *Server) writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -27,27 +26,23 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, data any) {
 	}
 }
 
-// writeError writes a JSON error response with the given status code.
 func (s *Server) writeError(w http.ResponseWriter, status int, message string) {
 	s.writeJSON(w, status, map[string]string{"error": message})
 }
 
-// writeMessage writes a JSON response with a message.
 func (s *Server) writeMessage(w http.ResponseWriter, message string) {
 	s.writeJSON(w, http.StatusOK, map[string]string{"message": message})
 }
 
-// writeNoContent writes a 204 No Content response.
 func (s *Server) writeNoContent(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// readJSON decodes JSON from the request body into v.
 func (s *Server) readJSON(r *http.Request, v any) error {
 	return json.NewDecoder(r.Body).Decode(v)
 }
 
-// maxRequestBodySize is the maximum allowed size for JSON request bodies (1MB).
+// maxRequestBodySize limits JSON request bodies to 1MB.
 const maxRequestBodySize = 1 << 20
 
 // parseJSON parses JSON from the request body into type T and reports whether parsing succeeded.
@@ -63,7 +58,6 @@ func parseJSON[T any](s *Server, w http.ResponseWriter, r *http.Request) (T, boo
 }
 
 // handleAPIConfig returns the full configuration for the frontend.
-// GET /api/config
 func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
 
@@ -110,7 +104,6 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAPIDevices returns available audio devices.
-// GET /api/devices
 func (s *Server) handleAPIDevices(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"devices": audio.ListDevices(),
@@ -118,7 +111,6 @@ func (s *Server) handleAPIDevices(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAPISettings updates all settings atomically.
-// POST /api/settings
 func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[config.SettingsUpdate](s, w, r)
 	if !ok {
@@ -176,17 +168,13 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	s.writeNoContent(w)
 }
 
-// Stream API endpoints
-
 // handleListStreams returns all configured streams.
-// GET /api/streams
 func (s *Server) handleListStreams(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
 	s.writeJSON(w, http.StatusOK, cfg.Streams)
 }
 
 // handleGetStream returns a single stream by ID.
-// GET /api/streams/{id}
 func (s *Server) handleGetStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	stream := s.config.Stream(id)
@@ -197,7 +185,7 @@ func (s *Server) handleGetStream(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, stream)
 }
 
-// StreamRequest is the request body for creating/updating streams.
+// StreamRequest contains fields for creating or updating streams.
 type StreamRequest struct {
 	Enabled    bool        `json:"enabled"`
 	Host       string      `json:"host"`
@@ -209,7 +197,6 @@ type StreamRequest struct {
 }
 
 // handleCreateStream creates a new stream.
-// POST /api/streams
 func (s *Server) handleCreateStream(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[StreamRequest](s, w, r)
 	if !ok {
@@ -242,7 +229,6 @@ func (s *Server) handleCreateStream(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUpdateStream replaces a stream by ID.
-// PUT /api/streams/{id}
 func (s *Server) handleUpdateStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	existing := s.config.Stream(id)
@@ -295,7 +281,6 @@ func (s *Server) handleUpdateStream(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDeleteStream deletes a stream by ID.
-// DELETE /api/streams/{id}
 func (s *Server) handleDeleteStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if s.config.Stream(id) == nil {
@@ -316,17 +301,13 @@ func (s *Server) handleDeleteStream(w http.ResponseWriter, r *http.Request) {
 	s.writeNoContent(w)
 }
 
-// Recorder API endpoints
-
 // handleListRecorders returns all configured recorders.
-// GET /api/recorders
 func (s *Server) handleListRecorders(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
 	s.writeJSON(w, http.StatusOK, cfg.Recorders)
 }
 
 // handleGetRecorder returns a single recorder by ID.
-// GET /api/recorders/{id}
 func (s *Server) handleGetRecorder(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	recorder := s.config.Recorder(id)
@@ -337,7 +318,7 @@ func (s *Server) handleGetRecorder(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, recorder)
 }
 
-// RecorderRequest is the request body for creating/updating recorders.
+// RecorderRequest contains fields for creating or updating recorders.
 type RecorderRequest struct {
 	Name              string             `json:"name"`
 	Enabled           bool               `json:"enabled"`
@@ -353,7 +334,6 @@ type RecorderRequest struct {
 }
 
 // handleCreateRecorder creates a new recorder.
-// POST /api/recorders
 func (s *Server) handleCreateRecorder(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[RecorderRequest](s, w, r)
 	if !ok {
@@ -384,7 +364,6 @@ func (s *Server) handleCreateRecorder(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUpdateRecorder replaces a recorder by ID.
-// PUT /api/recorders/{id}
 func (s *Server) handleUpdateRecorder(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	existing := s.config.Recorder(id)
@@ -426,7 +405,6 @@ func (s *Server) handleUpdateRecorder(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDeleteRecorder deletes a recorder by ID.
-// DELETE /api/recorders/{id}
 func (s *Server) handleDeleteRecorder(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if s.config.Recorder(id) == nil {
@@ -444,8 +422,6 @@ func (s *Server) handleDeleteRecorder(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRecorderAction handles start/stop actions for a recorder.
-// POST /api/recorders/{id}/start
-// POST /api/recorders/{id}/stop
 func (s *Server) handleRecorderAction(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	action := r.PathValue("action")
@@ -472,7 +448,7 @@ func (s *Server) handleRecorderAction(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// S3TestRequest is the request body for testing S3 connectivity.
+// S3TestRequest contains fields for testing S3 connectivity.
 type S3TestRequest struct {
 	Endpoint  string `json:"s3_endpoint"`
 	Bucket    string `json:"s3_bucket"`
@@ -481,7 +457,6 @@ type S3TestRequest struct {
 }
 
 // handleTestS3 tests S3 connectivity.
-// POST /api/recorders/test-s3
 func (s *Server) handleTestS3(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[S3TestRequest](s, w, r)
 	if !ok {
@@ -516,9 +491,7 @@ func (s *Server) handleTestS3(w http.ResponseWriter, r *http.Request) {
 	s.writeMessage(w, "S3 connection successful")
 }
 
-// Notification test endpoints
-
-// NotificationTestRequest is the request body for testing notifications.
+// NotificationTestRequest contains fields for testing notifications.
 type NotificationTestRequest struct {
 	// Webhook
 	WebhookURL string `json:"webhook_url,omitempty"`
@@ -639,7 +612,6 @@ func (s *Server) handleAPIRegenerateKey(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleAPIEvents returns events from the event log.
-// GET /api/events?limit=50&offset=0&type=stream|silence
 func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 	emptyResponse := map[string]any{
 		"events":   []eventlog.Event{},

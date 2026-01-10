@@ -12,7 +12,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// Manager is a coordinator for multiple GenericRecorders.
+// Manager coordinates multiple GenericRecorders.
 type Manager struct {
 	mu sync.RWMutex
 
@@ -27,7 +27,6 @@ type Manager struct {
 	hourlyRetryStopCh chan struct{} // Stop signal for hourly retry scheduler
 }
 
-// NewManager creates a new recording manager.
 func NewManager(ffmpegPath, tempDir string, maxDurationMinutes int, eventLogger *eventlog.Logger) (*Manager, error) {
 	if tempDir == "" {
 		tempDir = DefaultTempDir
@@ -49,7 +48,6 @@ func NewManager(ffmpegPath, tempDir string, maxDurationMinutes int, eventLogger 
 	}, nil
 }
 
-// AddRecorder creates and adds a new recorder.
 func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -76,7 +74,6 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 	return nil
 }
 
-// RemoveRecorder stops and removes a recorder.
 func (m *Manager) RemoveRecorder(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -98,7 +95,6 @@ func (m *Manager) RemoveRecorder(id string) error {
 	return nil
 }
 
-// UpdateRecorder updates a recorder's configuration.
 func (m *Manager) UpdateRecorder(cfg *types.Recorder) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -111,7 +107,6 @@ func (m *Manager) UpdateRecorder(cfg *types.Recorder) error {
 	return recorder.UpdateConfig(cfg)
 }
 
-// StartRecorder starts an on-demand recorder.
 func (m *Manager) StartRecorder(id string) error {
 	m.mu.RLock()
 	recorder, exists := m.recorders[id]
@@ -134,7 +129,6 @@ func (m *Manager) StartRecorder(id string) error {
 	return recorder.Start()
 }
 
-// StopRecorder stops an on-demand recorder.
 func (m *Manager) StopRecorder(id string) error {
 	m.mu.RLock()
 	recorder, exists := m.recorders[id]
@@ -157,7 +151,7 @@ func (m *Manager) StopRecorder(id string) error {
 	return recorder.Stop()
 }
 
-// Start begins recorder management.
+// Start begins recorder management, starting hourly recorders and cleanup schedulers.
 func (m *Manager) Start() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -184,7 +178,6 @@ func (m *Manager) Start() error {
 	return nil
 }
 
-// Stop terminates all recorders.
 func (m *Manager) Stop() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -213,7 +206,6 @@ func (m *Manager) Stop() error {
 	return lastErr
 }
 
-// WriteAudio sends PCM data to all active recorders.
 func (m *Manager) WriteAudio(pcm []byte) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -229,7 +221,6 @@ func (m *Manager) WriteAudio(pcm []byte) error {
 	return nil
 }
 
-// AllStatuses returns status for all recorders.
 func (m *Manager) AllStatuses() map[string]types.ProcessStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -241,7 +232,7 @@ func (m *Manager) AllStatuses() map[string]types.ProcessStatus {
 	return statuses
 }
 
-// startHourlyRetryScheduler starts the hourly retry scheduler for failed recorders.
+// startHourlyRetryScheduler retries failed hourly recorders at each hour boundary.
 func (m *Manager) startHourlyRetryScheduler() {
 	go func() {
 		for {
@@ -256,7 +247,6 @@ func (m *Manager) startHourlyRetryScheduler() {
 	}()
 }
 
-// retryFailedHourlyRecorders restarts failed hourly recorders.
 func (m *Manager) retryFailedHourlyRecorders() {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
