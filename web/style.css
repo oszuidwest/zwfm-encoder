@@ -1646,7 +1646,7 @@
             color: var(--text-secondary);
         }
 
-        .event-error-detail {
+        .event-error {
             font-family: var(--font-mono);
             font-size: 0.75rem;
             color: var(--state-danger);

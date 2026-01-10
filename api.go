@@ -739,6 +739,11 @@ func readSilenceLog(logPath string, maxEntries int) ([]types.SilenceLogEntry, er
 // handleAPIEvents returns stream events from the event log.
 // GET /api/events?limit=50
 func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
+	emptyResponse := map[string]any{
+		"events": []events.StreamEvent{},
+		"total":  0,
+	}
+
 	// Parse limit parameter (default 50, max 500)
 	limit := 50
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
@@ -750,10 +755,7 @@ func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 	// Get event log path from encoder
 	logPath := s.encoder.EventLogPath()
 	if logPath == "" {
-		s.writeJSON(w, http.StatusOK, map[string]any{
-			"events": []events.StreamEvent{},
-			"total":  0,
-		})
+		s.writeJSON(w, http.StatusOK, emptyResponse)
 		return
 	}
 
@@ -761,10 +763,7 @@ func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 	eventList, err := events.ReadLast(logPath, limit)
 	if err != nil {
 		slog.Warn("failed to read events", "error", err)
-		s.writeJSON(w, http.StatusOK, map[string]any{
-			"events": []events.StreamEvent{},
-			"total":  0,
-		})
+		s.writeJSON(w, http.StatusOK, emptyResponse)
 		return
 	}
 

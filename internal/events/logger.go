@@ -84,6 +84,11 @@ func (l *Logger) Close() error {
 	return nil
 }
 
+// Path returns the path to the log file.
+func (l *Logger) Path() string {
+	return l.filePath
+}
+
 // ReadLast reads the last n events from the log file.
 func ReadLast(filePath string, n int) ([]StreamEvent, error) {
 	file, err := os.Open(filePath)

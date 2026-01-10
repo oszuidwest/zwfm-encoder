@@ -151,8 +151,7 @@ func (e *Encoder) EventLogPath() string {
 	if e.eventLogger == nil {
 		return ""
 	}
-	snap := e.config.Snapshot()
-	return fmt.Sprintf("/var/log/encoder/%d/events.jsonl", snap.WebPort)
+	return e.eventLogger.Path()
 }
 
 // InitRecording prepares the recording manager for use.
@@ -367,6 +366,13 @@ func (e *Encoder) Stop() error {
 	// Stop silence dump manager
 	if e.silenceDumpManager != nil {
 		e.silenceDumpManager.Stop()
+	}
+
+	// Close event logger
+	if e.eventLogger != nil {
+		if err := e.eventLogger.Close(); err != nil {
+			slog.Warn("failed to close event logger", "error", err)
+		}
 	}
 
 	e.mu.Lock()
