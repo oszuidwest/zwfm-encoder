@@ -121,7 +121,7 @@ func (n *SilenceNotifier) handleSilenceStart(levelL, levelR float64) {
 	n.mu.Lock()
 	shouldSendWebhook := !n.webhookSent && cfg.HasWebhook()
 	shouldSendEmail := !n.emailSent && cfg.HasGraph()
-	shouldSendLog := !n.logSent && cfg.HasLogPath()
+	shouldSendLog := !n.logSent && n.eventLogger != nil
 	shouldSendZabbix := !n.zabbixSent && cfg.HasZabbix()
 	if shouldSendWebhook {
 		n.webhookSent = true

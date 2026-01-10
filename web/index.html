@@ -461,24 +461,6 @@
                     </div>
                     <div class="section">
                         <div class="section-header">
-                            <span class="icon-container" x-html="icons.file"></span>
-                            <h3>File Log</h3>
-                        </div>
-                        <p class="section-desc">Log silence events to a JSON Lines file.</p>
-                        <div class="form">
-                            <div class="group">
-                                <label for="silence-log-path">Log File Path</label>
-                                <input id="silence-log-path" type="text" placeholder="/var/log/encoder/silence.jsonl" x-model="settingsForm.silenceLogPath" @input="markSettingsDirty()" aria-describedby="silence-log-path-hint">
-                                <span id="silence-log-path-hint" class="input-hint">Leave empty to disable file logging.</span>
-                            </div>
-                        </div>
-                        <div class="btn-group">
-                            <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('log')" :disabled="testStates.log.pending" x-text="testStates.log.text">Test</button>
-                            <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="viewSilenceLog()" :disabled="!settingsForm.silenceLogPath">View Log</button>
-                        </div>
-                    </div>
-                    <div class="section">
-                        <div class="section-header">
                             <span class="icon-container" x-html="icons.email"></span>
                             <h3>Microsoft 365 Email</h3>
                         </div>
@@ -956,53 +938,6 @@
                             Delete Recorder
                         </button>
                     </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- === Silence Log Modal ===
-             Broadcast console style log viewer displaying silence events.
-             Dark theme with LED indicators and monospace data presentation. -->
-        <div class="modal" x-show="silenceLogModal.visible" x-cloak>
-            <div class="overlay" @click.self="handleSilenceLogClose()" x-transition:enter.duration.200ms>
-                <div class="content" role="dialog" aria-modal="true" aria-labelledby="silence-log-title">
-                    <header class="header">
-                        <h2 id="silence-log-title">Silence Log</h2>
-                        <button class="icon-btn" data-variant="close" type="button" tabindex="0" aria-label="Close" @click="handleSilenceLogClose()">
-                            <span class="icon-container" x-html="icons.close"></span>
-                        </button>
-                    </header>
-                    <div class="body log">
-                        <div class="loading" x-show="silenceLogModal.loading">
-                            Loading events...
-                        </div>
-                        <div class="alert" role="alert" x-show="!silenceLogModal.loading && silenceLogModal.error">
-                            <span class="icon-container" x-html="icons.warning"></span>
-                            <span x-text="silenceLogModal.error"></span>
-                        </div>
-                        <div class="empty-state" x-show="!silenceLogModal.loading && !silenceLogModal.error && silenceLogModal.entries.length === 0">
-                            No events recorded
-                        </div>
-                        <div class="outputs" x-show="!silenceLogModal.loading && !silenceLogModal.error && silenceLogModal.entries.length > 0">
-                            <template x-for="entry in silenceLogModal.entries" :key="entry.timestamp">
-                                <div class="item" x-data="{ e: formatLogEntry(entry) }">
-                                    <div class="row">
-                                        <span class="dot" :class="e.stateClass"></span>
-                                        <span class="host" x-text="e.event"></span>
-                                    </div>
-                                    <div class="details">
-                                        <span class="codec" x-text="e.levels" x-show="e.levels"></span>
-                                        <span class="codec" x-text="e.threshold"></span>
-                                        <span class="status" :class="e.stateClass" x-text="e.time"></span>
-                                    </div>
-                                </div>
-                            </template>
-                        </div>
-                    </div>
-                    <footer class="footer">
-                        <span class="path" x-show="silenceLogModal.path" x-text="silenceLogModal.path"></span>
-                        <button class="btn" data-variant="secondary" type="button" tabindex="0" @click="handleSilenceLogRefresh()" :disabled="silenceLogModal.loading">Refresh</button>
-                    </footer>
                 </div>
             </div>
         </div>

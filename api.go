@@ -6,11 +6,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"os"
 	"runtime"
-	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
@@ -87,9 +84,6 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 
 		// Notifications - Webhook
 		WebhookURL: cfg.WebhookURL,
-
-		// Notifications - Log
-		LogPath: cfg.LogPath,
 
 		// Notifications - Zabbix
 		ZabbixServer: cfg.ZabbixServer,
@@ -529,9 +523,6 @@ type NotificationTestRequest struct {
 	// Webhook
 	WebhookURL string `json:"webhook_url,omitempty"`
 
-	// Log
-	LogPath string `json:"log_path,omitempty"`
-
 	// Email
 	GraphTenantID     string `json:"graph_tenant_id,omitempty"`
 	GraphClientID     string `json:"graph_client_id,omitempty"`
@@ -567,28 +558,6 @@ func (s *Server) handleAPITestWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeMessage(w, "Webhook test sent")
-}
-
-// handleAPITestLog tests log file notification.
-func (s *Server) handleAPITestLog(w http.ResponseWriter, r *http.Request) {
-	req, ok := parseJSON[NotificationTestRequest](s, w, r)
-	if !ok {
-		return
-	}
-
-	path := cmp.Or(req.LogPath, s.config.Snapshot().LogPath)
-
-	if path == "" {
-		s.writeError(w, http.StatusBadRequest, "No log path configured")
-		return
-	}
-
-	if err := notify.WriteTestLog(path); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	s.writeMessage(w, "Test log entry written")
 }
 
 // handleAPITestEmail tests email notification.
@@ -667,73 +636,6 @@ func (s *Server) handleAPIRegenerateKey(w http.ResponseWriter, r *http.Request) 
 
 	s.broadcastConfigChanged()
 	s.writeJSON(w, http.StatusOK, map[string]string{"api_key": newKey})
-}
-
-// handleAPIViewLog returns the silence log entries.
-func (s *Server) handleAPIViewLog(w http.ResponseWriter, r *http.Request) {
-	logPath := s.config.LogPath()
-	if logPath == "" {
-		s.writeError(w, http.StatusBadRequest, "Log file path not configured")
-		return
-	}
-
-	entries, err := readSilenceLog(logPath, 100)
-	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	s.writeJSON(w, http.StatusOK, map[string]any{
-		"entries": entries,
-		"path":    logPath,
-	})
-}
-
-// readSilenceLog reads the last N entries from the silence log file.
-func readSilenceLog(logPath string, maxEntries int) ([]types.SilenceLogEntry, error) {
-	data, err := os.ReadFile(logPath)
-	if os.IsNotExist(err) {
-		return []types.SilenceLogEntry{}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	content := strings.TrimSpace(string(data))
-	if content == "" {
-		return []types.SilenceLogEntry{}, nil
-	}
-
-	ring := make([]types.SilenceLogEntry, maxEntries)
-	count := 0
-
-	for line := range strings.Lines(content) {
-		if line == "" {
-			continue
-		}
-		var entry types.SilenceLogEntry
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			slog.Warn("failed to parse silence log entry", "line", line, "error", err)
-			continue
-		}
-		ring[count%maxEntries] = entry
-		count++
-	}
-
-	if count == 0 {
-		return []types.SilenceLogEntry{}, nil
-	}
-
-	size := min(count, maxEntries)
-	entries := make([]types.SilenceLogEntry, size)
-	start := count - size
-	for i := range size {
-		entries[i] = ring[(start+i)%maxEntries]
-	}
-
-	slices.Reverse(entries)
-
-	return entries, nil
 }
 
 // handleAPIEvents returns events from the event log.

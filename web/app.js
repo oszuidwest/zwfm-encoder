@@ -60,7 +60,6 @@ const API = {
     RECORDERS: '/api/recorders',
     RECORDERS_TEST_S3: '/api/recorders/test-s3',
     NOTIFICATIONS_TEST: '/api/notifications/test',
-    NOTIFICATIONS_LOG: '/api/notifications/log',
     RECORDING_REGENERATE_KEY: '/api/recording/regenerate-key',
 };
 
@@ -184,7 +183,6 @@ document.addEventListener('alpine:init', () => {
             silence_recovery_ms: 5000,
             silence_dump: { enabled: true, retention_days: 7 },
             webhook_url: '',
-            log_path: '',
             zabbix_server: '',
             zabbix_port: 10051,
             zabbix_host: '',
@@ -208,7 +206,6 @@ document.addEventListener('alpine:init', () => {
             silenceRecovery: 5,
             silenceDump: { enabled: true, retentionDays: 7 },
             silenceWebhook: '',
-            silenceLogPath: '',
             zabbix: { server: '', port: 10051, host: '', key: '' },
             graph: { tenantId: '', clientId: '', clientSecret: '', fromAddress: '', recipients: '' },
             recordingApiKey: '',
@@ -226,7 +223,6 @@ document.addEventListener('alpine:init', () => {
         // Notification test state (unified object for all test types)
         testStates: {
             webhook: { pending: false, text: 'Test' },
-            log: { pending: false, text: 'Test' },
             email: { pending: false, text: 'Test' },
             zabbix: { pending: false, text: 'Test' },
             recorderS3: { pending: false, text: 'Test Connection' }
@@ -234,14 +230,6 @@ document.addEventListener('alpine:init', () => {
 
         // API key copy feedback
         apiKeyCopied: false,
-
-        silenceLogModal: {
-            visible: false,
-            loading: false,
-            entries: [],
-            path: '',
-            error: ''
-        },
 
         banner: {
             visible: false,
@@ -352,10 +340,7 @@ document.addEventListener('alpine:init', () => {
 
             // Escape: Close views/modals
             if (event.key === 'Escape') {
-                if (this.silenceLogModal.visible) {
-                    this.handleSilenceLogClose();
-                    event.preventDefault();
-                } else if (this.view === 'settings') {
+                if (this.view === 'settings') {
                     this.cancelSettings();
                     event.preventDefault();
                 } else if (this.view === 'stream-form' || this.view === 'recorder-form') {
@@ -679,7 +664,6 @@ document.addEventListener('alpine:init', () => {
                     retentionDays: this.config.silence_dump?.retention_days ?? 7
                 },
                 silenceWebhook: this.config.webhook_url || '',
-                silenceLogPath: this.config.log_path || '',
                 zabbix: {
                     server: this.config.zabbix_server || '',
                     port: this.config.zabbix_port || 10051,
@@ -733,7 +717,6 @@ document.addEventListener('alpine:init', () => {
                         silence_dump_enabled: this.config.silence_dump.enabled,
                         silence_dump_retention_days: this.config.silence_dump.retention_days,
                         webhook_url: this.config.webhook_url,
-                        log_path: this.config.log_path,
                         zabbix_server: this.config.zabbix_server,
                         zabbix_port: this.config.zabbix_port,
                         zabbix_host: this.config.zabbix_host,
@@ -782,7 +765,6 @@ document.addEventListener('alpine:init', () => {
                 silence_dump_enabled: form.silenceDump.enabled,
                 silence_dump_retention_days: form.silenceDump.retentionDays,
                 webhook_url: form.silenceWebhook,
-                log_path: form.silenceLogPath,
                 zabbix_server: form.zabbix.server,
                 zabbix_port: form.zabbix.port,
                 zabbix_host: form.zabbix.host,
@@ -1359,8 +1341,6 @@ document.addEventListener('alpine:init', () => {
             if (this.settingsForm) {
                 if (type === 'webhook') {
                     payload.webhook_url = this.settingsForm.silenceWebhook;
-                } else if (type === 'log') {
-                    payload.log_path = this.settingsForm.silenceLogPath;
                 } else if (type === 'email') {
                     payload.graph_tenant_id = this.settingsForm.graph.tenantId;
                     payload.graph_client_id = this.settingsForm.graph.clientId;
@@ -1449,51 +1429,6 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
-         * Opens the silence log modal and fetches log entries via REST API.
-         */
-        async viewSilenceLog() {
-            this.silenceLogModal.visible = true;
-            this.silenceLogModal.loading = true;
-            this.silenceLogModal.entries = [];
-            this.silenceLogModal.error = '';
-
-            await this.fetchSilenceLog();
-        },
-
-        handleSilenceLogClose() {
-            this.silenceLogModal.visible = false;
-        },
-
-        async handleSilenceLogRefresh() {
-            this.silenceLogModal.loading = true;
-            await this.fetchSilenceLog();
-        },
-
-        /**
-         * Fetches silence log entries from REST API.
-         */
-        async fetchSilenceLog() {
-            try {
-                const response = await fetch(API.NOTIFICATIONS_LOG);
-                const result = await response.json();
-
-                this.silenceLogModal.loading = false;
-                if (response.ok) {
-                    this.silenceLogModal.entries = result.entries || [];
-                    this.silenceLogModal.path = result.path || '';
-                    this.silenceLogModal.error = '';
-                } else {
-                    this.silenceLogModal.entries = [];
-                    this.silenceLogModal.error = result.error || 'Unknown error';
-                }
-            } catch (err) {
-                this.silenceLogModal.loading = false;
-                this.silenceLogModal.entries = [];
-                this.silenceLogModal.error = err.message;
-            }
-        },
-
-        /**
          * Shows an alert banner notification.
          * Clears any existing auto-hide timeout to prevent race conditions.
          * @param {string} message - Message to display
@@ -1570,50 +1505,6 @@ document.addEventListener('alpine:init', () => {
                 if (toast.timeoutId) clearTimeout(toast.timeoutId);
             }
             this.toasts = [];
-        },
-
-        /**
-         * Formats a silence log entry for display.
-         * For "ended" events, duration is the key metric (total silence time).
-         * For "started" events, duration is just detection delay (not shown).
-         * @param {Object} entry - Log entry with timestamp, event, duration_ms, threshold_db, level_left_db, level_right_db
-         * @returns {Object} Formatted entry with human-readable values
-         */
-        formatLogEntry(entry) {
-            const date = new Date(entry.timestamp);
-            const isEnd = entry.event === 'silence_end';
-            const isStart = entry.event === 'silence_start';
-            const isTest = entry.event === 'test';
-
-            // For ended events, show duration prominently in the event name
-            let eventText = 'Unknown event';
-            if (isEnd) {
-                const dur = entry.duration_ms > 0 ? formatSmartDuration(entry.duration_ms) : '';
-                eventText = dur ? `Silence ended: ${dur}` : 'Silence ended';
-            } else if (isStart) {
-                eventText = 'Silence detected';
-            } else if (isTest) {
-                eventText = 'Test entry';
-            }
-
-            // Map event type to state class
-            let stateClass = 'state-stopped';
-            if (isStart) stateClass = 'state-warning';
-            else if (isEnd) stateClass = 'state-success';
-
-            // Format audio levels with context
-            const hasLevels = entry.level_left_db !== undefined && entry.level_right_db !== undefined;
-            const levels = hasLevels
-                ? `Level: L ${entry.level_left_db.toFixed(1)} / R ${entry.level_right_db.toFixed(1)} dB`
-                : '';
-
-            return {
-                time: date.toLocaleString(),
-                event: eventText,
-                stateClass,
-                threshold: `Threshold: ${entry.threshold_db.toFixed(0)} dB`,
-                levels
-            };
         }
     }));
 });

@@ -248,10 +248,8 @@ func (s *Server) SetupRoutes() http.Handler {
 
 	// Notification routes
 	mux.HandleFunc("POST /api/notifications/test/webhook", auth(s.handleAPITestWebhook))
-	mux.HandleFunc("POST /api/notifications/test/log", auth(s.handleAPITestLog))
 	mux.HandleFunc("POST /api/notifications/test/email", auth(s.handleAPITestEmail))
 	mux.HandleFunc("POST /api/notifications/test/zabbix", auth(s.handleAPITestZabbix))
-	mux.HandleFunc("GET /api/notifications/log", auth(s.handleAPIViewLog))
 	mux.HandleFunc("POST /api/recording/regenerate-key", auth(s.handleAPIRegenerateKey))
 
 	// Events

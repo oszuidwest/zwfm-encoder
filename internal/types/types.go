@@ -377,9 +377,6 @@ type APIConfigResponse struct {
 	// Notifications - Webhook
 	WebhookURL string `json:"webhook_url"` // Webhook URL for alerts
 
-	// Notifications - Log
-	LogPath string `json:"log_path"` // Log file path
-
 	// Notifications - Zabbix
 	ZabbixServer string `json:"zabbix_server"` // Zabbix server address
 	ZabbixPort   int    `json:"zabbix_port"`   // Zabbix server port
@@ -405,22 +402,6 @@ type APIConfigResponse struct {
 type WSLevelsResponse struct {
 	Type   string            `json:"type"`   // Message type identifier
 	Levels audio.AudioLevels `json:"levels"` // Current audio levels
-}
-
-// SilenceLogEntry represents a single entry in the silence log.
-type SilenceLogEntry struct {
-	Timestamp    string  `json:"timestamp"`                // RFC3339 timestamp
-	Event        string  `json:"event"`                    // Event type (silence_start, silence_end)
-	DurationMs   int64   `json:"duration_ms,omitempty"`    // Silence duration in milliseconds (silence_end only)
-	LevelLeftDB  float64 `json:"level_left_db,omitempty"`  // Left channel RMS level in dB
-	LevelRightDB float64 `json:"level_right_db,omitempty"` // Right channel RMS level in dB
-	ThresholdDB  float64 `json:"threshold_db"`             // Threshold in dB
-
-	// Audio dump fields (silence_end only)
-	DumpPath      string `json:"dump_path,omitempty"`       // Full path to the MP3 dump file
-	DumpFilename  string `json:"dump_filename,omitempty"`   // Dump filename
-	DumpSizeBytes int64  `json:"dump_size_bytes,omitempty"` // Dump file size in bytes
-	DumpError     string `json:"dump_error,omitempty"`      // Error message if dump encoding failed
 }
 
 // GraphConfig is the Microsoft Graph API configuration for email notifications.

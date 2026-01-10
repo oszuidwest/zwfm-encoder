@@ -67,11 +67,6 @@ type WebhookConfig struct {
 	URL string `json:"url"` // Webhook URL for silence alerts
 }
 
-// LogConfig represents log file notification settings.
-type LogConfig struct {
-	Path string `json:"path"` // Log file path for silence events
-}
-
 // EmailConfig represents Microsoft Graph email notification settings.
 type EmailConfig struct {
 	TenantID     string `json:"tenant_id"`     // Azure AD tenant ID
@@ -84,7 +79,6 @@ type EmailConfig struct {
 // NotificationsConfig represents all notification channel settings.
 type NotificationsConfig struct {
 	Webhook WebhookConfig      `json:"webhook"`          // Webhook settings
-	Log     LogConfig          `json:"log"`              // Log file settings
 	Email   EmailConfig        `json:"email"`            // Email settings
 	Zabbix  types.ZabbixConfig `json:"zabbix,omitempty"` // Zabbix settings
 }
@@ -417,13 +411,6 @@ func (c *Config) GetFFmpegPath() string {
 	return c.System.FFmpegPath
 }
 
-// LogPath returns the configured log file path for notifications.
-func (c *Config) LogPath() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.Notifications.Log.Path
-}
-
 // GraphConfig returns a copy of the current Graph/Email configuration.
 func (c *Config) GraphConfig() types.GraphConfig {
 	c.mu.RLock()
@@ -483,7 +470,6 @@ type Snapshot struct {
 
 	// Notifications
 	WebhookURL string
-	LogPath    string
 
 	// Zabbix
 	ZabbixServer string
@@ -538,7 +524,6 @@ func (c *Config) Snapshot() Snapshot {
 
 		// Notifications
 		WebhookURL: c.Notifications.Webhook.URL,
-		LogPath:    c.Notifications.Log.Path,
 
 		// Zabbix
 		ZabbixServer: c.Notifications.Zabbix.Server,
@@ -574,11 +559,6 @@ func (s *Snapshot) HasGraph() bool {
 		s.GraphFromAddress != "" && s.GraphRecipients != ""
 }
 
-// HasLogPath reports whether a log path is configured.
-func (s *Snapshot) HasLogPath() bool {
-	return s.LogPath != ""
-}
-
 // HasZabbix reports whether Zabbix settings are configured.
 func (s *Snapshot) HasZabbix() bool {
 	return s.ZabbixServer != "" && s.ZabbixHost != "" && s.ZabbixKey != ""
@@ -596,7 +576,6 @@ type SettingsUpdate struct {
 	SilenceDumpEnabled       bool    `json:"silence_dump_enabled"`
 	SilenceDumpRetentionDays int     `json:"silence_dump_retention_days"`
 	WebhookURL               string  `json:"webhook_url"`
-	LogPath                  string  `json:"log_path"`
 	ZabbixServer             string  `json:"zabbix_server"`
 	ZabbixPort               int     `json:"zabbix_port"`
 	ZabbixHost               string  `json:"zabbix_host"`
@@ -632,13 +611,6 @@ func (s *SettingsUpdate) Validate() []string {
 	if s.WebhookURL != "" {
 		if _, err := url.ParseRequestURI(s.WebhookURL); err != nil {
 			errs = append(errs, "webhook_url: invalid URL format")
-		}
-	}
-
-	// Log path security
-	if s.LogPath != "" {
-		if err := util.ValidatePath("log_path", s.LogPath); err != nil {
-			errs = append(errs, err.Error())
 		}
 	}
 
@@ -681,7 +653,6 @@ func (c *Config) ApplySettings(s *SettingsUpdate) error {
 
 	// Notifications
 	c.Notifications.Webhook.URL = s.WebhookURL
-	c.Notifications.Log.Path = s.LogPath
 	c.Notifications.Zabbix.Server = s.ZabbixServer
 	c.Notifications.Zabbix.Port = s.ZabbixPort
 	c.Notifications.Zabbix.Host = s.ZabbixHost

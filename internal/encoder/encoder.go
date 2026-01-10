@@ -460,11 +460,6 @@ func (e *Encoder) TriggerTestWebhook() error {
 	return notify.SendTestWebhook(cfg.WebhookURL, cfg.StationName)
 }
 
-// TriggerTestLog writes a test log entry.
-func (e *Encoder) TriggerTestLog() error {
-	return notify.WriteTestLog(e.config.Snapshot().LogPath)
-}
-
 // TriggerTestZabbix sends a test notification to the configured Zabbix server.
 func (e *Encoder) TriggerTestZabbix() error {
 	cfg := e.config.Snapshot()
