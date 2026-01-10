@@ -34,14 +34,14 @@ const (
 
 // Recorder event types.
 const (
-	RecorderStarted   EventType = "recorder_started"
-	RecorderStopped   EventType = "recorder_stopped"
-	RecorderError     EventType = "recorder_error"
-	RecorderFile      EventType = "recorder_file"
-	UploadQueued      EventType = "upload_queued"
-	UploadCompleted   EventType = "upload_completed"
-	UploadFailed      EventType = "upload_failed"
-	CleanupCompleted  EventType = "cleanup_completed"
+	RecorderStarted  EventType = "recorder_started"
+	RecorderStopped  EventType = "recorder_stopped"
+	RecorderError    EventType = "recorder_error"
+	RecorderFile     EventType = "recorder_file"
+	UploadQueued     EventType = "upload_queued"
+	UploadCompleted  EventType = "upload_completed"
+	UploadFailed     EventType = "upload_failed"
+	CleanupCompleted EventType = "cleanup_completed"
 )
 
 // Event represents a single log entry with type-specific details.
@@ -75,15 +75,15 @@ type SilenceDetails struct {
 
 // RecorderDetails contains recorder-specific event details.
 type RecorderDetails struct {
-	RecorderName  string `json:"recorder_name,omitempty"`
-	Filename      string `json:"filename,omitempty"`
-	Codec         string `json:"codec,omitempty"`
-	StorageMode   string `json:"storage_mode,omitempty"`
-	S3Key         string `json:"s3_key,omitempty"`
-	Error         string `json:"error,omitempty"`
-	RetryCount    int    `json:"retry,omitempty"`
-	FilesDeleted  int    `json:"files_deleted,omitempty"`
-	StorageType   string `json:"storage_type,omitempty"` // "local" or "s3" for cleanup
+	RecorderName string `json:"recorder_name,omitempty"`
+	Filename     string `json:"filename,omitempty"`
+	Codec        string `json:"codec,omitempty"`
+	StorageMode  string `json:"storage_mode,omitempty"`
+	S3Key        string `json:"s3_key,omitempty"`
+	Error        string `json:"error,omitempty"`
+	RetryCount   int    `json:"retry,omitempty"`
+	FilesDeleted int    `json:"files_deleted,omitempty"`
+	StorageType  string `json:"storage_type,omitempty"` // "local" or "s3" for cleanup
 }
 
 // Logger writes events to a JSON lines file.
