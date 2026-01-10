@@ -253,11 +253,6 @@ mkdir -p "$CONFIG_DIR"
 chown encoder:encoder "$CONFIG_DIR"
 chmod 700 "$CONFIG_DIR"
 
-# Create log directory for event logs
-mkdir -p /var/log/encoder
-chown encoder:encoder /var/log/encoder
-chmod 755 /var/log/encoder
-
 # Migrate config from old location if it exists
 OLD_CONFIG="${INSTALL_DIR}/config.json"
 if [ -f "$OLD_CONFIG" ] && [ ! -f "$CONFIG_FILE" ]; then
