@@ -73,18 +73,30 @@ func FormatHumanTime(rfc3339 string) string {
 }
 
 // FormatDuration formats milliseconds as a human-readable duration string.
-// Examples: "45s", "2m 34s", "1h 23m"
+// Shows only the two most relevant units:
+//   - < 1 minute: "45s"
+//   - < 1 hour: "12m 34s"
+//   - < 24 hours: "2h 24m"
+//   - >= 24 hours: "1d 3h"
 func FormatDuration(ms int64) string {
 	totalSeconds := ms / 1000
 	if totalSeconds < 60 {
 		return fmt.Sprintf("%ds", totalSeconds)
 	}
+
 	minutes := totalSeconds / 60
 	seconds := totalSeconds % 60
 	if minutes < 60 {
 		return fmt.Sprintf("%dm %ds", minutes, seconds)
 	}
+
 	hours := minutes / 60
 	minutes %= 60
-	return fmt.Sprintf("%dh %dm", hours, minutes)
+	if hours < 24 {
+		return fmt.Sprintf("%dh %dm", hours, minutes)
+	}
+
+	days := hours / 24
+	hours %= 24
+	return fmt.Sprintf("%dd %dh", days, hours)
 }

@@ -218,7 +218,7 @@ func (m *Manager) AllStatuses(getMaxRetries func(string) int) map[string]types.P
 
 		var uptime string
 		if isRunning {
-			uptime = time.Since(stream.startTime).Truncate(time.Second).String()
+			uptime = util.FormatDuration(time.Since(stream.startTime).Milliseconds())
 		}
 
 		statuses[id] = types.ProcessStatus{
