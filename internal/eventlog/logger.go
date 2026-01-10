@@ -274,29 +274,17 @@ func ReadLast(filePath string, n, offset int, filter TypeFilter) ([]Event, bool,
 	}
 
 	// Parse events in reverse order (newest first), applying filter
-	events := make([]Event, 0, n)
+	// Collect n+1 events to determine hasMore without a second loop
+	events := make([]Event, 0, n+1)
 	skipped := 0
-	for i := len(lines) - 1; i >= 0; i-- {
+	for i := len(lines) - 1; i >= 0 && len(events) <= n; i-- {
 		var event Event
 		if err := json.Unmarshal([]byte(lines[i]), &event); err != nil {
 			continue // Skip malformed lines
 		}
 
-		// Apply filter
-		if filter != FilterAll {
-			isStream := IsStreamEvent(event.Type)
-			isSilence := IsSilenceEvent(event.Type)
-			isRecorder := IsRecorderEvent(event.Type)
-
-			if filter == FilterStream && !isStream {
-				continue
-			}
-			if filter == FilterSilence && !isSilence {
-				continue
-			}
-			if filter == FilterRecorder && !isRecorder {
-				continue
-			}
+		if !matchesFilter(event.Type, filter) {
+			continue
 		}
 
 		// Skip events until we reach the offset
@@ -306,39 +294,31 @@ func ReadLast(filePath string, n, offset int, filter TypeFilter) ([]Event, bool,
 		}
 
 		events = append(events, event)
-
-		// Stop if we have enough events
-		if len(events) >= n {
-			break
-		}
 	}
 
-	// Check if there are more events available
-	hasMore := false
-	if len(events) == n {
-		// Continue scanning to see if there's at least one more event
-		for i := len(lines) - 1 - offset - n; i >= 0; i-- {
-			var event Event
-			if err := json.Unmarshal([]byte(lines[i]), &event); err != nil {
-				continue
-			}
-			if filter != FilterAll {
-				if filter == FilterStream && !IsStreamEvent(event.Type) {
-					continue
-				}
-				if filter == FilterSilence && !IsSilenceEvent(event.Type) {
-					continue
-				}
-				if filter == FilterRecorder && !IsRecorderEvent(event.Type) {
-					continue
-				}
-			}
-			hasMore = true
-			break
-		}
+	// If we collected more than n, there are more events available
+	hasMore := len(events) > n
+	if hasMore {
+		events = events[:n]
 	}
 
 	return events, hasMore, nil
+}
+
+// matchesFilter returns true if the event type matches the given filter.
+func matchesFilter(t EventType, filter TypeFilter) bool {
+	switch filter {
+	case FilterAll:
+		return true
+	case FilterStream:
+		return IsStreamEvent(t)
+	case FilterSilence:
+		return IsSilenceEvent(t)
+	case FilterRecorder:
+		return IsRecorderEvent(t)
+	default:
+		return true
+	}
 }
 
 // IsStreamEvent returns true if the event type is a stream event.
