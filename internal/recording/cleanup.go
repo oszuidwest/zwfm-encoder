@@ -215,18 +215,11 @@ func (m *Manager) logCleanupEvent(recorderName string, filesDeleted int, storage
 	if m.eventLogger == nil {
 		return
 	}
-	if err := m.eventLogger.LogRecorder(
-		eventlog.CleanupCompleted,
-		recorderName,
-		"",
-		"",
-		"",
-		"",
-		"",
-		0,
-		filesDeleted,
-		storageType,
-	); err != nil {
+	if err := m.eventLogger.LogRecorder(eventlog.CleanupCompleted, &eventlog.RecorderEventParams{
+		RecorderName: recorderName,
+		FilesDeleted: filesDeleted,
+		StorageType:  storageType,
+	}); err != nil {
 		slog.Warn("failed to log cleanup event", "error", err)
 	}
 }

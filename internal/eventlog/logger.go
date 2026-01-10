@@ -87,6 +87,20 @@ type RecorderDetails struct {
 	StorageType  string `json:"storage_type,omitempty"` // "local" or "s3" for cleanup
 }
 
+// RecorderEventParams is the input struct for LogRecorder.
+// All fields are optional; only non-zero values appear in the log.
+type RecorderEventParams struct {
+	RecorderName string
+	Filename     string
+	Codec        string
+	StorageMode  string
+	S3Key        string
+	Error        string
+	RetryCount   int
+	FilesDeleted int
+	StorageType  string
+}
+
 // Logger writes events to a JSON lines file.
 type Logger struct {
 	mu       sync.Mutex
@@ -190,19 +204,19 @@ func (l *Logger) LogSilenceEnd(durationMs int64, levelL, levelR, threshold float
 }
 
 // LogRecorder logs a recorder event.
-func (l *Logger) LogRecorder(eventType EventType, recorderName, filename, codec, storageMode, s3Key, errMsg string, retryCount, filesDeleted int, storageType string) error {
+func (l *Logger) LogRecorder(eventType EventType, p *RecorderEventParams) error {
 	return l.Log(&Event{
 		Type: eventType,
 		Details: &RecorderDetails{
-			RecorderName: recorderName,
-			Filename:     filename,
-			Codec:        codec,
-			StorageMode:  storageMode,
-			S3Key:        s3Key,
-			Error:        errMsg,
-			RetryCount:   retryCount,
-			FilesDeleted: filesDeleted,
-			StorageType:  storageType,
+			RecorderName: p.RecorderName,
+			Filename:     p.Filename,
+			Codec:        p.Codec,
+			StorageMode:  p.StorageMode,
+			S3Key:        p.S3Key,
+			Error:        p.Error,
+			RetryCount:   p.RetryCount,
+			FilesDeleted: p.FilesDeleted,
+			StorageType:  p.StorageType,
 		},
 	})
 }

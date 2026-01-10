@@ -16,24 +16,6 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// logContext holds recorder config values needed for event logging.
-// Captured under lock to avoid data races with UpdateConfig.
-type logContext struct {
-	name        string
-	codec       string
-	storageMode string
-}
-
-// logParams holds optional parameters for recorder event logging.
-type logParams struct {
-	filename     string
-	s3Key        string
-	errMsg       string
-	retryCount   int
-	filesDeleted int
-	storageType  string
-}
-
 // GenericRecorder is a recorder that saves audio to files with optional S3 upload.
 type GenericRecorder struct {
 	mu sync.RWMutex // Protects state, config, file paths
@@ -225,14 +207,14 @@ func (r *GenericRecorder) startAsync() {
 
 	r.state = types.ProcessRunning
 
-	// Capture log context and name while holding lock
-	logCtx := r.captureLogContextLocked()
+	// Capture log params while holding lock
+	logParams := r.captureLogParamsLocked()
 	name := r.config.Name
 	mode := r.config.RotationMode
 	r.mu.Unlock()
 
 	slog.Info("recorder started", "id", r.id, "name", name, "mode", mode)
-	r.logEvent(logCtx, eventlog.RecorderStarted, nil)
+	r.logEvent(eventlog.RecorderStarted, logParams)
 }
 
 // setError sets the recorder to error state with the given message.
@@ -243,42 +225,29 @@ func (r *GenericRecorder) setError(msg string) {
 	r.lastError = msg
 	slog.Error("recorder error", "id", r.id, "error", msg)
 
-	// Log to event log (capture context while holding lock)
-	r.logEvent(r.captureLogContextLocked(), eventlog.RecorderError, &logParams{errMsg: msg})
+	// Log to event log (capture params while holding lock)
+	p := r.captureLogParamsLocked()
+	p.Error = msg
+	r.logEvent(eventlog.RecorderError, p)
 }
 
-// captureLogContextLocked returns a snapshot of config values for logging.
+// captureLogParamsLocked returns a snapshot of config values for logging.
 // Must be called with r.mu held (read or write lock).
-func (r *GenericRecorder) captureLogContextLocked() logContext {
-	return logContext{
-		name:        r.config.Name,
-		codec:       string(r.config.Codec),
-		storageMode: string(r.config.StorageMode),
+func (r *GenericRecorder) captureLogParamsLocked() *eventlog.RecorderEventParams {
+	return &eventlog.RecorderEventParams{
+		RecorderName: r.config.Name,
+		Codec:        string(r.config.Codec),
+		StorageMode:  string(r.config.StorageMode),
 	}
 }
 
 // logEvent logs a recorder event to the event log.
-// The logContext must be captured under lock before calling this method.
-func (r *GenericRecorder) logEvent(ctx logContext, eventType eventlog.EventType, p *logParams) {
+// The params must be captured under lock before calling this method.
+func (r *GenericRecorder) logEvent(eventType eventlog.EventType, p *eventlog.RecorderEventParams) {
 	if r.eventLogger == nil {
 		return
 	}
-	var params logParams
-	if p != nil {
-		params = *p
-	}
-	if err := r.eventLogger.LogRecorder(
-		eventType,
-		ctx.name,
-		params.filename,
-		ctx.codec,
-		ctx.storageMode,
-		params.s3Key,
-		params.errMsg,
-		params.retryCount,
-		params.filesDeleted,
-		params.storageType,
-	); err != nil {
+	if err := r.eventLogger.LogRecorder(eventType, p); err != nil {
 		slog.Warn("failed to log recorder event", "type", eventType, "error", err)
 	}
 }
@@ -330,13 +299,13 @@ func (r *GenericRecorder) Stop() error {
 	r.uploadQueue = make(chan uploadRequest, 100) // Reset for next start
 	r.stopOnce = sync.Once{}                      // Reset Once for next start
 
-	// Capture log context while holding lock
-	logCtx := r.captureLogContextLocked()
+	// Capture log params while holding lock
+	logParams := r.captureLogParamsLocked()
 	name := r.config.Name
 	r.mu.Unlock()
 
 	slog.Info("recorder stopped", "id", r.id, "name", name)
-	r.logEvent(logCtx, eventlog.RecorderStopped, nil)
+	r.logEvent(eventlog.RecorderStopped, logParams)
 	return nil
 }
 
@@ -465,7 +434,9 @@ func (r *GenericRecorder) startEncoderLocked() error {
 	slog.Info("recorder encoding started", "id", r.id, "file", filepath.Base(r.currentFile), "codec", r.config.Codec)
 
 	// Log new file event (already holding lock)
-	r.logEvent(r.captureLogContextLocked(), eventlog.RecorderFile, &logParams{filename: filepath.Base(r.currentFile)})
+	p := r.captureLogParamsLocked()
+	p.Filename = filepath.Base(r.currentFile)
+	r.logEvent(eventlog.RecorderFile, p)
 	return nil
 }
 

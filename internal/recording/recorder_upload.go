@@ -62,14 +62,13 @@ func (r *GenericRecorder) logUploadEventLocked(eventType eventlog.EventType, fil
 		return
 	}
 	r.mu.RLock()
-	ctx := r.captureLogContextLocked()
+	p := r.captureLogParamsLocked()
 	r.mu.RUnlock()
 
-	r.logEvent(ctx, eventType, &logParams{
-		filename: filename,
-		s3Key:    s3Key,
-		errMsg:   errMsg,
-	})
+	p.Filename = filename
+	p.S3Key = s3Key
+	p.Error = errMsg
+	r.logEvent(eventType, p)
 }
 
 // uploadWorker processes the upload queue.
