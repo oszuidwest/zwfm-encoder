@@ -16,7 +16,7 @@ import (
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
-	"github.com/oszuidwest/zwfm-encoder/internal/events"
+	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/notify"
 	"github.com/oszuidwest/zwfm-encoder/internal/recording"
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
@@ -50,7 +50,7 @@ type Encoder struct {
 	streamManager       *streaming.Manager
 	recordingManager    *recording.Manager
 	silenceDumpManager  *silencedump.Manager
-	eventLogger         *events.Logger
+	eventLogger         *eventlog.Logger
 	sourceCmd           *exec.Cmd
 	sourceCancel        context.CancelFunc
 	sourceStdout        io.ReadCloser
@@ -70,7 +70,7 @@ type Encoder struct {
 }
 
 // New creates a new Encoder with the given configuration and FFmpeg binary path.
-func New(cfg *config.Config, ffmpegPath string) *Encoder {
+func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 	graphCfg := cfg.GraphConfig()
 	snap := cfg.Snapshot()
 
@@ -86,11 +86,11 @@ func New(cfg *config.Config, ffmpegPath string) *Encoder {
 		notifier.OnDumpReady,
 	)
 
-	// Create event logger
-	eventLogPath := fmt.Sprintf("/var/log/encoder/%d/events.jsonl", snap.WebPort)
-	eventLogger, err := events.NewLogger(eventLogPath)
+	// Create event logger with platform-specific path
+	eventLogPath := eventlog.DefaultLogPath(snap.WebPort)
+	logger, err := eventlog.NewLogger(eventLogPath)
 	if err != nil {
-		slog.Warn("failed to create event logger, events will not be persisted", "path", eventLogPath, "error", err)
+		return nil, fmt.Errorf("create event logger at %s: %w", eventLogPath, err)
 	}
 
 	// Create stream manager and wire up event callback
@@ -101,7 +101,7 @@ func New(cfg *config.Config, ffmpegPath string) *Encoder {
 		ffmpegPath:          ffmpegPath,
 		streamManager:       streamMgr,
 		silenceDumpManager:  dumpManager,
-		eventLogger:         eventLogger,
+		eventLogger:         logger,
 		state:               types.StateStopped,
 		backoff:             util.NewBackoff(types.InitialRetryDelay, types.MaxRetryDelay),
 		silenceDetect:       audio.NewSilenceDetector(),
@@ -113,7 +113,7 @@ func New(cfg *config.Config, ffmpegPath string) *Encoder {
 	// Set event callback on stream manager
 	streamMgr.SetEventCallback(e.onStreamEvent, e.getStreamName)
 
-	return e
+	return e, nil
 }
 
 // onStreamEvent handles stream events from the streaming manager.
@@ -122,17 +122,7 @@ func (e *Encoder) onStreamEvent(streamID, streamName, eventType, message, errMsg
 		return
 	}
 
-	event := events.StreamEvent{
-		StreamID:   streamID,
-		StreamName: streamName,
-		Event:      events.EventType(eventType),
-		Message:    message,
-		Error:      errMsg,
-		RetryCount: retryCount,
-		MaxRetries: maxRetries,
-	}
-
-	if err := e.eventLogger.Log(&event); err != nil {
+	if err := e.eventLogger.LogStream(eventlog.EventType(eventType), streamID, streamName, message, errMsg, retryCount, maxRetries); err != nil {
 		slog.Warn("failed to log stream event", "error", err)
 	}
 }

@@ -15,7 +15,7 @@ import (
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
-	"github.com/oszuidwest/zwfm-encoder/internal/events"
+	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/notify"
 	"github.com/oszuidwest/zwfm-encoder/internal/recording"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
@@ -736,11 +736,11 @@ func readSilenceLog(logPath string, maxEntries int) ([]types.SilenceLogEntry, er
 	return entries, nil
 }
 
-// handleAPIEvents returns stream events from the event log.
-// GET /api/events?limit=50
+// handleAPIEvents returns events from the event log.
+// GET /api/events?limit=50&type=stream|silence
 func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 	emptyResponse := map[string]any{
-		"events": []events.StreamEvent{},
+		"events": []eventlog.Event{},
 		"total":  0,
 	}
 
@@ -752,6 +752,17 @@ func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Parse type filter parameter
+	var filter eventlog.TypeFilter
+	switch r.URL.Query().Get("type") {
+	case "stream":
+		filter = eventlog.FilterStream
+	case "silence":
+		filter = eventlog.FilterSilence
+	default:
+		filter = eventlog.FilterAll
+	}
+
 	// Get event log path from encoder
 	logPath := s.encoder.EventLogPath()
 	if logPath == "" {
@@ -760,7 +771,7 @@ func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Read events from log file
-	eventList, err := events.ReadLast(logPath, limit)
+	eventList, err := eventlog.ReadLast(logPath, limit, filter)
 	if err != nil {
 		slog.Warn("failed to read events", "error", err)
 		s.writeJSON(w, http.StatusOK, emptyResponse)

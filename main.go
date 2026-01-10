@@ -59,7 +59,11 @@ func main() {
 		slog.Info("FFmpeg found", "path", ffmpegPath)
 	}
 
-	enc := encoder.New(cfg, ffmpegPath)
+	enc, err := encoder.New(cfg, ffmpegPath)
+	if err != nil {
+		slog.Error("failed to create encoder", "error", err)
+		os.Exit(1)
+	}
 
 	srv := NewServer(cfg, enc, ffmpegAvailable)
 

@@ -122,7 +122,7 @@ func (m *Manager) Start(stream *types.Stream) error {
 	m.streams[stream.ID] = s
 	m.mu.Unlock()
 
-	m.emitEvent(stream.ID, "started", fmt.Sprintf("Connecting to %s:%d", stream.Host, stream.Port), "", 0, 0)
+	m.emitEvent(stream.ID, "stream_started", fmt.Sprintf("Connecting to %s:%d", stream.Host, stream.Port), "", 0, 0)
 
 	// Emit stable event after threshold if still running
 	go func(id string) {
@@ -132,7 +132,7 @@ func (m *Manager) Start(stream *types.Stream) error {
 		isRunning := exists && s.state == types.ProcessRunning
 		m.mu.RUnlock()
 		if isRunning {
-			m.emitEvent(id, "stable", "Stream connected and stable", "", 0, 0)
+			m.emitEvent(id, "stream_stable", "Stream connected and stable", "", 0, 0)
 		}
 	}(stream.ID)
 
@@ -354,7 +354,7 @@ func (m *Manager) handleStreamExit(streamID string, result *ffmpeg.StartResult, 
 	// Check if this was an intentional stop - don't treat as error
 	cause := context.Cause(result.Context())
 	if errors.Is(cause, errStoppedByUser) {
-		m.emitEvent(streamID, "stopped", "Stream stopped by user", "", 0, 0)
+		m.emitEvent(streamID, "stream_stopped", "Stream stopped by user", "", 0, 0)
 		return
 	}
 
@@ -369,7 +369,7 @@ func (m *Manager) handleStreamExit(streamID string, result *ffmpeg.StartResult, 
 			slog.Error("stream error", "stream_id", streamID, "error", errMsg)
 		}
 		m.SetError(streamID, errMsg)
-		m.emitEvent(streamID, "error", "Stream failed", errMsg, 0, 0)
+		m.emitEvent(streamID, "stream_error", "Stream failed", errMsg, 0, 0)
 
 		if runDuration >= types.SuccessThreshold {
 			m.ResetRetry(streamID)
@@ -379,7 +379,7 @@ func (m *Manager) handleStreamExit(streamID string, result *ffmpeg.StartResult, 
 		}
 	} else {
 		m.ResetRetry(streamID)
-		m.emitEvent(streamID, "stopped", "Stream ended normally", "", 0, 0)
+		m.emitEvent(streamID, "stream_stopped", "Stream ended normally", "", 0, 0)
 	}
 }
 
@@ -442,7 +442,7 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 		maxRetries := stream.MaxRetriesOrDefault()
 		slog.Info("stream stopped, waiting before retry",
 			"stream_id", streamID, "delay", retryDelay, "retry", retryCount, "max_retries", maxRetries)
-		m.emitEvent(streamID, "retry", fmt.Sprintf("Retrying in %s", retryDelay.Round(time.Second)), "", retryCount, maxRetries)
+		m.emitEvent(streamID, "stream_retry", fmt.Sprintf("Retrying in %s", retryDelay.Round(time.Second)), "", retryCount, maxRetries)
 
 		select {
 		case <-stopChan:
