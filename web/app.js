@@ -1493,17 +1493,9 @@ document.addEventListener('alpine:init', () => {
          * @param {Object} event - Event object
          * @returns {string} CSS style string
          */
-        getStreamBadgeStyle(event) {
-            // Silence events get neutral gray style
-            if (event.type?.startsWith('silence_')) {
-                return 'background: var(--neutral-200); color: var(--neutral-600);';
-            }
-            // Recorder events get purple/violet color
-            if (event.type?.startsWith('recorder_') || event.type?.startsWith('upload_') || event.type === 'cleanup_completed') {
-                return 'background: color-mix(in srgb, #8b5cf6 15%, transparent); color: #7c3aed;';
-            }
-            // Stream events get brand color
-            return 'background: color-mix(in srgb, var(--brand) 15%, transparent); color: var(--brand);';
+        getStreamBadgeStyle() {
+            // All badges get neutral gray style
+            return 'background: var(--neutral-200); color: var(--neutral-600);';
         },
 
         /**
