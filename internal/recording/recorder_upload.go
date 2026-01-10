@@ -67,7 +67,7 @@ func (r *GenericRecorder) logUploadEvent(eventType eventlog.EventType, filename,
 	storageMode := string(r.config.StorageMode)
 	r.mu.RUnlock()
 
-	_ = r.eventLogger.LogRecorder(
+	if err := r.eventLogger.LogRecorder(
 		eventType,
 		recorderName,
 		filename,
@@ -78,7 +78,9 @@ func (r *GenericRecorder) logUploadEvent(eventType eventlog.EventType, filename,
 		retryCount,
 		0,
 		"",
-	)
+	); err != nil {
+		slog.Warn("failed to log upload event", "type", eventType, "error", err)
+	}
 }
 
 // uploadWorker processes the upload queue.

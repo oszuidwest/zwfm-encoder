@@ -16,6 +16,14 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
+// logContext holds recorder config values needed for event logging.
+// Captured under lock to avoid data races with UpdateConfig.
+type logContext struct {
+	name        string
+	codec       string
+	storageMode string
+}
+
 // GenericRecorder is a recorder that saves audio to files with optional S3 upload.
 type GenericRecorder struct {
 	mu sync.RWMutex // Protects state, config, file paths
@@ -207,11 +215,14 @@ func (r *GenericRecorder) startAsync() {
 
 	r.state = types.ProcessRunning
 
-	slog.Info("recorder started", "id", r.id, "name", r.config.Name, "mode", r.config.RotationMode)
-
-	// Log started event (need to unlock first since logEvent reads config)
+	// Capture log context and name while holding lock
+	logCtx := r.captureLogContextLocked()
+	name := r.config.Name
+	mode := r.config.RotationMode
 	r.mu.Unlock()
-	r.logEvent(eventlog.RecorderStarted, "", "", 0, 0, "")
+
+	slog.Info("recorder started", "id", r.id, "name", name, "mode", mode)
+	r.logEvent(logCtx, eventlog.RecorderStarted, "", "", 0, 0, "")
 }
 
 // setError sets the recorder to error state with the given message.
@@ -222,27 +233,40 @@ func (r *GenericRecorder) setError(msg string) {
 	r.lastError = msg
 	slog.Error("recorder error", "id", r.id, "error", msg)
 
-	// Log to event log
-	r.logEvent(eventlog.RecorderError, "", msg, 0, 0, "")
+	// Log to event log (capture context while holding lock)
+	r.logEvent(r.captureLogContextLocked(), eventlog.RecorderError, "", msg, 0, 0, "")
+}
+
+// captureLogContextLocked returns a snapshot of config values for logging.
+// Must be called with r.mu held (read or write lock).
+func (r *GenericRecorder) captureLogContextLocked() logContext {
+	return logContext{
+		name:        r.config.Name,
+		codec:       string(r.config.Codec),
+		storageMode: string(r.config.StorageMode),
+	}
 }
 
 // logEvent logs a recorder event to the event log.
-func (r *GenericRecorder) logEvent(eventType eventlog.EventType, filename, errMsg string, retryCount, filesDeleted int, storageType string) {
+// The logContext must be captured under lock before calling this method.
+func (r *GenericRecorder) logEvent(ctx logContext, eventType eventlog.EventType, filename, errMsg string, retryCount, filesDeleted int, storageType string) {
 	if r.eventLogger == nil {
 		return
 	}
-	_ = r.eventLogger.LogRecorder(
+	if err := r.eventLogger.LogRecorder(
 		eventType,
-		r.config.Name,
+		ctx.name,
 		filename,
-		string(r.config.Codec),
-		string(r.config.StorageMode),
+		ctx.codec,
+		ctx.storageMode,
 		"", // s3Key - set separately for upload events
 		errMsg,
 		retryCount,
 		filesDeleted,
 		storageType,
-	)
+	); err != nil {
+		slog.Warn("failed to log recorder event", "type", eventType, "error", err)
+	}
 }
 
 // Stop ends recording.
@@ -291,10 +315,14 @@ func (r *GenericRecorder) Stop() error {
 	r.uploadStopCh = make(chan struct{})          // Reset for next start
 	r.uploadQueue = make(chan uploadRequest, 100) // Reset for next start
 	r.stopOnce = sync.Once{}                      // Reset Once for next start
+
+	// Capture log context while holding lock
+	logCtx := r.captureLogContextLocked()
+	name := r.config.Name
 	r.mu.Unlock()
 
-	slog.Info("recorder stopped", "id", r.id, "name", r.config.Name)
-	r.logEvent(eventlog.RecorderStopped, "", "", 0, 0, "")
+	slog.Info("recorder stopped", "id", r.id, "name", name)
+	r.logEvent(logCtx, eventlog.RecorderStopped, "", "", 0, 0, "")
 	return nil
 }
 
@@ -422,17 +450,8 @@ func (r *GenericRecorder) startEncoderLocked() error {
 
 	slog.Info("recorder encoding started", "id", r.id, "file", filepath.Base(r.currentFile), "codec", r.config.Codec)
 
-	// Log new file event (eventLogger is thread-safe)
-	if r.eventLogger != nil {
-		_ = r.eventLogger.LogRecorder(
-			eventlog.RecorderFile,
-			r.config.Name,
-			filepath.Base(r.currentFile),
-			string(r.config.Codec),
-			string(r.config.StorageMode),
-			"", "", 0, 0, "",
-		)
-	}
+	// Log new file event (already holding lock)
+	r.logEvent(r.captureLogContextLocked(), eventlog.RecorderFile, filepath.Base(r.currentFile), "", 0, 0, "")
 	return nil
 }
 
