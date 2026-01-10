@@ -133,6 +133,12 @@ Configuration is stored in `/etc/encoder/config.json` on production systems. For
 
 The installer creates a minimal config file. All other settings are configured through the web interface.
 
+## Event Log
+
+The encoder logs all stream, silence, and recording events to a JSON Lines file for monitoring and debugging. Events are accessible via the web interface and REST API.
+
+See [docs/events.md](docs/events.md) for the complete event reference.
+
 ## Architecture
 
 ```mermaid
