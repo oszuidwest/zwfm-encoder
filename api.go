@@ -646,11 +646,11 @@ func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 		"has_more": false,
 	}
 
-	// Parse limit parameter (default 50, max 500)
+	// Parse limit parameter (default 50, max MaxReadLimit)
 	limit := 50
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
 		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
-			limit = min(parsed, 500)
+			limit = min(parsed, eventlog.MaxReadLimit)
 		}
 	}
 

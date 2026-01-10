@@ -237,10 +237,23 @@ const (
 	FilterRecorder TypeFilter = "recorder"
 )
 
+// MaxReadLimit is the maximum number of events that can be read at once.
+// This prevents denial-of-service via excessive memory allocation.
+const MaxReadLimit = 500
+
 // ReadLast reads events from the log file with pagination support.
 // Returns up to n events starting from offset, filtered by type.
 // Events are returned in reverse chronological order (newest first).
+// The n parameter is capped at MaxReadLimit to prevent excessive memory allocation.
 func ReadLast(filePath string, n, offset int, filter TypeFilter) ([]Event, bool, error) {
+	// Cap n to prevent excessive memory allocation (defense in depth)
+	if n > MaxReadLimit {
+		n = MaxReadLimit
+	}
+	if n <= 0 {
+		return []Event{}, false, nil
+	}
+
 	file, err := os.Open(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
