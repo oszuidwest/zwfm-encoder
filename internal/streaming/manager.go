@@ -26,11 +26,16 @@ type StreamContext interface {
 	IsRunning() bool
 }
 
+// EventCallback is called when stream events occur.
+type EventCallback func(streamID, streamName string, event string, message string, err string, retryCount, maxRetries int)
+
 // Manager orchestrates multiple streams.
 type Manager struct {
-	ffmpegPath string
-	streams    map[string]*Stream
-	mu         sync.RWMutex // Protects streams map
+	ffmpegPath    string
+	streams       map[string]*Stream
+	mu            sync.RWMutex // Protects streams map
+	onEvent       EventCallback
+	getStreamName func(string) string
 }
 
 // Stream represents a managed SRT stream to a server.
@@ -51,13 +56,37 @@ func NewManager(ffmpegPath string) *Manager {
 	}
 }
 
+// SetEventCallback sets the callback for stream events.
+func (m *Manager) SetEventCallback(cb EventCallback, getStreamName func(string) string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onEvent = cb
+	m.getStreamName = getStreamName
+}
+
+// emitEvent calls the event callback if set.
+func (m *Manager) emitEvent(streamID, event, message, errMsg string, retryCount, maxRetries int) {
+	m.mu.RLock()
+	cb := m.onEvent
+	getName := m.getStreamName
+	m.mu.RUnlock()
+
+	if cb != nil {
+		name := ""
+		if getName != nil {
+			name = getName(streamID)
+		}
+		cb(streamID, name, event, message, errMsg, retryCount, maxRetries)
+	}
+}
+
 // Start launches a stream.
 func (m *Manager) Start(stream *types.Stream) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	existing, exists := m.streams[stream.ID]
 	if exists && existing.state == types.ProcessRunning {
+		m.mu.Unlock()
 		return nil // Already running
 	}
 
@@ -78,6 +107,7 @@ func (m *Manager) Start(stream *types.Stream) error {
 
 	result, err := ffmpeg.StartProcess(m.ffmpegPath, args)
 	if err != nil {
+		m.mu.Unlock()
 		return err
 	}
 
@@ -90,6 +120,22 @@ func (m *Manager) Start(stream *types.Stream) error {
 	}
 
 	m.streams[stream.ID] = s
+	m.mu.Unlock()
+
+	m.emitEvent(stream.ID, "started", fmt.Sprintf("Connecting to %s:%d", stream.Host, stream.Port), "", 0, 0)
+
+	// Emit stable event after threshold if still running
+	go func(id string) {
+		time.Sleep(types.StableThreshold)
+		m.mu.RLock()
+		s, exists := m.streams[id]
+		isRunning := exists && s.state == types.ProcessRunning
+		m.mu.RUnlock()
+		if isRunning {
+			m.emitEvent(id, "stable", "Stream connected and stable", "", 0, 0)
+		}
+	}(stream.ID)
+
 	return nil
 }
 
@@ -308,6 +354,7 @@ func (m *Manager) handleStreamExit(streamID string, result *ffmpeg.StartResult, 
 	// Check if this was an intentional stop - don't treat as error
 	cause := context.Cause(result.Context())
 	if errors.Is(cause, errStoppedByUser) {
+		m.emitEvent(streamID, "stopped", "Stream stopped by user", "", 0, 0)
 		return
 	}
 
@@ -322,6 +369,7 @@ func (m *Manager) handleStreamExit(streamID string, result *ffmpeg.StartResult, 
 			slog.Error("stream error", "stream_id", streamID, "error", errMsg)
 		}
 		m.SetError(streamID, errMsg)
+		m.emitEvent(streamID, "error", "Stream failed", errMsg, 0, 0)
 
 		if runDuration >= types.SuccessThreshold {
 			m.ResetRetry(streamID)
@@ -331,6 +379,7 @@ func (m *Manager) handleStreamExit(streamID string, result *ffmpeg.StartResult, 
 		}
 	} else {
 		m.ResetRetry(streamID)
+		m.emitEvent(streamID, "stopped", "Stream ended normally", "", 0, 0)
 	}
 }
 
@@ -390,8 +439,10 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 		retryDelay := backoff.Current()
 		retryCount := m.RetryCount(streamID)
 		stream := ctx.Stream(streamID)
+		maxRetries := stream.MaxRetriesOrDefault()
 		slog.Info("stream stopped, waiting before retry",
-			"stream_id", streamID, "delay", retryDelay, "retry", retryCount, "max_retries", stream.MaxRetriesOrDefault())
+			"stream_id", streamID, "delay", retryDelay, "retry", retryCount, "max_retries", maxRetries)
+		m.emitEvent(streamID, "retry", fmt.Sprintf("Retrying in %s", retryDelay.Round(time.Second)), "", retryCount, maxRetries)
 
 		select {
 		case <-stopChan:

@@ -163,6 +163,11 @@ document.addEventListener('alpine:init', () => {
         recorderForm: { ...DEFAULT_RECORDER, id: '' },
         recorderFormDirty: false,
 
+        // Event history
+        streamEvents: [],
+        loadingEvents: false,
+        eventsLoaded: false,
+
         devices: [],
         levels: { ...DEFAULT_LEVELS },
         vuMode: localStorage.getItem('vuMode') || 'peak',
@@ -1306,6 +1311,36 @@ document.addEventListener('alpine:init', () => {
 
         resetVuMeter() {
             this.levels = { ...DEFAULT_LEVELS };
+        },
+
+        /**
+         * Loads stream events from the API.
+         */
+        async loadEvents() {
+            this.loadingEvents = true;
+            try {
+                const response = await fetch('/api/events?limit=50');
+                if (response.ok) {
+                    const data = await response.json();
+                    this.streamEvents = data.events || [];
+                    this.eventsLoaded = true;
+                }
+            } catch (error) {
+                console.error('Failed to load events:', error);
+            } finally {
+                this.loadingEvents = false;
+            }
+        },
+
+        /**
+         * Formats an event timestamp for display.
+         * @param {string} ts - ISO timestamp
+         * @returns {string} Formatted time string
+         */
+        formatEventTime(ts) {
+            if (!ts) return '';
+            const date = new Date(ts);
+            return date.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         },
 
         /**

@@ -16,6 +16,7 @@ import (
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
+	"github.com/oszuidwest/zwfm-encoder/internal/events"
 	"github.com/oszuidwest/zwfm-encoder/internal/notify"
 	"github.com/oszuidwest/zwfm-encoder/internal/recording"
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
@@ -49,6 +50,7 @@ type Encoder struct {
 	streamManager       *streaming.Manager
 	recordingManager    *recording.Manager
 	silenceDumpManager  *silencedump.Manager
+	eventLogger         *events.Logger
 	sourceCmd           *exec.Cmd
 	sourceCancel        context.CancelFunc
 	sourceStdout        io.ReadCloser
@@ -84,11 +86,22 @@ func New(cfg *config.Config, ffmpegPath string) *Encoder {
 		notifier.OnDumpReady,
 	)
 
-	return &Encoder{
+	// Create event logger
+	eventLogPath := fmt.Sprintf("/var/log/encoder/%d/events.jsonl", snap.WebPort)
+	eventLogger, err := events.NewLogger(eventLogPath)
+	if err != nil {
+		slog.Warn("failed to create event logger, events will not be persisted", "path", eventLogPath, "error", err)
+	}
+
+	// Create stream manager and wire up event callback
+	streamMgr := streaming.NewManager(ffmpegPath)
+
+	e := &Encoder{
 		config:              cfg,
 		ffmpegPath:          ffmpegPath,
-		streamManager:       streaming.NewManager(ffmpegPath),
+		streamManager:       streamMgr,
 		silenceDumpManager:  dumpManager,
+		eventLogger:         eventLogger,
 		state:               types.StateStopped,
 		backoff:             util.NewBackoff(types.InitialRetryDelay, types.MaxRetryDelay),
 		silenceDetect:       audio.NewSilenceDetector(),
@@ -96,6 +109,50 @@ func New(cfg *config.Config, ffmpegPath string) *Encoder {
 		peakHolder:          audio.NewPeakHolder(),
 		secretExpiryChecker: notify.NewSecretExpiryChecker(&graphCfg),
 	}
+
+	// Set event callback on stream manager
+	streamMgr.SetEventCallback(e.onStreamEvent, e.getStreamName)
+
+	return e
+}
+
+// onStreamEvent handles stream events from the streaming manager.
+func (e *Encoder) onStreamEvent(streamID, streamName, eventType, message, errMsg string, retryCount, maxRetries int) {
+	if e.eventLogger == nil {
+		return
+	}
+
+	event := events.StreamEvent{
+		StreamID:   streamID,
+		StreamName: streamName,
+		Event:      events.EventType(eventType),
+		Message:    message,
+		Error:      errMsg,
+		RetryCount: retryCount,
+		MaxRetries: maxRetries,
+	}
+
+	if err := e.eventLogger.Log(&event); err != nil {
+		slog.Warn("failed to log stream event", "error", err)
+	}
+}
+
+// getStreamName returns a display name for a stream by ID.
+func (e *Encoder) getStreamName(streamID string) string {
+	stream := e.config.Stream(streamID)
+	if stream == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d", stream.Host, stream.Port)
+}
+
+// EventLogPath returns the path to the event log file.
+func (e *Encoder) EventLogPath() string {
+	if e.eventLogger == nil {
+		return ""
+	}
+	snap := e.config.Snapshot()
+	return fmt.Sprintf("/var/log/encoder/%d/events.jsonl", snap.WebPort)
 }
 
 // InitRecording prepares the recording manager for use.

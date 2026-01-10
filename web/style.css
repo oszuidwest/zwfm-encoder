@@ -1594,6 +1594,69 @@
             flex: 1;
         }
     }
+
+    /* =========================================================================
+       Events List Component
+       ========================================================================= */
+    @scope (.events-list) {
+        .event-item {
+            padding: 0.75rem 0;
+            border-bottom: 1px solid var(--border-default);
+            font-size: 0.875rem;
+        }
+
+        .event-item:last-child {
+            border-bottom: none;
+        }
+
+        .event-time {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.25rem;
+        }
+
+        .event-details {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        .event-stream {
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .event-type {
+            font-size: 0.75rem;
+            padding: 0.125rem 0.5rem;
+            border-radius: var(--radius-sm);
+            text-transform: uppercase;
+            font-weight: 500;
+        }
+
+        .event-started { background: var(--state-info-bg); color: var(--state-info); }
+        .event-stable { background: var(--state-success-bg); color: var(--state-success); }
+        .event-error { background: var(--state-danger-bg); color: var(--state-danger); }
+        .event-retry { background: var(--state-warning-bg); color: var(--state-warning); }
+        .event-stopped { background: var(--surface-elevated); color: var(--text-secondary); }
+
+        .event-message {
+            color: var(--text-secondary);
+        }
+
+        .event-error-detail {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--state-danger);
+            margin-top: 0.25rem;
+            padding: 0.5rem;
+            background: var(--state-danger-bg);
+            border-radius: var(--radius-sm);
+            word-break: break-word;
+        }
+    }
 }
 
 /* =============================================================================

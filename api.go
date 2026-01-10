@@ -9,11 +9,13 @@ import (
 	"os"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
+	"github.com/oszuidwest/zwfm-encoder/internal/events"
 	"github.com/oszuidwest/zwfm-encoder/internal/notify"
 	"github.com/oszuidwest/zwfm-encoder/internal/recording"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
@@ -732,4 +734,42 @@ func readSilenceLog(logPath string, maxEntries int) ([]types.SilenceLogEntry, er
 	slices.Reverse(entries)
 
 	return entries, nil
+}
+
+// handleAPIEvents returns stream events from the event log.
+// GET /api/events?limit=50
+func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
+	// Parse limit parameter (default 50, max 500)
+	limit := 50
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			limit = min(parsed, 500)
+		}
+	}
+
+	// Get event log path from encoder
+	logPath := s.encoder.EventLogPath()
+	if logPath == "" {
+		s.writeJSON(w, http.StatusOK, map[string]any{
+			"events": []events.StreamEvent{},
+			"total":  0,
+		})
+		return
+	}
+
+	// Read events from log file
+	eventList, err := events.ReadLast(logPath, limit)
+	if err != nil {
+		slog.Warn("failed to read events", "error", err)
+		s.writeJSON(w, http.StatusOK, map[string]any{
+			"events": []events.StreamEvent{},
+			"total":  0,
+		})
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"events": eventList,
+		"total":  len(eventList),
+	})
 }

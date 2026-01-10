@@ -254,6 +254,9 @@ func (s *Server) SetupRoutes() http.Handler {
 	mux.HandleFunc("GET /api/notifications/log", auth(s.handleAPIViewLog))
 	mux.HandleFunc("POST /api/recording/regenerate-key", auth(s.handleAPIRegenerateKey))
 
+	// Events
+	mux.HandleFunc("GET /api/events", auth(s.handleAPIEvents))
+
 	// Protected routes
 	mux.HandleFunc("/ws", auth(s.handleWebSocket))
 	mux.HandleFunc("/", auth(s.handleStatic))
