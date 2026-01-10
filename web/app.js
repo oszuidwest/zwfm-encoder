@@ -162,8 +162,8 @@ document.addEventListener('alpine:init', () => {
         recorderForm: { ...DEFAULT_RECORDER, id: '' },
         recorderFormDirty: false,
 
-        // Event history
-        streamEvents: [],
+        // Event history (all event types: stream_* and silence_*)
+        events: [],
         loadingEvents: false,
         eventsLoaded: false,
 
@@ -1296,7 +1296,7 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
-         * Loads stream events from the API.
+         * Loads events from the API (all types: stream_* and silence_*).
          */
         async loadEvents() {
             this.loadingEvents = true;
@@ -1304,7 +1304,7 @@ document.addEventListener('alpine:init', () => {
                 const response = await fetch('/api/events?limit=50');
                 if (response.ok) {
                     const data = await response.json();
-                    this.streamEvents = data.events || [];
+                    this.events = data.events || [];
                     this.eventsLoaded = true;
                 }
             } catch (error) {
@@ -1323,6 +1323,85 @@ document.addEventListener('alpine:init', () => {
             if (!ts) return '';
             const date = new Date(ts);
             return date.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        },
+
+        /**
+         * Checks if an event is a stream event.
+         * @param {string} type - Event type
+         * @returns {boolean} True if stream event
+         */
+        isStreamEvent(type) {
+            return type?.startsWith('stream_');
+        },
+
+        /**
+         * Checks if an event is a silence event.
+         * @param {string} type - Event type
+         * @returns {boolean} True if silence event
+         */
+        isSilenceEvent(type) {
+            return type?.startsWith('silence_');
+        },
+
+        /**
+         * Formats an event for display.
+         * Handles both stream_* and silence_* events.
+         * @param {Object} event - Event object with type, details, etc.
+         * @returns {Object} Formatted event for display
+         */
+        formatEvent(event) {
+            const isStream = this.isStreamEvent(event.type);
+            const isSilence = this.isSilenceEvent(event.type);
+            const details = event.details || {};
+
+            // Determine display type (remove prefix for cleaner display)
+            const displayType = event.type.replace('stream_', '').replace('silence_', '');
+
+            // For stream events
+            if (isStream) {
+                return {
+                    category: 'stream',
+                    name: details.stream_name || event.stream_id || 'Stream',
+                    type: displayType,
+                    message: event.msg || '',
+                    error: details.error || '',
+                    retry: details.retry && details.max_retries ? `${details.retry}/${details.max_retries}` : ''
+                };
+            }
+
+            // For silence events
+            if (isSilence) {
+                const levels = details.level_left_db !== undefined && details.level_right_db !== undefined
+                    ? `L ${details.level_left_db.toFixed(1)} / R ${details.level_right_db.toFixed(1)} dB`
+                    : '';
+                const threshold = details.threshold_db !== undefined ? `${details.threshold_db.toFixed(0)} dB threshold` : '';
+                const duration = details.duration_ms ? formatSmartDuration(details.duration_ms) : '';
+
+                let message = '';
+                if (event.type === 'silence_start') {
+                    message = `Audio below ${threshold}`;
+                } else if (event.type === 'silence_end') {
+                    message = duration ? `Lasted ${duration}` : 'Audio restored';
+                }
+
+                return {
+                    category: 'silence',
+                    name: 'Silence Detection',
+                    type: displayType,
+                    message: message,
+                    error: details.dump_error || '',
+                    levels: levels
+                };
+            }
+
+            // Unknown event type
+            return {
+                category: 'unknown',
+                name: 'Unknown',
+                type: event.type,
+                message: event.msg || '',
+                error: ''
+            };
         },
 
         /**

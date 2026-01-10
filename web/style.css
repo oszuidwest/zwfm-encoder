@@ -1636,14 +1636,24 @@
             font-weight: 500;
         }
 
-        .event-started { background: var(--state-info-bg); color: var(--state-info); }
-        .event-stable { background: var(--state-success-bg); color: var(--state-success); }
-        .event-error { background: var(--state-danger-bg); color: var(--state-danger); }
-        .event-retry { background: var(--state-warning-bg); color: var(--state-warning); }
-        .event-stopped { background: var(--surface-elevated); color: var(--text-secondary); }
+        /* Stream events */
+        .event-stream_started { background: var(--state-info-bg); color: var(--state-info); }
+        .event-stream_stable { background: var(--state-success-bg); color: var(--state-success); }
+        .event-stream_error { background: var(--state-danger-bg); color: var(--state-danger); }
+        .event-stream_retry { background: var(--state-warning-bg); color: var(--state-warning); }
+        .event-stream_stopped { background: var(--surface-elevated); color: var(--text-secondary); }
+
+        /* Silence events */
+        .event-silence_start { background: var(--state-warning-bg); color: var(--state-warning); }
+        .event-silence_end { background: var(--state-success-bg); color: var(--state-success); }
 
         .event-message {
             color: var(--text-secondary);
+        }
+
+        .event-retry {
+            font-size: 0.75rem;
+            color: var(--text-tertiary);
         }
 
         .event-error {

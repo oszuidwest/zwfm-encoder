@@ -310,7 +310,7 @@
         </section>
 
         <!-- === Event History ===
-             Shows recent stream events (started, stable, error, retry, stopped).
+             Shows recent events (stream and silence).
              Events are loaded from /api/events on demand. -->
         <section class="card">
             <div class="header" data-theme="slate">
@@ -325,18 +325,19 @@
             </div>
             <div class="body">
                 <div class="events-list">
-                    <template x-if="streamEvents.length === 0">
+                    <template x-if="events.length === 0">
                         <div class="empty-state" x-text="eventsLoaded ? 'No events recorded' : 'Click Refresh to load events'"></div>
                     </template>
-                    <template x-for="event in streamEvents" :key="event.ts + event.stream_id + event.event">
-                        <div class="event-item" :data-event-type="event.event">
+                    <template x-for="event in events" :key="event.ts + event.type + (event.stream_id || '')">
+                        <div class="event-item" x-data="{ e: formatEvent(event) }" :data-event-type="event.type" :data-event-category="e.category">
                             <div class="event-time" x-text="formatEventTime(event.ts)"></div>
                             <div class="event-details">
-                                <span class="event-stream" x-text="event.stream_name || event.stream_id"></span>
-                                <span class="event-type" :class="'event-' + event.event" x-text="event.event"></span>
-                                <span class="event-message" x-text="event.msg"></span>
+                                <span class="event-stream" x-text="e.name"></span>
+                                <span class="event-type" :class="'event-' + event.type" x-text="e.type"></span>
+                                <span class="event-message" x-text="e.message"></span>
+                                <span class="event-retry" x-show="e.retry" x-text="e.retry"></span>
                             </div>
-                            <div class="event-error" x-show="event.error" x-text="event.error"></div>
+                            <div class="event-error" x-show="e.error" x-text="e.error"></div>
                         </div>
                     </template>
                 </div>
