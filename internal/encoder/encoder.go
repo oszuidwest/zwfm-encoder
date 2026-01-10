@@ -368,13 +368,6 @@ func (e *Encoder) Stop() error {
 		e.silenceDumpManager.Stop()
 	}
 
-	// Close event logger
-	if e.eventLogger != nil {
-		if err := e.eventLogger.Close(); err != nil {
-			slog.Warn("failed to close event logger", "error", err)
-		}
-	}
-
 	e.mu.Lock()
 	e.state = types.StateStopped
 	e.sourceCmd = nil
