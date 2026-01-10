@@ -4,8 +4,9 @@ config.json
 /node_modules
 *.exe
 
-# Markdown files (only README and LICENSE on GitHub)
+# Markdown files (only README, LICENSE, and docs on GitHub)
 *.md
 !README.md
 !LICENSE.md
+!docs/*.md
 zwfm-encoder
