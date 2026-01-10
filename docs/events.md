@@ -456,7 +456,7 @@ GET /api/events?limit=50&offset=0&type=stream
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `limit` | int | Maximum events to return (default: 50, max: 100) |
+| `limit` | int | Maximum events to return (default: 50, max: 500) |
 | `offset` | int | Number of events to skip for pagination |
 | `type` | string | Filter: `stream`, `silence`, `recorder`, or omit for all |
 
