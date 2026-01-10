@@ -3,18 +3,21 @@ package notify
 import (
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
+	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 // SilenceNotifier manages notifications for silence detection events.
 type SilenceNotifier struct {
-	cfg *config.Config
+	cfg         *config.Config
+	eventLogger *eventlog.Logger
 
 	// mu protects the notification state fields below
 	mu sync.Mutex
@@ -53,6 +56,11 @@ type recoveryFlags struct {
 // NewSilenceNotifier returns a SilenceNotifier configured with the given config.
 func NewSilenceNotifier(cfg *config.Config) *SilenceNotifier {
 	return &SilenceNotifier{cfg: cfg}
+}
+
+// SetEventLogger sets the event logger for silence events.
+func (n *SilenceNotifier) SetEventLogger(logger *eventlog.Logger) {
+	n.eventLogger = logger
 }
 
 // ResetPendingRecovery clears any pending recovery notification state.
@@ -261,10 +269,12 @@ func (n *SilenceNotifier) sendSilenceEmailWithClient(cfg *GraphConfig, stationNa
 //
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) logSilenceStart(cfg config.Snapshot, levelL, levelR float64) {
-	logNotifyResult(
-		func() error { return LogSilenceStart(cfg.LogPath, levelL, levelR, cfg.SilenceThreshold) },
-		"Silence log",
-	)
+	if n.eventLogger == nil {
+		return
+	}
+	if err := n.eventLogger.LogSilenceStart(levelL, levelR, cfg.SilenceThreshold); err != nil {
+		slog.Warn("failed to log silence start", "error", err)
+	}
 }
 
 // OnDumpReady sends recovery notifications with the audio dump attached.
@@ -322,12 +332,25 @@ func (n *SilenceNotifier) sendRecoveryEmailWithDump(cfg config.Snapshot, duratio
 //
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) logSilenceEndWithDump(cfg config.Snapshot, durationMs int64, levelL, levelR float64, dump *silencedump.EncodeResult) {
-	logNotifyResult(
-		func() error {
-			return LogSilenceEndWithDump(cfg.LogPath, durationMs, levelL, levelR, cfg.SilenceThreshold, dump)
-		},
-		"Recovery log with dump",
-	)
+	if n.eventLogger == nil {
+		return
+	}
+
+	var dumpPath, dumpFilename, dumpError string
+	var dumpSize int64
+	if dump != nil {
+		if dump.Error != nil {
+			dumpError = dump.Error.Error()
+		} else {
+			dumpPath = dump.FilePath
+			dumpFilename = dump.Filename
+			dumpSize = dump.FileSize
+		}
+	}
+
+	if err := n.eventLogger.LogSilenceEnd(durationMs, levelL, levelR, cfg.SilenceThreshold, dumpPath, dumpFilename, dumpSize, dumpError); err != nil {
+		slog.Warn("failed to log silence end", "error", err)
+	}
 }
 
 // sendSilenceZabbix sends a silence alert to Zabbix.

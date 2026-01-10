@@ -93,6 +93,9 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 		return nil, fmt.Errorf("create event logger at %s: %w", eventLogPath, err)
 	}
 
+	// Wire event logger to notifier for silence event logging
+	notifier.SetEventLogger(logger)
+
 	// Create stream manager and wire up event callback
 	streamMgr := streaming.NewManager(ffmpegPath)
 
