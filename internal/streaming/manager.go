@@ -215,14 +215,21 @@ func (m *Manager) AllStatuses(getMaxRetries func(string) int) map[string]types.P
 	for id, stream := range m.streams {
 		maxRetries := getMaxRetries(id)
 		isRunning := stream.state == types.ProcessRunning
+		runDuration := time.Since(stream.startTime)
+
+		var uptime string
+		if isRunning {
+			uptime = util.FormatDuration(runDuration.Milliseconds())
+		}
 
 		statuses[id] = types.ProcessStatus{
 			State:      stream.state,
-			Stable:     isRunning && time.Since(stream.startTime) >= types.StableThreshold,
+			Stable:     isRunning && runDuration >= types.StableThreshold,
 			Exhausted:  stream.retryCount > maxRetries,
 			RetryCount: stream.retryCount,
 			MaxRetries: maxRetries,
 			Error:      stream.lastError,
+			Uptime:     uptime,
 		}
 	}
 	return statuses

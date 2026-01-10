@@ -52,6 +52,7 @@ type ProcessStatus struct {
 	RetryCount int          `json:"retry_count,omitempty"` // Streams: current retry attempt
 	MaxRetries int          `json:"max_retries,omitempty"` // Streams: max allowed retries
 	Error      string       `json:"error,omitempty"`       // Error message
+	Uptime     string       `json:"uptime,omitempty"`      // Duration since process started
 }
 
 const (
