@@ -24,6 +24,16 @@ type logContext struct {
 	storageMode string
 }
 
+// logParams holds optional parameters for recorder event logging.
+type logParams struct {
+	filename     string
+	s3Key        string
+	errMsg       string
+	retryCount   int
+	filesDeleted int
+	storageType  string
+}
+
 // GenericRecorder is a recorder that saves audio to files with optional S3 upload.
 type GenericRecorder struct {
 	mu sync.RWMutex // Protects state, config, file paths
@@ -222,7 +232,7 @@ func (r *GenericRecorder) startAsync() {
 	r.mu.Unlock()
 
 	slog.Info("recorder started", "id", r.id, "name", name, "mode", mode)
-	r.logEvent(logCtx, eventlog.RecorderStarted, "", "", 0, 0, "")
+	r.logEvent(logCtx, eventlog.RecorderStarted, nil)
 }
 
 // setError sets the recorder to error state with the given message.
@@ -234,7 +244,7 @@ func (r *GenericRecorder) setError(msg string) {
 	slog.Error("recorder error", "id", r.id, "error", msg)
 
 	// Log to event log (capture context while holding lock)
-	r.logEvent(r.captureLogContextLocked(), eventlog.RecorderError, "", msg, 0, 0, "")
+	r.logEvent(r.captureLogContextLocked(), eventlog.RecorderError, &logParams{errMsg: msg})
 }
 
 // captureLogContextLocked returns a snapshot of config values for logging.
@@ -249,21 +259,25 @@ func (r *GenericRecorder) captureLogContextLocked() logContext {
 
 // logEvent logs a recorder event to the event log.
 // The logContext must be captured under lock before calling this method.
-func (r *GenericRecorder) logEvent(ctx logContext, eventType eventlog.EventType, filename, errMsg string, retryCount, filesDeleted int, storageType string) {
+func (r *GenericRecorder) logEvent(ctx logContext, eventType eventlog.EventType, p *logParams) {
 	if r.eventLogger == nil {
 		return
+	}
+	var params logParams
+	if p != nil {
+		params = *p
 	}
 	if err := r.eventLogger.LogRecorder(
 		eventType,
 		ctx.name,
-		filename,
+		params.filename,
 		ctx.codec,
 		ctx.storageMode,
-		"", // s3Key - set separately for upload events
-		errMsg,
-		retryCount,
-		filesDeleted,
-		storageType,
+		params.s3Key,
+		params.errMsg,
+		params.retryCount,
+		params.filesDeleted,
+		params.storageType,
 	); err != nil {
 		slog.Warn("failed to log recorder event", "type", eventType, "error", err)
 	}
@@ -322,7 +336,7 @@ func (r *GenericRecorder) Stop() error {
 	r.mu.Unlock()
 
 	slog.Info("recorder stopped", "id", r.id, "name", name)
-	r.logEvent(logCtx, eventlog.RecorderStopped, "", "", 0, 0, "")
+	r.logEvent(logCtx, eventlog.RecorderStopped, nil)
 	return nil
 }
 
@@ -451,7 +465,7 @@ func (r *GenericRecorder) startEncoderLocked() error {
 	slog.Info("recorder encoding started", "id", r.id, "file", filepath.Base(r.currentFile), "codec", r.config.Codec)
 
 	// Log new file event (already holding lock)
-	r.logEvent(r.captureLogContextLocked(), eventlog.RecorderFile, filepath.Base(r.currentFile), "", 0, 0, "")
+	r.logEvent(r.captureLogContextLocked(), eventlog.RecorderFile, &logParams{filename: filepath.Base(r.currentFile)})
 	return nil
 }
 

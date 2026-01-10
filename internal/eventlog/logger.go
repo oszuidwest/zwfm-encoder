@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -96,6 +97,7 @@ type Logger struct {
 
 // DefaultLogPath returns the platform-specific log file path.
 func DefaultLogPath(port int) string {
+	portStr := strconv.Itoa(port)
 	switch runtime.GOOS {
 	case "windows":
 		// %PROGRAMDATA% is typically C:\ProgramData
@@ -103,10 +105,10 @@ func DefaultLogPath(port int) string {
 		if programData == "" {
 			programData = `C:\ProgramData`
 		}
-		return filepath.Join(programData, "encoder", "logs", fmt.Sprintf("%d", port), "encoder.jsonl")
+		return filepath.Join(programData, "encoder", "logs", portStr, "encoder.jsonl")
 	default: // linux, darwin
 		//nolint:gocritic // Intentional absolute path for Unix systems
-		return filepath.Join("/var/log/encoder", fmt.Sprintf("%d", port), "encoder.jsonl")
+		return filepath.Join("/var/log/encoder", portStr, "encoder.jsonl")
 	}
 }
 
@@ -146,10 +148,9 @@ func (l *Logger) Log(event *Event) error {
 // LogStream logs a stream event.
 func (l *Logger) LogStream(eventType EventType, streamID, streamName, message, errMsg string, retryCount, maxRetries int) error {
 	return l.Log(&Event{
-		Timestamp: time.Now(),
-		Type:      eventType,
-		StreamID:  streamID,
-		Message:   message,
+		Type:     eventType,
+		StreamID: streamID,
+		Message:  message,
 		Details: &StreamDetails{
 			StreamName: streamName,
 			Error:      errMsg,
@@ -162,8 +163,7 @@ func (l *Logger) LogStream(eventType EventType, streamID, streamName, message, e
 // LogSilenceStart logs a silence start event.
 func (l *Logger) LogSilenceStart(levelL, levelR, threshold float64) error {
 	return l.Log(&Event{
-		Timestamp: time.Now(),
-		Type:      SilenceStart,
+		Type: SilenceStart,
 		Details: &SilenceDetails{
 			LevelLeftDB:  levelL,
 			LevelRightDB: levelR,
@@ -175,8 +175,7 @@ func (l *Logger) LogSilenceStart(levelL, levelR, threshold float64) error {
 // LogSilenceEnd logs a silence end event with optional dump info.
 func (l *Logger) LogSilenceEnd(durationMs int64, levelL, levelR, threshold float64, dumpPath, dumpFilename string, dumpSize int64, dumpError string) error {
 	return l.Log(&Event{
-		Timestamp: time.Now(),
-		Type:      SilenceEnd,
+		Type: SilenceEnd,
 		Details: &SilenceDetails{
 			LevelLeftDB:   levelL,
 			LevelRightDB:  levelR,
@@ -193,9 +192,7 @@ func (l *Logger) LogSilenceEnd(durationMs int64, levelL, levelR, threshold float
 // LogRecorder logs a recorder event.
 func (l *Logger) LogRecorder(eventType EventType, recorderName, filename, codec, storageMode, s3Key, errMsg string, retryCount, filesDeleted int, storageType string) error {
 	return l.Log(&Event{
-		Timestamp: time.Now(),
-		Type:      eventType,
-		Message:   "",
+		Type: eventType,
 		Details: &RecorderDetails{
 			RecorderName: recorderName,
 			Filename:     filename,
@@ -323,17 +320,31 @@ func matchesFilter(t EventType, filter TypeFilter) bool {
 
 // IsStreamEvent returns true if the event type is a stream event.
 func IsStreamEvent(t EventType) bool {
-	return t == StreamStarted || t == StreamStable || t == StreamError || t == StreamRetry || t == StreamStopped
+	switch t {
+	case StreamStarted, StreamStable, StreamError, StreamRetry, StreamStopped:
+		return true
+	default:
+		return false
+	}
 }
 
 // IsSilenceEvent returns true if the event type is a silence event.
 func IsSilenceEvent(t EventType) bool {
-	return t == SilenceStart || t == SilenceEnd
+	switch t {
+	case SilenceStart, SilenceEnd:
+		return true
+	default:
+		return false
+	}
 }
 
 // IsRecorderEvent returns true if the event type is a recorder event.
 func IsRecorderEvent(t EventType) bool {
-	return t == RecorderStarted || t == RecorderStopped || t == RecorderError ||
-		t == RecorderFile || t == UploadQueued || t == UploadCompleted ||
-		t == UploadFailed || t == CleanupCompleted
+	switch t {
+	case RecorderStarted, RecorderStopped, RecorderError, RecorderFile,
+		UploadQueued, UploadCompleted, UploadFailed, CleanupCompleted:
+		return true
+	default:
+		return false
+	}
 }

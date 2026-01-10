@@ -50,37 +50,26 @@ func (r *GenericRecorder) queueForUpload(filePath string) {
 		fileSize:  info.Size(),
 	}:
 		slog.Info("queued file for upload", "id", r.id, "file", filepath.Base(filePath))
-		r.logUploadEvent(eventlog.UploadQueued, filepath.Base(filePath), s3Key, "", 0)
+		r.logUploadEventLocked(eventlog.UploadQueued, filepath.Base(filePath), s3Key, "")
 	default:
 		slog.Warn("upload queue full", "id", r.id)
 	}
 }
 
-// logUploadEvent logs an upload-related event to the event log.
-func (r *GenericRecorder) logUploadEvent(eventType eventlog.EventType, filename, s3Key, errMsg string, retryCount int) {
+// logUploadEventLocked logs an upload-related event, acquiring the lock to capture config.
+func (r *GenericRecorder) logUploadEventLocked(eventType eventlog.EventType, filename, s3Key, errMsg string) {
 	if r.eventLogger == nil {
 		return
 	}
 	r.mu.RLock()
-	recorderName := r.config.Name
-	codec := string(r.config.Codec)
-	storageMode := string(r.config.StorageMode)
+	ctx := r.captureLogContextLocked()
 	r.mu.RUnlock()
 
-	if err := r.eventLogger.LogRecorder(
-		eventType,
-		recorderName,
-		filename,
-		codec,
-		storageMode,
-		s3Key,
-		errMsg,
-		retryCount,
-		0,
-		"",
-	); err != nil {
-		slog.Warn("failed to log upload event", "type", eventType, "error", err)
-	}
+	r.logEvent(ctx, eventType, &logParams{
+		filename: filename,
+		s3Key:    s3Key,
+		errMsg:   errMsg,
+	})
 }
 
 // uploadWorker processes the upload queue.
@@ -152,7 +141,7 @@ func (r *GenericRecorder) uploadFile(req uploadRequest) {
 
 	if err != nil {
 		slog.Error("upload failed", "id", r.id, "s3_key", req.s3Key, "error", err)
-		r.logUploadEvent(eventlog.UploadFailed, filepath.Base(req.localPath), req.s3Key, err.Error(), 0)
+		r.logUploadEventLocked(eventlog.UploadFailed, filepath.Base(req.localPath), req.s3Key, err.Error())
 		return
 	}
 
@@ -161,7 +150,7 @@ func (r *GenericRecorder) uploadFile(req uploadRequest) {
 	r.mu.RUnlock()
 
 	slog.Info("upload completed", "id", r.id, "s3_key", req.s3Key)
-	r.logUploadEvent(eventlog.UploadCompleted, filepath.Base(req.localPath), req.s3Key, "", 0)
+	r.logUploadEventLocked(eventlog.UploadCompleted, filepath.Base(req.localPath), req.s3Key, "")
 
 	// Handle local file based on storage mode
 	if storageMode == types.StorageS3 {

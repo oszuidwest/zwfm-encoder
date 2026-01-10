@@ -71,13 +71,15 @@ func (m *Manager) emitEvent(streamID, event, message, errMsg string, retryCount,
 	getName := m.getStreamName
 	m.mu.RUnlock()
 
-	if cb != nil {
-		name := ""
-		if getName != nil {
-			name = getName(streamID)
-		}
-		cb(streamID, name, event, message, errMsg, retryCount, maxRetries)
+	if cb == nil {
+		return
 	}
+
+	var name string
+	if getName != nil {
+		name = getName(streamID)
+	}
+	cb(streamID, name, event, message, errMsg, retryCount, maxRetries)
 }
 
 // Start launches a stream.

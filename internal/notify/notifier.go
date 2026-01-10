@@ -336,21 +336,22 @@ func (n *SilenceNotifier) logSilenceEndWithDump(cfg config.Snapshot, durationMs 
 		return
 	}
 
-	var dumpPath, dumpFilename, dumpError string
-	var dumpSize int64
-	if dump != nil {
-		if dump.Error != nil {
-			dumpError = dump.Error.Error()
-		} else {
-			dumpPath = dump.FilePath
-			dumpFilename = dump.Filename
-			dumpSize = dump.FileSize
-		}
-	}
+	dumpPath, dumpFilename, dumpSize, dumpError := extractDumpInfo(dump)
 
 	if err := n.eventLogger.LogSilenceEnd(durationMs, levelL, levelR, cfg.SilenceThreshold, dumpPath, dumpFilename, dumpSize, dumpError); err != nil {
 		slog.Warn("failed to log silence end", "error", err)
 	}
+}
+
+// extractDumpInfo extracts path, filename, size, and error string from a dump result.
+func extractDumpInfo(dump *silencedump.EncodeResult) (path, filename string, size int64, errStr string) {
+	if dump == nil {
+		return "", "", 0, ""
+	}
+	if dump.Error != nil {
+		return "", "", 0, dump.Error.Error()
+	}
+	return dump.FilePath, dump.Filename, dump.FileSize, ""
 }
 
 // sendSilenceZabbix sends a silence alert to Zabbix.

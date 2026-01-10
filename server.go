@@ -246,13 +246,15 @@ func (s *Server) SetupRoutes() http.Handler {
 	mux.HandleFunc("DELETE /api/recorders/{id}", auth(s.handleDeleteRecorder))
 	mux.HandleFunc("POST /api/recorders/{id}/{action}", auth(s.handleRecorderAction))
 
-	// Notification routes
+	// Notification test routes
 	mux.HandleFunc("POST /api/notifications/test/webhook", auth(s.handleAPITestWebhook))
 	mux.HandleFunc("POST /api/notifications/test/email", auth(s.handleAPITestEmail))
 	mux.HandleFunc("POST /api/notifications/test/zabbix", auth(s.handleAPITestZabbix))
+
+	// Recording API key management
 	mux.HandleFunc("POST /api/recording/regenerate-key", auth(s.handleAPIRegenerateKey))
 
-	// Events
+	// Event log
 	mux.HandleFunc("GET /api/events", auth(s.handleAPIEvents))
 
 	// Protected routes
