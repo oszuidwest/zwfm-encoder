@@ -340,7 +340,8 @@ func (r *Recorder) Validate() error {
 // EncoderStatus summarizes the encoder's current operational state.
 type EncoderStatus struct {
 	State            EncoderState `json:"state"`                       // Current encoder state
-	Uptime           string       `json:"uptime,omitzero"`             // Time since start
+	Uptime           string       `json:"uptime,omitzero"`             // Time since start (human readable)
+	UptimeSeconds    int64        `json:"uptime_seconds"`              // Time since start in seconds
 	LastError        string       `json:"last_error,omitzero"`         // Most recent error
 	StreamCount      int          `json:"stream_count"`                // Number of streams
 	SourceRetryCount int          `json:"source_retry_count,omitzero"` // Source retry attempts

@@ -209,14 +209,18 @@ func (e *Encoder) Status() types.EncoderStatus {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	uptime := ""
+	var uptime string
+	var uptimeSeconds int64
 	if e.state == types.StateRunning {
-		uptime = time.Since(e.startTime).Truncate(time.Second).String()
+		d := time.Since(e.startTime).Truncate(time.Second)
+		uptime = d.String()
+		uptimeSeconds = int64(d.Seconds())
 	}
 
 	return types.EncoderStatus{
 		State:            e.state,
 		Uptime:           uptime,
+		UptimeSeconds:    uptimeSeconds,
 		LastError:        e.lastError,
 		SourceRetryCount: e.retryCount,
 		SourceMaxRetries: types.MaxRetries,

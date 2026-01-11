@@ -210,6 +210,7 @@ func (s *Server) SetupRoutes() http.Handler {
 	// Public routes (no auth required)
 	mux.HandleFunc("/login", s.handleLogin)
 	mux.HandleFunc("/logout", s.handleLogout)
+	mux.HandleFunc("GET /health", s.handleHealth)
 
 	// Public static assets (needed for login page styling)
 	mux.HandleFunc("/style.css", s.handlePublicStatic)
