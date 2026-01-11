@@ -143,10 +143,15 @@ See [docs/events.md](docs/events.md) for the complete event reference.
 
 `GET /health` provides a public endpoint for monitoring tools (Kubernetes probes, load balancers, Prometheus, etc.).
 
-| Status | HTTP Code | Condition |
-|--------|-----------|-----------|
-| `healthy` | 200 OK | Encoder running AND FFmpeg available |
-| `unhealthy` | 503 Service Unavailable | Encoder stopped OR FFmpeg missing |
+**Healthy (200 OK)** requires both:
+- Encoder state is `running` (audio capture active)
+- FFmpeg binary is available on the system
+
+**Unhealthy (503 Service Unavailable)** when either:
+- Encoder state is `stopped`, `starting`, or `stopping`
+- FFmpeg binary is not found
+
+Note: Stream connection failures, silence detection, and recorder errors do **not** affect health status. These are reported in the response body for informational purposes only.
 
 Response example:
 
