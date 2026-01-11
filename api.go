@@ -633,27 +633,20 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	streamStatuses := s.encoder.AllStreamStatuses(cfg.Streams)
 	recorderStatuses := s.encoder.AllRecorderStatuses()
 
-	// Count stable streams
-	streamsStable := 0
-	for _, status := range streamStatuses {
-		if status.Stable {
-			streamsStable++
-		}
-	}
+	streamsStable := countStableStreams(streamStatuses)
+	recordersRunning := countRunningRecorders(recorderStatuses)
 
-	// Count running recorders
-	recordersRunning := 0
-	for _, status := range recorderStatuses {
-		if status.State == types.ProcessRunning {
-			recordersRunning++
-		}
-	}
-
-	// Determine health: encoder running AND FFmpeg available
 	isHealthy := s.ffmpegAvailable && encoderStatus.State == types.StateRunning
 
-	resp := HealthResponse{
-		Status:           "healthy",
+	status := "healthy"
+	httpStatus := http.StatusOK
+	if !isHealthy {
+		status = "unhealthy"
+		httpStatus = http.StatusServiceUnavailable
+	}
+
+	s.writeJSON(w, httpStatus, HealthResponse{
+		Status:           status,
 		EncoderState:     string(encoderStatus.State),
 		StreamCount:      len(cfg.Streams),
 		StreamsStable:    streamsStable,
@@ -661,15 +654,27 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		RecordersRunning: recordersRunning,
 		UptimeSeconds:    encoderStatus.UptimeSeconds,
 		SilenceDetected:  s.encoder.AudioLevels().SilenceLevel == audio.SilenceLevelActive,
-	}
+	})
+}
 
-	httpStatus := http.StatusOK
-	if !isHealthy {
-		resp.Status = "unhealthy"
-		httpStatus = http.StatusServiceUnavailable
+func countStableStreams(statuses map[string]types.ProcessStatus) int {
+	count := 0
+	for _, status := range statuses {
+		if status.Stable {
+			count++
+		}
 	}
+	return count
+}
 
-	s.writeJSON(w, httpStatus, resp)
+func countRunningRecorders(statuses map[string]types.ProcessStatus) int {
+	count := 0
+	for _, status := range statuses {
+		if status.State == types.ProcessRunning {
+			count++
+		}
+	}
+	return count
 }
 
 // handleAPIEvents returns events from the event log.
