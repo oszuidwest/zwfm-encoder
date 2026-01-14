@@ -42,6 +42,8 @@ const (
 	UploadQueued     EventType = "upload_queued"
 	UploadCompleted  EventType = "upload_completed"
 	UploadFailed     EventType = "upload_failed"
+	UploadRetry      EventType = "upload_retry"
+	UploadAbandoned  EventType = "upload_abandoned"
 	CleanupCompleted EventType = "cleanup_completed"
 )
 
@@ -353,7 +355,8 @@ func IsSilenceEvent(t EventType) bool {
 func IsRecorderEvent(t EventType) bool {
 	switch t {
 	case RecorderStarted, RecorderStopped, RecorderError, RecorderFile,
-		UploadQueued, UploadCompleted, UploadFailed, CleanupCompleted:
+		UploadQueued, UploadCompleted, UploadFailed, UploadRetry, UploadAbandoned,
+		CleanupCompleted:
 		return true
 	default:
 		return false

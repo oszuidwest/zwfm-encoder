@@ -47,6 +47,9 @@ type GenericRecorder struct {
 	uploadStopCh chan struct{}
 	stopOnce     sync.Once // Prevents double-close of uploadStopCh
 
+	// Retry queue for failed uploads (protected by mu)
+	retryQueue []pendingUpload
+
 	// Rotation timer (hourly mode)
 	rotationTimer *time.Timer
 
@@ -281,6 +284,12 @@ func (r *GenericRecorder) Stop() error {
 	r.uploadQueue = make(chan uploadRequest, 100) // Reset for next start
 	r.stopOnce = sync.Once{}                      // Reset Once for next start
 
+	// Clear retry queue on shutdown (files remain in temp dir)
+	if len(r.retryQueue) > 0 {
+		slog.Info("clearing retry queue on stop", "id", r.id, "pending", len(r.retryQueue))
+	}
+	r.retryQueue = nil
+
 	// Capture log params while holding lock
 	logParams := r.captureLogParamsLocked()
 	name := r.config.Name
@@ -495,6 +504,9 @@ func (r *GenericRecorder) rotateFile() {
 
 	// Stop current encoder and upload
 	r.stopEncoderAndUpload()
+
+	// Process retry queue at hour boundary
+	r.processRetryQueue()
 
 	r.mu.Lock()
 	// Re-check state after reacquiring lock - Stop() may have been called

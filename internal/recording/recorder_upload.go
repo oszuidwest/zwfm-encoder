@@ -21,6 +21,17 @@ type uploadRequest struct {
 	fileSize  int64
 }
 
+// pendingUpload tracks a failed upload for retry.
+type pendingUpload struct {
+	request      uploadRequest
+	firstAttempt time.Time
+	retryCount   int
+	lastError    string
+}
+
+// MaxUploadRetryAge is the maximum age for retrying uploads.
+const MaxUploadRetryAge = 24 * time.Hour
+
 func (r *GenericRecorder) queueForUpload(filePath string) {
 	info, err := os.Stat(filePath)
 	if err != nil {
@@ -139,6 +150,7 @@ func (r *GenericRecorder) uploadFile(req uploadRequest) {
 	if err != nil {
 		slog.Error("upload failed", "id", r.id, "s3_key", req.s3Key, "error", err)
 		r.logUploadEventLocked(eventlog.UploadFailed, filepath.Base(req.localPath), req.s3Key, err.Error())
+		r.addToRetryQueue(req, err.Error())
 		return
 	}
 
@@ -159,4 +171,154 @@ func (r *GenericRecorder) uploadFile(req uploadRequest) {
 		}
 	}
 	// For "both" mode: file stays in LocalPath until retention cleanup
+}
+
+// addToRetryQueue adds a failed upload to the retry queue.
+func (r *GenericRecorder) addToRetryQueue(req uploadRequest, errMsg string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Prevent duplicates
+	for _, p := range r.retryQueue {
+		if p.request.localPath == req.localPath {
+			return
+		}
+	}
+
+	r.retryQueue = append(r.retryQueue, pendingUpload{
+		request:      req,
+		firstAttempt: time.Now(),
+		retryCount:   0,
+		lastError:    errMsg,
+	})
+
+	slog.Info("upload queued for retry", "id", r.id, "file", filepath.Base(req.localPath))
+}
+
+// processRetryQueue attempts to upload all pending files.
+// Called from rotateFile() at hour boundaries.
+func (r *GenericRecorder) processRetryQueue() {
+	r.mu.Lock()
+	if len(r.retryQueue) == 0 {
+		r.mu.Unlock()
+		return
+	}
+
+	// Copy and clear queue
+	pending := make([]pendingUpload, len(r.retryQueue))
+	copy(pending, r.retryQueue)
+	r.retryQueue = nil
+	r.mu.Unlock()
+
+	now := time.Now()
+
+	for i := range pending {
+		p := &pending[i]
+
+		// Check 24-hour limit
+		if now.Sub(p.firstAttempt) > MaxUploadRetryAge {
+			slog.Warn("upload abandoned after 24h",
+				"id", r.id,
+				"file", filepath.Base(p.request.localPath),
+				"attempts", p.retryCount+1)
+			r.logRetryEvent(eventlog.UploadAbandoned, p, "exceeded 24h retry limit")
+			continue
+		}
+
+		// Attempt retry
+		p.retryCount++
+		slog.Info("retrying upload",
+			"id", r.id,
+			"file", filepath.Base(p.request.localPath),
+			"attempt", p.retryCount)
+		r.logRetryEvent(eventlog.UploadRetry, p, "")
+
+		if !r.retryUpload(p) {
+			// Failed - re-add to queue
+			r.mu.Lock()
+			r.retryQueue = append(r.retryQueue, *p)
+			r.mu.Unlock()
+		}
+	}
+}
+
+// retryUpload performs the upload and returns true on success.
+func (r *GenericRecorder) retryUpload(p *pendingUpload) bool {
+	ctx, cancel := context.WithTimeoutCause(
+		context.Background(),
+		5*time.Minute,
+		errors.New("s3 upload timeout"),
+	)
+	defer cancel()
+
+	file, err := os.Open(p.request.localPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			slog.Warn("retry file no longer exists", "id", r.id, "path", p.request.localPath)
+			return true // Nothing to upload
+		}
+		p.lastError = err.Error()
+		return false
+	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			slog.Warn("failed to close file after retry", "id", r.id, "error", err)
+		}
+	}()
+
+	client, err := r.getOrCreateS3Client()
+	if err != nil || client == nil {
+		if err != nil {
+			p.lastError = err.Error()
+		}
+		return false
+	}
+
+	r.mu.RLock()
+	bucket := r.config.S3Bucket
+	storageMode := r.config.StorageMode
+	r.mu.RUnlock()
+
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(bucket),
+		Key:           aws.String(p.request.s3Key),
+		Body:          file,
+		ContentLength: aws.Int64(p.request.fileSize),
+		ContentType:   aws.String(r.getContentType()),
+	})
+
+	if err != nil {
+		p.lastError = err.Error()
+		slog.Error("retry upload failed", "id", r.id, "s3_key", p.request.s3Key, "error", err)
+		r.logUploadEventLocked(eventlog.UploadFailed, filepath.Base(p.request.localPath), p.request.s3Key, err.Error())
+		return false
+	}
+
+	slog.Info("retry upload completed", "id", r.id, "s3_key", p.request.s3Key)
+	r.logUploadEventLocked(eventlog.UploadCompleted, filepath.Base(p.request.localPath), p.request.s3Key, "")
+
+	// Delete temp file if S3-only mode
+	if storageMode == types.StorageS3 {
+		if err := os.Remove(p.request.localPath); err != nil {
+			slog.Warn("failed to delete temp file after retry upload", "id", r.id, "path", p.request.localPath, "error", err)
+		}
+	}
+
+	return true
+}
+
+// logRetryEvent logs retry-related events with attempt count.
+func (r *GenericRecorder) logRetryEvent(eventType eventlog.EventType, p *pendingUpload, errMsg string) {
+	if r.eventLogger == nil {
+		return
+	}
+	r.mu.RLock()
+	params := r.captureLogParamsLocked()
+	r.mu.RUnlock()
+
+	params.Filename = filepath.Base(p.request.localPath)
+	params.S3Key = p.request.s3Key
+	params.RetryCount = p.retryCount
+	params.Error = errMsg
+	r.logEvent(eventType, params)
 }
