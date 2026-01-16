@@ -454,7 +454,7 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
 
 - **Severity:** `error`
 - **UI Label:** Abandoned
-- **Triggered:** When an upload is abandoned after exceeding the 24-hour retry limit. The local file remains on disk but will no longer be retried.
+- **Triggered:** When an upload is abandoned after exceeding the 24-hour retry limit. The `error` field contains the last upload error encountered. The local file remains on disk but will no longer be retried.
 
 ```json
 {
@@ -466,7 +466,7 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
     "codec": "mp3",
     "storage_mode": "s3",
     "s3_key": "recordings/Archive/Archive-2024-01-15-14-00.mp3",
-    "error": "exceeded 24h retry limit",
+    "error": "RequestTimeout: request timed out",
     "retry": 24
   }
 }

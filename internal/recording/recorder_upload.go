@@ -224,8 +224,9 @@ func (r *GenericRecorder) processRetryQueue() {
 			slog.Warn("upload abandoned after 24h",
 				"id", r.id,
 				"file", filepath.Base(p.request.localPath),
-				"attempts", p.retryCount+1)
-			r.logUploadEvent(eventlog.UploadAbandoned, filepath.Base(p.request.localPath), p.request.s3Key, "exceeded 24h retry limit", p.retryCount)
+				"attempts", p.retryCount+1,
+				"last_error", p.lastError)
+			r.logUploadEvent(eventlog.UploadAbandoned, filepath.Base(p.request.localPath), p.request.s3Key, p.lastError, p.retryCount)
 			continue
 		}
 
