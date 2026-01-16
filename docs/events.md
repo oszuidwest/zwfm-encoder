@@ -271,7 +271,7 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
 | `storage_mode` | string | Storage mode: `local`, `s3`, `both` |
 | `s3_key` | string | S3 object key (for upload events) |
 | `error` | string | Error message (if applicable) |
-| `retry` | int | Retry attempt number |
+| `retry` | int | Retry attempt number (upload events only) |
 | `files_deleted` | int | Number of files deleted (cleanup only) |
 | `storage_type` | string | Storage cleaned: `local` or `s3` |
 
@@ -407,7 +407,7 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
 
 - **Severity:** `error`
 - **UI Label:** Upload Failed
-- **Triggered:** When an S3 upload fails.
+- **Triggered:** When an S3 upload fails. The file is added to a retry queue for later attempts.
 
 ```json
 {
@@ -419,7 +419,55 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
     "codec": "mp3",
     "storage_mode": "s3",
     "s3_key": "recordings/Archive/Archive-2024-01-15-14-00.mp3",
-    "error": "AccessDenied: Access Denied"
+    "error": "AccessDenied: Access Denied",
+    "retry": 0
+  }
+}
+```
+
+---
+
+### `upload_retry`
+
+- **Severity:** `warning`
+- **UI Label:** Retry
+- **Triggered:** When a failed upload is being retried. Retries occur at hour boundaries (during file rotation). Files are retried for up to 24 hours.
+
+```json
+{
+  "ts": "2024-01-15T16:00:00.000Z",
+  "type": "upload_retry",
+  "details": {
+    "recorder_name": "Archive",
+    "filename": "Archive-2024-01-15-14-00.mp3",
+    "codec": "mp3",
+    "storage_mode": "s3",
+    "s3_key": "recordings/Archive/Archive-2024-01-15-14-00.mp3",
+    "retry": 1
+  }
+}
+```
+
+---
+
+### `upload_abandoned`
+
+- **Severity:** `error`
+- **UI Label:** Abandoned
+- **Triggered:** When an upload is abandoned after exceeding the 24-hour retry limit. The local file remains on disk but will no longer be retried.
+
+```json
+{
+  "ts": "2024-01-16T15:00:00.000Z",
+  "type": "upload_abandoned",
+  "details": {
+    "recorder_name": "Archive",
+    "filename": "Archive-2024-01-15-14-00.mp3",
+    "codec": "mp3",
+    "storage_mode": "s3",
+    "s3_key": "recordings/Archive/Archive-2024-01-15-14-00.mp3",
+    "error": "exceeded 24h retry limit",
+    "retry": 24
   }
 }
 ```
@@ -489,4 +537,6 @@ GET /api/events?limit=50&offset=0&type=stream
 | `upload_queued` | Recorder | info | Upload Queued | File queued for S3 upload |
 | `upload_completed` | Recorder | success | Uploaded | S3 upload successful |
 | `upload_failed` | Recorder | error | Upload Failed | S3 upload failed |
+| `upload_retry` | Recorder | warning | Retry | Failed upload being retried |
+| `upload_abandoned` | Recorder | error | Abandoned | Upload abandoned after 24h |
 | `cleanup_completed` | Recorder | success | Cleanup | Retention cleanup completed |

@@ -1384,8 +1384,9 @@ document.addEventListener('alpine:init', () => {
             if (type === 'stream_stable') return 'success';
             if (type === 'silence_start') return 'warning';
             if (type === 'silence_end') return 'success';
-            if (type === 'recorder_error' || type === 'upload_failed') return 'error';
+            if (type === 'recorder_error' || type === 'upload_failed' || type === 'upload_abandoned') return 'error';
             if (type === 'upload_completed' || type === 'cleanup_completed') return 'success';
+            if (type === 'upload_retry') return 'warning';
             return 'info';
         },
 
@@ -1410,6 +1411,8 @@ document.addEventListener('alpine:init', () => {
                 'upload_queued': 'Upload Queued',
                 'upload_completed': 'Uploaded',
                 'upload_failed': 'Upload Failed',
+                'upload_retry': 'Retry',
+                'upload_abandoned': 'Abandoned',
                 'cleanup_completed': 'Cleanup'
             };
             return labels[type] || type;
