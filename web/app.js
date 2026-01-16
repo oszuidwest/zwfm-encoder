@@ -1339,15 +1339,14 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
-         * Formats an event timestamp for display.
+         * Formats an event timestamp as short time (HH:MM).
          * @param {string} ts - ISO timestamp
          * @returns {string} Formatted time string
          */
         formatEventTime(ts) {
             if (!ts) return '';
             const date = new Date(ts);
-            return date.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-                + ' ' + date.toLocaleDateString('nl-NL', { day: '2-digit', month: '2-digit' });
+            return date.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
         },
 
         /**
@@ -1492,13 +1491,28 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
-         * Gets inline style for stream badge.
+         * Gets the event category for styling.
          * @param {Object} event - Event object
-         * @returns {string} CSS style string
+         * @returns {string} Category: 'stream', 'silence', 'recorder', or 'system'
          */
-        getStreamBadgeStyle() {
-            // All badges get neutral gray style
-            return 'background: var(--neutral-200); color: var(--neutral-600);';
+        getEventCategory(event) {
+            if (event.type?.startsWith('silence_')) return 'silence';
+            if (event.type?.startsWith('recorder_') || event.type?.startsWith('upload_')) return 'recorder';
+            if (event.type?.startsWith('stream_')) return 'stream';
+            return 'system';
+        },
+
+        /**
+         * Gets the short badge letter for event category.
+         * @param {Object} event - Event object
+         * @returns {string} Single letter: 'S', 'A', 'R', or '•'
+         */
+        getEventCategoryBadge(event) {
+            const category = this.getEventCategory(event);
+            if (category === 'stream') return 'S';
+            if (category === 'silence') return 'A';
+            if (category === 'recorder') return 'R';
+            return '•';
         },
 
         /**

@@ -526,9 +526,9 @@
                         <div class="event-toolbar">
                             <div class="event-filter-pills">
                                 <button type="button" class="filter-pill" :class="{ active: eventFilter === '' }" @click="eventFilter = ''; loadEvents(true)">All</button>
-                                <button type="button" class="filter-pill" :class="{ active: eventFilter === 'stream' }" @click="eventFilter = 'stream'; loadEvents(true)">Streams</button>
-                                <button type="button" class="filter-pill" :class="{ active: eventFilter === 'silence' }" @click="eventFilter = 'silence'; loadEvents(true)">Silence</button>
-                                <button type="button" class="filter-pill" :class="{ active: eventFilter === 'recorder' }" @click="eventFilter = 'recorder'; loadEvents(true)">Recorders</button>
+                                <button type="button" class="filter-pill" :class="{ active: eventFilter === 'stream' }" @click="eventFilter = 'stream'; loadEvents(true)"><span class="filter-dot stream"></span>Streams</button>
+                                <button type="button" class="filter-pill" :class="{ active: eventFilter === 'silence' }" @click="eventFilter = 'silence'; loadEvents(true)"><span class="filter-dot silence"></span>Audio</button>
+                                <button type="button" class="filter-pill" :class="{ active: eventFilter === 'recorder' }" @click="eventFilter = 'recorder'; loadEvents(true)"><span class="filter-dot recorder"></span>Recorders</button>
                             </div>
                             <span class="event-count" x-show="events.length > 0" x-text="events.length + ' events'"></span>
                         </div>
@@ -536,13 +536,21 @@
                     <div class="section section--flush">
                         <div class="event-list" x-show="events.length > 0">
                             <template x-for="(event, index) in events" :key="index">
-                                <article class="event-item" :data-severity="getEventSeverity(event.type)">
-                                    <div class="event-header">
-                                        <span class="event-stream-badge" :style="getStreamBadgeStyle(event)" x-text="getStreamBadgeText(event)"></span>
-                                        <span class="event-label" x-text="getEventLabel(event.type)"></span>
-                                        <time class="event-time" :datetime="event.ts" :title="new Date(event.ts).toLocaleString('nl-NL')" x-text="formatRelativeTime(event.ts)"></time>
+                                <article class="event-row" :data-severity="getEventSeverity(event.type)">
+                                    <div class="event-time-col">
+                                        <time class="event-time" :datetime="event.ts" :title="new Date(event.ts).toLocaleString('nl-NL')" x-text="formatEventTime(event.ts)"></time>
                                     </div>
-                                    <p class="event-detail" x-show="getEventDetail(event)" x-text="getEventDetail(event)"></p>
+                                    <div class="event-category-col">
+                                        <span class="category-badge" :class="getEventCategory(event)" x-text="getEventCategoryBadge(event)"></span>
+                                    </div>
+                                    <div class="event-content-col">
+                                        <div class="event-main">
+                                            <span class="severity-dot" :class="getEventSeverity(event.type)"></span>
+                                            <span class="event-source" x-text="getStreamBadgeText(event)"></span>
+                                            <span class="event-action" x-text="getEventLabel(event.type)"></span>
+                                        </div>
+                                        <p class="event-detail" x-show="getEventDetail(event)" x-text="getEventDetail(event)"></p>
+                                    </div>
                                 </article>
                             </template>
                         </div>
