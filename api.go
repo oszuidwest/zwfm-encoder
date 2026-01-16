@@ -705,8 +705,8 @@ func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Query().Get("type") {
 	case "stream":
 		filter = eventlog.FilterStream
-	case "silence":
-		filter = eventlog.FilterSilence
+	case "audio":
+		filter = eventlog.FilterAudio
 	case "recorder":
 		filter = eventlog.FilterRecorder
 	default:

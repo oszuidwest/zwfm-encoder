@@ -1493,10 +1493,10 @@ document.addEventListener('alpine:init', () => {
         /**
          * Gets the event category for styling.
          * @param {Object} event - Event object
-         * @returns {string} Category: 'stream', 'silence', 'recorder', or 'system'
+         * @returns {string} Category: 'stream', 'audio', 'recorder', or 'system'
          */
         getEventCategory(event) {
-            if (event.type?.startsWith('silence_')) return 'silence';
+            if (event.type?.startsWith('silence_')) return 'audio';
             if (event.type?.startsWith('recorder_') || event.type?.startsWith('upload_')) return 'recorder';
             if (event.type?.startsWith('stream_')) return 'stream';
             return 'system';
@@ -1510,7 +1510,7 @@ document.addEventListener('alpine:init', () => {
         getEventCategoryBadge(event) {
             const category = this.getEventCategory(event);
             if (category === 'stream') return 'S';
-            if (category === 'silence') return 'A';
+            if (category === 'audio') return 'A';
             if (category === 'recorder') return 'R';
             return '•';
         },

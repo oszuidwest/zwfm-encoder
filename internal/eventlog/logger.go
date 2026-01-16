@@ -245,7 +245,7 @@ type TypeFilter string
 const (
 	FilterAll      TypeFilter = ""
 	FilterStream   TypeFilter = "stream"
-	FilterSilence  TypeFilter = "silence"
+	FilterAudio    TypeFilter = "audio"
 	FilterRecorder TypeFilter = "recorder"
 )
 
@@ -322,7 +322,7 @@ func matchesFilter(t EventType, filter TypeFilter) bool {
 		return true
 	case FilterStream:
 		return IsStreamEvent(t)
-	case FilterSilence:
+	case FilterAudio:
 		return IsSilenceEvent(t)
 	case FilterRecorder:
 		return IsRecorderEvent(t)

@@ -527,7 +527,7 @@
                             <div class="event-filter-pills">
                                 <button type="button" class="filter-pill" :class="{ active: eventFilter === '' }" @click="eventFilter = ''; loadEvents(true)">All</button>
                                 <button type="button" class="filter-pill" :class="{ active: eventFilter === 'stream' }" @click="eventFilter = 'stream'; loadEvents(true)"><span class="filter-dot stream"></span>Streams</button>
-                                <button type="button" class="filter-pill" :class="{ active: eventFilter === 'silence' }" @click="eventFilter = 'silence'; loadEvents(true)"><span class="filter-dot silence"></span>Audio</button>
+                                <button type="button" class="filter-pill" :class="{ active: eventFilter === 'audio' }" @click="eventFilter = 'audio'; loadEvents(true)"><span class="filter-dot audio"></span>Audio</button>
                                 <button type="button" class="filter-pill" :class="{ active: eventFilter === 'recorder' }" @click="eventFilter = 'recorder'; loadEvents(true)"><span class="filter-dot recorder"></span>Recorders</button>
                             </div>
                             <span class="event-count" x-show="events.length > 0" x-text="events.length + ' events'"></span>

@@ -167,9 +167,9 @@ Stream events track the lifecycle and health of audio output streams.
 
 ---
 
-## Silence Events
+## Audio Events
 
-Silence events track periods when audio levels drop below the configured threshold.
+Audio events track periods when audio levels drop below the configured threshold.
 
 ### Details Structure
 
@@ -506,7 +506,7 @@ GET /api/events?limit=50&offset=0&type=stream
 |-----------|------|-------------|
 | `limit` | int | Maximum events to return (default: 50, max: 500) |
 | `offset` | int | Number of events to skip for pagination |
-| `type` | string | Filter: `stream`, `silence`, `recorder`, or omit for all |
+| `type` | string | Filter: `stream`, `audio`, `recorder`, or omit for all |
 
 ### Response
 
@@ -528,8 +528,8 @@ GET /api/events?limit=50&offset=0&type=stream
 | `stream_error` | Stream | error | Error | Stream encounters error |
 | `stream_retry` | Stream | warning | Retry | Stream retrying after failure |
 | `stream_stopped` | Stream | info | Stopped | Stream intentionally stopped |
-| `silence_start` | Silence | warning | Silence | Audio below threshold |
-| `silence_end` | Silence | success | Recovered | Audio returns above threshold |
+| `silence_start` | Audio | warning | Silence | Audio below threshold |
+| `silence_end` | Audio | success | Recovered | Audio returns above threshold |
 | `recorder_started` | Recorder | info | Started | Recorder begins recording |
 | `recorder_stopped` | Recorder | info | Stopped | Recorder stops recording |
 | `recorder_error` | Recorder | error | Error | Recorder encounters error |

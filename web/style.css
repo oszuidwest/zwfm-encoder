@@ -1963,7 +1963,7 @@
         background: var(--category-stream);
     }
 
-    .filter-dot.silence {
+    .filter-dot.audio {
         background: var(--category-audio);
     }
 
@@ -2071,7 +2071,7 @@
         color: var(--category-stream);
     }
 
-    .category-badge.silence {
+    .category-badge.audio {
         background: color-mix(in srgb, var(--category-audio) 15%, transparent);
         color: var(--category-audio);
     }
