@@ -1339,14 +1339,14 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
-         * Formats an event timestamp as short time (HH:MM).
+         * Formats an event timestamp as short time (HH:MM:SS).
          * @param {string} ts - ISO timestamp
          * @returns {string} Formatted time string
          */
         formatEventTime(ts) {
             if (!ts) return '';
             const date = new Date(ts);
-            return date.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
+            return date.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         },
 
         /**

@@ -42,6 +42,11 @@
         --danger-hover: #dc2626;
         --stopped: var(--neutral-400);
 
+        /* Event category colors (distinct from severity) */
+        --category-stream: #f472b6;
+        --category-audio: #22d3ee;
+        --category-recorder: #fb923c;
+
         /* State backgrounds */
         --success-bg: rgb(34 197 94 / 10%);
         --warning-bg: rgb(251 191 36 / 25%);
@@ -1955,15 +1960,15 @@
     }
 
     .filter-dot.stream {
-        background: #f472b6;
+        background: var(--category-stream);
     }
 
     .filter-dot.silence {
-        background: #22d3ee;
+        background: var(--category-audio);
     }
 
     .filter-dot.recorder {
-        background: #fb923c;
+        background: var(--category-recorder);
     }
 
     .event-count {
@@ -1988,7 +1993,7 @@
     }
 
     .event-time-col {
-        width: 3rem;
+        width: 4.5rem;
         padding: var(--space-3) var(--space-2) var(--space-3) var(--space-3);
         border-right: 1px solid var(--border-default);
         text-align: right;
@@ -2062,18 +2067,18 @@
     }
 
     .category-badge.stream {
-        background: rgba(244, 114, 182, 0.15);
-        color: #f472b6;
+        background: color-mix(in srgb, var(--category-stream) 15%, transparent);
+        color: var(--category-stream);
     }
 
     .category-badge.silence {
-        background: rgba(34, 211, 238, 0.15);
-        color: #22d3ee;
+        background: color-mix(in srgb, var(--category-audio) 15%, transparent);
+        color: var(--category-audio);
     }
 
     .category-badge.recorder {
-        background: rgba(251, 146, 60, 0.15);
-        color: #fb923c;
+        background: color-mix(in srgb, var(--category-recorder) 15%, transparent);
+        color: var(--category-recorder);
     }
 
     .category-badge.system {
