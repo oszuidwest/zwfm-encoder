@@ -195,8 +195,8 @@ func (s *Server) buildWSRuntime() types.WSRuntimeStatus {
 		Type:              "status",
 		FFmpegAvailable:   s.ffmpegAvailable,
 		Encoder:           status,
-		StreamStatus:      s.encoder.AllStreamStatuses(cfg.Streams),
-		RecorderStatuses:  s.encoder.AllRecorderStatuses(),
+		StreamStatus:      s.encoder.StreamStatuses(cfg.Streams),
+		RecorderStatuses:  s.encoder.RecorderStatuses(),
 		GraphSecretExpiry: s.encoder.GraphSecretExpiry(),
 		Version:           s.version.Info(),
 	}
@@ -410,7 +410,7 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 // apiKeyAuth wraps a handler with API key authentication.
 func (s *Server) apiKeyAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		apiKey := s.config.GetRecordingAPIKey()
+		apiKey := s.config.RecordingAPIKey()
 		if apiKey == "" {
 			http.Error(w, "API key not configured", http.StatusServiceUnavailable)
 			return

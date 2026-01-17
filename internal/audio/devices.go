@@ -7,10 +7,10 @@ import (
 	"strings"
 )
 
-// ListDevices returns available audio input devices for the current platform.
-func ListDevices() []Device {
+// Devices returns available audio input devices for the current platform.
+func Devices() []Device {
 	cfg := getPlatformConfig()
-	return cfg.ListDevices()
+	return cfg.Devices()
 }
 
 // DeviceListConfig defines how to list audio devices for a platform.

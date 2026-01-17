@@ -221,7 +221,7 @@ func (m *Manager) WriteAudio(pcm []byte) error {
 	return nil
 }
 
-func (m *Manager) AllStatuses() map[string]types.ProcessStatus {
+func (m *Manager) Statuses() map[string]types.ProcessStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 

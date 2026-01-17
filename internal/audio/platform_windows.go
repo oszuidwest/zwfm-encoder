@@ -20,7 +20,7 @@ func buildWindowsArgs(device string) []string {
 	return buildFFmpegCaptureArgs("dshow", device)
 }
 
-func (cfg *CaptureConfig) ListDevices() []Device {
+func (cfg *CaptureConfig) Devices() []Device {
 	return parseDeviceList(DeviceListConfig{
 		Command: []string{"ffmpeg", "-hide_banner", "-f", "dshow", "-list_devices", "true", "-i", "dummy"},
 		// No section markers - FFmpeg versions vary in output format.

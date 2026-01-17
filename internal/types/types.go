@@ -155,17 +155,17 @@ var CodecPresets = map[Codec]CodecPreset{
 	CodecWAV: {[]string{"pcm_s16le"}, "matroska"},
 }
 
-// CodecArgsFor returns the encoder arguments for the given codec.
-func CodecArgsFor(codec Codec) []string {
-	if preset, ok := CodecPresets[codec]; ok {
+// Args returns the encoder arguments for this codec.
+func (c Codec) Args() []string {
+	if preset, ok := CodecPresets[c]; ok {
 		return preset.Args
 	}
 	return CodecPresets[CodecWAV].Args
 }
 
-// FormatFor returns the output format for the given codec.
-func FormatFor(codec Codec) string {
-	if preset, ok := CodecPresets[codec]; ok {
+// Format returns the output format for this codec.
+func (c Codec) Format() string {
+	if preset, ok := CodecPresets[c]; ok {
 		return preset.Format
 	}
 	return CodecPresets[CodecWAV].Format
@@ -173,12 +173,12 @@ func FormatFor(codec Codec) string {
 
 // CodecArgs returns the encoder arguments for this stream's codec.
 func (s *Stream) CodecArgs() []string {
-	return CodecArgsFor(s.Codec)
+	return s.Codec.Args()
 }
 
 // Format returns the output format for this stream's codec.
 func (s *Stream) Format() string {
-	return FormatFor(s.Codec)
+	return s.Codec.Format()
 }
 
 // Validate reports an error if the stream configuration is invalid.
@@ -299,12 +299,12 @@ func (r *Recorder) IsEnabled() bool {
 
 // CodecArgs returns the encoder arguments for this recorder's codec.
 func (r *Recorder) CodecArgs() []string {
-	return CodecArgsFor(r.Codec)
+	return r.Codec.Args()
 }
 
 // Format returns the output format for this recorder's codec.
 func (r *Recorder) Format() string {
-	return FormatFor(r.Codec)
+	return r.Codec.Format()
 }
 
 // Validate reports an error if the recorder configuration is invalid.

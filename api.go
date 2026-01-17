@@ -64,7 +64,7 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 	resp := types.APIConfigResponse{
 		// Audio
 		AudioInput: cfg.AudioInput,
-		Devices:    audio.ListDevices(),
+		Devices:    audio.Devices(),
 		Platform:   runtime.GOOS,
 
 		// Silence detection
@@ -106,7 +106,7 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 // handleAPIDevices returns available audio devices.
 func (s *Server) handleAPIDevices(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"devices": audio.ListDevices(),
+		"devices": audio.Devices(),
 	})
 }
 
@@ -525,7 +525,7 @@ func (s *Server) handleAPITestWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := notify.SendTestWebhook(webhookURL, cfg.StationName); err != nil {
+	if err := notify.SendWebhookTest(webhookURL, cfg.StationName); err != nil {
 		s.writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -586,7 +586,7 @@ func (s *Server) handleAPITestZabbix(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := notify.SendTestZabbix(server, port, host, key); err != nil {
+	if err := notify.SendZabbixTest(server, port, host, key); err != nil {
 		s.writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -630,8 +630,8 @@ type HealthResponse struct {
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
 	encoderStatus := s.encoder.Status()
-	streamStatuses := s.encoder.AllStreamStatuses(cfg.Streams)
-	recorderStatuses := s.encoder.AllRecorderStatuses()
+	streamStatuses := s.encoder.StreamStatuses(cfg.Streams)
+	recorderStatuses := s.encoder.RecorderStatuses()
 
 	streamsStable := countStableStreams(streamStatuses)
 	recordersRunning := countRunningRecorders(recorderStatuses)

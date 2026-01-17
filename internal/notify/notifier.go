@@ -183,7 +183,7 @@ func (n *SilenceNotifier) Reset() {
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) sendSilenceWebhook(cfg config.Snapshot, levelL, levelR float64) {
 	logNotifyResult(
-		func() error { return SendSilenceWebhook(cfg.WebhookURL, levelL, levelR, cfg.SilenceThreshold) },
+		func() error { return SendWebhookSilence(cfg.WebhookURL, levelL, levelR, cfg.SilenceThreshold) },
 		"Silence webhook",
 	)
 }
@@ -328,7 +328,7 @@ func extractDumpInfo(dump *silencedump.EncodeResult) (path, filename string, siz
 func (n *SilenceNotifier) sendSilenceZabbix(cfg config.Snapshot, levelL, levelR float64) {
 	logNotifyResult(
 		func() error {
-			return SendSilenceZabbix(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixKey, levelL, levelR, cfg.SilenceThreshold)
+			return SendZabbixSilence(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixKey, levelL, levelR, cfg.SilenceThreshold)
 		},
 		"Silence zabbix",
 	)
@@ -338,7 +338,7 @@ func (n *SilenceNotifier) sendSilenceZabbix(cfg config.Snapshot, levelL, levelR 
 func (n *SilenceNotifier) sendRecoveryZabbix(cfg config.Snapshot, durationMs int64, levelL, levelR float64) {
 	logNotifyResult(
 		func() error {
-			return SendRecoveryZabbix(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixKey, durationMs, levelL, levelR, cfg.SilenceThreshold)
+			return SendZabbixRecovery(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixKey, durationMs, levelL, levelR, cfg.SilenceThreshold)
 		},
 		"Recovery zabbix",
 	)

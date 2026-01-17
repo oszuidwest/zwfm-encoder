@@ -39,7 +39,7 @@ func BuildCaptureCommand(device, ffmpegPath string) (cmd string, args []string, 
 
 	// Auto-detect if still empty (Windows has no safe default).
 	if device == "" {
-		devices := ListDevices()
+		devices := Devices()
 		if len(devices) == 0 {
 			return "", nil, ErrNoAudioDevice
 		}

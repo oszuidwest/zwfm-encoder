@@ -255,8 +255,8 @@ func (m *Manager) WriteAudio(streamID string, data []byte) error {
 	return nil
 }
 
-// AllStatuses returns status information for all managed streams.
-func (m *Manager) AllStatuses(getMaxRetries func(string) int) map[string]types.ProcessStatus {
+// Statuses returns status information for all managed streams.
+func (m *Manager) Statuses(getMaxRetries func(string) int) map[string]types.ProcessStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 

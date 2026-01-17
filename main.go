@@ -50,11 +50,11 @@ func main() {
 	}
 
 	// Check FFmpeg availability
-	ffmpegPath := util.ResolveFFmpegPath(cfg.GetFFmpegPath())
+	ffmpegPath := util.ResolveFFmpegPath(cfg.FFmpegPath())
 	ffmpegAvailable := ffmpegPath != ""
 	if !ffmpegAvailable {
 		slog.Warn("FFmpeg not found - running in degraded mode",
-			"configured_path", cfg.GetFFmpegPath())
+			"configured_path", cfg.FFmpegPath())
 	} else {
 		slog.Info("FFmpeg found", "path", ffmpegPath)
 	}

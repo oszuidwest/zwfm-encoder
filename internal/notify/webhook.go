@@ -27,8 +27,8 @@ type WebhookPayload struct {
 	AudioDumpError     string `json:"audio_dump_error,omitempty"`      // Error message if dump encoding failed
 }
 
-// SendSilenceWebhook notifies the configured webhook of critical silence detection.
-func SendSilenceWebhook(webhookURL string, levelL, levelR, threshold float64) error {
+// SendWebhookSilence notifies the configured webhook of critical silence detection.
+func SendWebhookSilence(webhookURL string, levelL, levelR, threshold float64) error {
 	return sendWebhook(webhookURL, &WebhookPayload{
 		Event:        "silence_detected",
 		LevelLeftDB:  levelL,
@@ -38,8 +38,8 @@ func SendSilenceWebhook(webhookURL string, levelL, levelR, threshold float64) er
 	})
 }
 
-// SendTestWebhook sends a test webhook notification.
-func SendTestWebhook(webhookURL, stationName string) error {
+// SendWebhookTest sends a test webhook notification.
+func SendWebhookTest(webhookURL, stationName string) error {
 	if webhookURL == "" {
 		return fmt.Errorf("webhook URL not configured")
 	}

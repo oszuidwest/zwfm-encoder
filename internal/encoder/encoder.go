@@ -167,9 +167,9 @@ func (e *Encoder) InitRecording() error {
 	return nil
 }
 
-// AllRecorderStatuses returns status for all configured recorders.
-func (e *Encoder) AllRecorderStatuses() map[string]types.ProcessStatus {
-	return e.recordingManager.AllStatuses()
+// RecorderStatuses returns status for all configured recorders.
+func (e *Encoder) RecorderStatuses() map[string]types.ProcessStatus {
+	return e.recordingManager.Statuses()
 }
 
 // State returns the current encoder state.
@@ -227,10 +227,10 @@ func (e *Encoder) Status() types.EncoderStatus {
 	}
 }
 
-// AllStreamStatuses returns status for all configured streams.
-func (e *Encoder) AllStreamStatuses(streams []types.Stream) map[string]types.ProcessStatus {
+// StreamStatuses returns status for all configured streams.
+func (e *Encoder) StreamStatuses(streams []types.Stream) map[string]types.ProcessStatus {
 	// Get statuses for streams with active processes
-	processStatuses := e.streamManager.AllStatuses(func(id string) int {
+	processStatuses := e.streamManager.Statuses(func(id string) int {
 		if s := e.config.Stream(id); s != nil {
 			return s.MaxRetriesOrDefault()
 		}
@@ -425,7 +425,7 @@ func (e *Encoder) GraphSecretExpiry() types.SecretExpiryInfo {
 	if e.secretExpiryChecker == nil {
 		return types.SecretExpiryInfo{}
 	}
-	return e.secretExpiryChecker.GetInfo()
+	return e.secretExpiryChecker.Info()
 }
 
 // InvalidateGraphSecretExpiryCache clears the cached secret expiry info.
@@ -453,13 +453,13 @@ func (e *Encoder) UpdateSilenceDumpConfig() {
 // TriggerTestWebhook sends a test webhook.
 func (e *Encoder) TriggerTestWebhook() error {
 	cfg := e.config.Snapshot()
-	return notify.SendTestWebhook(cfg.WebhookURL, cfg.StationName)
+	return notify.SendWebhookTest(cfg.WebhookURL, cfg.StationName)
 }
 
 // TriggerTestZabbix sends a test notification to the configured Zabbix server.
 func (e *Encoder) TriggerTestZabbix() error {
 	cfg := e.config.Snapshot()
-	return notify.SendTestZabbix(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixKey)
+	return notify.SendZabbixTest(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixKey)
 }
 
 // runSourceLoop manages the audio capture lifecycle with automatic retry and backoff.

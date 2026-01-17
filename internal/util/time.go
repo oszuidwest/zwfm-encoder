@@ -38,7 +38,7 @@ func TimeUntilNextHour(t time.Time) time.Duration {
 func FilenameTime(filename string) (time.Time, bool) {
 	for _, p := range TimestampPatterns {
 		if m := p.Pattern.FindStringSubmatch(filename); len(m) >= 2 {
-			if ts, err := time.Parse(p.Layout, m[1]); err == nil {
+			if ts, err := time.ParseInLocation(p.Layout, m[1], time.Local); err == nil {
 				return ts, true
 			}
 		}

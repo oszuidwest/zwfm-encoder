@@ -124,19 +124,19 @@ func sendZabbixEvent(server string, port int, host, key, value string) error {
 	return sendZabbixPayload(server, port, req)
 }
 
-// SendSilenceZabbix sends a silence alert to Zabbix.
-func SendSilenceZabbix(server string, port int, host, key string, levelL, levelR, threshold float64) error {
+// SendZabbixSilence sends a silence alert to Zabbix.
+func SendZabbixSilence(server string, port int, host, key string, levelL, levelR, threshold float64) error {
 	return sendZabbixEvent(server, port, host, key,
 		fmt.Sprintf("event=SILENCE level_l=%.1f level_r=%.1f threshold=%.1f", levelL, levelR, threshold))
 }
 
-// SendRecoveryZabbix sends a recovery message to Zabbix.
-func SendRecoveryZabbix(server string, port int, host, key string, durationMs int64, levelL, levelR, threshold float64) error {
+// SendZabbixRecovery sends a recovery message to Zabbix.
+func SendZabbixRecovery(server string, port int, host, key string, durationMs int64, levelL, levelR, threshold float64) error {
 	return sendZabbixEvent(server, port, host, key,
 		fmt.Sprintf("event=RECOVERY duration_ms=%d level_l=%.1f level_r=%.1f threshold=%.1f", durationMs, levelL, levelR, threshold))
 }
 
-// SendTestZabbix sends a test message to verify Zabbix config.
-func SendTestZabbix(server string, port int, host, key string) error {
+// SendZabbixTest sends a test message to verify Zabbix config.
+func SendZabbixTest(server string, port int, host, key string) error {
 	return sendZabbixEvent(server, port, host, key, "event=TEST source=zwfm-encoder")
 }

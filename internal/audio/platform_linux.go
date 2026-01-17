@@ -24,7 +24,7 @@ func buildLinuxArgs(device string) []string {
 	}
 }
 
-func (cfg *CaptureConfig) ListDevices() []Device {
+func (cfg *CaptureConfig) Devices() []Device {
 	return parseDeviceList(DeviceListConfig{
 		Command:          []string{"arecord", "-l"},
 		AudioStartMarker: "", // No marker, parse all lines

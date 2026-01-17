@@ -394,8 +394,8 @@ func (c *Config) AudioInput() string {
 	return c.Audio.Input
 }
 
-// GetFFmpegPath returns the configured FFmpeg binary path.
-func (c *Config) GetFFmpegPath() string {
+// FFmpegPath returns the configured FFmpeg binary path.
+func (c *Config) FFmpegPath() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.System.FFmpegPath
@@ -414,8 +414,8 @@ func (c *Config) GraphConfig() types.GraphConfig {
 	}
 }
 
-// GetRecordingAPIKey returns the API key for recording REST endpoints.
-func (c *Config) GetRecordingAPIKey() string {
+// RecordingAPIKey returns the API key for recording REST endpoints.
+func (c *Config) RecordingAPIKey() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.Recording.APIKey

@@ -38,8 +38,8 @@ func NewSecretExpiryChecker(cfg *types.GraphConfig) *SecretExpiryChecker {
 	}
 }
 
-// GetInfo returns the secret expiry information.
-func (c *SecretExpiryChecker) GetInfo() types.SecretExpiryInfo {
+// Info returns the secret expiry information.
+func (c *SecretExpiryChecker) Info() types.SecretExpiryInfo {
 	c.mu.RLock()
 	if time.Since(c.lastCheck) < expiryCacheTTL && c.lastCheck.After(time.Time{}) {
 		info := c.cached
