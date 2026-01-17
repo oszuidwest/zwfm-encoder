@@ -6,29 +6,25 @@ import (
 	"time"
 )
 
-// DatePattern matches YYYY-MM-DD in filenames.
-var DatePattern = regexp.MustCompile(`(\d{4}-\d{2}-\d{2})`)
+// TimestampPatterns match timestamps in filenames (most specific first).
+var TimestampPatterns = []struct {
+	Pattern *regexp.Regexp
+	Layout  string
+}{
+	// YYYY-MM-DD_HH-MM-SS (silencedump format)
+	{regexp.MustCompile(`(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})`), "2006-01-02_15-04-05"},
+	// YYYY-MM-DD-HH-MM (recording format)
+	{regexp.MustCompile(`(\d{4}-\d{2}-\d{2}-\d{2}-\d{2})`), "2006-01-02-15-04"},
+	// YYYY-MM-DD (date only fallback)
+	{regexp.MustCompile(`(\d{4}-\d{2}-\d{2})`), "2006-01-02"},
+}
 
-// RetentionCutoff returns the cutoff time for retention-based cleanup.
-// Files with dates before this cutoff should be deleted.
+// OldestToKeep returns the oldest timestamp to retain during cleanup.
+// Files older than this should be deleted.
 //
-// The cutoff is calculated as midnight (00:00:00) such that exactly N days
-// of files are kept (today plus N-1 previous days).
-//
-// Example with retention=1, cleanup on Jan 10:
-//
-//	Cutoff = Jan 10 00:00:00
-//	File from Jan 10 → kept (today)
-//	File from Jan 9  → deleted (older than 1 day)
-//
-// Example with retention=7, cleanup on Jan 10:
-//
-//	Cutoff = Jan 4 00:00:00
-//	Files from Jan 4-10 → kept (7 days)
-//	Files from Jan 3 or earlier → deleted
-func RetentionCutoff(days int, now time.Time) time.Time {
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	return today.AddDate(0, 0, -days+1)
+// Uses rolling retention: now - (days * 24 hours).
+func OldestToKeep(days int, now time.Time) time.Time {
+	return now.Add(-time.Duration(days) * 24 * time.Hour)
 }
 
 // TimeUntilNextHour returns the duration until the next hour boundary.
@@ -37,19 +33,17 @@ func TimeUntilNextHour(t time.Time) time.Duration {
 	return nextHour.Sub(t)
 }
 
-// ExtractDateFromFilename extracts a date from a filename containing YYYY-MM-DD.
-func ExtractDateFromFilename(filename string) (time.Time, bool) {
-	matches := DatePattern.FindStringSubmatch(filename)
-	if len(matches) < 2 {
-		return time.Time{}, false
+// FilenameTime extracts a timestamp from a filename.
+// Supports: YYYY-MM-DD_HH-MM-SS, YYYY-MM-DD-HH-MM, YYYY-MM-DD.
+func FilenameTime(filename string) (time.Time, bool) {
+	for _, p := range TimestampPatterns {
+		if m := p.Pattern.FindStringSubmatch(filename); len(m) >= 2 {
+			if ts, err := time.Parse(p.Layout, m[1]); err == nil {
+				return ts, true
+			}
+		}
 	}
-
-	date, err := time.Parse(time.DateOnly, matches[1])
-	if err != nil {
-		return time.Time{}, false
-	}
-
-	return date, true
+	return time.Time{}, false
 }
 
 // humanTimeFormat is the layout for human-readable timestamps with timezone.

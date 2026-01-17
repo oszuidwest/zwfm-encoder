@@ -174,7 +174,7 @@ func (m *Manager) runCleanup() {
 		return
 	}
 
-	cutoff := util.RetentionCutoff(retentionDays, time.Now())
+	cutoff := util.OldestToKeep(retentionDays, time.Now())
 	var deleted int
 
 	for _, entry := range entries {
@@ -190,7 +190,7 @@ func (m *Manager) runCleanup() {
 		}
 
 		// Extract date from filename
-		fileDate, ok := util.ExtractDateFromFilename(name)
+		fileDate, ok := util.FilenameTime(name)
 		if !ok {
 			continue
 		}
