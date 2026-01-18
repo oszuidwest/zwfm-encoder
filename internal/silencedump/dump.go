@@ -75,7 +75,8 @@ type Capturer struct {
 	silenceStartPos int64     // Byte position when silence started
 	silenceEndPos   int64     // Byte position when recovery started
 	silenceStart    time.Time // Time when silence started
-	capturing       bool      // capturing reports whether we're waiting for recovery + 15s
+	// capturing reports whether we're waiting for recovery + 15s.
+	capturing       bool
 
 	// Saved pre-silence audio snapshot. Captured immediately on silence start
 	// to prevent data loss during long silences that exceed ring buffer capacity.
