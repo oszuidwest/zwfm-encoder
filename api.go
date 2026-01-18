@@ -214,8 +214,15 @@ func (s *Server) handleCreateStream(w http.ResponseWriter, r *http.Request) {
 		MaxRetries: req.MaxRetries,
 	}
 
-	if err := s.config.AddStream(stream); err != nil {
+	// Validate first - client error
+	if err := stream.Validate(); err != nil {
 		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Persistence failures are server errors
+	if err := s.config.AddStream(stream); err != nil {
+		s.writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -257,8 +264,15 @@ func (s *Server) handleUpdateStream(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:  existing.CreatedAt,
 	}
 
-	if err := s.config.UpdateStream(updated); err != nil {
+	// Validate first - client error
+	if err := updated.Validate(); err != nil {
 		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Persistence failures are server errors
+	if err := s.config.UpdateStream(updated); err != nil {
+		s.writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -359,8 +373,15 @@ func (s *Server) handleCreateRecorder(w http.ResponseWriter, r *http.Request) {
 		RetentionDays:     req.RetentionDays,
 	}
 
-	if err := s.encoder.AddRecorder(recorder); err != nil {
+	// Validate first - client error
+	if err := recorder.Validate(); err != nil {
 		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Persistence/manager failures are server errors
+	if err := s.encoder.AddRecorder(recorder); err != nil {
+		s.writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -400,8 +421,15 @@ func (s *Server) handleUpdateRecorder(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:         existing.CreatedAt,
 	}
 
-	if err := s.encoder.UpdateRecorder(updated); err != nil {
+	// Validate first - client error
+	if err := updated.Validate(); err != nil {
 		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Persistence/manager failures are server errors
+	if err := s.encoder.UpdateRecorder(updated); err != nil {
+		s.writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 

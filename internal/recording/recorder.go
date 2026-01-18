@@ -324,14 +324,70 @@ func (r *GenericRecorder) WriteAudio(pcm []byte) error {
 			return nil
 		}
 
+		// Capture values and clear to prevent further writes and double cleanup
 		r.mu.Lock()
 		r.state = types.ProcessError
 		r.lastError = err.Error()
+		capturedResult := r.result
+		capturedFile := r.currentFile
+		r.result = nil
+		r.currentFile = ""
 		r.mu.Unlock()
+
+		// Trigger async cleanup to finalize/upload the current recording
+		go r.cleanupAfterWriteError(capturedResult, capturedFile)
+
 		return err
 	}
 
 	return nil
+}
+
+// cleanupAfterWriteError handles cleanup when a write error occurs.
+// It closes FFmpeg gracefully and queues the file for upload.
+func (r *GenericRecorder) cleanupAfterWriteError(result *ffmpeg.StartResult, currentFile string) {
+	if result == nil {
+		return
+	}
+
+	slog.Warn("recorder write error, cleaning up", "id", r.id)
+
+	// Close stdin - signals FFmpeg that input is done
+	result.CloseStdin()
+
+	// Wait for FFmpeg to finish with timeout
+	done := make(chan error, 1)
+	go func() {
+		done <- result.Wait()
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			r.mu.Lock()
+			errMsg := util.ExtractLastError(result.Stderr())
+			if errMsg != "" {
+				r.lastError = errMsg
+			}
+			r.mu.Unlock()
+		}
+	case <-time.After(10 * time.Second):
+		slog.Warn("recorder ffmpeg did not stop in time after write error, sending signal", "id", r.id)
+		_ = result.Signal()
+
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			slog.Error("recorder ffmpeg force killed after write error", "id", r.id)
+			_ = result.Kill()
+			<-done
+		}
+	}
+
+	// Queue for upload if file exists
+	if currentFile != "" {
+		r.queueForUpload(currentFile)
+	}
 }
 
 func (r *GenericRecorder) Status() types.ProcessStatus {
