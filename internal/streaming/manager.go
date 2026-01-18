@@ -247,6 +247,7 @@ func (m *Manager) WriteAudio(streamID string, data []byte) error {
 		if stream, exists := m.streams[streamID]; exists && stream.state == types.ProcessRunning {
 			slog.Warn("stream write failed, marking as error", "stream_id", streamID, "error", err)
 			stream.state = types.ProcessError
+			stream.lastError = err.Error()
 			stream.result.CloseStdin()
 		}
 		m.mu.Unlock()
