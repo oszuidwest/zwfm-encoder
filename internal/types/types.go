@@ -58,7 +58,7 @@ type ProcessStatus struct {
 	MaxRetries int `json:"max_retries,omitempty"`
 	// Error is the last error message.
 	Error string `json:"error,omitempty"`
-	// Uptime is the time since the process started.
+	// Uptime is the human-readable elapsed time since the process started.
 	Uptime string `json:"uptime,omitempty"`
 }
 
@@ -162,9 +162,9 @@ func (s *Stream) MaxRetriesOrDefault() int {
 
 // CodecPreset defines encoding parameters for a codec.
 type CodecPreset struct {
-	// Args are encoder arguments.
+	// Args contains the FFmpeg encoder arguments for this codec.
 	Args []string
-	// Format is the output container format.
+	// Format is the output container format for this codec.
 	Format string
 }
 
@@ -220,7 +220,7 @@ func (s *Stream) Validate() error {
 type RotationMode string
 
 const (
-	// RotationHourly rotates at system clock hour boundaries.
+	// RotationHourly rotates recordings at system clock hour boundaries.
 	RotationHourly RotationMode = "hourly"
 )
 
@@ -251,11 +251,11 @@ func (m *RotationMode) UnmarshalJSON(data []byte) error {
 type StorageMode string
 
 const (
-	// StorageLocal saves only to the local filesystem.
+	// StorageLocal stores recordings on the local filesystem only.
 	StorageLocal StorageMode = "local"
-	// StorageS3 uploads only to S3.
+	// StorageS3 uploads recordings to S3-compatible storage only.
 	StorageS3 StorageMode = "s3"
-	// StorageBoth saves locally and uploads to S3.
+	// StorageBoth stores recordings locally and uploads to S3-compatible storage.
 	StorageBoth StorageMode = "both"
 )
 
@@ -319,7 +319,7 @@ type Recorder struct {
 	S3Bucket string `json:"s3_bucket"`
 	// S3AccessKeyID is the S3 access key ID.
 	S3AccessKeyID string `json:"s3_access_key_id"`
-	// S3SecretAccessKey is the S3 secret access key.
+	// S3SecretAccessKey is the AWS secret for S3 authentication.
 	S3SecretAccessKey string `json:"s3_secret_access_key"`
 
 	// RetentionDays is the number of days to keep recordings.
@@ -385,9 +385,9 @@ type EncoderStatus struct {
 	LastError string `json:"last_error,omitzero"`
 	// StreamCount is the number of configured streams.
 	StreamCount int `json:"stream_count"`
-	// SourceRetryCount is the source retry attempt count.
+	// SourceRetryCount is the number of audio source retry attempts.
 	SourceRetryCount int `json:"source_retry_count,omitzero"`
-	// SourceMaxRetries is the maximum source retry attempts.
+	// SourceMaxRetries is the maximum number of audio source retry attempts.
 	SourceMaxRetries int `json:"source_max_retries"`
 }
 
@@ -401,7 +401,7 @@ type WSRuntimeStatus struct {
 	Encoder EncoderStatus `json:"encoder"`
 	// StreamStatus holds runtime stream status by ID.
 	StreamStatus map[string]ProcessStatus `json:"stream_status"`
-	// RecorderStatuses holds runtime recorder status by ID.
+	// RecorderStatuses maps recorder IDs to their runtime status.
 	RecorderStatuses map[string]ProcessStatus `json:"recorder_statuses"`
 	// GraphSecretExpiry holds client secret expiration info.
 	GraphSecretExpiry SecretExpiryInfo `json:"graph_secret_expiry"`
@@ -420,14 +420,14 @@ type APIConfigResponse struct {
 
 	// SilenceThreshold is the silence threshold in dB.
 	SilenceThreshold float64 `json:"silence_threshold"`
-	// SilenceDurationMs is the silence duration in milliseconds.
+	// SilenceDurationMs is the duration required to trigger silence detection.
 	SilenceDurationMs int64 `json:"silence_duration_ms"`
 	// SilenceRecoveryMs is the recovery duration in milliseconds.
 	SilenceRecoveryMs int64 `json:"silence_recovery_ms"`
 	// SilenceDump holds silence dump configuration.
 	SilenceDump SilenceDumpConfig `json:"silence_dump"`
 
-	// WebhookURL is the webhook URL for alerts.
+	// WebhookURL is the endpoint for sending silence alert notifications.
 	WebhookURL string `json:"webhook_url"`
 
 	// ZabbixServer is the Zabbix server address.
@@ -463,7 +463,7 @@ type APIConfigResponse struct {
 type WSLevelsResponse struct {
 	// Type is the message type identifier.
 	Type string `json:"type"`
-	// Levels are the current audio levels.
+	// Levels contains current RMS and peak audio levels.
 	Levels audio.AudioLevels `json:"levels"`
 }
 
@@ -473,7 +473,7 @@ type GraphConfig struct {
 	TenantID string `json:"tenant_id,omitempty"`
 	// ClientID is the app registration client ID.
 	ClientID string `json:"client_id,omitempty"`
-	// ClientSecret is the app registration client secret.
+	// ClientSecret is the Azure AD app secret for the Microsoft Graph API.
 	ClientSecret string `json:"client_secret,omitempty"`
 	// FromAddress is the shared mailbox sender address.
 	FromAddress string `json:"from_address,omitempty"`
@@ -487,9 +487,9 @@ type ZabbixConfig struct {
 	Server string `json:"server,omitempty"`
 	// Port is the Zabbix server port.
 	Port int `json:"port,omitempty"`
-	// Host is the Zabbix host name.
+	// Host is the name of the monitored host in Zabbix.
 	Host string `json:"host,omitempty"`
-	// Key is the Zabbix item key.
+	// Key is the Zabbix item key used for silence alerts.
 	Key string `json:"key,omitempty"`
 }
 
@@ -511,7 +511,7 @@ type VersionInfo struct {
 	Current string `json:"current"`
 	// Latest is the latest available version.
 	Latest string `json:"latest,omitempty"`
-	// UpdateAvail reports whether an update is available.
+	// UpdateAvail reports whether a newer version is available.
 	UpdateAvail bool `json:"update_available"`
 	// Commit is the git commit hash.
 	Commit string `json:"commit,omitempty"`

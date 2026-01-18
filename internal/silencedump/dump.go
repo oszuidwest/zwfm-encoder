@@ -47,11 +47,11 @@ func outputDirForPort(port int) string {
 type EncodeResult struct {
 	// FilePath is the full path to the MP3 file.
 	FilePath string
-	// Filename is the MP3 filename.
+	// Filename is the base name of the MP3 file.
 	Filename string
-	// FileSize is the file size in bytes.
+	// FileSize is the MP3 size in bytes.
 	FileSize int64
-	// Duration is the total silence duration.
+	// Duration is the total silence event duration.
 	Duration time.Duration
 	// DumpStart is when silence started.
 	DumpStart time.Time
@@ -75,7 +75,7 @@ type Capturer struct {
 	silenceStartPos int64     // Byte position when silence started
 	silenceEndPos   int64     // Byte position when recovery started
 	silenceStart    time.Time // Time when silence started
-	capturing       bool      // True if we're waiting for recovery + 15s
+	capturing       bool      // capturing reports whether we're waiting for recovery + 15s
 
 	// Saved pre-silence audio snapshot. Captured immediately on silence start
 	// to prevent data loss during long silences that exceed ring buffer capacity.
@@ -99,7 +99,7 @@ func NewCapturer(ffmpegPath, outputDir string, onDumpReady DumpCallback) *Captur
 	}
 }
 
-// SetEnabled controls whether dump capture is active.
+// SetEnabled sets whether dump capture is active.
 func (c *Capturer) SetEnabled(enabled bool) {
 	c.mu.Lock()
 	c.enabled = enabled && c.ffmpegPath != ""

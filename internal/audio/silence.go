@@ -21,7 +21,7 @@ type SilenceEvent struct {
 	InSilence bool
 	// DurationMs is the current silence duration in milliseconds (0 if not silent).
 	DurationMs int64
-	// Level is the silence level string.
+	// Level indicates the current silence detection state.
 	Level SilenceLevel
 
 	// CurrentLevelL is the current left channel level in dB.
@@ -29,13 +29,13 @@ type SilenceEvent struct {
 	// CurrentLevelR is the current right channel level in dB.
 	CurrentLevelR float64
 
-	// JustEntered is true on the frame when silence is first confirmed.
+	// JustEntered reports whether silence was just confirmed on this frame.
 	JustEntered bool
-	// JustRecovered is true on the frame when recovery completes.
+	// JustRecovered reports whether recovery just completed on this frame.
 	JustRecovered bool
-	// TotalDurationMs is the total silence duration in milliseconds.
+	// TotalDurationMs is the total silence duration in milliseconds at recovery.
 	TotalDurationMs int64
-	// RecoveryDurationMs is how long audio was good before recovery was confirmed.
+	// RecoveryDurationMs is the duration of audio above threshold before recovery was confirmed.
 	RecoveryDurationMs int64
 }
 

@@ -196,15 +196,15 @@ func (s *Server) handleGetStream(w http.ResponseWriter, r *http.Request) {
 
 // StreamRequest contains fields for creating or updating streams.
 type StreamRequest struct {
-	// Enabled controls whether the stream is enabled.
+	// Enabled reports whether the stream is active.
 	Enabled bool `json:"enabled"`
-	// Host is the destination host name.
+	// Host is the SRT server hostname.
 	Host string `json:"host"`
-	// Port is the destination port.
+	// Port is the SRT server port.
 	Port int `json:"port"`
-	// Password is the stream password.
+	// Password is the SRT encryption passphrase.
 	Password string `json:"password"`
-	// StreamID is the stream identifier.
+	// StreamID identifies the stream at the destination server.
 	StreamID string `json:"stream_id"`
 	// Codec selects the audio codec.
 	Codec types.Codec `json:"codec"`
@@ -350,11 +350,11 @@ func (s *Server) handleGetRecorder(w http.ResponseWriter, r *http.Request) {
 
 // RecorderRequest contains fields for creating or updating recorders.
 type RecorderRequest struct {
-	// Name is the recorder name.
+	// Name is the recorder display name.
 	Name string `json:"name"`
-	// Enabled controls whether the recorder is enabled.
+	// Enabled reports whether the recorder is active.
 	Enabled bool `json:"enabled"`
-	// Codec selects the recorder audio codec.
+	// Codec selects the recording codec.
 	Codec types.Codec `json:"codec"`
 	// RotationMode selects the file rotation mode.
 	RotationMode types.RotationMode `json:"rotation_mode"`
@@ -364,11 +364,11 @@ type RecorderRequest struct {
 	LocalPath string `json:"local_path"`
 	// S3Endpoint is the S3-compatible endpoint URL.
 	S3Endpoint string `json:"s3_endpoint"`
-	// S3Bucket is the S3 bucket name.
+	// S3Bucket is the target S3 bucket name.
 	S3Bucket string `json:"s3_bucket"`
 	// S3AccessKeyID is the S3 access key ID.
 	S3AccessKeyID string `json:"s3_access_key_id"`
-	// S3SecretAccessKey is the S3 secret access key.
+	// S3SecretAccessKey is the S3 secret for authentication.
 	S3SecretAccessKey string `json:"s3_secret_access_key"`
 	// RetentionDays is the number of days to retain recordings.
 	RetentionDays int `json:"retention_days"`
@@ -507,11 +507,11 @@ func (s *Server) handleRecorderAction(w http.ResponseWriter, r *http.Request) {
 type S3TestRequest struct {
 	// Endpoint is the S3-compatible endpoint URL.
 	Endpoint string `json:"s3_endpoint"`
-	// Bucket is the S3 bucket name.
+	// Bucket is the target S3 bucket name.
 	Bucket string `json:"s3_bucket"`
 	// AccessKey is the S3 access key ID.
 	AccessKey string `json:"s3_access_key_id"`
-	// SecretKey is the S3 secret access key.
+	// SecretKey is the S3 secret for authentication.
 	SecretKey string `json:"s3_secret_access_key"`
 }
 
@@ -552,7 +552,7 @@ func (s *Server) handleTestS3(w http.ResponseWriter, r *http.Request) {
 
 // NotificationTestRequest contains fields for testing notifications.
 type NotificationTestRequest struct {
-	// WebhookURL is the webhook endpoint URL.
+	// WebhookURL is the endpoint for silence notifications.
 	WebhookURL string `json:"webhook_url,omitempty"`
 
 	// GraphTenantID is the Microsoft Graph tenant ID.
@@ -570,7 +570,7 @@ type NotificationTestRequest struct {
 	ZabbixServer string `json:"zabbix_server,omitempty"`
 	// ZabbixPort is the Zabbix server port.
 	ZabbixPort int `json:"zabbix_port,omitempty"`
-	// ZabbixHost is the Zabbix host name.
+	// ZabbixHost is the monitored host name in Zabbix.
 	ZabbixHost string `json:"zabbix_host,omitempty"`
 	// ZabbixKey is the Zabbix item key.
 	ZabbixKey string `json:"zabbix_key,omitempty"`
@@ -679,7 +679,7 @@ func (s *Server) handleAPIRegenerateKey(w http.ResponseWriter, r *http.Request) 
 
 // HealthResponse is the response body for the health endpoint.
 type HealthResponse struct {
-	// Status is the overall health status string.
+	// Status is the overall health status (healthy or unhealthy).
 	Status string `json:"status"`
 	// EncoderState is the encoder's current state string.
 	EncoderState string `json:"encoder_state"`

@@ -20,7 +20,7 @@ type AudioLevels struct {
 	Silence bool `json:"silence,omitzero"`
 	// SilenceDurationMs is the silence duration in milliseconds.
 	SilenceDurationMs int64 `json:"silence_duration_ms,omitzero"`
-	// SilenceLevel is the current silence level state.
+	// SilenceLevel indicates the current silence detection state.
 	SilenceLevel SilenceLevel `json:"silence_level,omitzero"`
 	// ClipLeft is the clipped sample count for the left channel.
 	ClipLeft int `json:"clip_left,omitzero"`

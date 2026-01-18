@@ -114,7 +114,7 @@ func (m *Manager) HandleSilenceEvent(event audio.SilenceEvent) {
 	}
 }
 
-// SetEnabled controls whether dump capture is active.
+// SetEnabled sets whether dump capture is active.
 func (m *Manager) SetEnabled(enabled bool) {
 	m.mu.Lock()
 	m.enabled = enabled && m.ffmpegPath != ""
