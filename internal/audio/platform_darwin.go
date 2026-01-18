@@ -17,6 +17,7 @@ func buildDarwinArgs(device string) []string {
 	return buildFFmpegCaptureArgs("avfoundation", device)
 }
 
+// Devices returns the available audio input devices.
 func (cfg *CaptureConfig) Devices() []Device {
 	return parseDeviceList(DeviceListConfig{
 		Command:          []string{"ffmpeg", "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""},

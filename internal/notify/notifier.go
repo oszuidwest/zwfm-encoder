@@ -54,14 +54,17 @@ type recoveryFlags struct {
 	zabbix  bool
 }
 
+// NewSilenceNotifier creates a new SilenceNotifier.
 func NewSilenceNotifier(cfg *config.Config) *SilenceNotifier {
 	return &SilenceNotifier{cfg: cfg}
 }
 
+// SetEventLogger sets the event logger for silence notifications.
 func (n *SilenceNotifier) SetEventLogger(logger *eventlog.Logger) {
 	n.eventLogger = logger
 }
 
+// ResetPendingRecovery clears any pending recovery data.
 func (n *SilenceNotifier) ResetPendingRecovery() {
 	n.mu.Lock()
 	n.pendingRecovery = nil
@@ -171,6 +174,7 @@ func (n *SilenceNotifier) handleSilenceEnd(totalDurationMs int64, levelL, levelR
 	n.mu.Unlock()
 }
 
+// Reset clears notification state for the current silence period.
 func (n *SilenceNotifier) Reset() {
 	n.mu.Lock()
 	n.webhookSent = false
@@ -188,6 +192,7 @@ func (n *SilenceNotifier) sendSilenceWebhook(cfg config.Snapshot, levelL, levelR
 	)
 }
 
+// BuildGraphConfig builds a GraphConfig from a config snapshot.
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func BuildGraphConfig(cfg config.Snapshot) *GraphConfig {
 	return &GraphConfig{

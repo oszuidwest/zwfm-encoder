@@ -45,12 +45,18 @@ func outputDirForPort(port int) string {
 
 // EncodeResult contains the result of encoding a silence dump.
 type EncodeResult struct {
-	FilePath  string        // Full path to the MP3 file
-	Filename  string        // Just the filename
-	FileSize  int64         // Size in bytes
-	Duration  time.Duration // Total silence duration
-	DumpStart time.Time     // When silence started
-	Error     error         // nil if successful
+	// FilePath is the full path to the MP3 file.
+	FilePath string
+	// Filename is the MP3 filename.
+	Filename string
+	// FileSize is the file size in bytes.
+	FileSize int64
+	// Duration is the total silence duration.
+	Duration time.Duration
+	// DumpStart is when silence started.
+	DumpStart time.Time
+	// Error is non-nil if encoding failed.
+	Error error
 }
 
 // DumpCallback is called when a dump is ready.

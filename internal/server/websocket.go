@@ -14,7 +14,9 @@ import (
 // WebSocketConn is the interface for WebSocket connection operations.
 type WebSocketConn interface {
 	io.Closer
+	// WriteJSON writes a JSON message to the connection.
 	WriteJSON(v interface{}) error
+	// ReadMessage reads the next message from the connection.
 	ReadMessage() (messageType int, p []byte, err error)
 }
 

@@ -18,88 +18,137 @@ import (
 // EventType identifies the category of a logged event.
 type EventType string
 
-// Stream event types: started, stable, error, retry, stopped.
 const (
+	// StreamStarted indicates a stream start event.
 	StreamStarted EventType = "stream_started"
+	// StreamStable indicates a stream stable event.
 	StreamStable  EventType = "stream_stable"
+	// StreamError indicates a stream error event.
 	StreamError   EventType = "stream_error"
+	// StreamRetry indicates a stream retry event.
 	StreamRetry   EventType = "stream_retry"
+	// StreamStopped indicates a stream stopped event.
 	StreamStopped EventType = "stream_stopped"
 )
 
-// Silence event types: start and end.
 const (
+	// SilenceStart indicates a silence start event.
 	SilenceStart EventType = "silence_start"
+	// SilenceEnd indicates a silence end event.
 	SilenceEnd   EventType = "silence_end"
 )
 
-// Recorder event types: lifecycle, upload, and cleanup events.
 const (
+	// RecorderStarted indicates a recorder started event.
 	RecorderStarted  EventType = "recorder_started"
+	// RecorderStopped indicates a recorder stopped event.
 	RecorderStopped  EventType = "recorder_stopped"
+	// RecorderError indicates a recorder error event.
 	RecorderError    EventType = "recorder_error"
+	// RecorderFile indicates a recorder file rotation event.
 	RecorderFile     EventType = "recorder_file"
+	// UploadQueued indicates an upload queued event.
 	UploadQueued     EventType = "upload_queued"
+	// UploadCompleted indicates an upload completed event.
 	UploadCompleted  EventType = "upload_completed"
+	// UploadFailed indicates an upload failed event.
 	UploadFailed     EventType = "upload_failed"
+	// UploadRetry indicates an upload retry event.
 	UploadRetry      EventType = "upload_retry"
+	// UploadAbandoned indicates an upload abandoned event.
 	UploadAbandoned  EventType = "upload_abandoned"
+	// CleanupCompleted indicates a cleanup completed event.
 	CleanupCompleted EventType = "cleanup_completed"
 )
 
 // Event is a single log entry with type-specific details.
 type Event struct {
+	// Timestamp is the event timestamp.
 	Timestamp time.Time `json:"ts"`
-	Type      EventType `json:"type"`
-	StreamID  string    `json:"stream_id,omitempty"`
-	Message   string    `json:"msg,omitempty"`
-	Details   any       `json:"details,omitempty"`
+	// Type is the event type.
+	Type EventType `json:"type"`
+	// StreamID is the stream identifier, when applicable.
+	StreamID string `json:"stream_id,omitempty"`
+	// Message is a human-readable event message.
+	Message string `json:"msg,omitempty"`
+	// Details contains event-specific details.
+	Details any `json:"details,omitempty"`
 }
 
 // StreamDetails holds stream event information.
 type StreamDetails struct {
+	// StreamName is the stream display name.
 	StreamName string `json:"stream_name,omitempty"`
-	Error      string `json:"error,omitempty"`
-	RetryCount int    `json:"retry,omitempty"`
-	MaxRetries int    `json:"max_retries,omitempty"`
+	// Error is the error message, if any.
+	Error string `json:"error,omitempty"`
+	// RetryCount is the current retry count.
+	RetryCount int `json:"retry,omitempty"`
+	// MaxRetries is the maximum retry count.
+	MaxRetries int `json:"max_retries,omitempty"`
 }
 
 // SilenceDetails holds silence event information.
 type SilenceDetails struct {
-	LevelLeftDB   float64 `json:"level_left_db"`
-	LevelRightDB  float64 `json:"level_right_db"`
-	ThresholdDB   float64 `json:"threshold_db"`
-	DurationMs    int64   `json:"duration_ms,omitempty"`
-	DumpPath      string  `json:"dump_path,omitempty"`
-	DumpFilename  string  `json:"dump_filename,omitempty"`
-	DumpSizeBytes int64   `json:"dump_size_bytes,omitempty"`
-	DumpError     string  `json:"dump_error,omitempty"`
+	// LevelLeftDB is the left channel level in dB.
+	LevelLeftDB float64 `json:"level_left_db"`
+	// LevelRightDB is the right channel level in dB.
+	LevelRightDB float64 `json:"level_right_db"`
+	// ThresholdDB is the silence threshold in dB.
+	ThresholdDB float64 `json:"threshold_db"`
+	// DurationMs is the silence duration in milliseconds.
+	DurationMs int64 `json:"duration_ms,omitempty"`
+	// DumpPath is the dump file path.
+	DumpPath string `json:"dump_path,omitempty"`
+	// DumpFilename is the dump file name.
+	DumpFilename string `json:"dump_filename,omitempty"`
+	// DumpSizeBytes is the dump file size in bytes.
+	DumpSizeBytes int64 `json:"dump_size_bytes,omitempty"`
+	// DumpError is the dump error message, if any.
+	DumpError string `json:"dump_error,omitempty"`
 }
 
 // RecorderDetails holds recorder event information.
 type RecorderDetails struct {
+	// RecorderName is the recorder name.
 	RecorderName string `json:"recorder_name,omitempty"`
-	Filename     string `json:"filename,omitempty"`
-	Codec        string `json:"codec,omitempty"`
-	StorageMode  string `json:"storage_mode,omitempty"`
-	S3Key        string `json:"s3_key,omitempty"`
-	Error        string `json:"error,omitempty"`
-	RetryCount   int    `json:"retry,omitempty"`
-	FilesDeleted int    `json:"files_deleted,omitempty"`
-	StorageType  string `json:"storage_type,omitempty"` // "local" or "s3" for cleanup
+	// Filename is the recording file name.
+	Filename string `json:"filename,omitempty"`
+	// Codec is the recording codec.
+	Codec string `json:"codec,omitempty"`
+	// StorageMode is the configured storage mode.
+	StorageMode string `json:"storage_mode,omitempty"`
+	// S3Key is the S3 object key.
+	S3Key string `json:"s3_key,omitempty"`
+	// Error is the error message, if any.
+	Error string `json:"error,omitempty"`
+	// RetryCount is the retry count for uploads.
+	RetryCount int `json:"retry,omitempty"`
+	// FilesDeleted is the number of files deleted during cleanup.
+	FilesDeleted int `json:"files_deleted,omitempty"`
+	// StorageType is the storage type for cleanup ("local" or "s3").
+	StorageType string `json:"storage_type,omitempty"`
 }
 
 // RecorderEventParams provides optional fields for [Logger.LogRecorder].
 type RecorderEventParams struct {
+	// RecorderName is the recorder name.
 	RecorderName string
-	Filename     string
-	Codec        string
-	StorageMode  string
-	S3Key        string
-	Error        string
-	RetryCount   int
+	// Filename is the recording file name.
+	Filename string
+	// Codec is the recording codec.
+	Codec string
+	// StorageMode is the storage mode.
+	StorageMode string
+	// S3Key is the S3 object key.
+	S3Key string
+	// Error is the error message, if any.
+	Error string
+	// RetryCount is the retry count for uploads.
+	RetryCount int
+	// FilesDeleted is the number of files deleted during cleanup.
 	FilesDeleted int
-	StorageType  string
+	// StorageType is the storage type for cleanup ("local" or "s3").
+	StorageType string
 }
 
 // Logger records events to a JSON lines file.
@@ -241,11 +290,14 @@ func (l *Logger) Path() string {
 // TypeFilter selects event categories for [ReadLast].
 type TypeFilter string
 
-// TypeFilter values for [ReadLast].
 const (
+	// FilterAll selects all events.
 	FilterAll      TypeFilter = ""
+	// FilterStream selects stream events.
 	FilterStream   TypeFilter = "stream"
+	// FilterAudio selects silence events.
 	FilterAudio    TypeFilter = "audio"
+	// FilterRecorder selects recorder events.
 	FilterRecorder TypeFilter = "recorder"
 )
 

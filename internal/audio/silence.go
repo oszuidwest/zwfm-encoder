@@ -7,27 +7,36 @@ import (
 
 // SilenceConfig holds the configurable thresholds for silence detection.
 type SilenceConfig struct {
-	Threshold  float64 // dB level below which audio is considered silent
-	DurationMs int64   // milliseconds of silence before triggering
-	RecoveryMs int64   // milliseconds of audio before considering recovered
+	// Threshold is the dB level below which audio is considered silent.
+	Threshold float64
+	// DurationMs is the number of milliseconds of silence before triggering.
+	DurationMs int64
+	// RecoveryMs is the number of milliseconds of audio before considering recovered.
+	RecoveryMs int64
 }
 
 // SilenceEvent represents the result of a silence detection update.
 type SilenceEvent struct {
-	// Current state
-	InSilence  bool         // Currently in confirmed silence state
-	DurationMs int64        // Current silence duration in ms (0 if not silent)
-	Level      SilenceLevel // "active" when in silence, "" otherwise
+	// InSilence reports whether silence is currently confirmed.
+	InSilence bool
+	// DurationMs is the current silence duration in milliseconds (0 if not silent).
+	DurationMs int64
+	// Level is the silence level string.
+	Level SilenceLevel
 
-	// Current audio levels (for notifications)
-	CurrentLevelL float64 // Current left channel level in dB
-	CurrentLevelR float64 // Current right channel level in dB
+	// CurrentLevelL is the current left channel level in dB.
+	CurrentLevelL float64
+	// CurrentLevelR is the current right channel level in dB.
+	CurrentLevelR float64
 
-	// State transitions (for triggering notifications)
-	JustEntered        bool  // True on the frame when silence is first confirmed
-	JustRecovered      bool  // True on the frame when recovery completes
-	TotalDurationMs    int64 // Total silence duration in ms (only set when JustRecovered)
-	RecoveryDurationMs int64 // How long audio was good before recovery confirmed (only set when JustRecovered)
+	// JustEntered is true on the frame when silence is first confirmed.
+	JustEntered bool
+	// JustRecovered is true on the frame when recovery completes.
+	JustRecovered bool
+	// TotalDurationMs is the total silence duration in milliseconds.
+	TotalDurationMs int64
+	// RecoveryDurationMs is how long audio was good before recovery was confirmed.
+	RecoveryDurationMs int64
 }
 
 // SilenceDetector tracks audio silence state and generates detection events.

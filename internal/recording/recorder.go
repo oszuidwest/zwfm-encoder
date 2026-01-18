@@ -58,6 +58,7 @@ type GenericRecorder struct {
 	durationTimer *time.Timer
 }
 
+// NewGenericRecorder creates a new recorder instance.
 func NewGenericRecorder(cfg *types.Recorder, ffmpegPath, tempDir string, maxDurationMinutes int, eventLogger *eventlog.Logger) (*GenericRecorder, error) {
 	r := &GenericRecorder{
 		id:                 cfg.ID,
@@ -74,10 +75,12 @@ func NewGenericRecorder(cfg *types.Recorder, ffmpegPath, tempDir string, maxDura
 	return r, nil
 }
 
+// ID returns the recorder ID.
 func (r *GenericRecorder) ID() string {
 	return r.id
 }
 
+// Config returns a copy of the recorder configuration.
 func (r *GenericRecorder) Config() types.Recorder {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -120,6 +123,7 @@ func (r *GenericRecorder) IsCurrentFile(path string) bool {
 	return r.currentFile == path
 }
 
+// Start starts the recorder.
 func (r *GenericRecorder) Start() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -242,6 +246,7 @@ func (r *GenericRecorder) logEvent(eventType eventlog.EventType, p *eventlog.Rec
 	}
 }
 
+// Stop stops the recorder.
 func (r *GenericRecorder) Stop() error {
 	r.mu.Lock()
 
@@ -302,6 +307,7 @@ func (r *GenericRecorder) Stop() error {
 	return nil
 }
 
+// WriteAudio writes PCM audio to the recorder.
 func (r *GenericRecorder) WriteAudio(pcm []byte) error {
 	r.mu.RLock()
 	state := r.state
@@ -391,6 +397,7 @@ func (r *GenericRecorder) cleanupAfterWriteError(result *ffmpeg.StartResult, cur
 	}
 }
 
+// Status returns the recorder process status.
 func (r *GenericRecorder) Status() types.ProcessStatus {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -408,6 +415,7 @@ func (r *GenericRecorder) IsRecording() bool {
 	return r.state == types.ProcessRunning
 }
 
+// UpdateConfig updates the recorder configuration.
 func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -664,6 +672,7 @@ func sanitizeFilename(name string) string {
 	return string(result)
 }
 
+// TestRecorderS3Connection tests S3 connectivity for a recorder configuration.
 func TestRecorderS3Connection(cfg *types.Recorder) error {
 	return TestS3Connection(RecorderToS3Config(cfg))
 }

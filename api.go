@@ -196,13 +196,20 @@ func (s *Server) handleGetStream(w http.ResponseWriter, r *http.Request) {
 
 // StreamRequest contains fields for creating or updating streams.
 type StreamRequest struct {
-	Enabled    bool        `json:"enabled"`
-	Host       string      `json:"host"`
-	Port       int         `json:"port"`
-	Password   string      `json:"password"`
-	StreamID   string      `json:"stream_id"`
-	Codec      types.Codec `json:"codec"`
-	MaxRetries int         `json:"max_retries"`
+	// Enabled controls whether the stream is enabled.
+	Enabled bool `json:"enabled"`
+	// Host is the destination host name.
+	Host string `json:"host"`
+	// Port is the destination port.
+	Port int `json:"port"`
+	// Password is the stream password.
+	Password string `json:"password"`
+	// StreamID is the stream identifier.
+	StreamID string `json:"stream_id"`
+	// Codec selects the audio codec.
+	Codec types.Codec `json:"codec"`
+	// MaxRetries is the maximum number of retries before giving up.
+	MaxRetries int `json:"max_retries"`
 }
 
 // handleCreateStream creates a new stream.
@@ -343,17 +350,28 @@ func (s *Server) handleGetRecorder(w http.ResponseWriter, r *http.Request) {
 
 // RecorderRequest contains fields for creating or updating recorders.
 type RecorderRequest struct {
-	Name              string             `json:"name"`
-	Enabled           bool               `json:"enabled"`
-	Codec             types.Codec        `json:"codec"`
-	RotationMode      types.RotationMode `json:"rotation_mode"`
-	StorageMode       types.StorageMode  `json:"storage_mode"`
-	LocalPath         string             `json:"local_path"`
-	S3Endpoint        string             `json:"s3_endpoint"`
-	S3Bucket          string             `json:"s3_bucket"`
-	S3AccessKeyID     string             `json:"s3_access_key_id"`
-	S3SecretAccessKey string             `json:"s3_secret_access_key"`
-	RetentionDays     int                `json:"retention_days"`
+	// Name is the recorder name.
+	Name string `json:"name"`
+	// Enabled controls whether the recorder is enabled.
+	Enabled bool `json:"enabled"`
+	// Codec selects the recorder audio codec.
+	Codec types.Codec `json:"codec"`
+	// RotationMode selects the file rotation mode.
+	RotationMode types.RotationMode `json:"rotation_mode"`
+	// StorageMode selects local/S3 storage behavior.
+	StorageMode types.StorageMode `json:"storage_mode"`
+	// LocalPath is the local directory for recordings.
+	LocalPath string `json:"local_path"`
+	// S3Endpoint is the S3-compatible endpoint URL.
+	S3Endpoint string `json:"s3_endpoint"`
+	// S3Bucket is the S3 bucket name.
+	S3Bucket string `json:"s3_bucket"`
+	// S3AccessKeyID is the S3 access key ID.
+	S3AccessKeyID string `json:"s3_access_key_id"`
+	// S3SecretAccessKey is the S3 secret access key.
+	S3SecretAccessKey string `json:"s3_secret_access_key"`
+	// RetentionDays is the number of days to retain recordings.
+	RetentionDays int `json:"retention_days"`
 }
 
 // handleCreateRecorder creates a new recorder.
@@ -487,9 +505,13 @@ func (s *Server) handleRecorderAction(w http.ResponseWriter, r *http.Request) {
 
 // S3TestRequest contains fields for testing S3 connectivity.
 type S3TestRequest struct {
-	Endpoint  string `json:"s3_endpoint"`
-	Bucket    string `json:"s3_bucket"`
+	// Endpoint is the S3-compatible endpoint URL.
+	Endpoint string `json:"s3_endpoint"`
+	// Bucket is the S3 bucket name.
+	Bucket string `json:"s3_bucket"`
+	// AccessKey is the S3 access key ID.
 	AccessKey string `json:"s3_access_key_id"`
+	// SecretKey is the S3 secret access key.
 	SecretKey string `json:"s3_secret_access_key"`
 }
 
@@ -530,21 +552,28 @@ func (s *Server) handleTestS3(w http.ResponseWriter, r *http.Request) {
 
 // NotificationTestRequest contains fields for testing notifications.
 type NotificationTestRequest struct {
-	// Webhook
+	// WebhookURL is the webhook endpoint URL.
 	WebhookURL string `json:"webhook_url,omitempty"`
 
-	// Email
-	GraphTenantID     string `json:"graph_tenant_id,omitempty"`
-	GraphClientID     string `json:"graph_client_id,omitempty"`
+	// GraphTenantID is the Microsoft Graph tenant ID.
+	GraphTenantID string `json:"graph_tenant_id,omitempty"`
+	// GraphClientID is the Microsoft Graph client ID.
+	GraphClientID string `json:"graph_client_id,omitempty"`
+	// GraphClientSecret is the Microsoft Graph client secret.
 	GraphClientSecret string `json:"graph_client_secret,omitempty"`
-	GraphFromAddress  string `json:"graph_from_address,omitempty"`
-	GraphRecipients   string `json:"graph_recipients,omitempty"`
+	// GraphFromAddress is the sender email address.
+	GraphFromAddress string `json:"graph_from_address,omitempty"`
+	// GraphRecipients is a comma-separated recipient list.
+	GraphRecipients string `json:"graph_recipients,omitempty"`
 
-	// Zabbix
+	// ZabbixServer is the Zabbix server hostname.
 	ZabbixServer string `json:"zabbix_server,omitempty"`
-	ZabbixPort   int    `json:"zabbix_port,omitempty"`
-	ZabbixHost   string `json:"zabbix_host,omitempty"`
-	ZabbixKey    string `json:"zabbix_key,omitempty"`
+	// ZabbixPort is the Zabbix server port.
+	ZabbixPort int `json:"zabbix_port,omitempty"`
+	// ZabbixHost is the Zabbix host name.
+	ZabbixHost string `json:"zabbix_host,omitempty"`
+	// ZabbixKey is the Zabbix item key.
+	ZabbixKey string `json:"zabbix_key,omitempty"`
 }
 
 // handleAPITestWebhook tests webhook notification connectivity.
@@ -650,14 +679,22 @@ func (s *Server) handleAPIRegenerateKey(w http.ResponseWriter, r *http.Request) 
 
 // HealthResponse is the response body for the health endpoint.
 type HealthResponse struct {
-	Status           string `json:"status"`
-	EncoderState     string `json:"encoder_state"`
-	StreamCount      int    `json:"stream_count"`
-	StreamsStable    int    `json:"streams_stable"`
-	RecorderCount    int    `json:"recorder_count"`
-	RecordersRunning int    `json:"recorders_running"`
-	UptimeSeconds    int64  `json:"uptime_seconds"`
-	SilenceDetected  bool   `json:"silence_detected"`
+	// Status is the overall health status string.
+	Status string `json:"status"`
+	// EncoderState is the encoder's current state string.
+	EncoderState string `json:"encoder_state"`
+	// StreamCount is the number of configured streams.
+	StreamCount int `json:"stream_count"`
+	// StreamsStable is the number of stable streams.
+	StreamsStable int `json:"streams_stable"`
+	// RecorderCount is the number of configured recorders.
+	RecorderCount int `json:"recorder_count"`
+	// RecordersRunning is the number of running recorders.
+	RecordersRunning int `json:"recorders_running"`
+	// UptimeSeconds is the encoder uptime in seconds.
+	UptimeSeconds int64 `json:"uptime_seconds"`
+	// SilenceDetected reports whether silence is currently detected.
+	SilenceDetected bool `json:"silence_detected"`
 }
 
 // handleHealth returns the health status of the encoder.

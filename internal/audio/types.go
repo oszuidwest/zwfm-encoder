@@ -8,19 +8,30 @@ const SilenceLevelActive SilenceLevel = "active"
 
 // AudioLevels is the current audio level measurements.
 type AudioLevels struct {
-	Left              float64      `json:"left"`                         // RMS level in dB
-	Right             float64      `json:"right"`                        // RMS level in dB
-	PeakLeft          float64      `json:"peak_left"`                    // Peak level in dB
-	PeakRight         float64      `json:"peak_right"`                   // Peak level in dB
-	Silence           bool         `json:"silence,omitzero"`             // True if audio below threshold
-	SilenceDurationMs int64        `json:"silence_duration_ms,omitzero"` // Silence duration in milliseconds
-	SilenceLevel      SilenceLevel `json:"silence_level,omitzero"`       // "active" when in confirmed silence state
-	ClipLeft          int          `json:"clip_left,omitzero"`           // Clipped samples on left channel
-	ClipRight         int          `json:"clip_right,omitzero"`          // Clipped samples on right channel
+	// Left is the RMS level in dB for the left channel.
+	Left float64 `json:"left"`
+	// Right is the RMS level in dB for the right channel.
+	Right float64 `json:"right"`
+	// PeakLeft is the peak level in dB for the left channel.
+	PeakLeft float64 `json:"peak_left"`
+	// PeakRight is the peak level in dB for the right channel.
+	PeakRight float64 `json:"peak_right"`
+	// Silence reports whether audio is below the silence threshold.
+	Silence bool `json:"silence,omitzero"`
+	// SilenceDurationMs is the silence duration in milliseconds.
+	SilenceDurationMs int64 `json:"silence_duration_ms,omitzero"`
+	// SilenceLevel is the current silence level state.
+	SilenceLevel SilenceLevel `json:"silence_level,omitzero"`
+	// ClipLeft is the clipped sample count for the left channel.
+	ClipLeft int `json:"clip_left,omitzero"`
+	// ClipRight is the clipped sample count for the right channel.
+	ClipRight int `json:"clip_right,omitzero"`
 }
 
 // Device represents an available audio input device.
 type Device struct {
-	ID   string `json:"id"`   // Device identifier
-	Name string `json:"name"` // Device display name
+	// ID is the device identifier.
+	ID string `json:"id"`
+	// Name is the device display name.
+	Name string `json:"name"`
 }

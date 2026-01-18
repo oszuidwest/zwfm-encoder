@@ -12,19 +12,29 @@ import (
 
 // WebhookPayload represents the data sent to webhook endpoints.
 type WebhookPayload struct {
-	Event             string  `json:"event"`
-	SilenceDurationMs int64   `json:"silence_duration_ms,omitempty"`
-	LevelLeftDB       float64 `json:"level_left_db,omitempty"`
-	LevelRightDB      float64 `json:"level_right_db,omitempty"`
-	Threshold         float64 `json:"threshold,omitempty"`
-	Message           string  `json:"message,omitempty"`
-	Timestamp         string  `json:"timestamp"`
+	// Event is the webhook event name.
+	Event string `json:"event"`
+	// SilenceDurationMs is the silence duration in milliseconds.
+	SilenceDurationMs int64 `json:"silence_duration_ms,omitempty"`
+	// LevelLeftDB is the left channel level in dB.
+	LevelLeftDB float64 `json:"level_left_db,omitempty"`
+	// LevelRightDB is the right channel level in dB.
+	LevelRightDB float64 `json:"level_right_db,omitempty"`
+	// Threshold is the silence threshold in dB.
+	Threshold float64 `json:"threshold,omitempty"`
+	// Message is a human-readable message.
+	Message string `json:"message,omitempty"`
+	// Timestamp is the event timestamp.
+	Timestamp string `json:"timestamp"`
 
-	// Audio dump fields (silence_recovered only)
-	AudioDumpBase64    string `json:"audio_dump_base64,omitempty"`     // Base64-encoded MP3 dump
-	AudioDumpFilename  string `json:"audio_dump_filename,omitempty"`   // Dump filename
-	AudioDumpSizeBytes int64  `json:"audio_dump_size_bytes,omitempty"` // Dump file size in bytes
-	AudioDumpError     string `json:"audio_dump_error,omitempty"`      // Error message if dump encoding failed
+	// AudioDumpBase64 is the base64-encoded MP3 dump.
+	AudioDumpBase64 string `json:"audio_dump_base64,omitempty"`
+	// AudioDumpFilename is the dump file name.
+	AudioDumpFilename string `json:"audio_dump_filename,omitempty"`
+	// AudioDumpSizeBytes is the dump file size in bytes.
+	AudioDumpSizeBytes int64 `json:"audio_dump_size_bytes,omitempty"`
+	// AudioDumpError is the dump error message, if any.
+	AudioDumpError string `json:"audio_dump_error,omitempty"`
 }
 
 // SendWebhookSilence notifies the configured webhook of critical silence detection.

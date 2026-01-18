@@ -28,6 +28,7 @@ type Manager struct {
 	hourlyRetryStopCh chan struct{} // Stop signal for hourly retry scheduler
 }
 
+// NewManager creates a new recording manager.
 func NewManager(ffmpegPath, tempDir string, maxDurationMinutes int, eventLogger *eventlog.Logger) (*Manager, error) {
 	if tempDir == "" {
 		tempDir = DefaultTempDir
@@ -49,6 +50,7 @@ func NewManager(ffmpegPath, tempDir string, maxDurationMinutes int, eventLogger 
 	}, nil
 }
 
+// AddRecorder adds a recorder to the manager.
 func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -75,6 +77,7 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 	return nil
 }
 
+// RemoveRecorder removes a recorder from the manager.
 func (m *Manager) RemoveRecorder(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -94,6 +97,7 @@ func (m *Manager) RemoveRecorder(id string) error {
 	return nil
 }
 
+// UpdateRecorder updates an existing recorder configuration.
 func (m *Manager) UpdateRecorder(cfg *types.Recorder) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -106,6 +110,7 @@ func (m *Manager) UpdateRecorder(cfg *types.Recorder) error {
 	return recorder.UpdateConfig(cfg)
 }
 
+// StartRecorder starts an on-demand recorder by ID.
 func (m *Manager) StartRecorder(id string) error {
 	m.mu.RLock()
 	recorder, exists := m.recorders[id]
@@ -128,6 +133,7 @@ func (m *Manager) StartRecorder(id string) error {
 	return recorder.Start()
 }
 
+// StopRecorder stops an on-demand recorder by ID.
 func (m *Manager) StopRecorder(id string) error {
 	m.mu.RLock()
 	recorder, exists := m.recorders[id]
@@ -177,6 +183,7 @@ func (m *Manager) Start() error {
 	return nil
 }
 
+// Stop stops all active recorders and background schedulers.
 func (m *Manager) Stop() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -205,6 +212,7 @@ func (m *Manager) Stop() error {
 	return errors.Join(errs...)
 }
 
+// WriteAudio writes PCM audio to any active recorders.
 func (m *Manager) WriteAudio(pcm []byte) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -220,6 +228,7 @@ func (m *Manager) WriteAudio(pcm []byte) error {
 	return nil
 }
 
+// Statuses returns the current status of all recorders.
 func (m *Manager) Statuses() map[string]types.ProcessStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

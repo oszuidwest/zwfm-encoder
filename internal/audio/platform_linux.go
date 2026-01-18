@@ -24,6 +24,7 @@ func buildLinuxArgs(device string) []string {
 	}
 }
 
+// Devices returns the available audio input devices.
 func (cfg *CaptureConfig) Devices() []Device {
 	return parseDeviceList(DeviceListConfig{
 		Command:          []string{"arecord", "-l"},

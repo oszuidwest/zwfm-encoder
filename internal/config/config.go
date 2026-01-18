@@ -30,81 +30,134 @@ var (
 )
 
 const (
-	DefaultWebPort                     = 8080
-	DefaultWebUsername                 = "admin"
-	DefaultWebPassword                 = "encoder"
-	DefaultSilenceThreshold            = -40.0
-	DefaultSilenceDurationMs           = 15000 // 15 seconds in milliseconds
-	DefaultSilenceRecoveryMs           = 5000  // 5 seconds in milliseconds
-	DefaultPeakHoldMs                  = 3000  // 3 seconds peak hold duration
-	DefaultStationName                 = "ZuidWest FM"
-	DefaultStationColorLight           = "#E6007E"
-	DefaultStationColorDark            = "#E6007E"
-	DefaultRecordingMaxDurationMinutes = 240 // 4 hours for on-demand recorders
+	// DefaultWebPort is the default HTTP server port.
+	DefaultWebPort = 8080
+	// DefaultWebUsername is the default web username.
+	DefaultWebUsername = "admin"
+	// DefaultWebPassword is the default web password.
+	DefaultWebPassword = "encoder"
+	// DefaultSilenceThreshold is the default silence threshold in dB.
+	DefaultSilenceThreshold = -40.0
+	// DefaultSilenceDurationMs is the default silence duration in milliseconds.
+	DefaultSilenceDurationMs = 15000
+	// DefaultSilenceRecoveryMs is the default recovery duration in milliseconds.
+	DefaultSilenceRecoveryMs = 5000
+	// DefaultPeakHoldMs is the default peak hold duration in milliseconds.
+	DefaultPeakHoldMs = 3000
+	// DefaultStationName is the default station name.
+	DefaultStationName = "ZuidWest FM"
+	// DefaultStationColorLight is the default light theme color.
+	DefaultStationColorLight = "#E6007E"
+	// DefaultStationColorDark is the default dark theme color.
+	DefaultStationColorDark = "#E6007E"
+	// DefaultRecordingMaxDurationMinutes is the default max duration for on-demand recorders in minutes.
+	DefaultRecordingMaxDurationMinutes = 240
 )
 
+// SystemConfig holds system-level configuration.
 type SystemConfig struct {
-	FFmpegPath string `json:"ffmpeg_path"` // Path to FFmpeg binary (empty = use PATH)
-	Port       int    `json:"port"`        // HTTP server port
-	Username   string `json:"username"`    // Login username
-	Password   string `json:"password"`    // Login password
+	// FFmpegPath is the path to the FFmpeg binary (empty uses PATH).
+	FFmpegPath string `json:"ffmpeg_path"`
+	// Port is the HTTP server port.
+	Port int `json:"port"`
+	// Username is the login username.
+	Username string `json:"username"`
+	// Password is the login password.
+	Password string `json:"password"`
 }
 
+// WebConfig holds web UI branding settings.
 type WebConfig struct {
-	StationName string `json:"station_name"` // Station display name
-	ColorLight  string `json:"color_light"`  // Theme color for light mode (#RRGGBB)
-	ColorDark   string `json:"color_dark"`   // Theme color for dark mode (#RRGGBB)
+	// StationName is the station display name.
+	StationName string `json:"station_name"`
+	// ColorLight is the light theme color (#RRGGBB).
+	ColorLight string `json:"color_light"`
+	// ColorDark is the dark theme color (#RRGGBB).
+	ColorDark string `json:"color_dark"`
 }
 
+// AudioConfig holds audio input configuration.
 type AudioConfig struct {
-	Input string `json:"input"` // Audio input device identifier
+	// Input is the audio input device identifier.
+	Input string `json:"input"`
 }
 
+// SilenceDetectionConfig holds silence detection settings.
 type SilenceDetectionConfig struct {
-	ThresholdDB float64 `json:"threshold_db"` // Silence threshold in dB
-	DurationMs  int64   `json:"duration_ms"`  // Duration below threshold before silence alert
-	RecoveryMs  int64   `json:"recovery_ms"`  // Duration above threshold before recovery
-	PeakHoldMs  int64   `json:"peak_hold_ms"` // Duration to hold peak values in VU meter
+	// ThresholdDB is the silence threshold in dB.
+	ThresholdDB float64 `json:"threshold_db"`
+	// DurationMs is the duration below threshold before silence alert.
+	DurationMs int64 `json:"duration_ms"`
+	// RecoveryMs is the duration above threshold before recovery.
+	RecoveryMs int64 `json:"recovery_ms"`
+	// PeakHoldMs is the duration to hold peak values in the VU meter.
+	PeakHoldMs int64 `json:"peak_hold_ms"`
 }
 
+// WebhookConfig holds webhook notification settings.
 type WebhookConfig struct {
-	URL string `json:"url"` // Webhook URL for silence alerts
+	// URL is the webhook URL for silence alerts.
+	URL string `json:"url"`
 }
 
+// EmailConfig holds Microsoft Graph email settings.
 type EmailConfig struct {
-	TenantID     string `json:"tenant_id"`     // Azure AD tenant ID
-	ClientID     string `json:"client_id"`     // App registration client ID
-	ClientSecret string `json:"client_secret"` // App registration client secret
-	FromAddress  string `json:"from_address"`  // Shared mailbox sender address
-	Recipients   string `json:"recipients"`    // Comma-separated recipient addresses
+	// TenantID is the Azure AD tenant ID.
+	TenantID string `json:"tenant_id"`
+	// ClientID is the app registration client ID.
+	ClientID string `json:"client_id"`
+	// ClientSecret is the app registration client secret.
+	ClientSecret string `json:"client_secret"`
+	// FromAddress is the shared mailbox sender address.
+	FromAddress string `json:"from_address"`
+	// Recipients is a comma-separated list of recipient addresses.
+	Recipients string `json:"recipients"`
 }
 
+// NotificationsConfig holds notification settings.
 type NotificationsConfig struct {
-	Webhook WebhookConfig      `json:"webhook"`          // Webhook settings
-	Email   EmailConfig        `json:"email"`            // Email settings
-	Zabbix  types.ZabbixConfig `json:"zabbix,omitempty"` // Zabbix settings
+	// Webhook contains webhook notification settings.
+	Webhook WebhookConfig `json:"webhook"`
+	// Email contains Microsoft Graph email settings.
+	Email EmailConfig `json:"email"`
+	// Zabbix contains Zabbix notification settings.
+	Zabbix types.ZabbixConfig `json:"zabbix,omitempty"`
 }
 
+// StreamingConfig holds stream configuration.
 type StreamingConfig struct {
-	Streams []types.Stream `json:"streams"` // SRT streaming destinations
+	// Streams lists the configured stream destinations.
+	Streams []types.Stream `json:"streams"`
 }
 
+// RecordingConfig holds recording configuration.
 type RecordingConfig struct {
-	APIKey             string           `json:"api_key"`              // API key for recording control
-	MaxDurationMinutes int              `json:"max_duration_minutes"` // Max duration for on-demand recorders
-	Recorders          []types.Recorder `json:"recorders"`            // Recording destinations
+	// APIKey is the API key for recording control.
+	APIKey string `json:"api_key"`
+	// MaxDurationMinutes is the max duration for on-demand recorders.
+	MaxDurationMinutes int `json:"max_duration_minutes"`
+	// Recorders lists configured recording destinations.
+	Recorders []types.Recorder `json:"recorders"`
 }
 
 // Config is safe for concurrent use.
 type Config struct {
-	System           SystemConfig            `json:"system"`
-	Web              WebConfig               `json:"web"`
-	Audio            AudioConfig             `json:"audio"`
-	SilenceDetection SilenceDetectionConfig  `json:"silence_detection"`
-	SilenceDump      types.SilenceDumpConfig `json:"silence_dump"`
-	Notifications    NotificationsConfig     `json:"notifications"`
-	Streaming        StreamingConfig         `json:"streaming"`
-	Recording        RecordingConfig         `json:"recording"`
+	// System contains system-level configuration.
+	System SystemConfig `json:"system"`
+	// Web contains web UI branding settings.
+	Web WebConfig `json:"web"`
+	// Audio contains audio input settings.
+	Audio AudioConfig `json:"audio"`
+	// SilenceDetection contains silence detection settings.
+	SilenceDetection SilenceDetectionConfig `json:"silence_detection"`
+	// SilenceDump contains silence dump settings.
+	SilenceDump types.SilenceDumpConfig `json:"silence_dump"`
+	// Notifications contains notification settings.
+	Notifications NotificationsConfig `json:"notifications"`
+	// Streaming contains stream settings.
+	Streaming StreamingConfig `json:"streaming"`
+	// Recording contains recording settings.
+	Recording RecordingConfig `json:"recording"`
 
 	mu       sync.RWMutex
 	filePath string
@@ -445,51 +498,68 @@ func (c *Config) SetRecordingAPIKey(key string) error {
 
 // Snapshot is a point-in-time copy of configuration values.
 type Snapshot struct {
-	// System
-	WebPort     int
-	WebUser     string
+	// WebPort is the configured HTTP server port.
+	WebPort int
+	// WebUser is the configured web username.
+	WebUser string
+	// WebPassword is the configured web password.
 	WebPassword string
 
-	// Web/Branding
-	StationName       string
+	// StationName is the station display name.
+	StationName string
+	// StationColorLight is the light theme color (#RRGGBB).
 	StationColorLight string
-	StationColorDark  string
+	// StationColorDark is the dark theme color (#RRGGBB).
+	StationColorDark string
 
-	// Audio
+	// AudioInput is the configured audio input identifier.
 	AudioInput string
 
-	// Silence Detection
-	SilenceThreshold  float64
+	// SilenceThreshold is the silence threshold in dB.
+	SilenceThreshold float64
+	// SilenceDurationMs is the silence duration threshold in milliseconds.
 	SilenceDurationMs int64
+	// SilenceRecoveryMs is the silence recovery duration in milliseconds.
 	SilenceRecoveryMs int64
-	PeakHoldMs        int64
+	// PeakHoldMs is the peak hold duration in milliseconds.
+	PeakHoldMs int64
 
-	// Silence Dump
-	SilenceDumpEnabled       bool
+	// SilenceDumpEnabled reports whether silence dumping is enabled.
+	SilenceDumpEnabled bool
+	// SilenceDumpRetentionDays is the silence dump retention period in days.
 	SilenceDumpRetentionDays int
 
-	// Notifications
+	// WebhookURL is the configured webhook URL.
 	WebhookURL string
 
-	// Zabbix
+	// ZabbixServer is the configured Zabbix server host.
 	ZabbixServer string
-	ZabbixPort   int
-	ZabbixHost   string
-	ZabbixKey    string
+	// ZabbixPort is the configured Zabbix server port.
+	ZabbixPort int
+	// ZabbixHost is the configured Zabbix host name.
+	ZabbixHost string
+	// ZabbixKey is the configured Zabbix item key.
+	ZabbixKey string
 
-	// Microsoft Graph
-	GraphTenantID     string
-	GraphClientID     string
+	// GraphTenantID is the Microsoft Graph tenant ID.
+	GraphTenantID string
+	// GraphClientID is the Microsoft Graph client ID.
+	GraphClientID string
+	// GraphClientSecret is the Microsoft Graph client secret.
 	GraphClientSecret string
-	GraphFromAddress  string
-	GraphRecipients   string
+	// GraphFromAddress is the sender email address.
+	GraphFromAddress string
+	// GraphRecipients is a comma-separated recipient list.
+	GraphRecipients string
 
-	// Recording
-	RecordingAPIKey             string
+	// RecordingAPIKey is the API key for recording endpoints.
+	RecordingAPIKey string
+	// RecordingMaxDurationMinutes is the max duration for on-demand recorders.
 	RecordingMaxDurationMinutes int
 
-	// Entities
-	Streams   []types.Stream
+	// Streams lists configured stream destinations.
+	Streams []types.Stream
+	// Recorders lists configured recorders.
 	Recorders []types.Recorder
 }
 
@@ -568,22 +638,38 @@ func (s *Snapshot) HasZabbix() bool {
 
 // SettingsUpdate contains all settings for atomic update.
 type SettingsUpdate struct {
-	AudioInput               string  `json:"audio_input"`
-	SilenceThreshold         float64 `json:"silence_threshold"`
-	SilenceDurationMs        int64   `json:"silence_duration_ms"`
-	SilenceRecoveryMs        int64   `json:"silence_recovery_ms"`
-	SilenceDumpEnabled       bool    `json:"silence_dump_enabled"`
-	SilenceDumpRetentionDays int     `json:"silence_dump_retention_days"`
-	WebhookURL               string  `json:"webhook_url"`
-	ZabbixServer             string  `json:"zabbix_server"`
-	ZabbixPort               int     `json:"zabbix_port"`
-	ZabbixHost               string  `json:"zabbix_host"`
-	ZabbixKey                string  `json:"zabbix_key"`
-	GraphTenantID            string  `json:"graph_tenant_id"`
-	GraphClientID            string  `json:"graph_client_id"`
-	GraphClientSecret        string  `json:"graph_client_secret"`
-	GraphFromAddress         string  `json:"graph_from_address"`
-	GraphRecipients          string  `json:"graph_recipients"`
+	// AudioInput is the audio input identifier.
+	AudioInput string `json:"audio_input"`
+	// SilenceThreshold is the silence threshold in dB.
+	SilenceThreshold float64 `json:"silence_threshold"`
+	// SilenceDurationMs is the silence duration in milliseconds.
+	SilenceDurationMs int64 `json:"silence_duration_ms"`
+	// SilenceRecoveryMs is the silence recovery duration in milliseconds.
+	SilenceRecoveryMs int64 `json:"silence_recovery_ms"`
+	// SilenceDumpEnabled reports whether silence dumps are enabled.
+	SilenceDumpEnabled bool `json:"silence_dump_enabled"`
+	// SilenceDumpRetentionDays is the retention period in days.
+	SilenceDumpRetentionDays int `json:"silence_dump_retention_days"`
+	// WebhookURL is the webhook URL for notifications.
+	WebhookURL string `json:"webhook_url"`
+	// ZabbixServer is the Zabbix server host.
+	ZabbixServer string `json:"zabbix_server"`
+	// ZabbixPort is the Zabbix server port.
+	ZabbixPort int `json:"zabbix_port"`
+	// ZabbixHost is the Zabbix host name.
+	ZabbixHost string `json:"zabbix_host"`
+	// ZabbixKey is the Zabbix item key.
+	ZabbixKey string `json:"zabbix_key"`
+	// GraphTenantID is the Microsoft Graph tenant ID.
+	GraphTenantID string `json:"graph_tenant_id"`
+	// GraphClientID is the Microsoft Graph client ID.
+	GraphClientID string `json:"graph_client_id"`
+	// GraphClientSecret is the Microsoft Graph client secret.
+	GraphClientSecret string `json:"graph_client_secret"`
+	// GraphFromAddress is the sender email address.
+	GraphFromAddress string `json:"graph_from_address"`
+	// GraphRecipients is a comma-separated recipient list.
+	GraphRecipients string `json:"graph_recipients"`
 }
 
 // Validate checks all settings fields and returns all validation errors.

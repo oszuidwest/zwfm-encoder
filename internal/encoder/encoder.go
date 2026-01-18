@@ -25,6 +25,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
+// LevelUpdateSamples is the sample count between level updates.
 const LevelUpdateSamples = 12000
 
 // ErrNoAudioInput is returned when no audio input device is configured.
@@ -371,6 +372,7 @@ func (e *Encoder) Stop() error {
 	return errors.Join(errs...)
 }
 
+// Restart stops and restarts the encoder.
 func (e *Encoder) Restart() error {
 	if err := e.Stop(); err != nil {
 		return fmt.Errorf("stop: %w", err)
@@ -436,12 +438,14 @@ func (e *Encoder) InvalidateGraphSecretExpiryCache() {
 	}
 }
 
+// UpdateSilenceConfig resets silence detection after config changes.
 func (e *Encoder) UpdateSilenceConfig() {
 	if e.silenceDetect != nil {
 		e.silenceDetect.Reset()
 	}
 }
 
+// UpdateSilenceDumpConfig applies the current silence dump configuration.
 func (e *Encoder) UpdateSilenceDumpConfig() {
 	snap := e.config.Snapshot()
 	if e.silenceDumpManager != nil {

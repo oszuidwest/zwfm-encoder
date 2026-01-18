@@ -17,12 +17,19 @@ const (
 
 // LevelData holds raw sample accumulator data for level calculation.
 type LevelData struct {
+	// SumSquaresL accumulates squared samples for the left channel.
 	SumSquaresL float64
+	// SumSquaresR accumulates squared samples for the right channel.
 	SumSquaresR float64
-	PeakL       float64
-	PeakR       float64
-	ClipCountL  int
-	ClipCountR  int
+	// PeakL tracks the peak absolute sample value for the left channel.
+	PeakL float64
+	// PeakR tracks the peak absolute sample value for the right channel.
+	PeakR float64
+	// ClipCountL counts clipped samples for the left channel.
+	ClipCountL int
+	// ClipCountR counts clipped samples for the right channel.
+	ClipCountR int
+	// SampleCount tracks the number of samples processed.
 	SampleCount int
 }
 
@@ -57,11 +64,17 @@ func ProcessSamples(buf []byte, n int, data *LevelData) {
 
 // Levels contains calculated audio levels in dB.
 type Levels struct {
-	RMSLeft   float64
-	RMSRight  float64
-	PeakLeft  float64
+	// RMSLeft is the RMS level in dB for the left channel.
+	RMSLeft float64
+	// RMSRight is the RMS level in dB for the right channel.
+	RMSRight float64
+	// PeakLeft is the peak level in dB for the left channel.
+	PeakLeft float64
+	// PeakRight is the peak level in dB for the right channel.
 	PeakRight float64
-	ClipLeft  int
+	// ClipLeft is the clipped sample count for the left channel.
+	ClipLeft int
+	// ClipRight is the clipped sample count for the right channel.
 	ClipRight int
 }
 
