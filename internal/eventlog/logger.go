@@ -22,11 +22,11 @@ const (
 	// StreamStarted indicates a stream start event.
 	StreamStarted EventType = "stream_started"
 	// StreamStable indicates a stream stable event.
-	StreamStable  EventType = "stream_stable"
+	StreamStable EventType = "stream_stable"
 	// StreamError indicates a stream error event.
-	StreamError   EventType = "stream_error"
+	StreamError EventType = "stream_error"
 	// StreamRetry indicates a stream retry event.
-	StreamRetry   EventType = "stream_retry"
+	StreamRetry EventType = "stream_retry"
 	// StreamStopped indicates a stream stopped event.
 	StreamStopped EventType = "stream_stopped"
 )
@@ -35,28 +35,28 @@ const (
 	// SilenceStart indicates a silence start event.
 	SilenceStart EventType = "silence_start"
 	// SilenceEnd indicates a silence end event.
-	SilenceEnd   EventType = "silence_end"
+	SilenceEnd EventType = "silence_end"
 )
 
 const (
 	// RecorderStarted indicates a recorder started event.
-	RecorderStarted  EventType = "recorder_started"
+	RecorderStarted EventType = "recorder_started"
 	// RecorderStopped indicates a recorder stopped event.
-	RecorderStopped  EventType = "recorder_stopped"
+	RecorderStopped EventType = "recorder_stopped"
 	// RecorderError indicates a recorder error event.
-	RecorderError    EventType = "recorder_error"
+	RecorderError EventType = "recorder_error"
 	// RecorderFile indicates a recorder file rotation event.
-	RecorderFile     EventType = "recorder_file"
+	RecorderFile EventType = "recorder_file"
 	// UploadQueued indicates an upload queued event.
-	UploadQueued     EventType = "upload_queued"
+	UploadQueued EventType = "upload_queued"
 	// UploadCompleted indicates an upload completed event.
-	UploadCompleted  EventType = "upload_completed"
+	UploadCompleted EventType = "upload_completed"
 	// UploadFailed indicates an upload failed event.
-	UploadFailed     EventType = "upload_failed"
+	UploadFailed EventType = "upload_failed"
 	// UploadRetry indicates an upload retry event.
-	UploadRetry      EventType = "upload_retry"
+	UploadRetry EventType = "upload_retry"
 	// UploadAbandoned indicates an upload abandoned event.
-	UploadAbandoned  EventType = "upload_abandoned"
+	UploadAbandoned EventType = "upload_abandoned"
 	// CleanupCompleted indicates a cleanup completed event.
 	CleanupCompleted EventType = "cleanup_completed"
 )
@@ -292,11 +292,11 @@ type TypeFilter string
 
 const (
 	// FilterAll selects all events.
-	FilterAll      TypeFilter = ""
+	FilterAll TypeFilter = ""
 	// FilterStream selects stream events.
-	FilterStream   TypeFilter = "stream"
+	FilterStream TypeFilter = "stream"
 	// FilterAudio selects silence events.
-	FilterAudio    TypeFilter = "audio"
+	FilterAudio TypeFilter = "audio"
 	// FilterRecorder selects recorder events.
 	FilterRecorder TypeFilter = "recorder"
 )

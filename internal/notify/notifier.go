@@ -193,6 +193,7 @@ func (n *SilenceNotifier) sendSilenceWebhook(cfg config.Snapshot, levelL, levelR
 }
 
 // BuildGraphConfig builds a GraphConfig from a config snapshot.
+//
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func BuildGraphConfig(cfg config.Snapshot) *GraphConfig {
 	return &GraphConfig{
