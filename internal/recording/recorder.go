@@ -246,15 +246,24 @@ func (r *GenericRecorder) Stop() error {
 		return nil
 	}
 
-	// If in error or starting state, just reset to stopped
-	if r.state == types.ProcessError || r.state == types.ProcessStarting {
+	// Starting state: async startup in progress, no encoder yet
+	if r.state == types.ProcessStarting {
 		r.state = types.ProcessStopped
 		r.lastError = ""
 		r.mu.Unlock()
 		return nil
 	}
 
-	// ProcessRunning or ProcessRotating - proceed with full stop sequence
+	// Error state with no active encoder: nothing to clean up
+	if r.state == types.ProcessError && r.result == nil {
+		r.state = types.ProcessStopped
+		r.lastError = ""
+		r.mu.Unlock()
+		return nil
+	}
+
+	// ProcessRunning, ProcessRotating, or ProcessError with active encoder
+	// Proceed with full stop sequence
 	r.state = types.ProcessStopping
 
 	// Stop timers
