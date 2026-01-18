@@ -18,13 +18,13 @@ func GracefulSignal(p *os.Process) error {
 	return p.Signal(syscall.SIGINT)
 }
 
-// StopFFmpegViaStdin is a no-op on Unix since we use SIGINT.
-// Provided for API compatibility with Windows.
+// StopFFmpegViaStdin closes stdin on Unix systems.
+// On Unix, FFmpeg is stopped via SIGINT (see GracefulSignal), so this
+// function only closes the stdin pipe to clean up resources.
+// Provided for API compatibility with Windows where 'q' stdin is required.
 func StopFFmpegViaStdin(stdin io.WriteCloser) error {
-	// On Unix, FFmpeg is stopped via SIGINT, not stdin.
-	// Just close stdin if provided.
-	if stdin != nil {
-		return stdin.Close()
+	if stdin == nil {
+		return nil
 	}
-	return nil
+	return stdin.Close()
 }
