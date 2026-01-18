@@ -241,29 +241,21 @@ func (r *GenericRecorder) logEvent(eventType eventlog.EventType, p *eventlog.Rec
 func (r *GenericRecorder) Stop() error {
 	r.mu.Lock()
 
+	// Already stopped or in the process of stopping
 	if r.state == types.ProcessStopped || r.state == types.ProcessStopping {
 		r.mu.Unlock()
 		return nil
 	}
 
-	// Starting state: async startup in progress, no encoder yet
-	if r.state == types.ProcessStarting {
+	// No active encoder to clean up (starting or error state without encoder)
+	if r.result == nil {
 		r.state = types.ProcessStopped
 		r.lastError = ""
 		r.mu.Unlock()
 		return nil
 	}
 
-	// Error state with no active encoder: nothing to clean up
-	if r.state == types.ProcessError && r.result == nil {
-		r.state = types.ProcessStopped
-		r.lastError = ""
-		r.mu.Unlock()
-		return nil
-	}
-
-	// ProcessRunning, ProcessRotating, or ProcessError with active encoder
-	// Proceed with full stop sequence
+	// Active encoder exists - proceed with full stop sequence
 	r.state = types.ProcessStopping
 
 	// Stop timers
