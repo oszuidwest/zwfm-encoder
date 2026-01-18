@@ -1,6 +1,7 @@
 package recording
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -192,18 +193,18 @@ func (m *Manager) Stop() error {
 	close(m.hourlyRetryStopCh)
 	m.hourlyRetryStopCh = make(chan struct{}) // Reset for potential restart
 
-	var lastErr error
+	var errs []error
 	for id, recorder := range m.recorders {
 		if recorder.IsRecording() {
 			if err := recorder.Stop(); err != nil {
 				slog.Warn("error stopping recorder", "id", id, "error", err)
-				lastErr = err
+				errs = append(errs, err)
 			}
 		}
 	}
 
 	slog.Info("recording manager stopped")
-	return lastErr
+	return errors.Join(errs...)
 }
 
 func (m *Manager) WriteAudio(pcm []byte) error {

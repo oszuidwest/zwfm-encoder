@@ -324,6 +324,7 @@ func (r *GenericRecorder) WriteAudio(pcm []byte) error {
 		}
 
 		r.mu.Lock()
+		r.state = types.ProcessError
 		r.lastError = err.Error()
 		r.mu.Unlock()
 		return err

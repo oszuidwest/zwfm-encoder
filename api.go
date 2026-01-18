@@ -293,7 +293,7 @@ func (s *Server) handleDeleteStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.config.RemoveStream(id); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -413,7 +413,7 @@ func (s *Server) handleDeleteRecorder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.encoder.RemoveRecorder(id); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
