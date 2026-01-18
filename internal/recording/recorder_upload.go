@@ -33,37 +33,58 @@ type pendingUpload struct {
 const MaxUploadRetryAge = 24 * time.Hour
 
 func (r *GenericRecorder) queueForUpload(filePath string) {
+	req, ok := r.prepareUploadRequest(filePath)
+	if !ok {
+		return
+	}
+
+	select {
+	case r.uploadQueue <- req:
+		slog.Info("queued file for upload", "id", r.id, "file", filepath.Base(filePath))
+		r.logUploadEvent(eventlog.UploadQueued, filepath.Base(filePath), req.s3Key, "", 0)
+	default:
+		slog.Warn("upload queue full", "id", r.id)
+	}
+}
+
+// uploadDirectly uploads a file synchronously, bypassing the queue.
+// Used by cleanupAfterWriteError to avoid race conditions with Stop().
+func (r *GenericRecorder) uploadDirectly(filePath string) {
+	req, ok := r.prepareUploadRequest(filePath)
+	if !ok {
+		return
+	}
+
+	slog.Info("uploading file directly (error recovery)", "id", r.id, "file", filepath.Base(filePath))
+	r.uploadFile(req)
+}
+
+// prepareUploadRequest validates and creates an upload request for the given file.
+// Returns false if the file should not be uploaded.
+func (r *GenericRecorder) prepareUploadRequest(filePath string) (uploadRequest, bool) {
 	info, err := os.Stat(filePath)
 	if err != nil {
 		slog.Warn("failed to stat recording file", "id", r.id, "error", err)
-		return
+		return uploadRequest{}, false
 	}
 
 	// Local-only mode: no upload needed
 	if r.config.StorageMode == types.StorageLocal {
 		slog.Info("local storage mode, file saved", "id", r.id, "path", filePath)
-		return
+		return uploadRequest{}, false
 	}
 
-	// S3 or Both mode: queue for upload
+	// S3 or Both mode: need S3 config
 	if !r.isS3Configured() {
 		slog.Warn("S3 not configured but storage mode requires it", "id", r.id, "mode", r.config.StorageMode)
-		return
+		return uploadRequest{}, false
 	}
 
-	s3Key := r.generateS3Key(filepath.Base(filePath))
-
-	select {
-	case r.uploadQueue <- uploadRequest{
+	return uploadRequest{
 		localPath: filePath,
-		s3Key:     s3Key,
+		s3Key:     r.generateS3Key(filepath.Base(filePath)),
 		fileSize:  info.Size(),
-	}:
-		slog.Info("queued file for upload", "id", r.id, "file", filepath.Base(filePath))
-		r.logUploadEvent(eventlog.UploadQueued, filepath.Base(filePath), s3Key, "", 0)
-	default:
-		slog.Warn("upload queue full", "id", r.id)
-	}
+	}, true
 }
 
 // logUploadEvent logs upload-related events with optional retry count.

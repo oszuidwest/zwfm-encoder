@@ -39,6 +39,14 @@ func (s *Server) writeNoContent(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) writeConfigError(w http.ResponseWriter, err error) {
+	if errors.Is(err, config.ErrStreamNotFound) || errors.Is(err, config.ErrRecorderNotFound) {
+		s.writeError(w, http.StatusNotFound, err.Error())
+	} else {
+		s.writeError(w, http.StatusInternalServerError, err.Error())
+	}
+}
+
 func (s *Server) readJSON(r *http.Request, v any) error {
 	return json.NewDecoder(r.Body).Decode(v)
 }
@@ -272,11 +280,7 @@ func (s *Server) handleUpdateStream(w http.ResponseWriter, r *http.Request) {
 
 	// Persistence failures are server errors (not-found can happen on concurrent delete)
 	if err := s.config.UpdateStream(updated); err != nil {
-		if errors.Is(err, config.ErrStreamNotFound) {
-			s.writeError(w, http.StatusNotFound, err.Error())
-		} else {
-			s.writeError(w, http.StatusInternalServerError, err.Error())
-		}
+		s.writeConfigError(w, err)
 		return
 	}
 
@@ -312,11 +316,7 @@ func (s *Server) handleDeleteStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.config.RemoveStream(id); err != nil {
-		if errors.Is(err, config.ErrStreamNotFound) {
-			s.writeError(w, http.StatusNotFound, err.Error())
-		} else {
-			s.writeError(w, http.StatusInternalServerError, err.Error())
-		}
+		s.writeConfigError(w, err)
 		return
 	}
 
@@ -433,11 +433,7 @@ func (s *Server) handleUpdateRecorder(w http.ResponseWriter, r *http.Request) {
 
 	// Persistence/manager failures are server errors (not-found can happen on concurrent delete)
 	if err := s.encoder.UpdateRecorder(updated); err != nil {
-		if errors.Is(err, config.ErrRecorderNotFound) {
-			s.writeError(w, http.StatusNotFound, err.Error())
-		} else {
-			s.writeError(w, http.StatusInternalServerError, err.Error())
-		}
+		s.writeConfigError(w, err)
 		return
 	}
 
@@ -454,11 +450,7 @@ func (s *Server) handleDeleteRecorder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.encoder.RemoveRecorder(id); err != nil {
-		if errors.Is(err, config.ErrRecorderNotFound) {
-			s.writeError(w, http.StatusNotFound, err.Error())
-		} else {
-			s.writeError(w, http.StatusInternalServerError, err.Error())
-		}
+		s.writeConfigError(w, err)
 		return
 	}
 

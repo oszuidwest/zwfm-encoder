@@ -345,7 +345,7 @@ func (r *GenericRecorder) WriteAudio(pcm []byte) error {
 }
 
 // cleanupAfterWriteError handles cleanup when a write error occurs.
-// It closes FFmpeg gracefully and queues the file for upload.
+// It closes FFmpeg gracefully and uploads the file directly.
 func (r *GenericRecorder) cleanupAfterWriteError(result *ffmpeg.StartResult, currentFile string) {
 	if result == nil {
 		return
@@ -385,9 +385,9 @@ func (r *GenericRecorder) cleanupAfterWriteError(result *ffmpeg.StartResult, cur
 		}
 	}
 
-	// Queue for upload if file exists
+	// Upload directly - bypasses queue to avoid race with concurrent Stop()
 	if currentFile != "" {
-		r.queueForUpload(currentFile)
+		r.uploadDirectly(currentFile)
 	}
 }
 
