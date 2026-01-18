@@ -84,11 +84,9 @@ func (m *Manager) RemoveRecorder(id string) error {
 		return fmt.Errorf("recorder not found: %s", id)
 	}
 
-	// Stop if recording
-	if recorder.IsRecording() {
-		if err := recorder.Stop(); err != nil {
-			slog.Warn("error stopping recorder during removal", "id", id, "error", err)
-		}
+	// Always stop to clean up resources (timers, upload worker) even in error state
+	if err := recorder.Stop(); err != nil {
+		slog.Warn("error stopping recorder during removal", "id", id, "error", err)
 	}
 
 	delete(m.recorders, id)
