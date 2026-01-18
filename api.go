@@ -294,7 +294,6 @@ func (s *Server) handleDeleteStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.config.RemoveStream(id); err != nil {
-		// Distinguish between not-found (race condition) and persistence errors
 		if errors.Is(err, config.ErrStreamNotFound) {
 			s.writeError(w, http.StatusNotFound, err.Error())
 		} else {
@@ -419,7 +418,6 @@ func (s *Server) handleDeleteRecorder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.encoder.RemoveRecorder(id); err != nil {
-		// Distinguish between not-found (race condition) and persistence errors
 		if errors.Is(err, config.ErrRecorderNotFound) {
 			s.writeError(w, http.StatusNotFound, err.Error())
 		} else {
