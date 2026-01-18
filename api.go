@@ -270,9 +270,13 @@ func (s *Server) handleUpdateStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Persistence failures are server errors
+	// Persistence failures are server errors (not-found can happen on concurrent delete)
 	if err := s.config.UpdateStream(updated); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
+		if errors.Is(err, config.ErrStreamNotFound) {
+			s.writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			s.writeError(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 
@@ -427,9 +431,13 @@ func (s *Server) handleUpdateRecorder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Persistence/manager failures are server errors
+	// Persistence/manager failures are server errors (not-found can happen on concurrent delete)
 	if err := s.encoder.UpdateRecorder(updated); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
+		if errors.Is(err, config.ErrRecorderNotFound) {
+			s.writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			s.writeError(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 
