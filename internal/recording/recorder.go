@@ -630,10 +630,6 @@ func (r *GenericRecorder) getFileExtension() string {
 
 func (r *GenericRecorder) getContentType() string {
 	switch r.config.Codec {
-	case types.CodecMP2:
-		return "audio/mpeg"
-	case types.CodecMP3:
-		return "audio/mpeg"
 	case types.CodecOGG:
 		return "audio/ogg"
 	case types.CodecWAV:

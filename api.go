@@ -42,9 +42,9 @@ func (s *Server) writeNoContent(w http.ResponseWriter) {
 func (s *Server) writeConfigError(w http.ResponseWriter, err error) {
 	if errors.Is(err, config.ErrStreamNotFound) || errors.Is(err, config.ErrRecorderNotFound) {
 		s.writeError(w, http.StatusNotFound, err.Error())
-	} else {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
+	s.writeError(w, http.StatusInternalServerError, err.Error())
 }
 
 func (s *Server) readJSON(r *http.Request, v any) error {
