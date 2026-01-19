@@ -1,4 +1,4 @@
-// Package streaming manages FFmpeg streaming processes.
+// Package streaming provides FFmpeg process management for SRT output streams.
 package streaming
 
 import (

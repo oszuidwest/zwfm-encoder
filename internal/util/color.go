@@ -1,4 +1,3 @@
-// Package util provides utility functions for the encoder.
 package util
 
 import (

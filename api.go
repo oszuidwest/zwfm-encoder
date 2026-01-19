@@ -54,8 +54,7 @@ func (s *Server) readJSON(r *http.Request, v any) error {
 // maxRequestBodySize limits JSON request bodies to 1MB.
 const maxRequestBodySize = 1 << 20
 
-// parseJSON parses JSON from the request body into type T and reports whether parsing succeeded.
-// Limits request body size to prevent denial of service attacks.
+// parseJSON limits body to maxRequestBodySize to prevent DoS.
 func parseJSON[T any](s *Server, w http.ResponseWriter, r *http.Request) (T, bool) {
 	var v T
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
@@ -66,7 +65,6 @@ func parseJSON[T any](s *Server, w http.ResponseWriter, r *http.Request) (T, boo
 	return v, true
 }
 
-// handleAPIConfig returns the full configuration for the frontend.
 func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
 
@@ -112,14 +110,12 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, resp)
 }
 
-// handleAPIDevices returns available audio devices.
 func (s *Server) handleAPIDevices(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"devices": audio.Devices(),
 	})
 }
 
-// handleAPISettings updates all settings atomically.
 func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[config.SettingsUpdate](s, w, r)
 	if !ok {
@@ -177,13 +173,11 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	s.writeNoContent(w)
 }
 
-// handleListStreams returns all configured streams.
 func (s *Server) handleListStreams(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
 	s.writeJSON(w, http.StatusOK, cfg.Streams)
 }
 
-// handleGetStream returns a single stream by ID.
 func (s *Server) handleGetStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	stream := s.config.Stream(id)
@@ -212,7 +206,6 @@ type StreamRequest struct {
 	MaxRetries int `json:"max_retries"`
 }
 
-// handleCreateStream creates a new stream.
 func (s *Server) handleCreateStream(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[StreamRequest](s, w, r)
 	if !ok {
@@ -251,7 +244,6 @@ func (s *Server) handleCreateStream(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusCreated, stream)
 }
 
-// handleUpdateStream replaces a stream by ID.
 func (s *Server) handleUpdateStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	existing := s.config.Stream(id)
@@ -310,7 +302,6 @@ func (s *Server) handleUpdateStream(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, updated)
 }
 
-// handleDeleteStream deletes a stream by ID.
 func (s *Server) handleDeleteStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if s.config.Stream(id) == nil {
@@ -331,13 +322,11 @@ func (s *Server) handleDeleteStream(w http.ResponseWriter, r *http.Request) {
 	s.writeNoContent(w)
 }
 
-// handleListRecorders returns all configured recorders.
 func (s *Server) handleListRecorders(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
 	s.writeJSON(w, http.StatusOK, cfg.Recorders)
 }
 
-// handleGetRecorder returns a single recorder by ID.
 func (s *Server) handleGetRecorder(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	recorder := s.config.Recorder(id)
@@ -374,7 +363,6 @@ type RecorderRequest struct {
 	RetentionDays int `json:"retention_days"`
 }
 
-// handleCreateRecorder creates a new recorder.
 func (s *Server) handleCreateRecorder(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[RecorderRequest](s, w, r)
 	if !ok {
@@ -411,7 +399,6 @@ func (s *Server) handleCreateRecorder(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusCreated, recorder)
 }
 
-// handleUpdateRecorder replaces a recorder by ID.
 func (s *Server) handleUpdateRecorder(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	existing := s.config.Recorder(id)
@@ -459,7 +446,6 @@ func (s *Server) handleUpdateRecorder(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, updated)
 }
 
-// handleDeleteRecorder deletes a recorder by ID.
 func (s *Server) handleDeleteRecorder(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if s.config.Recorder(id) == nil {
@@ -476,7 +462,6 @@ func (s *Server) handleDeleteRecorder(w http.ResponseWriter, r *http.Request) {
 	s.writeNoContent(w)
 }
 
-// handleRecorderAction handles start/stop actions for a recorder.
 func (s *Server) handleRecorderAction(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	action := r.PathValue("action")
@@ -515,7 +500,6 @@ type S3TestRequest struct {
 	SecretKey string `json:"s3_secret_access_key"`
 }
 
-// handleTestS3 tests S3 connectivity.
 func (s *Server) handleTestS3(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[S3TestRequest](s, w, r)
 	if !ok {
@@ -576,7 +560,6 @@ type NotificationTestRequest struct {
 	ZabbixKey string `json:"zabbix_key,omitempty"`
 }
 
-// handleAPITestWebhook tests webhook notification connectivity.
 func (s *Server) handleAPITestWebhook(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[NotificationTestRequest](s, w, r)
 	if !ok {
@@ -599,7 +582,6 @@ func (s *Server) handleAPITestWebhook(w http.ResponseWriter, r *http.Request) {
 	s.writeMessage(w, "Webhook test sent")
 }
 
-// handleAPITestEmail tests email notification.
 func (s *Server) handleAPITestEmail(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[NotificationTestRequest](s, w, r)
 	if !ok {
@@ -634,7 +616,6 @@ func (s *Server) handleAPITestEmail(w http.ResponseWriter, r *http.Request) {
 	s.writeMessage(w, "Test email sent")
 }
 
-// handleAPITestZabbix tests Zabbix trapper notification connectivity.
 func (s *Server) handleAPITestZabbix(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[NotificationTestRequest](s, w, r)
 	if !ok {
@@ -660,7 +641,6 @@ func (s *Server) handleAPITestZabbix(w http.ResponseWriter, r *http.Request) {
 	s.writeMessage(w, "Zabbix test sent")
 }
 
-// handleAPIRegenerateKey generates a new recording API key.
 func (s *Server) handleAPIRegenerateKey(w http.ResponseWriter, r *http.Request) {
 	newKey, err := config.GenerateAPIKey()
 	if err != nil {
@@ -697,7 +677,6 @@ type HealthResponse struct {
 	SilenceDetected bool `json:"silence_detected"`
 }
 
-// handleHealth returns the health status of the encoder.
 // GET /health
 // Returns 200 OK if healthy, 503 Service Unavailable if unhealthy.
 // Health is defined as: encoder running AND FFmpeg available.
@@ -751,7 +730,6 @@ func countRunningRecorders(statuses map[string]types.ProcessStatus) int {
 	return count
 }
 
-// handleAPIEvents returns events from the event log.
 func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 	emptyResponse := map[string]any{
 		"events":   []eventlog.Event{},

@@ -1,4 +1,3 @@
-// Package notify provides notification services for silence alerts.
 package notify
 
 import (

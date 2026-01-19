@@ -1,4 +1,4 @@
-// Package notify handles silence detection notifications.
+// Package notify provides alerting services for silence detection events.
 package notify
 
 import (

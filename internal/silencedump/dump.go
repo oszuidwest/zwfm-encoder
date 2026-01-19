@@ -1,4 +1,4 @@
-// Package silencedump captures audio around silence events and encodes to MP3.
+// Package silencedump provides audio capture around silence events with MP3 encoding.
 package silencedump
 
 import (
