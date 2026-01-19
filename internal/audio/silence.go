@@ -7,35 +7,23 @@ import (
 
 // SilenceConfig holds the configurable thresholds for silence detection.
 type SilenceConfig struct {
-	// Threshold is the audio level in dB below which silence is detected.
-	Threshold float64
-	// DurationMs is how long audio must be below threshold before alerting.
+	Threshold  float64 // dB
 	DurationMs int64
-	// RecoveryMs is how long audio must be above threshold before clearing the alert.
 	RecoveryMs int64
 }
 
 // SilenceEvent represents the result of a silence detection update.
 type SilenceEvent struct {
-	// InSilence reports whether silence is currently confirmed.
-	InSilence bool
-	// DurationMs is how long silence has lasted in milliseconds (0 if not silent).
+	InSilence  bool
 	DurationMs int64
-	// Level indicates the silence detection state (active or empty).
-	Level SilenceLevel
+	Level      SilenceLevel
 
-	// CurrentLevelL is the left channel audio level in dB at detection time.
-	CurrentLevelL float64
-	// CurrentLevelR is the right channel audio level in dB at detection time.
-	CurrentLevelR float64
+	CurrentLevelL float64 // dB
+	CurrentLevelR float64 // dB
 
-	// JustEntered reports whether silence was just confirmed on this update.
-	JustEntered bool
-	// JustRecovered reports whether recovery just completed on this update.
-	JustRecovered bool
-	// TotalDurationMs is the total silence duration in milliseconds when recovery completes.
-	TotalDurationMs int64
-	// RecoveryDurationMs is how long audio was above threshold before recovery was confirmed.
+	JustEntered        bool
+	JustRecovered      bool
+	TotalDurationMs    int64
 	RecoveryDurationMs int64
 }
 
