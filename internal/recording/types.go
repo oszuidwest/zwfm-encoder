@@ -21,13 +21,9 @@ var (
 
 // S3Config is the configuration for S3-compatible storage.
 type S3Config struct {
-	// Endpoint is the S3-compatible endpoint URL, or empty to use AWS S3.
-	Endpoint string `json:"endpoint,omitempty"`
-	// Bucket is where recordings are uploaded.
-	Bucket string `json:"bucket,omitempty"`
-	// AccessKeyID is the access key for S3 authentication.
-	AccessKeyID string `json:"access_key_id,omitempty"`
-	// SecretAccessKey is the secret key for S3 authentication.
+	Endpoint        string `json:"endpoint,omitempty"`
+	Bucket          string `json:"bucket,omitempty"`
+	AccessKeyID     string `json:"access_key_id,omitempty"`
 	SecretAccessKey string `json:"secret_access_key,omitempty"`
 }
 
