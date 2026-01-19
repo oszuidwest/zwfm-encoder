@@ -46,19 +46,19 @@ const (
 
 // ProcessStatus holds runtime status for a stream or recorder.
 type ProcessStatus struct {
-	// State is the current process state.
+	// State is the lifecycle phase (stopped, running, error, etc.).
 	State ProcessState `json:"state"`
-	// Stable reports whether a stream has been running long enough to be stable.
+	// Stable reports whether the stream has been running past the stability threshold.
 	Stable bool `json:"stable,omitempty"`
-	// Exhausted reports whether retries are exhausted.
+	// Exhausted reports whether all retry attempts have been used.
 	Exhausted bool `json:"exhausted,omitempty"`
-	// RetryCount is the current retry attempt.
+	// RetryCount is which retry attempt is currently in progress.
 	RetryCount int `json:"retry_count,omitempty"`
-	// MaxRetries is the maximum allowed retry attempts.
+	// MaxRetries is the configured maximum retry attempts before giving up.
 	MaxRetries int `json:"max_retries,omitempty"`
-	// Error is the last error message.
+	// Error is the most recent error message, if any.
 	Error string `json:"error,omitempty"`
-	// Uptime is the human-readable elapsed time since the process started.
+	// Uptime is the elapsed time since start in human-readable form (e.g., "1h23m").
 	Uptime string `json:"uptime,omitempty"`
 }
 
@@ -121,23 +121,23 @@ func (c *Codec) UnmarshalJSON(data []byte) error {
 
 // Stream defines an SRT streaming destination.
 type Stream struct {
-	// ID is the unique stream identifier.
+	// ID is the unique identifier assigned when the stream is created.
 	ID string `json:"id"`
-	// Enabled reports whether the stream is active.
+	// Enabled reports whether the stream should be started with the encoder.
 	Enabled bool `json:"enabled"`
-	// Host is the SRT server hostname.
+	// Host is the SRT server hostname or IP address to connect to.
 	Host string `json:"host"`
-	// Port is the SRT server port.
+	// Port is the TCP port on the SRT server to connect to.
 	Port int `json:"port"`
-	// Password is the SRT encryption passphrase.
+	// Password is the SRT encryption passphrase, if required by the server.
 	Password string `json:"password"`
-	// StreamID is the SRT stream identifier.
+	// StreamID is the SRT stream identifier sent to the server for routing.
 	StreamID string `json:"stream_id"`
-	// Codec selects the audio codec.
+	// Codec selects the audio encoding format (mp3, mp2, ogg, wav).
 	Codec Codec `json:"codec"`
-	// MaxRetries is the maximum retry attempts (0 = no retries).
+	// MaxRetries is how many reconnection attempts before giving up (0 = no retries).
 	MaxRetries int `json:"max_retries"`
-	// CreatedAt is the Unix timestamp of creation.
+	// CreatedAt is the Unix timestamp in milliseconds when the stream was created.
 	CreatedAt int64 `json:"created_at"`
 }
 
@@ -162,9 +162,9 @@ func (s *Stream) MaxRetriesOrDefault() int {
 
 // CodecPreset defines encoding parameters for a codec.
 type CodecPreset struct {
-	// Args contains the FFmpeg encoder arguments for this codec.
+	// Args contains the FFmpeg encoder arguments (e.g., "libmp3lame", "-b:a", "320k").
 	Args []string
-	// Format is the output container format for this codec.
+	// Format is the output container format (e.g., "mp3", "ogg", "matroska").
 	Format string
 }
 
@@ -290,41 +290,41 @@ const DefaultSilenceDumpRetentionDays = 7
 
 // SilenceDumpConfig defines settings for capturing audio around silence events.
 type SilenceDumpConfig struct {
-	// Enabled reports whether dump capture is active.
+	// Enabled reports whether audio dumps are captured during silence events.
 	Enabled bool `json:"enabled"`
-	// RetentionDays is the number of days to keep dump files.
+	// RetentionDays is how many days to keep dump files before cleanup (0 = forever).
 	RetentionDays int `json:"retention_days"`
 }
 
 // Recorder defines a recording destination configuration.
 type Recorder struct {
-	// ID is the unique recorder identifier.
+	// ID is the unique identifier assigned when the recorder is created.
 	ID string `json:"id"`
-	// Name is the recorder display name.
+	// Name is the display name shown in the web UI.
 	Name string `json:"name"`
-	// Enabled reports whether the recorder is active.
+	// Enabled reports whether the recorder should be started with the encoder.
 	Enabled bool `json:"enabled"`
-	// Codec selects the audio codec.
+	// Codec selects the audio encoding format (mp3, mp2, ogg, wav).
 	Codec Codec `json:"codec"`
-	// RotationMode selects the rotation mode.
+	// RotationMode selects when recordings are split into new files (hourly).
 	RotationMode RotationMode `json:"rotation_mode"`
-	// StorageMode selects the storage mode.
+	// StorageMode selects where recordings are stored (local, s3, both).
 	StorageMode StorageMode `json:"storage_mode"`
-	// LocalPath is the local directory for recordings.
+	// LocalPath is the directory where local recordings are saved.
 	LocalPath string `json:"local_path"`
 
-	// S3Endpoint is the S3-compatible endpoint URL.
+	// S3Endpoint is the S3-compatible storage endpoint URL.
 	S3Endpoint string `json:"s3_endpoint"`
-	// S3Bucket is the S3 bucket name.
+	// S3Bucket is the bucket name where recordings are uploaded.
 	S3Bucket string `json:"s3_bucket"`
-	// S3AccessKeyID is the S3 access key ID.
+	// S3AccessKeyID is the access key for S3 authentication.
 	S3AccessKeyID string `json:"s3_access_key_id"`
-	// S3SecretAccessKey is the AWS secret for S3 authentication.
+	// S3SecretAccessKey is the secret key for S3 authentication.
 	S3SecretAccessKey string `json:"s3_secret_access_key"`
 
-	// RetentionDays is the number of days to keep recordings.
+	// RetentionDays is how many days to keep recordings before cleanup (0 = forever).
 	RetentionDays int `json:"retention_days"`
-	// CreatedAt is the Unix timestamp of creation.
+	// CreatedAt is the Unix timestamp in milliseconds when the recorder was created.
 	CreatedAt int64 `json:"created_at"`
 }
 
@@ -375,146 +375,146 @@ func (r *Recorder) Validate() error {
 
 // EncoderStatus summarizes the encoder's current operational state.
 type EncoderStatus struct {
-	// State is the current encoder state.
+	// State is the lifecycle phase (stopped, starting, running, stopping).
 	State EncoderState `json:"state"`
-	// Uptime is the time since start in human-readable form.
+	// Uptime is the elapsed time since start in human-readable form (e.g., "1h23m").
 	Uptime string `json:"uptime,omitzero"`
-	// UptimeSeconds is the time since start in seconds.
+	// UptimeSeconds is the elapsed time since start in seconds.
 	UptimeSeconds int64 `json:"uptime_seconds"`
-	// LastError is the most recent error message.
+	// LastError is the most recent error message, if any.
 	LastError string `json:"last_error,omitzero"`
-	// StreamCount is the number of configured streams.
+	// StreamCount is how many streams are configured.
 	StreamCount int `json:"stream_count"`
-	// SourceRetryCount is the number of audio source retry attempts.
+	// SourceRetryCount is which audio source retry attempt is in progress.
 	SourceRetryCount int `json:"source_retry_count,omitzero"`
-	// SourceMaxRetries is the maximum number of audio source retry attempts.
+	// SourceMaxRetries is the configured maximum audio source retry attempts.
 	SourceMaxRetries int `json:"source_max_retries"`
 }
 
 // WSRuntimeStatus contains runtime status sent to clients periodically.
 type WSRuntimeStatus struct {
-	// Type is the message type identifier.
+	// Type is the WebSocket message type (always "status").
 	Type string `json:"type"`
-	// FFmpegAvailable reports whether the FFmpeg binary is available.
+	// FFmpegAvailable reports whether the FFmpeg binary was found at startup.
 	FFmpegAvailable bool `json:"ffmpeg_available"`
-	// Encoder holds encoder status.
+	// Encoder holds the encoder's current status.
 	Encoder EncoderStatus `json:"encoder"`
-	// StreamStatus holds runtime stream status by ID.
+	// StreamStatus maps stream IDs to their current runtime status.
 	StreamStatus map[string]ProcessStatus `json:"stream_status"`
-	// RecorderStatuses maps recorder IDs to their runtime status.
+	// RecorderStatuses maps recorder IDs to their current runtime status.
 	RecorderStatuses map[string]ProcessStatus `json:"recorder_statuses"`
-	// GraphSecretExpiry holds client secret expiration info.
+	// GraphSecretExpiry holds Azure app client secret expiration info.
 	GraphSecretExpiry SecretExpiryInfo `json:"graph_secret_expiry"`
-	// Version holds version information.
+	// Version holds current and latest version details.
 	Version VersionInfo `json:"version"`
 }
 
 // APIConfigResponse contains the complete encoder configuration for API responses.
 type APIConfigResponse struct {
-	// AudioInput is the selected audio input device.
+	// AudioInput is the configured audio input device identifier.
 	AudioInput string `json:"audio_input"`
-	// Devices lists available audio devices.
+	// Devices lists all available audio input devices on this system.
 	Devices []audio.Device `json:"devices"`
-	// Platform is the operating system platform.
+	// Platform is the operating system (linux, darwin, windows).
 	Platform string `json:"platform"`
 
-	// SilenceThreshold is the silence threshold in dB.
+	// SilenceThreshold is the audio level in dB below which silence is detected.
 	SilenceThreshold float64 `json:"silence_threshold"`
-	// SilenceDurationMs is the duration required to trigger silence detection.
+	// SilenceDurationMs is how long audio must be below threshold before alerting.
 	SilenceDurationMs int64 `json:"silence_duration_ms"`
-	// SilenceRecoveryMs is the recovery duration in milliseconds.
+	// SilenceRecoveryMs is how long audio must be above threshold before clearing the alert.
 	SilenceRecoveryMs int64 `json:"silence_recovery_ms"`
-	// SilenceDump holds silence dump configuration.
+	// SilenceDump holds silence audio dump configuration.
 	SilenceDump SilenceDumpConfig `json:"silence_dump"`
 
-	// WebhookURL is the endpoint for sending silence alert notifications.
+	// WebhookURL is the endpoint to POST silence alerts to.
 	WebhookURL string `json:"webhook_url"`
 
-	// ZabbixServer is the Zabbix server address.
+	// ZabbixServer is the Zabbix trapper server hostname or IP.
 	ZabbixServer string `json:"zabbix_server"`
-	// ZabbixPort is the Zabbix server port.
+	// ZabbixPort is the Zabbix trapper server port.
 	ZabbixPort int `json:"zabbix_port"`
-	// ZabbixHost is the Zabbix host name.
+	// ZabbixHost is the host name as registered in Zabbix.
 	ZabbixHost string `json:"zabbix_host"`
-	// ZabbixKey is the Zabbix item key.
+	// ZabbixKey is the item key for Zabbix trapper values.
 	ZabbixKey string `json:"zabbix_key"`
 
-	// GraphTenantID is the Azure AD tenant ID.
+	// GraphTenantID is the Azure AD tenant ID for Graph API authentication.
 	GraphTenantID string `json:"graph_tenant_id"`
-	// GraphClientID is the app registration client ID.
+	// GraphClientID is the Azure app registration client ID.
 	GraphClientID string `json:"graph_client_id"`
-	// GraphFromAddress is the shared mailbox sender address.
+	// GraphFromAddress is the shared mailbox address to send emails from.
 	GraphFromAddress string `json:"graph_from_address"`
-	// GraphRecipients is a comma-separated recipient list.
+	// GraphRecipients is a comma-separated list of email addresses to notify.
 	GraphRecipients string `json:"graph_recipients"`
-	// GraphHasSecret reports whether a client secret is configured.
+	// GraphHasSecret reports whether an Azure client secret is configured.
 	GraphHasSecret bool `json:"graph_has_secret"`
 
-	// RecordingAPIKey is the API key for recording control.
+	// RecordingAPIKey is the secret key for external recording control via REST API.
 	RecordingAPIKey string `json:"recording_api_key"`
 
-	// Streams lists stream configurations.
+	// Streams lists all configured stream destinations.
 	Streams []Stream `json:"streams"`
-	// Recorders lists recorder configurations.
+	// Recorders lists all configured recording destinations.
 	Recorders []Recorder `json:"recorders"`
 }
 
 // WSLevelsResponse contains audio level data sent to clients.
 type WSLevelsResponse struct {
-	// Type is the message type identifier.
+	// Type is the WebSocket message type (always "levels").
 	Type string `json:"type"`
-	// Levels contains current RMS and peak audio levels.
+	// Levels contains current RMS and peak audio levels for VU meters.
 	Levels audio.AudioLevels `json:"levels"`
 }
 
-// GraphConfig holds credentials for email notifications.
+// GraphConfig holds credentials for Microsoft Graph email notifications.
 type GraphConfig struct {
-	// TenantID is the Azure AD tenant ID.
+	// TenantID is the Azure AD tenant ID for Graph API authentication.
 	TenantID string `json:"tenant_id,omitempty"`
-	// ClientID is the app registration client ID.
+	// ClientID is the Azure app registration client ID.
 	ClientID string `json:"client_id,omitempty"`
-	// ClientSecret is the Azure AD app secret for the Microsoft Graph API.
+	// ClientSecret is the Azure app registration client secret.
 	ClientSecret string `json:"client_secret,omitempty"`
-	// FromAddress is the shared mailbox sender address.
+	// FromAddress is the shared mailbox address to send emails from.
 	FromAddress string `json:"from_address,omitempty"`
-	// Recipients is a comma-separated recipient list.
+	// Recipients is a comma-separated list of email addresses to notify.
 	Recipients string `json:"recipients,omitempty"`
 }
 
-// ZabbixConfig holds settings for external monitoring alerts.
+// ZabbixConfig holds settings for Zabbix trapper monitoring alerts.
 type ZabbixConfig struct {
-	// Server is the Zabbix server host.
+	// Server is the Zabbix trapper server hostname or IP.
 	Server string `json:"server,omitempty"`
-	// Port is the Zabbix server port.
+	// Port is the Zabbix trapper server port (default 10051).
 	Port int `json:"port,omitempty"`
-	// Host is the name of the monitored host in Zabbix.
+	// Host is the host name as registered in Zabbix.
 	Host string `json:"host,omitempty"`
-	// Key is the Zabbix item key used for silence alerts.
+	// Key is the item key for Zabbix trapper values.
 	Key string `json:"key,omitempty"`
 }
 
-// SecretExpiryInfo holds expiration details for a client secret.
+// SecretExpiryInfo holds expiration details for an Azure client secret.
 type SecretExpiryInfo struct {
-	// ExpiresAt is the RFC3339 expiration timestamp.
+	// ExpiresAt is when the secret expires in RFC3339 format.
 	ExpiresAt string `json:"expires_at,omitempty"`
 	// ExpiresSoon reports whether expiration is within 30 days.
 	ExpiresSoon bool `json:"expires_soon,omitempty"`
-	// DaysLeft is the number of days until expiration.
+	// DaysLeft is how many days remain until expiration.
 	DaysLeft int `json:"days_left,omitempty"`
-	// Error is the error message if the check failed.
+	// Error is the error message if the expiry check failed.
 	Error string `json:"error,omitempty"`
 }
 
 // VersionInfo holds current and latest version details.
 type VersionInfo struct {
-	// Current is the current version.
+	// Current is the running encoder version (e.g., "v1.2.3").
 	Current string `json:"current"`
-	// Latest is the latest available version.
+	// Latest is the newest release version available on GitHub.
 	Latest string `json:"latest,omitempty"`
-	// UpdateAvail reports whether a newer version is available.
+	// UpdateAvail reports whether a newer version is available on GitHub.
 	UpdateAvail bool `json:"update_available"`
-	// Commit is the git commit hash.
+	// Commit is the git commit hash this build was made from.
 	Commit string `json:"commit,omitempty"`
-	// BuildTime is the build timestamp.
+	// BuildTime is when this binary was built in RFC3339 format.
 	BuildTime string `json:"build_time,omitempty"`
 }

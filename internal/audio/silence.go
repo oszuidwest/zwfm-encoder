@@ -7,11 +7,11 @@ import (
 
 // SilenceConfig holds the configurable thresholds for silence detection.
 type SilenceConfig struct {
-	// Threshold is the dB level below which audio is considered silent.
+	// Threshold is the audio level in dB below which silence is detected.
 	Threshold float64
-	// DurationMs is the number of milliseconds of silence before triggering.
+	// DurationMs is how long audio must be below threshold before alerting.
 	DurationMs int64
-	// RecoveryMs is the number of milliseconds of audio before considering recovered.
+	// RecoveryMs is how long audio must be above threshold before clearing the alert.
 	RecoveryMs int64
 }
 
@@ -19,23 +19,23 @@ type SilenceConfig struct {
 type SilenceEvent struct {
 	// InSilence reports whether silence is currently confirmed.
 	InSilence bool
-	// DurationMs is the current silence duration in milliseconds (0 if not silent).
+	// DurationMs is how long silence has lasted in milliseconds (0 if not silent).
 	DurationMs int64
-	// Level indicates the current silence detection state.
+	// Level indicates the silence detection state (active or empty).
 	Level SilenceLevel
 
-	// CurrentLevelL is the current left channel level in dB.
+	// CurrentLevelL is the left channel audio level in dB at detection time.
 	CurrentLevelL float64
-	// CurrentLevelR is the current right channel level in dB.
+	// CurrentLevelR is the right channel audio level in dB at detection time.
 	CurrentLevelR float64
 
-	// JustEntered reports whether silence was just confirmed on this frame.
+	// JustEntered reports whether silence was just confirmed on this update.
 	JustEntered bool
-	// JustRecovered reports whether recovery just completed on this frame.
+	// JustRecovered reports whether recovery just completed on this update.
 	JustRecovered bool
-	// TotalDurationMs is the total silence duration in milliseconds at recovery.
+	// TotalDurationMs is the total silence duration in milliseconds when recovery completes.
 	TotalDurationMs int64
-	// RecoveryDurationMs is the duration of audio above threshold before recovery was confirmed.
+	// RecoveryDurationMs is how long audio was above threshold before recovery was confirmed.
 	RecoveryDurationMs int64
 }
 

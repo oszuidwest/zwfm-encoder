@@ -63,91 +63,91 @@ const (
 
 // Event is a single log entry with type-specific details.
 type Event struct {
-	// Timestamp is when the event occurred.
+	// Timestamp is when the event occurred in RFC3339 format.
 	Timestamp time.Time `json:"ts"`
-	// Type identifies the event category.
+	// Type identifies the event category (stream, silence, recorder).
 	Type EventType `json:"type"`
-	// StreamID is the associated stream ID, when applicable.
+	// StreamID is the associated stream ID, if this is a stream event.
 	StreamID string `json:"stream_id,omitempty"`
-	// Message provides a human-readable summary.
+	// Message provides a human-readable summary of the event.
 	Message string `json:"msg,omitempty"`
-	// Details holds type-specific event data.
+	// Details holds event-specific data (StreamDetails, SilenceDetails, etc.).
 	Details any `json:"details,omitempty"`
 }
 
 // StreamDetails holds stream event information.
 type StreamDetails struct {
-	// StreamName is the display name of the stream.
+	// StreamName is the display name shown in the web UI.
 	StreamName string `json:"stream_name,omitempty"`
-	// Error contains the stream error message, if any.
+	// Error contains the error message that caused this event, if any.
 	Error string `json:"error,omitempty"`
-	// RetryCount is the current retry attempt.
+	// RetryCount is which retry attempt is in progress.
 	RetryCount int `json:"retry,omitempty"`
-	// MaxRetries is the maximum allowed retry attempts.
+	// MaxRetries is the configured maximum retry attempts before giving up.
 	MaxRetries int `json:"max_retries,omitempty"`
 }
 
 // SilenceDetails holds silence event information.
 type SilenceDetails struct {
-	// LevelLeftDB is the left channel level in dB at detection time.
+	// LevelLeftDB is the left channel audio level in dB when silence was detected.
 	LevelLeftDB float64 `json:"level_left_db"`
-	// LevelRightDB is the right channel level in dB at detection time.
+	// LevelRightDB is the right channel audio level in dB when silence was detected.
 	LevelRightDB float64 `json:"level_right_db"`
-	// ThresholdDB is the silence threshold in dB used for detection.
+	// ThresholdDB is the configured silence threshold in dB.
 	ThresholdDB float64 `json:"threshold_db"`
-	// DurationMs is the silence duration in milliseconds.
+	// DurationMs is how long the silence lasted in milliseconds.
 	DurationMs int64 `json:"duration_ms,omitempty"`
-	// DumpPath is the full path to the audio dump file.
+	// DumpPath is the full filesystem path to the audio dump file.
 	DumpPath string `json:"dump_path,omitempty"`
-	// DumpFilename is the audio dump file name.
+	// DumpFilename is the base name of the audio dump file (e.g., "2024-01-15_14-32-05.mp3").
 	DumpFilename string `json:"dump_filename,omitempty"`
-	// DumpSizeBytes is the audio dump size in bytes.
+	// DumpSizeBytes is the audio dump file size in bytes.
 	DumpSizeBytes int64 `json:"dump_size_bytes,omitempty"`
-	// DumpError is the error message from dump encoding, if any.
+	// DumpError is the error message if dump encoding failed.
 	DumpError string `json:"dump_error,omitempty"`
 }
 
 // RecorderDetails holds recorder event information.
 type RecorderDetails struct {
-	// RecorderName is the recorder display name.
+	// RecorderName is the display name shown in the web UI.
 	RecorderName string `json:"recorder_name,omitempty"`
-	// Filename is the recording file name.
+	// Filename is the recording file name (e.g., "2024-01-15_14-00.mp3").
 	Filename string `json:"filename,omitempty"`
-	// Codec is the encoding codec used for the recording.
+	// Codec is the audio encoding format used (mp3, mp2, ogg, wav).
 	Codec string `json:"codec,omitempty"`
-	// StorageMode is the configured storage mode.
+	// StorageMode is where recordings are stored (local, s3, both).
 	StorageMode string `json:"storage_mode,omitempty"`
-	// S3Key is the object key used for S3 uploads.
+	// S3Key is the object key path used for S3 uploads.
 	S3Key string `json:"s3_key,omitempty"`
-	// Error contains the recorder error message, if any.
+	// Error contains the error message that caused this event, if any.
 	Error string `json:"error,omitempty"`
-	// RetryCount is the upload retry attempt.
+	// RetryCount is which upload retry attempt is in progress.
 	RetryCount int `json:"retry,omitempty"`
-	// FilesDeleted is the number of files deleted during cleanup.
+	// FilesDeleted is how many files were removed during cleanup.
 	FilesDeleted int `json:"files_deleted,omitempty"`
-	// StorageType identifies the cleanup target storage type (local or s3).
+	// StorageType identifies where cleanup occurred (local or s3).
 	StorageType string `json:"storage_type,omitempty"`
 }
 
 // RecorderEventParams provides optional fields for [Logger.LogRecorder].
 type RecorderEventParams struct {
-	// RecorderName is the recorder display name.
+	// RecorderName is the display name shown in the web UI.
 	RecorderName string
-	// Filename is the recording file name.
+	// Filename is the recording file name (e.g., "2024-01-15_14-00.mp3").
 	Filename string
-	// Codec is the encoding codec used for the recording.
+	// Codec is the audio encoding format used (mp3, mp2, ogg, wav).
 	Codec string
-	// StorageMode is the storage mode.
+	// StorageMode is where recordings are stored (local, s3, both).
 	StorageMode string
-	// S3Key is the object key used for S3 uploads.
+	// S3Key is the object key path used for S3 uploads.
 	S3Key string
-	// Error contains the recorder error message, if any.
+	// Error contains the error message that caused this event, if any.
 	Error string
-	// RetryCount is the upload retry attempt.
+	// RetryCount is which upload retry attempt is in progress.
 	RetryCount int
-	// FilesDeleted is the number of files deleted during cleanup.
+	// FilesDeleted is how many files were removed during cleanup.
 	FilesDeleted int
-	// StorageType identifies the cleanup target storage type (local or s3).
+	// StorageType identifies where cleanup occurred (local or s3).
 	StorageType string
 }
 

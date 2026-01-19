@@ -17,19 +17,19 @@ const (
 
 // LevelData holds raw sample accumulator data for level calculation.
 type LevelData struct {
-	// SumSquaresL accumulates squared samples for the left channel.
+	// SumSquaresL accumulates squared left channel samples for RMS calculation.
 	SumSquaresL float64
-	// SumSquaresR accumulates squared samples for the right channel.
+	// SumSquaresR accumulates squared right channel samples for RMS calculation.
 	SumSquaresR float64
-	// PeakL tracks the peak absolute sample value for the left channel.
+	// PeakL tracks the highest absolute left channel sample value seen.
 	PeakL float64
-	// PeakR tracks the peak absolute sample value for the right channel.
+	// PeakR tracks the highest absolute right channel sample value seen.
 	PeakR float64
-	// ClipCountL counts clipped samples for the left channel.
+	// ClipCountL counts how many left channel samples exceeded the clip threshold.
 	ClipCountL int
-	// ClipCountR counts clipped samples for the right channel.
+	// ClipCountR counts how many right channel samples exceeded the clip threshold.
 	ClipCountR int
-	// SampleCount tracks the number of samples processed.
+	// SampleCount tracks how many sample pairs have been processed.
 	SampleCount int
 }
 
@@ -64,17 +64,17 @@ func ProcessSamples(buf []byte, n int, data *LevelData) {
 
 // Levels contains calculated audio levels in dB.
 type Levels struct {
-	// RMSLeft is the RMS level in dB for the left channel.
+	// RMSLeft is the left channel RMS level in dB.
 	RMSLeft float64
-	// RMSRight is the RMS level in dB for the right channel.
+	// RMSRight is the right channel RMS level in dB.
 	RMSRight float64
-	// PeakLeft is the peak level in dB for the left channel.
+	// PeakLeft is the left channel peak level in dB.
 	PeakLeft float64
-	// PeakRight is the peak level in dB for the right channel.
+	// PeakRight is the right channel peak level in dB.
 	PeakRight float64
-	// ClipLeft is the clipped sample count for the left channel.
+	// ClipLeft is how many samples clipped on the left channel.
 	ClipLeft int
-	// ClipRight is the clipped sample count for the right channel.
+	// ClipRight is how many samples clipped on the right channel.
 	ClipRight int
 }
 
