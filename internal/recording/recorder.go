@@ -17,6 +17,7 @@ import (
 )
 
 // GenericRecorder saves audio to files with optional S3 upload.
+// It is safe for concurrent use.
 type GenericRecorder struct {
 	mu sync.RWMutex // Protects state, config, file paths
 
@@ -58,7 +59,7 @@ type GenericRecorder struct {
 	durationTimer *time.Timer
 }
 
-// NewGenericRecorder creates a new recorder instance.
+// NewGenericRecorder creates a recorder with the given configuration.
 func NewGenericRecorder(cfg *types.Recorder, ffmpegPath, tempDir string, maxDurationMinutes int, eventLogger *eventlog.Logger) (*GenericRecorder, error) {
 	r := &GenericRecorder{
 		id:                 cfg.ID,
@@ -75,12 +76,12 @@ func NewGenericRecorder(cfg *types.Recorder, ffmpegPath, tempDir string, maxDura
 	return r, nil
 }
 
-// ID returns the recorder ID.
+// ID returns the recorder's unique identifier.
 func (r *GenericRecorder) ID() string {
 	return r.id
 }
 
-// Config returns a copy of the recorder configuration.
+// Config returns a snapshot of the recorder's current configuration.
 func (r *GenericRecorder) Config() types.Recorder {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -123,7 +124,7 @@ func (r *GenericRecorder) IsCurrentFile(path string) bool {
 	return r.currentFile == path
 }
 
-// Start starts the recorder.
+// Start begins encoding and queues any necessary uploads.
 func (r *GenericRecorder) Start() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -246,7 +247,7 @@ func (r *GenericRecorder) logEvent(eventType eventlog.EventType, p *eventlog.Rec
 	}
 }
 
-// Stop stops the recorder.
+// Stop ends the current recording and waits for uploads to complete.
 func (r *GenericRecorder) Stop() error {
 	r.mu.Lock()
 
@@ -307,7 +308,7 @@ func (r *GenericRecorder) Stop() error {
 	return nil
 }
 
-// WriteAudio writes PCM audio to the recorder.
+// WriteAudio sends PCM audio to the FFmpeg encoder.
 func (r *GenericRecorder) WriteAudio(pcm []byte) error {
 	r.mu.RLock()
 	state := r.state
@@ -397,7 +398,7 @@ func (r *GenericRecorder) cleanupAfterWriteError(result *ffmpeg.StartResult, cur
 	}
 }
 
-// Status returns the recorder process status.
+// Status returns the current recorder state and any error message.
 func (r *GenericRecorder) Status() types.ProcessStatus {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -415,7 +416,7 @@ func (r *GenericRecorder) IsRecording() bool {
 	return r.state == types.ProcessRunning
 }
 
-// UpdateConfig updates the recorder configuration.
+// UpdateConfig applies new settings, clearing any error state on update.
 func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

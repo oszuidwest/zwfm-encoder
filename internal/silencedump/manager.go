@@ -12,6 +12,7 @@ import (
 )
 
 // Manager coordinates silence dump capture and file retention.
+// It is safe for concurrent use.
 type Manager struct {
 	mu sync.RWMutex
 

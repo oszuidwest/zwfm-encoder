@@ -24,7 +24,8 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: checkOrigin,
 }
 
-// checkOrigin reports whether the WebSocket connection origin is allowed.
+// checkOrigin validates WebSocket connection origins against a security policy.
+// It allows localhost, same-origin, and private network IP addresses.
 func checkOrigin(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	// Same-origin requests omit the Origin header
@@ -66,7 +67,8 @@ func checkOrigin(r *http.Request) bool {
 	return false
 }
 
-// UpgradeConnection upgrades an HTTP connection to WebSocket.
+// UpgradeConnection upgrades an HTTP connection to WebSocket protocol.
+// Returns an error if the client doesn't support WebSocket or the handshake fails.
 func UpgradeConnection(w http.ResponseWriter, r *http.Request) (*websocket.Conn, error) {
 	return upgrader.Upgrade(w, r, nil)
 }

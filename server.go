@@ -52,6 +52,7 @@ type Server struct {
 	wsClientsMu sync.RWMutex
 }
 
+// NewServer creates an HTTP server that exposes the web UI and API endpoints.
 func NewServer(cfg *config.Config, enc *encoder.Encoder, ffmpegAvailable bool) *Server {
 	return &Server{
 		config:          cfg,
@@ -198,6 +199,7 @@ func (s *Server) buildWSRuntime() types.WSRuntimeStatus {
 	}
 }
 
+// SetupRoutes registers all HTTP handlers and returns the configured router.
 func (s *Server) SetupRoutes() http.Handler {
 	mux := http.NewServeMux()
 	auth := s.sessions.AuthMiddleware()
@@ -448,6 +450,7 @@ func (s *Server) handleExternalRecordingAction(w http.ResponseWriter, r *http.Re
 	})
 }
 
+// Start begins listening on the configured port and returns the underlying server.
 func (s *Server) Start() *http.Server {
 	addr := fmt.Sprintf(":%d", s.config.Snapshot().WebPort)
 	slog.Info("starting web server", "addr", addr)

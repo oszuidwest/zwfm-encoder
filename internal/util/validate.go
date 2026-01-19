@@ -57,6 +57,7 @@ func ValidatePath(field, path string) error {
 }
 
 // CheckPathWritable verifies that a directory path exists and is writable.
+// It creates the directory if it doesn't exist.
 func CheckPathWritable(path string) error {
 	// Create directory if it doesn't exist
 	if err := os.MkdirAll(path, 0o755); err != nil {

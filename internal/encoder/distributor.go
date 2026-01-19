@@ -12,7 +12,8 @@ import (
 // AudioLevelCallback is a function that receives audio level updates.
 type AudioLevelCallback func(levels *audio.AudioLevels)
 
-// Distributor distributes PCM audio to multiple streams.
+// Distributor processes PCM audio chunks and updates audio levels, silence
+// detection state, and peak hold values.
 type Distributor struct {
 	levelData          *audio.LevelData
 	silenceDetect      *audio.SilenceDetector
@@ -23,7 +24,7 @@ type Distributor struct {
 	callback           AudioLevelCallback
 }
 
-// NewDistributor returns a new Distributor.
+// NewDistributor creates a Distributor with the given dependencies.
 func NewDistributor(silenceDetect *audio.SilenceDetector, silenceNotifier *notify.SilenceNotifier, silenceDumpManager *silencedump.Manager, peakHolder *audio.PeakHolder, cfg *config.Config, callback AudioLevelCallback) *Distributor {
 	return &Distributor{
 		levelData:          &audio.LevelData{},
@@ -36,7 +37,8 @@ func NewDistributor(silenceDetect *audio.SilenceDetector, silenceNotifier *notif
 	}
 }
 
-// ProcessSamples processes a buffer of PCM audio samples.
+// ProcessSamples accumulates audio samples and periodically updates levels,
+// silence detection, and peak hold values via the configured callback.
 func (d *Distributor) ProcessSamples(buf []byte, n int) {
 	audio.ProcessSamples(buf, n, d.levelData)
 

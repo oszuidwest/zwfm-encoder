@@ -26,7 +26,7 @@ type LevelData struct {
 	SampleCount int
 }
 
-// ProcessSamples accumulates level data from audio samples.
+// ProcessSamples accumulates level data from interleaved 16-bit little-endian stereo PCM samples.
 func ProcessSamples(buf []byte, n int, data *LevelData) {
 	for i := 0; i+3 < n; i += 4 {
 		leftSample := int16(binary.LittleEndian.Uint16(buf[i:]))
@@ -93,7 +93,7 @@ func CalculateLevels(data *LevelData) Levels {
 	}
 }
 
-// Reset clears all accumulated sample data.
+// Reset clears all accumulated sample data to prepare for a new measurement window.
 func (d *LevelData) Reset() {
 	d.SampleCount = 0
 	d.SumSquaresL = 0

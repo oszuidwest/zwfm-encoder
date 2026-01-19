@@ -6,14 +6,14 @@ type SilenceLevel string
 // SilenceLevelActive indicates silence is confirmed.
 const SilenceLevelActive SilenceLevel = "active"
 
-// AudioLevels is the current audio level measurements for VU meters.
+// AudioLevels holds current audio level measurements for VU meters.
 type AudioLevels struct {
-	Left              float64      `json:"left"`                         // dB
-	Right             float64      `json:"right"`                        // dB
-	PeakLeft          float64      `json:"peak_left"`                    // dB
-	PeakRight         float64      `json:"peak_right"`                   // dB
-	Silence           bool         `json:"silence,omitzero"`             // Below threshold
-	SilenceDurationMs int64        `json:"silence_duration_ms,omitzero"` // Milliseconds
+	Left              float64      `json:"left"`       // dB
+	Right             float64      `json:"right"`      // dB
+	PeakLeft          float64      `json:"peak_left"`  // dB
+	PeakRight         float64      `json:"peak_right"` // dB
+	Silence           bool         `json:"silence,omitzero"`
+	SilenceDurationMs int64        `json:"silence_duration_ms,omitzero"`
 	SilenceLevel      SilenceLevel `json:"silence_level,omitzero"`
 	ClipLeft          int          `json:"clip_left,omitzero"`
 	ClipRight         int          `json:"clip_right,omitzero"`

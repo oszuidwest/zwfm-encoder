@@ -122,7 +122,7 @@ type Stream struct {
 	StreamID   string `json:"stream_id"`
 	Codec      Codec  `json:"codec"`
 	MaxRetries int    `json:"max_retries"` // 0 = no retries
-	CreatedAt  int64  `json:"created_at"`  // Unix timestamp in milliseconds
+	CreatedAt  int64  `json:"created_at"`  // Unix ms
 }
 
 // IsEnabled reports whether the stream is enabled.
@@ -146,8 +146,8 @@ func (s *Stream) MaxRetriesOrDefault() int {
 
 // CodecPreset defines encoding parameters for a codec.
 type CodecPreset struct {
-	Args   []string // FFmpeg encoder arguments
-	Format string   // Output container format
+	Args   []string
+	Format string
 }
 
 // CodecPresets maps codecs to their encoding parameters.
@@ -292,7 +292,7 @@ type Recorder struct {
 	S3SecretAccessKey string `json:"s3_secret_access_key"`
 
 	RetentionDays int   `json:"retention_days"` // 0 = forever
-	CreatedAt     int64 `json:"created_at"`     // Unix timestamp in milliseconds
+	CreatedAt     int64 `json:"created_at"`     // Unix ms
 }
 
 // IsEnabled reports whether the recorder is enabled.
@@ -351,7 +351,7 @@ type EncoderStatus struct {
 	SourceMaxRetries int          `json:"source_max_retries"`
 }
 
-// WSRuntimeStatus contains runtime status sent to clients periodically.
+// WSRuntimeStatus contains runtime status sent to WebSocket clients periodically.
 type WSRuntimeStatus struct {
 	Type              string                   `json:"type"` // Always "status"
 	FFmpegAvailable   bool                     `json:"ffmpeg_available"`
@@ -368,9 +368,9 @@ type APIConfigResponse struct {
 	Devices    []audio.Device `json:"devices"`
 	Platform   string         `json:"platform"`
 
-	SilenceThreshold  float64           `json:"silence_threshold"`   // dB
-	SilenceDurationMs int64             `json:"silence_duration_ms"` // Milliseconds before alerting
-	SilenceRecoveryMs int64             `json:"silence_recovery_ms"` // Milliseconds before clearing
+	SilenceThreshold  float64           `json:"silence_threshold"` // dB
+	SilenceDurationMs int64             `json:"silence_duration_ms"`
+	SilenceRecoveryMs int64             `json:"silence_recovery_ms"`
 	SilenceDump       SilenceDumpConfig `json:"silence_dump"`
 
 	WebhookURL string `json:"webhook_url"`
@@ -392,7 +392,7 @@ type APIConfigResponse struct {
 	Recorders []Recorder `json:"recorders"`
 }
 
-// WSLevelsResponse contains audio level data sent to clients.
+// WSLevelsResponse contains audio level data sent to WebSocket clients.
 type WSLevelsResponse struct {
 	Type   string            `json:"type"` // Always "levels"
 	Levels audio.AudioLevels `json:"levels"`

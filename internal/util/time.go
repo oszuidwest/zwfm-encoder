@@ -6,7 +6,8 @@ import (
 	"time"
 )
 
-// TimestampPatterns match timestamps in filenames (most specific first).
+// TimestampPatterns defines regex patterns and layouts for parsing timestamps
+// from filenames, ordered from most specific to least specific.
 var TimestampPatterns = []struct {
 	Pattern *regexp.Regexp
 	Layout  string
@@ -27,13 +28,13 @@ func OldestToKeep(days int, now time.Time) time.Time {
 	return now.Add(-time.Duration(days) * 24 * time.Hour)
 }
 
-// TimeUntilNextHour returns the duration until the next hour boundary.
+// TimeUntilNextHour calculates the duration until the next clock hour boundary.
 func TimeUntilNextHour(t time.Time) time.Duration {
 	nextHour := t.Truncate(time.Hour).Add(time.Hour)
 	return nextHour.Sub(t)
 }
 
-// FilenameTime extracts a timestamp from a filename.
+// FilenameTime parses a timestamp from a filename string.
 // Supports: YYYY-MM-DD_HH-MM-SS, YYYY-MM-DD-HH-MM, YYYY-MM-DD.
 func FilenameTime(filename string) (time.Time, bool) {
 	for _, p := range TimestampPatterns {
@@ -49,12 +50,12 @@ func FilenameTime(filename string) (time.Time, bool) {
 // humanTimeFormat is the layout for human-readable timestamps with timezone.
 const humanTimeFormat = "2 Jan 2006 15:04:05 MST"
 
-// HumanTime returns the current local time in a human-readable format.
+// HumanTime returns the current local time formatted for display in notifications.
 func HumanTime() string {
 	return time.Now().Format(humanTimeFormat)
 }
 
-// FormatHumanTime converts an RFC3339 timestamp to human-readable local time format.
+// FormatHumanTime converts an RFC3339 timestamp to a display-friendly local time format.
 func FormatHumanTime(rfc3339 string) string {
 	if rfc3339 == "" || rfc3339 == "unknown" {
 		return "unknown"
@@ -66,7 +67,7 @@ func FormatHumanTime(rfc3339 string) string {
 	return t.Local().Format(humanTimeFormat)
 }
 
-// FormatDuration formats milliseconds as a human-readable duration string.
+// FormatDuration converts milliseconds to a human-readable duration string.
 // Shows only the two most relevant units:
 //   - < 1 minute: "45s"
 //   - < 1 hour: "12m 34s"

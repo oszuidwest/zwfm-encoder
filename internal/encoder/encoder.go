@@ -43,7 +43,9 @@ var ErrStreamDisabled = errors.New("stream is disabled")
 // ErrStreamNotFound is returned when the stream was not found.
 var ErrStreamNotFound = errors.New("stream not found")
 
-// Encoder is the audio capture and distribution engine.
+// Encoder is the audio capture and distribution engine. It manages the audio
+// source lifecycle, distributes PCM audio to streams and recorders, and
+// coordinates silence detection. It is safe for concurrent use.
 type Encoder struct {
 	config              *config.Config
 	ffmpegPath          string
@@ -62,7 +64,7 @@ type Encoder struct {
 	retryCount          int
 	backoff             *util.Backoff
 	audioLevels         audio.AudioLevels
-	lastKnownLevels     audio.AudioLevels // Cache for TryRLock fallback
+	lastKnownLevels     audio.AudioLevels
 	silenceDetect       *audio.SilenceDetector
 	silenceNotifier     *notify.SilenceNotifier
 	peakHolder          *audio.PeakHolder
@@ -173,7 +175,7 @@ func (e *Encoder) RecorderStatuses() map[string]types.ProcessStatus {
 	return e.recordingManager.Statuses()
 }
 
-// State returns the current encoder state.
+// State returns the current encoder lifecycle state.
 func (e *Encoder) State() types.EncoderState {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -192,7 +194,9 @@ func (e *Encoder) IsRunning() bool {
 	return e.state == types.StateRunning
 }
 
-// AudioLevels returns the current audio levels.
+// AudioLevels returns the current audio levels. If the lock cannot be acquired
+// immediately (via TryRLock), it returns the last known levels to avoid blocking
+// the high-frequency WebSocket updates.
 func (e *Encoder) AudioLevels() audio.AudioLevels {
 	if !e.mu.TryRLock() {
 		return e.lastKnownLevels
@@ -205,7 +209,7 @@ func (e *Encoder) AudioLevels() audio.AudioLevels {
 	return e.audioLevels
 }
 
-// Status returns the current encoder status.
+// Status returns a snapshot of the current encoder operational state.
 func (e *Encoder) Status() types.EncoderStatus {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -265,7 +269,9 @@ func (e *Encoder) StreamStatuses(streams []types.Stream) map[string]types.Proces
 	return result
 }
 
-// Start starts audio capture and stream processes.
+// Start begins audio capture and stream processes.
+// Returns ErrNoAudioInput if no input device is configured,
+// or ErrAlreadyRunning if the encoder is already active.
 func (e *Encoder) Start() error {
 	if e.config.AudioInput() == "" {
 		return ErrNoAudioInput
@@ -291,7 +297,8 @@ func (e *Encoder) Start() error {
 	return nil
 }
 
-// Stop shuts down all processes.
+// Stop shuts down all audio capture, streaming, and recording processes.
+// It waits for graceful shutdown with timeout before force-killing.
 func (e *Encoder) Stop() error {
 	e.mu.Lock()
 
@@ -372,7 +379,7 @@ func (e *Encoder) Stop() error {
 	return errors.Join(errs...)
 }
 
-// Restart stops and restarts the encoder.
+// Restart performs a full stop and start cycle, useful when audio input changes.
 func (e *Encoder) Restart() error {
 	if err := e.Stop(); err != nil {
 		return fmt.Errorf("stop: %w", err)
@@ -381,7 +388,9 @@ func (e *Encoder) Restart() error {
 	return e.Start()
 }
 
-// StartStream initiates a streaming process.
+// StartStream initiates a streaming process for the given stream ID.
+// Returns ErrNotRunning if the encoder is not active, ErrStreamNotFound if
+// the stream does not exist, or ErrStreamDisabled if the stream is disabled.
 func (e *Encoder) StartStream(streamID string) error {
 	var stopChan chan struct{}
 
@@ -411,12 +420,12 @@ func (e *Encoder) StartStream(streamID string) error {
 	return nil
 }
 
-// StopStream terminates the stream with the given ID.
+// StopStream terminates the stream process with the given ID.
 func (e *Encoder) StopStream(streamID string) error {
 	return e.streamManager.Stop(streamID)
 }
 
-// TriggerTestEmail sends a test email.
+// TriggerTestEmail sends a test email using the configured Graph credentials.
 func (e *Encoder) TriggerTestEmail() error {
 	cfg := e.config.Snapshot()
 	return notify.SendTestEmail(notify.BuildGraphConfig(cfg), cfg.StationName)
@@ -438,7 +447,7 @@ func (e *Encoder) InvalidateGraphSecretExpiryCache() {
 	}
 }
 
-// UpdateSilenceConfig resets silence detection after config changes.
+// UpdateSilenceConfig resets the silence detection state after configuration changes.
 func (e *Encoder) UpdateSilenceConfig() {
 	if e.silenceDetect != nil {
 		e.silenceDetect.Reset()
@@ -454,7 +463,7 @@ func (e *Encoder) UpdateSilenceDumpConfig() {
 	}
 }
 
-// TriggerTestWebhook sends a test webhook.
+// TriggerTestWebhook sends a test webhook to the configured URL.
 func (e *Encoder) TriggerTestWebhook() error {
 	cfg := e.config.Snapshot()
 	return notify.SendWebhookTest(cfg.WebhookURL, cfg.StationName)
@@ -698,7 +707,7 @@ func (e *Encoder) pollUntil(ctx context.Context, condition func() bool) <-chan s
 	return done
 }
 
-// AddRecorder creates a new recorder.
+// AddRecorder creates and registers a new recorder with the given configuration.
 func (e *Encoder) AddRecorder(cfg *types.Recorder) error {
 	if err := e.config.AddRecorder(cfg); err != nil {
 		return err
@@ -706,7 +715,7 @@ func (e *Encoder) AddRecorder(cfg *types.Recorder) error {
 	return e.recordingManager.AddRecorder(cfg)
 }
 
-// RemoveRecorder deletes a recorder.
+// RemoveRecorder stops and removes the recorder with the given ID.
 func (e *Encoder) RemoveRecorder(id string) error {
 	if err := e.recordingManager.RemoveRecorder(id); err != nil {
 		slog.Warn("error removing recorder from manager", "id", id, "error", err)
@@ -714,7 +723,7 @@ func (e *Encoder) RemoveRecorder(id string) error {
 	return e.config.RemoveRecorder(id)
 }
 
-// UpdateRecorder modifies a recorder configuration.
+// UpdateRecorder applies new configuration to an existing recorder.
 func (e *Encoder) UpdateRecorder(cfg *types.Recorder) error {
 	if err := e.config.UpdateRecorder(cfg); err != nil {
 		return err
@@ -722,12 +731,12 @@ func (e *Encoder) UpdateRecorder(cfg *types.Recorder) error {
 	return e.recordingManager.UpdateRecorder(cfg)
 }
 
-// StartRecorder initiates a recorder.
+// StartRecorder begins recording for the recorder with the given ID.
 func (e *Encoder) StartRecorder(id string) error {
 	return e.recordingManager.StartRecorder(id)
 }
 
-// StopRecorder terminates a recorder.
+// StopRecorder ends recording for the recorder with the given ID.
 func (e *Encoder) StopRecorder(id string) error {
 	return e.recordingManager.StopRecorder(id)
 }

@@ -68,13 +68,14 @@ func newCredentialsConfig(cfg *types.GraphConfig) *clientcredentials.Config {
 	}
 }
 
-// GraphClient sends emails for silence notifications.
+// GraphClient sends emails via Microsoft Graph API for silence notifications.
+// It is safe for concurrent use.
 type GraphClient struct {
 	fromAddress string
 	httpClient  *http.Client
 }
 
-// NewGraphClient creates a new email client.
+// NewGraphClient creates an email client with OAuth2 authentication.
 func NewGraphClient(cfg *types.GraphConfig) (*GraphClient, error) {
 	if err := validateCredentials(cfg, false); err != nil {
 		return nil, err
@@ -131,15 +132,12 @@ type graphAttachment struct {
 
 // EmailAttachment represents an email attachment.
 type EmailAttachment struct {
-	// Filename is the attachment file name shown to the recipient.
-	Filename string
-	// ContentType is the MIME type of the attachment (e.g., "audio/mpeg").
+	Filename    string
 	ContentType string
-	// Data is the raw attachment content to be base64-encoded.
-	Data []byte
+	Data        []byte
 }
 
-// SendMail sends an email to the specified recipients.
+// SendMail sends an email to the recipients without attachments.
 func (c *GraphClient) SendMail(recipients []string, subject, body string) error {
 	return c.SendMailWithAttachment(recipients, subject, body, nil)
 }
@@ -195,7 +193,7 @@ func (c *GraphClient) doWithRetry(jsonData []byte) error {
 	return fmt.Errorf("max retries exceeded: %w", lastErr)
 }
 
-// SendMailWithAttachment sends an email with an optional attachment.
+// SendMailWithAttachment sends an email, optionally including a file attachment.
 func (c *GraphClient) SendMailWithAttachment(recipients []string, subject, body string, attachment *EmailAttachment) error {
 	if len(recipients) == 0 {
 		return fmt.Errorf("no recipients specified")
@@ -244,7 +242,7 @@ func (c *GraphClient) SendMailWithAttachment(recipients []string, subject, body 
 	return c.doWithRetry(jsonData)
 }
 
-// ValidateAuth verifies that the email credentials are valid.
+// ValidateAuth verifies that the OAuth2 credentials can authenticate successfully.
 func (c *GraphClient) ValidateAuth() error {
 	// The httpClient already has a token source configured.
 	// Making any request will trigger token acquisition.

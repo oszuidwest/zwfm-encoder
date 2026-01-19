@@ -63,95 +63,60 @@ const (
 
 // Event is a single log entry with type-specific details.
 type Event struct {
-	// Timestamp is when the event occurred in RFC3339 format.
-	Timestamp time.Time `json:"ts"`
-	// Type identifies the event category (stream, silence, recorder).
-	Type EventType `json:"type"`
-	// StreamID is the associated stream ID, if this is a stream event.
-	StreamID string `json:"stream_id,omitempty"`
-	// Message provides a human-readable summary of the event.
-	Message string `json:"msg,omitempty"`
-	// Details holds event-specific data (StreamDetails, SilenceDetails, etc.).
-	Details any `json:"details,omitempty"`
+	Timestamp time.Time `json:"ts"` // RFC3339
+	Type      EventType `json:"type"`
+	StreamID  string    `json:"stream_id,omitempty"`
+	Message   string    `json:"msg,omitempty"`
+	Details   any       `json:"details,omitempty"`
 }
 
 // StreamDetails holds stream event information.
 type StreamDetails struct {
-	// StreamName is the display name shown in the web UI.
 	StreamName string `json:"stream_name,omitempty"`
-	// Error contains the error message that caused this event, if any.
-	Error string `json:"error,omitempty"`
-	// RetryCount is which retry attempt is in progress.
-	RetryCount int `json:"retry,omitempty"`
-	// MaxRetries is the configured maximum retry attempts before giving up.
-	MaxRetries int `json:"max_retries,omitempty"`
+	Error      string `json:"error,omitempty"`
+	RetryCount int    `json:"retry,omitempty"`
+	MaxRetries int    `json:"max_retries,omitempty"`
 }
 
 // SilenceDetails holds silence event information.
 type SilenceDetails struct {
-	// LevelLeftDB is the left channel audio level in dB when silence was detected.
-	LevelLeftDB float64 `json:"level_left_db"`
-	// LevelRightDB is the right channel audio level in dB when silence was detected.
-	LevelRightDB float64 `json:"level_right_db"`
-	// ThresholdDB is the configured silence threshold in dB.
-	ThresholdDB float64 `json:"threshold_db"`
-	// DurationMs is how long the silence lasted in milliseconds.
-	DurationMs int64 `json:"duration_ms,omitempty"`
-	// DumpPath is the full filesystem path to the audio dump file.
-	DumpPath string `json:"dump_path,omitempty"`
-	// DumpFilename is the base name of the audio dump file (e.g., "2024-01-15_14-32-05.mp3").
-	DumpFilename string `json:"dump_filename,omitempty"`
-	// DumpSizeBytes is the audio dump file size in bytes.
-	DumpSizeBytes int64 `json:"dump_size_bytes,omitempty"`
-	// DumpError is the error message if dump encoding failed.
-	DumpError string `json:"dump_error,omitempty"`
+	LevelLeftDB   float64 `json:"level_left_db"`  // dB
+	LevelRightDB  float64 `json:"level_right_db"` // dB
+	ThresholdDB   float64 `json:"threshold_db"`   // dB
+	DurationMs    int64   `json:"duration_ms,omitempty"`
+	DumpPath      string  `json:"dump_path,omitempty"`
+	DumpFilename  string  `json:"dump_filename,omitempty"`
+	DumpSizeBytes int64   `json:"dump_size_bytes,omitempty"`
+	DumpError     string  `json:"dump_error,omitempty"`
 }
 
 // RecorderDetails holds recorder event information.
 type RecorderDetails struct {
-	// RecorderName is the display name shown in the web UI.
 	RecorderName string `json:"recorder_name,omitempty"`
-	// Filename is the recording file name (e.g., "2024-01-15_14-00.mp3").
-	Filename string `json:"filename,omitempty"`
-	// Codec is the audio encoding format used (mp3, mp2, ogg, wav).
-	Codec string `json:"codec,omitempty"`
-	// StorageMode is where recordings are stored (local, s3, both).
-	StorageMode string `json:"storage_mode,omitempty"`
-	// S3Key is the object key path used for S3 uploads.
-	S3Key string `json:"s3_key,omitempty"`
-	// Error contains the error message that caused this event, if any.
-	Error string `json:"error,omitempty"`
-	// RetryCount is which upload retry attempt is in progress.
-	RetryCount int `json:"retry,omitempty"`
-	// FilesDeleted is how many files were removed during cleanup.
-	FilesDeleted int `json:"files_deleted,omitempty"`
-	// StorageType identifies where cleanup occurred (local or s3).
-	StorageType string `json:"storage_type,omitempty"`
+	Filename     string `json:"filename,omitempty"`
+	Codec        string `json:"codec,omitempty"`
+	StorageMode  string `json:"storage_mode,omitempty"`
+	S3Key        string `json:"s3_key,omitempty"`
+	Error        string `json:"error,omitempty"`
+	RetryCount   int    `json:"retry,omitempty"`
+	FilesDeleted int    `json:"files_deleted,omitempty"`
+	StorageType  string `json:"storage_type,omitempty"`
 }
 
 // RecorderEventParams provides optional fields for [Logger.LogRecorder].
 type RecorderEventParams struct {
-	// RecorderName is the display name shown in the web UI.
 	RecorderName string
-	// Filename is the recording file name (e.g., "2024-01-15_14-00.mp3").
-	Filename string
-	// Codec is the audio encoding format used (mp3, mp2, ogg, wav).
-	Codec string
-	// StorageMode is where recordings are stored (local, s3, both).
-	StorageMode string
-	// S3Key is the object key path used for S3 uploads.
-	S3Key string
-	// Error contains the error message that caused this event, if any.
-	Error string
-	// RetryCount is which upload retry attempt is in progress.
-	RetryCount int
-	// FilesDeleted is how many files were removed during cleanup.
+	Filename     string
+	Codec        string
+	StorageMode  string
+	S3Key        string
+	Error        string
+	RetryCount   int
 	FilesDeleted int
-	// StorageType identifies where cleanup occurred (local or s3).
-	StorageType string
+	StorageType  string
 }
 
-// Logger records events to a JSON lines file.
+// Logger records events to a JSON lines file. It is safe for concurrent use.
 type Logger struct {
 	mu       sync.Mutex
 	filePath string
@@ -176,7 +141,7 @@ func DefaultLogPath(port int) string {
 	}
 }
 
-// NewLogger creates a new event logger at the specified path.
+// NewLogger creates an event logger that writes to the specified file path.
 func NewLogger(filePath string) (*Logger, error) {
 	// Ensure directory exists
 	dir := filepath.Dir(filePath)
@@ -197,7 +162,7 @@ func NewLogger(filePath string) (*Logger, error) {
 	}, nil
 }
 
-// Log writes an event, using the current time if Timestamp is zero.
+// Log writes an event to the log file. If Timestamp is zero, the current time is used.
 func (l *Logger) Log(event *Event) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -209,7 +174,7 @@ func (l *Logger) Log(event *Event) error {
 	return l.encoder.Encode(event)
 }
 
-// LogStream records a stream event with error and retry details.
+// LogStream records a stream lifecycle event with error and retry metadata.
 func (l *Logger) LogStream(eventType EventType, streamID, streamName, message, errMsg string, retryCount, maxRetries int) error {
 	return l.Log(&Event{
 		Type:     eventType,
@@ -224,7 +189,7 @@ func (l *Logger) LogStream(eventType EventType, streamID, streamName, message, e
 	})
 }
 
-// LogSilenceStart records when silence is first detected.
+// LogSilenceStart records a silence start event with current audio levels.
 func (l *Logger) LogSilenceStart(levelL, levelR, threshold float64) error {
 	return l.Log(&Event{
 		Type: SilenceStart,
@@ -236,7 +201,7 @@ func (l *Logger) LogSilenceStart(levelL, levelR, threshold float64) error {
 	})
 }
 
-// LogSilenceEnd records when silence ends, including duration and debug dump information.
+// LogSilenceEnd records a silence recovery event with duration and dump file details.
 func (l *Logger) LogSilenceEnd(durationMs int64, levelL, levelR, threshold float64, dumpPath, dumpFilename string, dumpSize int64, dumpError string) error {
 	return l.Log(&Event{
 		Type: SilenceEnd,
@@ -253,7 +218,7 @@ func (l *Logger) LogSilenceEnd(durationMs int64, levelL, levelR, threshold float
 	})
 }
 
-// LogRecorder records a recorder lifecycle or upload event.
+// LogRecorder records a recorder lifecycle event with upload and file metadata.
 func (l *Logger) LogRecorder(eventType EventType, p *RecorderEventParams) error {
 	return l.Log(&Event{
 		Type: eventType,
@@ -271,7 +236,7 @@ func (l *Logger) LogRecorder(eventType EventType, p *RecorderEventParams) error 
 	})
 }
 
-// Close releases the log file handle.
+// Close flushes and releases the log file handle.
 func (l *Logger) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -282,7 +247,7 @@ func (l *Logger) Close() error {
 	return nil
 }
 
-// Path returns the log file location.
+// Path returns the log file's filesystem location.
 func (l *Logger) Path() string {
 	return l.filePath
 }

@@ -29,6 +29,7 @@ type csrfToken struct {
 }
 
 // SessionManager manages user authentication sessions and CSRF tokens.
+// It is safe for concurrent use.
 type SessionManager struct {
 	sessions   map[string]*session
 	csrfTokens map[string]*csrfToken

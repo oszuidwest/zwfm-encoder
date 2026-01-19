@@ -7,6 +7,7 @@ import (
 )
 
 // Backoff provides retry delay calculation with exponential growth.
+// It is safe for concurrent use.
 type Backoff struct {
 	mu           sync.Mutex
 	current      time.Duration
@@ -17,6 +18,7 @@ type Backoff struct {
 }
 
 // NewBackoff returns a new Backoff with the given initial and maximum delays.
+// Default factor is 2.0 and jitter is 0.5 (up to 50% random addition).
 func NewBackoff(initial, maxDelay time.Duration) *Backoff {
 	return &Backoff{
 		current:      initial,

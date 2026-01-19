@@ -16,6 +16,7 @@ import (
 )
 
 // SilenceNotifier sends alerts when audio silence is detected and recovered.
+// It is safe for concurrent use.
 type SilenceNotifier struct {
 	cfg         *config.Config
 	eventLogger *eventlog.Logger
@@ -54,17 +55,17 @@ type recoveryFlags struct {
 	zabbix  bool
 }
 
-// NewSilenceNotifier creates a new SilenceNotifier.
+// NewSilenceNotifier creates a notifier that uses the given config for credentials.
 func NewSilenceNotifier(cfg *config.Config) *SilenceNotifier {
 	return &SilenceNotifier{cfg: cfg}
 }
 
-// SetEventLogger sets the event logger for silence notifications.
+// SetEventLogger configures the JSON event logger for silence events.
 func (n *SilenceNotifier) SetEventLogger(logger *eventlog.Logger) {
 	n.eventLogger = logger
 }
 
-// ResetPendingRecovery clears any pending recovery data.
+// ResetPendingRecovery discards any pending recovery notification data.
 func (n *SilenceNotifier) ResetPendingRecovery() {
 	n.mu.Lock()
 	n.pendingRecovery = nil
@@ -95,7 +96,7 @@ func (n *SilenceNotifier) getOrCreateGraphClient(cfg *GraphConfig) (*GraphClient
 	return client, nil
 }
 
-// HandleEvent dispatches silence start and recovery notifications based on the event.
+// HandleEvent processes a silence event, dispatching start or recovery notifications.
 func (n *SilenceNotifier) HandleEvent(event audio.SilenceEvent) {
 	if event.JustEntered {
 		n.handleSilenceStart(event.CurrentLevelL, event.CurrentLevelR)
@@ -174,7 +175,7 @@ func (n *SilenceNotifier) handleSilenceEnd(totalDurationMs int64, levelL, levelR
 	n.mu.Unlock()
 }
 
-// Reset clears notification state for the current silence period.
+// Reset clears notification flags for the current silence period.
 func (n *SilenceNotifier) Reset() {
 	n.mu.Lock()
 	n.webhookSent = false
@@ -260,7 +261,7 @@ func (n *SilenceNotifier) logSilenceStart(cfg config.Snapshot, levelL, levelR fl
 	}
 }
 
-// OnDumpReady completes pending recovery notifications with the audio dump attached.
+// OnDumpReady sends recovery notifications with the encoded audio dump attached.
 func (n *SilenceNotifier) OnDumpReady(result *silencedump.EncodeResult) {
 	n.mu.Lock()
 	pending := n.pendingRecovery

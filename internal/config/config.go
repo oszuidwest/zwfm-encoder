@@ -29,6 +29,7 @@ var (
 	ErrRecorderNotFound = errors.New("recorder not found")
 )
 
+// Default configuration values.
 const (
 	DefaultWebPort                     = 8080
 	DefaultWebUsername                 = "admin"
@@ -104,7 +105,7 @@ type RecordingConfig struct {
 	Recorders          []types.Recorder `json:"recorders"`
 }
 
-// Config is safe for concurrent use.
+// Config holds the application configuration and is safe for concurrent use.
 type Config struct {
 	System           SystemConfig            `json:"system"`
 	Web              WebConfig               `json:"web"`
@@ -119,7 +120,7 @@ type Config struct {
 	filePath string
 }
 
-// New returns a Config with default values.
+// New returns a Config initialized with default values and the given file path.
 func New(filePath string) *Config {
 	return &Config{
 		System: SystemConfig{
@@ -145,7 +146,8 @@ func New(filePath string) *Config {
 	}
 }
 
-// Load reads configuration from file or creates defaults.
+// Load reads configuration from the file path. If the file does not exist,
+// it creates one with default values.
 func (c *Config) Load() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -241,14 +243,14 @@ func (c *Config) saveLocked() error {
 
 // --- Stream management ---
 
-// ConfiguredStreams returns a copy of all streams.
+// ConfiguredStreams returns a copy of all configured streams.
 func (c *Config) ConfiguredStreams() []types.Stream {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return slices.Clone(c.Streaming.Streams)
 }
 
-// Stream returns the stream with the given ID, or nil if not found.
+// Stream finds and returns the stream with the given ID, or nil if not found.
 func (c *Config) Stream(id string) *types.Stream {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -268,7 +270,7 @@ func (c *Config) findStreamIndex(id string) int {
 	})
 }
 
-// AddStream adds a stream to the configuration and persists the change.
+// AddStream validates and adds a stream to the configuration, persisting to disk.
 func (c *Config) AddStream(stream *types.Stream) error {
 	if err := stream.Validate(); err != nil {
 		return err
@@ -292,7 +294,7 @@ func (c *Config) AddStream(stream *types.Stream) error {
 	return c.saveLocked()
 }
 
-// RemoveStream removes a stream from the configuration and persists the change.
+// RemoveStream deletes a stream from the configuration and persists to disk.
 func (c *Config) RemoveStream(id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -306,7 +308,7 @@ func (c *Config) RemoveStream(id string) error {
 	return c.saveLocked()
 }
 
-// UpdateStream updates a stream in the configuration and persists the change.
+// UpdateStream validates and replaces a stream in the configuration, persisting to disk.
 func (c *Config) UpdateStream(stream *types.Stream) error {
 	if err := stream.Validate(); err != nil {
 		return err
@@ -326,7 +328,7 @@ func (c *Config) UpdateStream(stream *types.Stream) error {
 
 // --- Recorder management ---
 
-// Recorder returns the recorder with the given ID, or nil if not found.
+// Recorder finds and returns the recorder with the given ID, or nil if not found.
 func (c *Config) Recorder(id string) *types.Recorder {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -346,7 +348,7 @@ func (c *Config) findRecorderIndex(id string) int {
 	})
 }
 
-// AddRecorder adds a recorder to the configuration and persists the change.
+// AddRecorder validates and adds a recorder to the configuration, persisting to disk.
 func (c *Config) AddRecorder(recorder *types.Recorder) error {
 	if err := recorder.Validate(); err != nil {
 		return err
@@ -372,7 +374,7 @@ func (c *Config) AddRecorder(recorder *types.Recorder) error {
 	return c.saveLocked()
 }
 
-// RemoveRecorder removes a recorder from the configuration and persists the change.
+// RemoveRecorder deletes a recorder from the configuration and persists to disk.
 func (c *Config) RemoveRecorder(id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -386,7 +388,7 @@ func (c *Config) RemoveRecorder(id string) error {
 	return c.saveLocked()
 }
 
-// UpdateRecorder updates a recorder in the configuration and persists the change.
+// UpdateRecorder validates and replaces a recorder in the configuration, persisting to disk.
 func (c *Config) UpdateRecorder(recorder *types.Recorder) error {
 	if err := recorder.Validate(); err != nil {
 		return err
@@ -406,21 +408,21 @@ func (c *Config) UpdateRecorder(recorder *types.Recorder) error {
 
 // --- Getters for individual settings ---
 
-// AudioInput returns the configured audio input device.
+// AudioInput returns the configured audio input device identifier.
 func (c *Config) AudioInput() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.Audio.Input
 }
 
-// FFmpegPath returns the configured FFmpeg binary path.
+// FFmpegPath returns the configured FFmpeg binary path, or empty to search PATH.
 func (c *Config) FFmpegPath() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.System.FFmpegPath
 }
 
-// GraphConfig returns a copy of the current Graph/Email configuration.
+// GraphConfig returns a copy of the Microsoft Graph email configuration.
 func (c *Config) GraphConfig() types.GraphConfig {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -433,7 +435,7 @@ func (c *Config) GraphConfig() types.GraphConfig {
 	}
 }
 
-// RecordingAPIKey returns the API key for recording REST endpoints.
+// RecordingAPIKey returns the API key used to authenticate recording REST endpoints.
 func (c *Config) RecordingAPIKey() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -442,7 +444,7 @@ func (c *Config) RecordingAPIKey() string {
 
 // --- Individual Setters ---
 
-// SetRecordingAPIKey updates the recording API key and persists the change.
+// SetRecordingAPIKey updates the recording API key and persists to disk.
 func (c *Config) SetRecordingAPIKey(key string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -492,7 +494,7 @@ type Snapshot struct {
 	Recorders []types.Recorder
 }
 
-// Snapshot returns a point-in-time copy of all configuration values.
+// Snapshot returns a thread-safe point-in-time copy of all configuration values.
 func (c *Config) Snapshot() Snapshot {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -585,7 +587,7 @@ type SettingsUpdate struct {
 	GraphRecipients          string  `json:"graph_recipients"` // Comma-separated
 }
 
-// Validate checks all settings fields and returns all validation errors.
+// Validate checks all settings fields and returns a list of validation errors.
 //
 //nolint:gocyclo // Validation functions naturally have many branches - one per field
 func (s *SettingsUpdate) Validate() []string {
@@ -633,7 +635,7 @@ func (s *SettingsUpdate) Validate() []string {
 	return errs
 }
 
-// ApplySettings updates all settings atomically with a single file write.
+// ApplySettings applies all settings atomically and persists with a single file write.
 // Validation should be performed before calling this method.
 func (c *Config) ApplySettings(s *SettingsUpdate) error {
 	c.mu.Lock()
@@ -666,7 +668,7 @@ func (c *Config) ApplySettings(s *SettingsUpdate) error {
 
 // --- Utility functions ---
 
-// GenerateAPIKey returns a new random API key.
+// GenerateAPIKey creates a cryptographically random 32-character API key.
 func GenerateAPIKey() (string, error) {
 	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	const length = 32
