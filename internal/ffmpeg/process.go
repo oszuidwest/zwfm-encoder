@@ -29,6 +29,10 @@ type StartResult struct {
 
 	stdin   io.WriteCloser
 	stdinMu sync.Mutex // protects stdin field
+
+	waitOnce sync.Once
+	waitErr  error
+	waitDone chan struct{}
 }
 
 // BaseInputArgs returns FFmpeg arguments for PCM audio input.
@@ -64,11 +68,12 @@ func StartProcess(ffmpegPath string, args []string) (*StartResult, error) {
 	}
 
 	return &StartResult{
-		cmd:    cmd,
-		ctx:    ctx,
-		cancel: cancel,
-		stderr: &stderr,
-		stdin:  stdinPipe,
+		cmd:      cmd,
+		ctx:      ctx,
+		cancel:   cancel,
+		stderr:   &stderr,
+		stdin:    stdinPipe,
+		waitDone: make(chan struct{}),
 	}, nil
 }
 
@@ -103,9 +108,15 @@ func (r *StartResult) CloseStdin() {
 }
 
 // Wait blocks until the FFmpeg process exits and returns any error.
-// This should be called after CloseStdin to allow graceful shutdown.
+// Safe for concurrent calls: the first caller runs cmd.Wait(), subsequent
+// callers receive the cached result.
 func (r *StartResult) Wait() error {
-	return r.cmd.Wait()
+	r.waitOnce.Do(func() {
+		r.waitErr = r.cmd.Wait()
+		close(r.waitDone)
+	})
+	<-r.waitDone
+	return r.waitErr
 }
 
 // Signal sends SIGTERM (Unix) or soft termination (Windows) for graceful shutdown.

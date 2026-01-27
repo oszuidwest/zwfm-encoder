@@ -18,6 +18,10 @@ import (
 // errStoppedByUser indicates the stream was intentionally stopped.
 var errStoppedByUser = errors.New("stopped by user")
 
+// audioBufferSize is the number of audio chunks buffered per stream.
+// At ~100ms per chunk, 5 chunks provides ~500ms of buffer.
+const audioBufferSize = 5
+
 // StreamContext provides encoder state for monitoring and retry decisions.
 type StreamContext interface {
 	// Stream returns the stream configuration, or nil if removed.
@@ -46,6 +50,16 @@ type Stream struct {
 	startTime  time.Time
 	retryCount int
 	backoff    *util.Backoff
+	audioCh    chan []byte
+	closeOnce  sync.Once
+	writerWg   sync.WaitGroup
+}
+
+// closeAudioCh safely closes the audio channel exactly once.
+func (s *Stream) closeAudioCh() {
+	s.closeOnce.Do(func() {
+		close(s.audioCh)
+	})
 }
 
 // NewManager creates a Manager with the given FFmpeg path.
@@ -79,6 +93,29 @@ func (m *Manager) emitEvent(streamID, event, message, errMsg string, retryCount,
 		name = getName(streamID)
 	}
 	cb(streamID, name, event, message, errMsg, retryCount, maxRetries)
+}
+
+// runWriter is the per-stream goroutine that drains audioCh and writes to FFmpeg stdin.
+func (m *Manager) runWriter(streamID string, s *Stream) {
+	defer s.writerWg.Done()
+
+	for data := range s.audioCh {
+		_, err := s.result.WriteStdin(data)
+		if err != nil {
+			if !errors.Is(err, ffmpeg.ErrStdinClosed) {
+				m.mu.Lock()
+				if cur, exists := m.streams[streamID]; exists && cur == s && cur.state == types.ProcessRunning {
+					slog.Warn("stream write failed, marking as error",
+						"stream_id", streamID, "error", err)
+					cur.state = types.ProcessError
+					cur.lastError = err.Error()
+					cur.result.CloseStdin()
+				}
+				m.mu.Unlock()
+			}
+			return
+		}
+	}
 }
 
 // Start launches a stream. On success, a goroutine emits a "stream_stable"
@@ -119,10 +156,14 @@ func (m *Manager) Start(stream *types.Stream) error {
 		startTime:  time.Now(),
 		retryCount: retryCount,
 		backoff:    backoff,
+		audioCh:    make(chan []byte, audioBufferSize),
 	}
+	s.writerWg.Add(1)
 
 	m.streams[stream.ID] = s
 	m.mu.Unlock()
+
+	go m.runWriter(stream.ID, s)
 
 	m.emitEvent(stream.ID, "stream_started", fmt.Sprintf("Connecting to %s:%d", stream.Host, stream.Port), "", 0, 0)
 
@@ -153,6 +194,12 @@ func (m *Manager) Stop(streamID string) error {
 	if stream.state != types.ProcessRunning && stream.state != types.ProcessStarting {
 		delete(m.streams, streamID)
 		m.mu.Unlock()
+
+		// Clean up writer goroutine. This path is hit when MonitorAndRetry
+		// sets ProcessStopped/ProcessError before StopAll reaches this stream.
+		stream.closeAudioCh()
+		stream.writerWg.Wait()
+
 		return nil
 	}
 
@@ -162,13 +209,18 @@ func (m *Manager) Stop(streamID string) error {
 
 	slog.Info("stopping stream", "stream_id", streamID)
 
-	// Mark as intentionally stopped before closing stdin
+	// 1. Close audio channel — no more data from distributor.
+	//    Writer's for-range will exit after draining remaining items.
+	stream.closeAudioCh()
+
+	// 2. Cancel context — marks stop as intentional. For stream processes
+	//    (no cmd.Cancel set), exec.CommandContext sends SIGKILL, breaking
+	//    the pipe and unblocking any writer stuck in stdin.Write().
 	result.Cancel(errStoppedByUser)
 
-	// Close stdin - signals FFmpeg that input is done
-	result.CloseStdin()
-
-	// Wait for process to exit with timeout
+	// 3. Wait for process exit with timeout escalation.
+	//    Must complete before writerWg.Wait — guarantees the process is
+	//    dead and the pipe is broken, so the writer can exit.
 	done := make(chan error, 1)
 	go func() {
 		done <- result.Wait()
@@ -176,22 +228,26 @@ func (m *Manager) Stop(streamID string) error {
 
 	select {
 	case <-done:
-		// Process exited gracefully
 	case <-time.After(5 * time.Second):
-		// Graceful shutdown: send SIGTERM
 		slog.Warn("stream did not stop in time, sending signal", "stream_id", streamID)
 		_ = result.Signal()
 
 		select {
 		case <-done:
-			// Process stopped after signal
 		case <-time.After(2 * time.Second):
-			// Force kill if still running
 			slog.Error("stream force killed", "stream_id", streamID)
 			_ = result.Kill()
 			<-done
 		}
 	}
+
+	// 4. Writer goroutine — process is dead, pipe is broken,
+	//    any blocked Write() has returned. This returns quickly.
+	stream.writerWg.Wait()
+
+	// 5. CloseStdin — best-effort cleanup. Writer released stdinMu,
+	//    so this won't block. May be a no-op if writer already closed it.
+	result.CloseStdin()
 
 	m.mu.Lock()
 	delete(m.streams, streamID)
@@ -221,38 +277,37 @@ func (m *Manager) StopAll() error {
 	return errors.Join(errs...)
 }
 
-// WriteAudio sends audio data to a stream. Errors from closed stdin during
-// shutdown are silently ignored.
+// WriteAudio enqueues audio data for a stream. The data is copied and sent
+// to the stream's buffered channel for its writer goroutine. If the buffer
+// is full, the oldest chunk is dropped to keep the most recent audio.
 func (m *Manager) WriteAudio(streamID string, data []byte) error {
-	// Get stream under read lock
 	m.mu.RLock()
 	stream, exists := m.streams[streamID]
 	if !exists || stream.state != types.ProcessRunning {
 		m.mu.RUnlock()
 		return nil
 	}
-	m.mu.RUnlock()
+	ch := stream.audioCh
 
-	// WriteStdin is thread-safe (mutex encapsulated in StartResult)
-	_, err := stream.result.WriteStdin(data)
-	if err != nil {
-		// ErrStdinClosed is expected during shutdown - not a real error
-		if errors.Is(err, ffmpeg.ErrStdinClosed) {
-			return nil
-		}
+	// Copy data — the caller reuses the buffer
+	buf := make([]byte, len(data))
+	copy(buf, data)
 
-		// Update state under write lock on error
-		m.mu.Lock()
-		// Re-check stream still exists and hasn't been modified
-		if stream, exists := m.streams[streamID]; exists && stream.state == types.ProcessRunning {
-			slog.Warn("stream write failed, marking as error", "stream_id", streamID, "error", err)
-			stream.state = types.ProcessError
-			stream.lastError = err.Error()
-			stream.result.CloseStdin()
+	// Drop-oldest: if full, discard one stale chunk, then enqueue fresh
+	select {
+	case ch <- buf:
+	default:
+		select {
+		case <-ch:
+		default:
 		}
-		m.mu.Unlock()
-		return fmt.Errorf("write audio: %w", err)
+		select {
+		case ch <- buf:
+		default:
+		}
 	}
+
+	m.mu.RUnlock()
 	return nil
 }
 
@@ -337,11 +392,22 @@ func (m *Manager) MarkStopped(streamID string) {
 	}
 }
 
-// Remove deletes a stream from the manager without stopping the process.
+// Remove deletes a stream from the manager and cleans up its writer goroutine.
 func (m *Manager) Remove(streamID string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.streams, streamID)
+	stream, exists := m.streams[streamID]
+	if exists {
+		delete(m.streams, streamID)
+	}
+	m.mu.Unlock()
+
+	// Close channel and wait for writer AFTER releasing m.mu.
+	// The writer's error path acquires m.mu — waiting while holding
+	// the lock would deadlock.
+	if exists {
+		stream.closeAudioCh()
+		stream.writerWg.Wait()
+	}
 }
 
 // RetryCount returns the number of retry attempts for a stream, or 0 if not found.
@@ -412,7 +478,6 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 	for {
 		select {
 		case <-stopChan:
-			m.Remove(streamID)
 			return
 		default:
 		}
@@ -450,7 +515,6 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 
 		select {
 		case <-stopChan:
-			m.Remove(streamID)
 			return
 		case <-time.After(retryDelay):
 		}
