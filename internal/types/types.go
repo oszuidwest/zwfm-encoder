@@ -53,6 +53,7 @@ type ProcessStatus struct {
 	MaxRetries int          `json:"max_retries,omitempty"`
 	Error      string       `json:"error,omitempty"`
 	Uptime     string       `json:"uptime,omitempty"`
+	AudioDrops int64        `json:"audio_drops,omitempty"`
 }
 
 const (

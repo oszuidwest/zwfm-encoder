@@ -8,6 +8,7 @@ import (
 	"maps"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/ffmpeg"
@@ -53,6 +54,7 @@ type Stream struct {
 	audioCh    chan []byte
 	closeOnce  sync.Once
 	writerWg   sync.WaitGroup
+	audioDrops atomic.Int64
 }
 
 // closeAudioCh safely closes the audio channel exactly once.
@@ -129,15 +131,28 @@ func (m *Manager) Start(stream *types.Stream) error {
 		return nil // Already running
 	}
 
-	// Preserve retry state from existing entry, or create fresh
+	// Preserve retry state and capture old stream for writer cleanup
 	var retryCount int
 	var backoff *util.Backoff
-	if exists && existing.backoff != nil {
+	var oldStream *Stream
+	if exists {
 		retryCount = existing.retryCount
 		backoff = existing.backoff
-	} else {
+		oldStream = existing
+		delete(m.streams, stream.ID)
+	}
+	if backoff == nil {
 		retryCount = 0
 		backoff = util.NewBackoff(types.InitialRetryDelay, types.MaxRetryDelay)
+	}
+	m.mu.Unlock()
+
+	// Clean up old writer goroutine outside the lock.
+	// The writer's error path acquires m.mu — waiting while holding
+	// the lock would deadlock.
+	if oldStream != nil {
+		oldStream.closeAudioCh()
+		oldStream.writerWg.Wait()
 	}
 
 	args := BuildFFmpegArgs(stream)
@@ -146,7 +161,6 @@ func (m *Manager) Start(stream *types.Stream) error {
 
 	result, err := ffmpeg.StartProcess(m.ffmpegPath, args)
 	if err != nil {
-		m.mu.Unlock()
 		return err
 	}
 
@@ -160,6 +174,7 @@ func (m *Manager) Start(stream *types.Stream) error {
 	}
 	s.writerWg.Add(1)
 
+	m.mu.Lock()
 	m.streams[stream.ID] = s
 	m.mu.Unlock()
 
@@ -305,6 +320,11 @@ func (m *Manager) WriteAudio(streamID string, data []byte) error {
 		case ch <- buf:
 		default:
 		}
+		drops := stream.audioDrops.Add(1)
+		if drops == 1 || drops%100 == 0 {
+			slog.Warn("audio buffer full, dropping chunk",
+				"stream_id", streamID, "total_drops", drops)
+		}
 	}
 
 	m.mu.RUnlock()
@@ -335,6 +355,7 @@ func (m *Manager) Statuses(getMaxRetries func(string) int) map[string]types.Proc
 			MaxRetries: maxRetries,
 			Error:      stream.lastError,
 			Uptime:     uptime,
+			AudioDrops: stream.audioDrops.Load(),
 		}
 	}
 	return statuses
