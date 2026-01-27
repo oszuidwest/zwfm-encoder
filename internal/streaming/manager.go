@@ -107,20 +107,25 @@ func (m *Manager) runWriter(streamID string, s *Stream) {
 
 	for data := range s.audioCh {
 		_, err := s.result.WriteStdin(data)
-		if err != nil {
-			if !errors.Is(err, ffmpeg.ErrStdinClosed) {
-				m.mu.Lock()
-				if cur, exists := m.streams[streamID]; exists && cur == s && cur.state == types.ProcessRunning {
-					slog.Warn("stream write failed, marking as error",
-						"stream_id", streamID, "error", err)
-					cur.state = types.ProcessError
-					cur.lastError = err.Error()
-					cur.result.CloseStdin()
-				}
-				m.mu.Unlock()
-			}
+		if err == nil {
+			continue
+		}
+
+		// ErrStdinClosed is expected during shutdown — not a real error
+		if errors.Is(err, ffmpeg.ErrStdinClosed) {
 			return
 		}
+
+		m.mu.Lock()
+		if cur, exists := m.streams[streamID]; exists && cur == s && cur.state == types.ProcessRunning {
+			slog.Warn("stream write failed, marking as error",
+				"stream_id", streamID, "error", err)
+			cur.state = types.ProcessError
+			cur.lastError = err.Error()
+			cur.result.CloseStdin()
+		}
+		m.mu.Unlock()
+		return
 	}
 }
 
@@ -141,17 +146,15 @@ func (m *Manager) Start(stream *types.Stream) error {
 	}
 
 	// Preserve retry state and capture old stream for writer cleanup
-	var retryCount int
-	var backoff *util.Backoff
 	var oldStream *Stream
+	retryCount := 0
+	backoff := util.NewBackoff(types.InitialRetryDelay, types.MaxRetryDelay)
 	if exists {
-		retryCount = existing.retryCount
-		backoff = existing.backoff
 		oldStream = existing
-	}
-	if backoff == nil {
-		retryCount = 0
-		backoff = util.NewBackoff(types.InitialRetryDelay, types.MaxRetryDelay)
+		if existing.backoff != nil {
+			retryCount = existing.retryCount
+			backoff = existing.backoff
+		}
 	}
 
 	// Insert placeholder to claim this stream ID. Carries retry state
@@ -348,26 +351,24 @@ func (m *Manager) WriteAudio(streamID string, data []byte) error {
 	buf := make([]byte, len(data))
 	copy(buf, data)
 
-	// Drop-oldest: if full, discard one stale chunk, then enqueue fresh
+	// Drop-oldest: if full, discard one stale chunk, then enqueue fresh.
+	// Both inner selects have default cases to handle races with the
+	// writer goroutine that may drain the channel concurrently.
 	select {
 	case ch <- buf:
 	default:
-		dropped := false
 		select {
 		case <-ch:
-			dropped = true
-		default:
-		}
-		select {
-		case ch <- buf:
-		default:
-		}
-		if dropped {
 			drops := stream.audioDrops.Add(1)
 			if drops == 1 || drops%100 == 0 {
 				slog.Warn("audio buffer full, dropping chunk",
 					"stream_id", streamID, "total_drops", drops)
 			}
+		default:
+		}
+		select {
+		case ch <- buf:
+		default:
 		}
 	}
 
