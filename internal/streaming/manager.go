@@ -58,7 +58,11 @@ type Stream struct {
 }
 
 // closeAudioCh safely closes the audio channel exactly once.
+// Nil-safe: placeholder entries have no audioCh.
 func (s *Stream) closeAudioCh() {
+	if s.audioCh == nil {
+		return
+	}
 	s.closeOnce.Do(func() {
 		close(s.audioCh)
 	})
@@ -122,13 +126,18 @@ func (m *Manager) runWriter(streamID string, s *Stream) {
 
 // Start launches a stream. On success, a goroutine emits a "stream_stable"
 // event after the stability threshold is reached.
+//
+// A ProcessStarting placeholder is inserted into the map while the lock is
+// released for old-writer cleanup and process startup. This prevents
+// concurrent Start calls from launching duplicate FFmpeg processes while
+// keeping the lock free for WriteAudio and Statuses on other streams.
 func (m *Manager) Start(stream *types.Stream) error {
 	m.mu.Lock()
 
 	existing, exists := m.streams[stream.ID]
-	if exists && existing.state == types.ProcessRunning {
+	if exists && (existing.state == types.ProcessRunning || existing.state == types.ProcessStarting) {
 		m.mu.Unlock()
-		return nil // Already running
+		return nil // Already running or being started
 	}
 
 	// Preserve retry state and capture old stream for writer cleanup
@@ -139,36 +148,41 @@ func (m *Manager) Start(stream *types.Stream) error {
 		retryCount = existing.retryCount
 		backoff = existing.backoff
 		oldStream = existing
-		delete(m.streams, stream.ID)
 	}
 	if backoff == nil {
 		retryCount = 0
 		backoff = util.NewBackoff(types.InitialRetryDelay, types.MaxRetryDelay)
 	}
 
+	// Insert placeholder to claim this stream ID. Carries retry state
+	// so concurrent callers see the correct backoff. Has no result,
+	// audioCh, or writer — those are created after StartProcess succeeds.
+	placeholder := &Stream{
+		state:      types.ProcessStarting,
+		retryCount: retryCount,
+		backoff:    backoff,
+	}
+	m.streams[stream.ID] = placeholder
+	m.mu.Unlock()
+
+	// Clean up old writer goroutine outside the lock.
+	// The writer's error path acquires m.mu — waiting while holding
+	// the lock would deadlock.
 	if oldStream != nil {
-		// Release lock for cleanup — writer's error path acquires m.mu,
-		// so waiting while holding the lock would deadlock.
-		m.mu.Unlock()
 		oldStream.closeAudioCh()
 		oldStream.writerWg.Wait()
-		m.mu.Lock()
-
-		// Re-check: another Start may have won the race during cleanup
-		if cur, ok := m.streams[stream.ID]; ok && cur.state == types.ProcessRunning {
-			m.mu.Unlock()
-			return nil
-		}
 	}
 
-	// Lock is held — StartProcess under lock prevents concurrent Start
-	// from launching duplicate FFmpeg processes for the same stream.
 	args := BuildFFmpegArgs(stream)
 
 	slog.Info("starting stream", "stream_id", stream.ID, "host", stream.Host, "port", stream.Port)
 
 	result, err := ffmpeg.StartProcess(m.ffmpegPath, args)
 	if err != nil {
+		m.mu.Lock()
+		if m.streams[stream.ID] == placeholder {
+			delete(m.streams, stream.ID)
+		}
 		m.mu.Unlock()
 		return err
 	}
@@ -183,6 +197,16 @@ func (m *Manager) Start(stream *types.Stream) error {
 	}
 	s.writerWg.Add(1)
 
+	m.mu.Lock()
+	if m.streams[stream.ID] != placeholder {
+		// Placeholder was removed by Stop/Remove during startup.
+		// Kill the process we just spawned and bail out.
+		m.mu.Unlock()
+		result.Cancel(errStoppedByUser)
+		result.CloseStdin()
+		_ = result.Wait()
+		return nil
+	}
 	m.streams[stream.ID] = s
 	m.mu.Unlock()
 
@@ -214,7 +238,15 @@ func (m *Manager) Stop(streamID string) error {
 		return nil
 	}
 
-	if stream.state != types.ProcessRunning && stream.state != types.ProcessStarting {
+	// Placeholder: no process, audioCh, or writer to clean up.
+	// Removing it signals the Start() goroutine to abort on re-check.
+	if stream.state == types.ProcessStarting {
+		delete(m.streams, streamID)
+		m.mu.Unlock()
+		return nil
+	}
+
+	if stream.state != types.ProcessRunning {
 		delete(m.streams, streamID)
 		m.mu.Unlock()
 
