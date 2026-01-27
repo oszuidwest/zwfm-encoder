@@ -2015,7 +2015,7 @@
         border-bottom: 1px solid var(--border-default);
     }
 
-    .event-row:last-child {
+    .event-list > :last-child .event-row {
         border-bottom: none;
     }
 
