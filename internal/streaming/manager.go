@@ -145,22 +145,31 @@ func (m *Manager) Start(stream *types.Stream) error {
 		retryCount = 0
 		backoff = util.NewBackoff(types.InitialRetryDelay, types.MaxRetryDelay)
 	}
-	m.mu.Unlock()
 
-	// Clean up old writer goroutine outside the lock.
-	// The writer's error path acquires m.mu — waiting while holding
-	// the lock would deadlock.
 	if oldStream != nil {
+		// Release lock for cleanup — writer's error path acquires m.mu,
+		// so waiting while holding the lock would deadlock.
+		m.mu.Unlock()
 		oldStream.closeAudioCh()
 		oldStream.writerWg.Wait()
+		m.mu.Lock()
+
+		// Re-check: another Start may have won the race during cleanup
+		if cur, ok := m.streams[stream.ID]; ok && cur.state == types.ProcessRunning {
+			m.mu.Unlock()
+			return nil
+		}
 	}
 
+	// Lock is held — StartProcess under lock prevents concurrent Start
+	// from launching duplicate FFmpeg processes for the same stream.
 	args := BuildFFmpegArgs(stream)
 
 	slog.Info("starting stream", "stream_id", stream.ID, "host", stream.Host, "port", stream.Port)
 
 	result, err := ffmpeg.StartProcess(m.ffmpegPath, args)
 	if err != nil {
+		m.mu.Unlock()
 		return err
 	}
 
@@ -174,7 +183,6 @@ func (m *Manager) Start(stream *types.Stream) error {
 	}
 	s.writerWg.Add(1)
 
-	m.mu.Lock()
 	m.streams[stream.ID] = s
 	m.mu.Unlock()
 
@@ -312,18 +320,22 @@ func (m *Manager) WriteAudio(streamID string, data []byte) error {
 	select {
 	case ch <- buf:
 	default:
+		dropped := false
 		select {
 		case <-ch:
+			dropped = true
 		default:
 		}
 		select {
 		case ch <- buf:
 		default:
 		}
-		drops := stream.audioDrops.Add(1)
-		if drops == 1 || drops%100 == 0 {
-			slog.Warn("audio buffer full, dropping chunk",
-				"stream_id", streamID, "total_drops", drops)
+		if dropped {
+			drops := stream.audioDrops.Add(1)
+			if drops == 1 || drops%100 == 0 {
+				slog.Warn("audio buffer full, dropping chunk",
+					"stream_id", streamID, "total_drops", drops)
+			}
 		}
 	}
 
