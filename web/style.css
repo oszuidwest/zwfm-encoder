@@ -1982,6 +1982,33 @@
         flex-direction: column;
     }
 
+    /* Date separator between day groups */
+    .event-date-separator {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        padding: var(--space-2) var(--space-3);
+        background: var(--surface-elevated);
+        border-bottom: 1px solid var(--border-default);
+    }
+
+    .event-date-separator::before,
+    .event-date-separator::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: var(--border-default);
+    }
+
+    .event-date-label {
+        font-size: var(--text-xs);
+        font-weight: 600;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        white-space: nowrap;
+    }
+
     /* Split time column layout */
     .event-row {
         display: flex;

@@ -536,6 +536,10 @@
                     <div class="section section--flush">
                         <div class="event-list" x-show="events.length > 0">
                             <template x-for="(event, index) in events" :key="index">
+                                <div>
+                                <div class="event-date-separator" x-show="isNewDateGroup(index)">
+                                    <span class="event-date-label" x-text="formatEventDate(event.ts)"></span>
+                                </div>
                                 <article class="event-row" :data-severity="getEventSeverity(event.type)">
                                     <div class="event-time-col">
                                         <time class="event-time" :datetime="event.ts" :title="new Date(event.ts).toLocaleString('nl-NL')" x-text="formatEventTime(event.ts)"></time>
@@ -552,6 +556,7 @@
                                         <p class="event-detail" x-show="getEventDetail(event)" x-text="getEventDetail(event)"></p>
                                     </div>
                                 </article>
+                                </div>
                             </template>
                         </div>
                         <div class="event-empty" x-show="events.length === 0 && !eventsLoading">

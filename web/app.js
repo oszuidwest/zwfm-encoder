@@ -1350,6 +1350,46 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
+         * Returns a date key (YYYY-MM-DD) for grouping events by day.
+         * @param {string} ts - ISO timestamp
+         * @returns {string} Date key
+         */
+        getEventDateKey(ts) {
+            if (!ts) return '';
+            const d = new Date(ts);
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        },
+
+        /**
+         * Checks whether the event at the given index starts a new date group.
+         * @param {number} index - Event index in the events array
+         * @returns {boolean} True if this event's date differs from the previous event
+         */
+        isNewDateGroup(index) {
+            if (index === 0) return true;
+            return this.getEventDateKey(this.events[index].ts) !== this.getEventDateKey(this.events[index - 1].ts);
+        },
+
+        /**
+         * Formats a date label for date separator rows.
+         * Returns "Today", "Yesterday", or a localized date string.
+         * @param {string} ts - ISO timestamp
+         * @returns {string} Human-readable date label
+         */
+        formatEventDate(ts) {
+            if (!ts) return '';
+            const date = new Date(ts);
+            const now = new Date();
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const eventDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+            const diffDays = Math.round((today - eventDay) / 86400000);
+
+            if (diffDays === 0) return 'Today';
+            if (diffDays === 1) return 'Yesterday';
+            return date.toLocaleDateString('nl-NL', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+        },
+
+        /**
          * Formats a timestamp as relative time (e.g., "2m ago", "1h ago").
          * @param {string} ts - ISO timestamp
          * @returns {string} Relative time string
