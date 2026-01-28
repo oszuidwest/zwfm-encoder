@@ -698,8 +698,7 @@ type HealthResponse struct {
 }
 
 // handleHealth returns the health status of the encoder.
-// GET /health
-// Returns 200 OK if healthy, 503 Service Unavailable if unhealthy.
+// It returns 200 OK if healthy, 503 Service Unavailable if unhealthy.
 // Health is defined as: encoder running AND FFmpeg available.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()

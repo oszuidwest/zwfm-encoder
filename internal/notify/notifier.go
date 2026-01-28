@@ -391,8 +391,8 @@ func (n *SilenceNotifier) sendRecoveryEmailWithClientAndDump(cfg *GraphConfig, s
 	body := fmt.Sprintf(
 		"Audio was restored at %s.\n\n"+
 			"The silence lasted %s.\n"+
-			"Level: Left %.1f dB / Right %.1f dB",
-		util.HumanTime(), util.FormatDuration(durationMs), levelL, levelR,
+			"Level: Left %.1f dB / Right %.1f dB (threshold: %.1f dB)",
+		util.HumanTime(), util.FormatDuration(durationMs), levelL, levelR, threshold,
 	)
 
 	// Add dump info to body

@@ -59,7 +59,7 @@ func ValidatePath(field, path string) error {
 // CheckPathWritable verifies that a directory path exists and is writable.
 func CheckPathWritable(path string) error {
 	// Create directory if it doesn't exist
-	if err := os.MkdirAll(path, 0o755); err != nil {
+	if err := os.MkdirAll(path, 0o755); err != nil { //nolint:gosec // Recording directory needs to be readable
 		slog.Error("path writability check failed", "path", path, "error", err, "step", "mkdir")
 		return fmt.Errorf("path is not writable")
 	}
@@ -67,7 +67,7 @@ func CheckPathWritable(path string) error {
 	// Create test file with unique name using nanosecond timestamp
 	testFile := filepath.Join(path, fmt.Sprintf(".encoder-write-test-%d", time.Now().UnixNano()))
 
-	f, err := os.Create(testFile)
+	f, err := os.Create(testFile) //nolint:gosec // testFile path is constructed internally
 	if err != nil {
 		slog.Error("path writability check failed", "path", path, "error", err, "step", "create")
 		return fmt.Errorf("path is not writable")

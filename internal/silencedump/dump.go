@@ -255,7 +255,7 @@ func encodeToMP3(ffmpegPath, outputDir string, pcm []byte, silenceStart time.Tim
 	}
 
 	// Ensure output directory exists
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+	if err := os.MkdirAll(outputDir, 0o755); err != nil { //nolint:gosec // Dump directory needs to be readable
 		result.Error = fmt.Errorf("create output dir: %w", err)
 		return result
 	}
@@ -281,7 +281,7 @@ func encodeToMP3(ffmpegPath, outputDir string, pcm []byte, silenceStart time.Tim
 		result.FilePath,
 	)
 
-	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+	cmd := exec.CommandContext(ctx, ffmpegPath, args...) //nolint:gosec // ffmpegPath is from internal config
 	cmd.Stdin = bytes.NewReader(pcm)
 
 	var stderr bytes.Buffer

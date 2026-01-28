@@ -154,7 +154,7 @@ func (r *GenericRecorder) startAsync() {
 	// Validate and prepare output directory based on storage mode
 	if storageMode == types.StorageS3 {
 		// S3-only: create temp directory (should always be writable)
-		if err := os.MkdirAll(filepath.Join(tempDir, "recorders", id), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(tempDir, "recorders", id), 0o755); err != nil { //nolint:gosec // Temp directory needs to be readable
 			r.setError(fmt.Sprintf("failed to create temp directory: %v", err))
 			return
 		}

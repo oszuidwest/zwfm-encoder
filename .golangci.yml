@@ -2,8 +2,21 @@ version: "2"
 
 linters:
   enable:
+    # Existing
     - gocritic
     - gocyclo
+    # Doc/Comment
+    - godot
+    - godoclint
+    - dupword
+    - misspell
+    # Code quality
+    - errorlint
+    - gosec
+    - nilerr
+    - unparam
+    - unconvert
+    - bodyclose
   settings:
     gocritic:
       enabled-tags:
@@ -12,3 +25,5 @@ linters:
         - performance
     gocyclo:
       min-complexity: 20
+    godot:
+      scope: toplevel
