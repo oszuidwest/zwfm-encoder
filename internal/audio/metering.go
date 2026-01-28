@@ -29,7 +29,7 @@ type LevelData struct {
 // ProcessSamples accumulates level data from audio samples.
 func ProcessSamples(buf []byte, n int, data *LevelData) {
 	for i := 0; i+3 < n; i += 4 {
-		leftSample := int16(binary.LittleEndian.Uint16(buf[i:]))   //nolint:gosec // Intentional reinterpretation of unsigned PCM to signed
+		leftSample := int16(binary.LittleEndian.Uint16(buf[i:]))    //nolint:gosec // Intentional reinterpretation of unsigned PCM to signed
 		rightSample := int16(binary.LittleEndian.Uint16(buf[i+2:])) //nolint:gosec // Intentional reinterpretation of unsigned PCM to signed
 		left := float64(leftSample)
 		right := float64(rightSample)
