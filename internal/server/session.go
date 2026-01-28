@@ -168,7 +168,7 @@ func (sm *SessionManager) CreateCSRFToken() string {
 	now := time.Now()
 
 	// Periodically clean up expired tokens.
-	if rand.IntN(10) == 0 {
+	if rand.IntN(10) == 0 { //nolint:gosec // Non-security random for cleanup timing
 		maps.DeleteFunc(sm.csrfTokens, func(_ string, v *csrfToken) bool {
 			return now.After(v.expiresAt)
 		})

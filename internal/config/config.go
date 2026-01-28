@@ -140,7 +140,7 @@ type RecordingConfig struct {
 	Recorders []types.Recorder `json:"recorders"`
 }
 
-// Config is safe for concurrent use.
+// Config holds all application configuration and is safe for concurrent use.
 type Config struct {
 	// System contains system-level configuration.
 	System SystemConfig `json:"system"`
@@ -272,7 +272,7 @@ func (c *Config) saveLocked() error {
 	}
 
 	dir := filepath.Dir(c.filePath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // Config directory needs to be readable
 		return util.WrapError("create config directory", err)
 	}
 
@@ -283,7 +283,7 @@ func (c *Config) saveLocked() error {
 	return nil
 }
 
-// --- Stream management ---
+// Stream management.
 
 // ConfiguredStreams returns a copy of all streams.
 func (c *Config) ConfiguredStreams() []types.Stream {
@@ -368,7 +368,7 @@ func (c *Config) UpdateStream(stream *types.Stream) error {
 	return c.saveLocked()
 }
 
-// --- Recorder management ---
+// Recorder management.
 
 // Recorder returns the recorder with the given ID, or nil if not found.
 func (c *Config) Recorder(id string) *types.Recorder {
@@ -448,7 +448,7 @@ func (c *Config) UpdateRecorder(recorder *types.Recorder) error {
 	return c.saveLocked()
 }
 
-// --- Getters for individual settings ---
+// Getters for individual settings.
 
 // AudioInput returns the configured audio input device.
 func (c *Config) AudioInput() string {
@@ -484,7 +484,7 @@ func (c *Config) RecordingAPIKey() string {
 	return c.Recording.APIKey
 }
 
-// --- Individual Setters ---
+// Individual setters.
 
 // SetRecordingAPIKey updates the recording API key and persists the change.
 func (c *Config) SetRecordingAPIKey(key string) error {
@@ -494,7 +494,7 @@ func (c *Config) SetRecordingAPIKey(key string) error {
 	return c.saveLocked()
 }
 
-// --- Snapshot for atomic reads ---
+// Snapshot for atomic reads.
 
 // Snapshot is a point-in-time copy of configuration values.
 type Snapshot struct {
@@ -634,7 +634,7 @@ func (s *Snapshot) HasZabbix() bool {
 	return s.ZabbixServer != "" && s.ZabbixHost != "" && s.ZabbixKey != ""
 }
 
-// --- Atomic Settings Update ---
+// Atomic settings update.
 
 // SettingsUpdate contains all settings for atomic update.
 type SettingsUpdate struct {
@@ -751,7 +751,7 @@ func (c *Config) ApplySettings(s *SettingsUpdate) error {
 	return c.saveLocked()
 }
 
-// --- Utility functions ---
+// Utility functions.
 
 // GenerateAPIKey returns a new random API key.
 func GenerateAPIKey() (string, error) {

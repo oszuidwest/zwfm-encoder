@@ -37,7 +37,7 @@ func (b *Backoff) Next() time.Duration {
 
 	// Add jitter to prevent thundering herd
 	if b.jitterFactor > 0 {
-		jitter := time.Duration(rand.Int64N(int64(float64(delay) * b.jitterFactor)))
+		jitter := time.Duration(rand.Int64N(int64(float64(delay) * b.jitterFactor))) //nolint:gosec // Non-security random for jitter
 		delay += jitter
 	}
 

@@ -145,12 +145,12 @@ func DefaultLogPath(port int) string {
 func NewLogger(filePath string) (*Logger, error) {
 	// Ensure directory exists
 	dir := filepath.Dir(filePath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // Log directory needs to be readable
 		return nil, fmt.Errorf("create log directory: %w", err)
 	}
 
 	// Open file for appending
-	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644) //nolint:gosec // Log file needs to be readable
 	if err != nil {
 		return nil, fmt.Errorf("open log file: %w", err)
 	}
@@ -281,7 +281,7 @@ func ReadLast(filePath string, n, offset int, filter TypeFilter) ([]Event, bool,
 		return []Event{}, false, nil
 	}
 
-	file, err := os.Open(filePath)
+	file, err := os.Open(filePath) //nolint:gosec // filePath is from DefaultLogPath, not user input
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []Event{}, false, nil

@@ -35,7 +35,7 @@ func NewManager(ffmpegPath, tempDir string, maxDurationMinutes int, eventLogger 
 	}
 
 	// Ensure temp directory exists
-	if err := os.MkdirAll(tempDir, 0o755); err != nil {
+	if err := os.MkdirAll(tempDir, 0o755); err != nil { //nolint:gosec // Temp directory needs to be readable
 		return nil, fmt.Errorf("create temp directory: %w", err)
 	}
 

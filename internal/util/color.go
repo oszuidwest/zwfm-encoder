@@ -1,4 +1,3 @@
-// Package util provides utility functions for the encoder.
 package util
 
 import (
@@ -19,7 +18,7 @@ func ParseHexColor(hex string) (r, g, b uint8, err error) {
 		return 0, 0, 0, fmt.Errorf("invalid hex color: %s", hex)
 	}
 
-	return uint8(ri), uint8(gi), uint8(bi), nil
+	return uint8(ri), uint8(gi), uint8(bi), nil //nolint:gosec // Values are validated to be 0-255 by hex parsing
 }
 
 // RGBToHex converts RGB components to a hex color string (#RRGGBB).

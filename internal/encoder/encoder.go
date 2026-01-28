@@ -541,7 +541,7 @@ func (e *Encoder) runSource() (string, error) {
 	slog.Info("starting audio capture", "command", cmdName, "input", audioInput)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, cmdName, args...)
+	cmd := exec.CommandContext(ctx, cmdName, args...) //nolint:gosec // cmdName is from internal platform config (arecord/ffmpeg)
 
 	// Go 1.20+: Declarative graceful shutdown - sends signal first, waits, then kills.
 	cmd.Cancel = func() error {

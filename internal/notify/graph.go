@@ -1,4 +1,3 @@
-// Package notify provides notification services for silence alerts.
 package notify
 
 import (
@@ -24,14 +23,14 @@ import (
 const (
 	graphBaseURL     = "https://graph.microsoft.com/v1.0"
 	graphScope       = "https://graph.microsoft.com/.default"
-	tokenURLTemplate = "https://login.microsoftonline.com/%s/oauth2/v2.0/token"
+	tokenURLTemplate = "https://login.microsoftonline.com/%s/oauth2/v2.0/token" //nolint:gosec // URL template, not a credential
 
-	// Retry settings
+	// Retry settings.
 	maxRetries       = 3
 	initialRetryWait = 1 * time.Second
 	maxRetryWait     = 30 * time.Second
 
-	// HTTP client timeout
+	// HTTP client timeout.
 	httpTimeout = 30 * time.Second
 )
 

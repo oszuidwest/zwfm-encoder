@@ -61,12 +61,12 @@ func sendWebhook(webhookURL string, payload *WebhookPayload) error {
 		return util.WrapError("marshal payload", err)
 	}
 
-	client := &http.Client{Timeout: 10000 * time.Millisecond}
+	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Post(webhookURL, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return util.WrapError("send webhook request", err)
 	}
-	defer util.SafeCloseFunc(resp.Body, "webhook response body")()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("webhook returned status %d", resp.StatusCode)
