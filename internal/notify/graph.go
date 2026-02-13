@@ -310,10 +310,11 @@ func ParseRecipients(recipients string) []string {
 	return result
 }
 
-// TokenSource returns a token source for the given config.
-func TokenSource(cfg *types.GraphConfig) (oauth2.TokenSource, error) {
+// TokenSourceContext returns an OAuth2 token source bound to the given context.
+// The context controls token acquisition timeouts.
+func TokenSourceContext(ctx context.Context, cfg *types.GraphConfig) (oauth2.TokenSource, error) {
 	if err := validateCredentials(cfg, false); err != nil {
 		return nil, err
 	}
-	return newCredentialsConfig(cfg).TokenSource(context.Background()), nil
+	return newCredentialsConfig(cfg).TokenSource(ctx), nil
 }
