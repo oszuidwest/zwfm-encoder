@@ -2,14 +2,13 @@ package recording
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
@@ -140,15 +139,9 @@ func (r *GenericRecorder) uploadFile(req uploadRequest) {
 	r.deleteIfS3Only(req.localPath)
 }
 
-// doUpload performs the actual S3 upload. Returns nil on success.
+// doUpload performs the actual S3 upload using the transfer manager for
+// automatic multipart uploads. Returns nil on success.
 func (r *GenericRecorder) doUpload(req uploadRequest) error {
-	ctx, cancel := context.WithTimeoutCause(
-		context.Background(),
-		5*time.Minute,
-		errors.New("s3 upload timeout"),
-	)
-	defer cancel()
-
 	file, err := os.Open(req.localPath)
 	if err != nil {
 		return err
@@ -164,14 +157,36 @@ func (r *GenericRecorder) doUpload(req uploadRequest) error {
 		return err
 	}
 	if client == nil {
-		return errors.New("no S3 client available")
+		return errNoS3Client
 	}
 
 	r.mu.RLock()
 	bucket := r.config.S3Bucket
 	r.mu.RUnlock()
 
-	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+	// Create transfer manager with progress logging
+	tm := transfermanager.New(client, func(o *transfermanager.Options) {
+		o.Concurrency = 5
+		o.PartSizeBytes = 8 * 1024 * 1024 // 8 MiB parts
+		o.ObjectProgressListeners.Register(&uploadProgressListener{
+			id:       r.id,
+			filename: filepath.Base(req.localPath),
+			fileSize: req.fileSize,
+		})
+	})
+
+	// Use a generous timeout: 2 minutes per 50MB, minimum 10 minutes
+	timeoutMinutes := max(10, int(req.fileSize/(50*1024*1024))*2+2)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMinutes)*time.Minute)
+	defer cancel()
+
+	slog.Info("starting upload",
+		"id", r.id,
+		"file", filepath.Base(req.localPath),
+		"size_mb", req.fileSize/(1024*1024),
+		"timeout_min", timeoutMinutes)
+
+	_, err = tm.UploadObject(ctx, &transfermanager.UploadObjectInput{
 		Bucket:        aws.String(bucket),
 		Key:           aws.String(req.s3Key),
 		Body:          file,
@@ -179,6 +194,32 @@ func (r *GenericRecorder) doUpload(req uploadRequest) error {
 		ContentType:   aws.String(r.getContentType()),
 	})
 	return err
+}
+
+var errNoS3Client = &noS3ClientError{}
+
+type noS3ClientError struct{}
+
+func (e *noS3ClientError) Error() string { return "no S3 client available" }
+
+// uploadProgressListener logs upload progress.
+type uploadProgressListener struct {
+	id            string
+	filename      string
+	fileSize      int64
+	lastLoggedPct int
+}
+
+func (l *uploadProgressListener) OnObjectBytesTransferred(e *transfermanager.ObjectBytesTransferredEvent) {
+	if l.fileSize == 0 {
+		return
+	}
+	pct := int(e.BytesTransferred * 100 / l.fileSize)
+	// Log every 25%
+	if pct >= l.lastLoggedPct+25 {
+		l.lastLoggedPct = pct
+		slog.Debug("upload progress", "id", l.id, "file", l.filename, "progress", pct)
+	}
 }
 
 // deleteIfS3Only removes the local file if storage mode is S3-only.
