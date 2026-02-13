@@ -2,6 +2,7 @@ package recording
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -177,7 +178,11 @@ func (r *GenericRecorder) doUpload(req uploadRequest) error {
 
 	// Use a generous timeout: 2 minutes per 50MB, minimum 10 minutes
 	timeoutMinutes := max(10, int(req.fileSize/(50*1024*1024))*2+2)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMinutes)*time.Minute)
+	ctx, cancel := context.WithTimeoutCause(
+		context.Background(),
+		time.Duration(timeoutMinutes)*time.Minute,
+		errors.New("s3 upload timeout"),
+	)
 	defer cancel()
 
 	slog.Info("starting upload",
@@ -198,6 +203,9 @@ func (r *GenericRecorder) doUpload(req uploadRequest) error {
 
 var errNoS3Client = &noS3ClientError{}
 
+// Compile-time interface check.
+var _ transfermanager.ObjectBytesTransferredListener = (*uploadProgressListener)(nil)
+
 type noS3ClientError struct{}
 
 func (e *noS3ClientError) Error() string { return "no S3 client available" }
@@ -210,7 +218,7 @@ type uploadProgressListener struct {
 	lastLoggedPct int
 }
 
-func (l *uploadProgressListener) OnObjectBytesTransferred(e *transfermanager.ObjectBytesTransferredEvent) {
+func (l *uploadProgressListener) OnObjectBytesTransferred(_ context.Context, e *transfermanager.ObjectBytesTransferredEvent) {
 	if l.fileSize == 0 {
 		return
 	}
