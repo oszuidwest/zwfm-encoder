@@ -99,7 +99,14 @@ type passwordCredential struct {
 
 // fetchExpiryInfo queries for credential expiry information.
 func (c *SecretExpiryChecker) fetchExpiryInfo(cfg *types.GraphConfig) (types.SecretExpiryInfo, error) {
-	ts, err := TokenSource(cfg)
+	ctx, cancel := context.WithTimeoutCause(
+		context.Background(),
+		httpTimeout,
+		errors.New("graph API request timeout"),
+	)
+	defer cancel()
+
+	ts, err := TokenSourceContext(ctx, cfg)
 	if err != nil {
 		return types.SecretExpiryInfo{}, fmt.Errorf("create token source: %w", err)
 	}
@@ -108,13 +115,6 @@ func (c *SecretExpiryChecker) fetchExpiryInfo(cfg *types.GraphConfig) (types.Sec
 	if err != nil {
 		return types.SecretExpiryInfo{}, fmt.Errorf("acquire token: %w", err)
 	}
-
-	ctx, cancel := context.WithTimeoutCause(
-		context.Background(),
-		httpTimeout,
-		errors.New("graph API request timeout"),
-	)
-	defer cancel()
 
 	apiURL := fmt.Sprintf("%s/applications(appId='%s')", graphBaseURL, url.PathEscape(cfg.ClientID))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, http.NoBody)
@@ -140,7 +140,8 @@ func (c *SecretExpiryChecker) fetchExpiryInfo(cfg *types.GraphConfig) (types.Sec
 		return types.SecretExpiryInfo{}, fmt.Errorf("parse response: %w", err)
 	}
 
-	// Find the earliest expiring credential
+	// Find the earliest non-expired credential
+	now := time.Now()
 	var earliest time.Time
 	for _, cred := range appResp.PasswordCredentials {
 		if cred.EndDateTime == "" {
@@ -150,13 +151,16 @@ func (c *SecretExpiryChecker) fetchExpiryInfo(cfg *types.GraphConfig) (types.Sec
 		if err != nil {
 			continue
 		}
+		if expiry.Before(now) {
+			continue // Skip already-expired credentials
+		}
 		if earliest.IsZero() || expiry.Before(earliest) {
 			earliest = expiry
 		}
 	}
 
 	if earliest.IsZero() {
-		return types.SecretExpiryInfo{Error: "no password credentials found"}, nil
+		return types.SecretExpiryInfo{Error: "no valid (non-expired) credentials found"}, nil
 	}
 
 	daysLeft := int(time.Until(earliest).Hours() / 24)
