@@ -84,11 +84,11 @@ func main() {
 	// Start web server.
 	httpServer := srv.Start()
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, util.ShutdownSignals()...)
-	<-sigChan
+	ctx, stop := signal.NotifyContext(context.Background(), util.ShutdownSignals()...)
+	defer stop()
+	<-ctx.Done()
 
-	slog.Info("shutting down")
+	slog.Info("shutting down", "signal", context.Cause(ctx))
 
 	// Stop version checker goroutine
 	srv.version.Stop()
