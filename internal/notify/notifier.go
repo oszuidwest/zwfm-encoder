@@ -2,10 +2,8 @@
 package notify
 
 import (
-	"encoding/base64"
 	"fmt"
 	"log/slog"
-	"os"
 	"sync"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
@@ -75,6 +73,9 @@ func graphConfigKeyFrom(cfg *GraphConfig) string {
 	return cfg.TenantID + "|" + cfg.ClientID + "|" + cfg.ClientSecret + "|" + cfg.FromAddress
 }
 
+// getOrCreateGraphClient returns a cached Graph client, creating one only when the config
+// changes. Caching avoids repeated token fetches during silence events where start and
+// recovery emails are sent in quick succession.
 func (n *SilenceNotifier) getOrCreateGraphClient(cfg *GraphConfig) (*GraphClient, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -187,7 +188,7 @@ func (n *SilenceNotifier) Reset() {
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func (n *SilenceNotifier) sendSilenceWebhook(cfg config.Snapshot, levelL, levelR float64) {
 	logNotifyResult(
-		func() error { return SendWebhookSilence(cfg.WebhookURL, levelL, levelR, cfg.SilenceThreshold) },
+		func() error { return sendWebhookSilence(cfg.WebhookURL, levelL, levelR, cfg.SilenceThreshold) },
 		"Silence webhook",
 	)
 }
@@ -334,7 +335,7 @@ func extractDumpInfo(dump *silencedump.EncodeResult) (path, filename string, siz
 func (n *SilenceNotifier) sendSilenceZabbix(cfg config.Snapshot, levelL, levelR float64) {
 	logNotifyResult(
 		func() error {
-			return SendZabbixSilence(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixSilenceKey, levelL, levelR, cfg.SilenceThreshold)
+			return sendZabbixSilence(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixSilenceKey, levelL, levelR, cfg.SilenceThreshold)
 		},
 		"Silence zabbix",
 	)
@@ -344,94 +345,10 @@ func (n *SilenceNotifier) sendSilenceZabbix(cfg config.Snapshot, levelL, levelR 
 func (n *SilenceNotifier) sendRecoveryZabbix(cfg config.Snapshot, durationMs int64, levelL, levelR float64) {
 	logNotifyResult(
 		func() error {
-			return SendZabbixRecovery(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixSilenceKey, durationMs, levelL, levelR, cfg.SilenceThreshold)
+			return sendZabbixRecovery(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixSilenceKey, durationMs, levelL, levelR, cfg.SilenceThreshold)
 		},
 		"Recovery zabbix",
 	)
-}
-
-func sendRecoveryWebhook(webhookURL string, durationMs int64, levelL, levelR, threshold float64, dump *silencedump.EncodeResult) error {
-	payload := &WebhookPayload{
-		Event:             "silence_recovered",
-		SilenceDurationMs: durationMs,
-		LevelLeftDB:       levelL,
-		LevelRightDB:      levelR,
-		Threshold:         threshold,
-		Timestamp:         timestampUTC(),
-	}
-
-	// Add dump info
-	if dump != nil {
-		if dump.Error != nil {
-			payload.AudioDumpError = dump.Error.Error()
-		} else if dump.FilePath != "" {
-			// Read and encode the dump file
-			data, err := os.ReadFile(dump.FilePath)
-			if err != nil {
-				payload.AudioDumpError = err.Error()
-			} else {
-				payload.AudioDumpBase64 = base64.StdEncoding.EncodeToString(data)
-				payload.AudioDumpFilename = dump.Filename
-				payload.AudioDumpSizeBytes = dump.FileSize
-			}
-		}
-	}
-
-	return sendWebhook(webhookURL, payload)
-}
-
-func (n *SilenceNotifier) sendRecoveryEmailWithClientAndDump(cfg *GraphConfig, stationName string, durationMs int64, levelL, levelR, threshold float64, dump *silencedump.EncodeResult) error {
-	if !IsConfigured(cfg) {
-		return nil
-	}
-
-	subject := "[OK] Audio Restored - " + stationName
-
-	// Build body with dump info
-	body := fmt.Sprintf(
-		"Audio was restored at %s.\n\n"+
-			"The silence lasted %s.\n"+
-			"Level: Left %.1f dB / Right %.1f dB (threshold: %.1f dB)",
-		util.HumanTime(), util.FormatDuration(durationMs), levelL, levelR, threshold,
-	)
-
-	// Add dump info to body
-	if dump != nil {
-		if dump.Error != nil {
-			body += fmt.Sprintf("\n\nAudio recording: Failed to capture (%s)", dump.Error.Error())
-		} else {
-			body += "\n\nAudio recording attached (15s before and after the silence)."
-		}
-	}
-
-	client, err := n.getOrCreateGraphClient(cfg)
-	if err != nil {
-		return util.WrapError("create Graph client", err)
-	}
-
-	recipients := ParseRecipients(cfg.Recipients)
-	if len(recipients) == 0 {
-		return fmt.Errorf("no valid recipients")
-	}
-
-	// Prepare attachment if dump is available
-	var attachment *EmailAttachment
-	if dump != nil && dump.Error == nil && dump.FilePath != "" {
-		data, err := os.ReadFile(dump.FilePath)
-		if err == nil {
-			attachment = &EmailAttachment{
-				Filename:    dump.Filename,
-				ContentType: "audio/mpeg",
-				Data:        data,
-			}
-		}
-	}
-
-	if err := client.SendMailWithAttachment(recipients, subject, body, attachment); err != nil {
-		return util.WrapError("send email via Graph", err)
-	}
-
-	return nil
 }
 
 // UploadAbandonedParams contains details about an abandoned upload for notification dispatch.

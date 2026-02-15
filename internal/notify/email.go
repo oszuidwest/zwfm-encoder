@@ -2,7 +2,9 @@ package notify
 
 import (
 	"fmt"
+	"os"
 
+	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
@@ -11,6 +13,8 @@ import (
 type GraphConfig = types.GraphConfig
 
 // sendUploadAbandonedEmail sends an upload abandonment alert via Microsoft Graph.
+// A fresh client is created each time because upload abandonments are rare one-off events
+// where caching would add complexity without meaningful benefit.
 func sendUploadAbandonedEmail(cfg *GraphConfig, stationName string, p UploadAbandonedParams) error {
 	if !IsConfigured(cfg) {
 		return nil
@@ -45,20 +49,74 @@ func sendUploadAbandonedEmail(cfg *GraphConfig, stationName string, p UploadAban
 	return nil
 }
 
+func (n *SilenceNotifier) sendRecoveryEmailWithClientAndDump(cfg *GraphConfig, stationName string, durationMs int64, levelL, levelR, threshold float64, dump *silencedump.EncodeResult) error {
+	if !IsConfigured(cfg) {
+		return nil
+	}
+
+	subject := "[OK] Audio Restored - " + stationName
+
+	// Build body with dump info
+	body := fmt.Sprintf(
+		"Audio was restored at %s.\n\n"+
+			"The silence lasted %s.\n"+
+			"Level: Left %.1f dB / Right %.1f dB (threshold: %.1f dB)",
+		util.HumanTime(), util.FormatDuration(durationMs), levelL, levelR, threshold,
+	)
+
+	// Add dump info to body
+	if dump != nil {
+		if dump.Error != nil {
+			body += fmt.Sprintf("\n\nAudio recording: Failed to capture (%s)", dump.Error.Error())
+		} else {
+			body += "\n\nAudio recording attached (15s before and after the silence)."
+		}
+	}
+
+	client, err := n.getOrCreateGraphClient(cfg)
+	if err != nil {
+		return util.WrapError("create Graph client", err)
+	}
+
+	recipients := ParseRecipients(cfg.Recipients)
+	if len(recipients) == 0 {
+		return fmt.Errorf("no valid recipients")
+	}
+
+	// Prepare attachment if dump is available
+	var attachment *EmailAttachment
+	if dump != nil && dump.Error == nil && dump.FilePath != "" {
+		data, err := os.ReadFile(dump.FilePath)
+		if err == nil {
+			attachment = &EmailAttachment{
+				Filename:    dump.Filename,
+				ContentType: "audio/mpeg",
+				Data:        data,
+			}
+		}
+	}
+
+	if err := client.SendMailWithAttachment(recipients, subject, body, attachment); err != nil {
+		return util.WrapError("send email via Graph", err)
+	}
+
+	return nil
+}
+
 // SendTestEmail sends a test email to verify email configuration.
 func SendTestEmail(cfg *GraphConfig, stationName string) error {
 	if err := ValidateConfig(cfg); err != nil {
-		return fmt.Errorf("configuration error: %w", err)
+		return util.WrapError("validate configuration", err)
 	}
 
 	client, err := NewGraphClient(cfg)
 	if err != nil {
-		return fmt.Errorf("create Graph client: %w", err)
+		return util.WrapError("create Graph client", err)
 	}
 
 	// Validate authentication first
 	if err := client.ValidateAuth(); err != nil {
-		return fmt.Errorf("authentication failed: %w", err)
+		return util.WrapError("authenticate", err)
 	}
 
 	subject := "[TEST] " + stationName
@@ -71,7 +129,7 @@ func SendTestEmail(cfg *GraphConfig, stationName string) error {
 
 	recipients := ParseRecipients(cfg.Recipients)
 	if err := client.SendMail(recipients, subject, body); err != nil {
-		return fmt.Errorf("send email: %w", err)
+		return util.WrapError("send email", err)
 	}
 
 	return nil
