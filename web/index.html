@@ -716,8 +716,9 @@
                                 <div class="group" x-show="streamForm.codec !== 'wav'">
                                     <label for="stream-bitrate">Bitrate</label>
                                     <select id="stream-bitrate" x-model.number="streamForm.bitrate" @change="markStreamFormDirty()">
+                                        <option value="0" x-text="'Default (' + CODEC_DEFAULT_BITRATE[streamForm.codec] + ' kbit/s)'"></option>
                                         <template x-for="br in (CODEC_BITRATES[streamForm.codec] || [])" :key="br">
-                                            <option :value="br" :selected="(streamForm.bitrate || CODEC_DEFAULT_BITRATE[streamForm.codec]) === br" x-text="br + ' kbit/s' + (br === CODEC_DEFAULT_BITRATE[streamForm.codec] ? ' (default)' : '')"></option>
+                                            <option :value="br" x-text="br + ' kbit/s'"></option>
                                         </template>
                                     </select>
                                 </div>
@@ -816,8 +817,9 @@
                                 <div class="group" x-show="recorderForm.codec !== 'wav'">
                                     <label for="recorder-bitrate">Bitrate</label>
                                     <select id="recorder-bitrate" x-model.number="recorderForm.bitrate" @change="markRecorderFormDirty()">
+                                        <option value="0" x-text="'Default (' + CODEC_DEFAULT_BITRATE[recorderForm.codec] + ' kbit/s)'"></option>
                                         <template x-for="br in (CODEC_BITRATES[recorderForm.codec] || [])" :key="br">
-                                            <option :value="br" :selected="(recorderForm.bitrate || CODEC_DEFAULT_BITRATE[recorderForm.codec]) === br" x-text="br + ' kbit/s' + (br === CODEC_DEFAULT_BITRATE[recorderForm.codec] ? ' (default)' : '')"></option>
+                                            <option :value="br" x-text="br + ' kbit/s'"></option>
                                         </template>
                                     </select>
                                 </div>
