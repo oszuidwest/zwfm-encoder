@@ -13,6 +13,18 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
+// UploadAbandonedEvent contains details about an upload that was abandoned after exhausting retries.
+type UploadAbandonedEvent struct {
+	RecorderName string
+	Filename     string
+	S3Key        string
+	LastError    string
+	RetryCount   int
+}
+
+// UploadAbandonedCallback is called when an upload is abandoned after exceeding the retry limit.
+type UploadAbandonedCallback func(UploadAbandonedEvent)
+
 // Manager coordinates multiple GenericRecorders.
 type Manager struct {
 	mu sync.RWMutex
@@ -23,6 +35,7 @@ type Manager struct {
 	maxDurationMinutes int  // Global max duration for on-demand recorders
 	running            bool // Whether encoder is running (recorders should be active)
 	eventLogger        *eventlog.Logger
+	onUploadAbandoned  UploadAbandonedCallback
 
 	cleanupStopCh     chan struct{} // Stop signal for cleanup scheduler
 	hourlyRetryStopCh chan struct{} // Stop signal for hourly retry scheduler
@@ -50,6 +63,13 @@ func NewManager(ffmpegPath, tempDir string, maxDurationMinutes int, eventLogger 
 	}, nil
 }
 
+// SetUploadAbandonedCallback configures the handler called when an upload is abandoned.
+func (m *Manager) SetUploadAbandonedCallback(cb UploadAbandonedCallback) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onUploadAbandoned = cb
+}
+
 // AddRecorder adds a recorder to the manager.
 func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 	m.mu.Lock()
@@ -59,7 +79,7 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 		return fmt.Errorf("recorder already exists: %s", cfg.ID)
 	}
 
-	recorder, err := NewGenericRecorder(cfg, m.ffmpegPath, m.tempDir, m.maxDurationMinutes, m.eventLogger)
+	recorder, err := NewGenericRecorder(cfg, m.ffmpegPath, m.tempDir, m.maxDurationMinutes, m.eventLogger, m.onUploadAbandoned)
 	if err != nil {
 		return fmt.Errorf("create recorder: %w", err)
 	}

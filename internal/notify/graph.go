@@ -68,7 +68,7 @@ func newCredentialsConfig(cfg *types.GraphConfig) *clientcredentials.Config {
 	}
 }
 
-// GraphClient sends emails for silence notifications.
+// GraphClient sends emails via Microsoft Graph API.
 type GraphClient struct {
 	fromAddress string
 	httpClient  *http.Client

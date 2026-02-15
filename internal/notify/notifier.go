@@ -1,4 +1,4 @@
-// Package notify handles silence detection notifications.
+// Package notify handles event notifications across multiple channels.
 package notify
 
 import (
@@ -114,7 +114,7 @@ func (n *SilenceNotifier) handleSilenceStart(levelL, levelR float64) {
 	shouldSendWebhook := !n.webhookSent && cfg.HasWebhook()
 	shouldSendEmail := !n.emailSent && cfg.HasGraph()
 	shouldSendLog := !n.logSent && n.eventLogger != nil
-	shouldSendZabbix := !n.zabbixSent && cfg.HasZabbix()
+	shouldSendZabbix := !n.zabbixSent && cfg.HasZabbixSilence()
 	if shouldSendWebhook {
 		n.webhookSent = true
 	}
@@ -334,7 +334,7 @@ func extractDumpInfo(dump *silencedump.EncodeResult) (path, filename string, siz
 func (n *SilenceNotifier) sendSilenceZabbix(cfg config.Snapshot, levelL, levelR float64) {
 	logNotifyResult(
 		func() error {
-			return SendZabbixSilence(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixKey, levelL, levelR, cfg.SilenceThreshold)
+			return SendZabbixSilence(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixSilenceKey, levelL, levelR, cfg.SilenceThreshold)
 		},
 		"Silence zabbix",
 	)
@@ -344,7 +344,7 @@ func (n *SilenceNotifier) sendSilenceZabbix(cfg config.Snapshot, levelL, levelR 
 func (n *SilenceNotifier) sendRecoveryZabbix(cfg config.Snapshot, durationMs int64, levelL, levelR float64) {
 	logNotifyResult(
 		func() error {
-			return SendZabbixRecovery(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixKey, durationMs, levelL, levelR, cfg.SilenceThreshold)
+			return SendZabbixRecovery(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixSilenceKey, durationMs, levelL, levelR, cfg.SilenceThreshold)
 		},
 		"Recovery zabbix",
 	)
@@ -432,4 +432,41 @@ func (n *SilenceNotifier) sendRecoveryEmailWithClientAndDump(cfg *GraphConfig, s
 	}
 
 	return nil
+}
+
+// UploadAbandonedParams contains details about an abandoned upload for notification dispatch.
+type UploadAbandonedParams struct {
+	RecorderName string
+	Filename     string
+	S3Key        string
+	LastError    string
+	RetryCount   int
+}
+
+// NotifyUploadAbandoned dispatches an upload abandonment alert to all configured channels.
+//
+//nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
+func NotifyUploadAbandoned(cfg config.Snapshot, p UploadAbandonedParams) {
+	if cfg.HasWebhook() {
+		go logNotifyResult(
+			func() error { return sendUploadAbandonedWebhook(cfg.WebhookURL, p) },
+			"Upload abandoned webhook",
+		)
+	}
+	if cfg.HasGraph() {
+		go logNotifyResult(
+			func() error {
+				return sendUploadAbandonedEmail(BuildGraphConfig(cfg), cfg.StationName, p)
+			},
+			"Upload abandoned email",
+		)
+	}
+	if cfg.HasZabbixUpload() {
+		go logNotifyResult(
+			func() error {
+				return sendUploadAbandonedZabbix(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixUploadKey, p)
+			},
+			"Upload abandoned zabbix",
+		)
+	}
 }

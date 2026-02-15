@@ -10,8 +10,8 @@
     <templates>
         <template>
             <uuid>679dae272b534829a4f83735a83dabc5</uuid>
-            <template>ZWFM Encoder Silence Monitor</template>
-            <name>ZWFM Encoder Silence Monitor</name>
+            <template>ZWFM Encoder Monitor</template>
+            <name>ZWFM Encoder Monitor</name>
             <groups>
                 <group>
                     <name>Templates/Applications</name>
@@ -28,7 +28,7 @@
                     <triggers>
                         <trigger>
                             <uuid>aa7ea5e33ab14a8f8bbc4f7a74eb11ed</uuid>
-                            <expression>find(/ZWFM Encoder Silence Monitor/silence.alert,,&quot;like&quot;,&quot;RECOVERY&quot;) = 1</expression>
+                            <expression>find(/ZWFM Encoder Monitor/silence.alert,,&quot;like&quot;,&quot;RECOVERY&quot;) = 1</expression>
                             <name>Audio Recovered</name>
                             <opdata>{ITEM.LASTVALUE}</opdata>
                             <priority>INFO</priority>
@@ -36,9 +36,9 @@
                         </trigger>
                         <trigger>
                             <uuid>656aef0e053447978932e7e6d8dddf55</uuid>
-                            <expression>find(/ZWFM Encoder Silence Monitor/silence.alert,,&quot;like&quot;,&quot;SILENCE&quot;) = 1</expression>
+                            <expression>find(/ZWFM Encoder Monitor/silence.alert,,&quot;like&quot;,&quot;SILENCE&quot;) = 1</expression>
                             <recovery_mode>RECOVERY_EXPRESSION</recovery_mode>
-                            <recovery_expression>find(/ZWFM Encoder Silence Monitor/silence.alert,,&quot;like&quot;,&quot;RECOVERY&quot;) = 1</recovery_expression>
+                            <recovery_expression>find(/ZWFM Encoder Monitor/silence.alert,,&quot;like&quot;,&quot;RECOVERY&quot;) = 1</recovery_expression>
                             <name>Silence Detected</name>
                             <opdata>{ITEM.LASTVALUE}</opdata>
                             <priority>DISASTER</priority>
@@ -46,10 +46,28 @@
                         </trigger>
                         <trigger>
                             <uuid>6b003bc3fb6b4b1abdbbca315219508c</uuid>
-                            <expression>find(/ZWFM Encoder Silence Monitor/silence.alert,,&quot;like&quot;,&quot;TEST&quot;) = 1</expression>
+                            <expression>find(/ZWFM Encoder Monitor/silence.alert,,&quot;like&quot;,&quot;TEST&quot;) = 1</expression>
                             <name>Test Message Received</name>
                             <priority>INFO</priority>
                             <description>Test message received from ZWFM encoder (information only)</description>
+                        </trigger>
+                    </triggers>
+                </item>
+                <item>
+                    <uuid>b3a2f8c1e5d74a6e9c0b1d2e3f4a5b6c</uuid>
+                    <name>Upload Alert</name>
+                    <type>TRAP</type>
+                    <key>upload.alert</key>
+                    <value_type>TEXT</value_type>
+                    <description>Receives upload alerts from ZWFM encoder. Values contain UPLOAD_ABANDONED messages when S3 uploads fail after 24 hours of retries.</description>
+                    <triggers>
+                        <trigger>
+                            <uuid>c4b3a2f1d6e84b7f0a1c2d3e4f5a6b7d</uuid>
+                            <expression>find(/ZWFM Encoder Monitor/upload.alert,,&quot;like&quot;,&quot;UPLOAD_ABANDONED&quot;) = 1</expression>
+                            <name>Upload Abandoned</name>
+                            <opdata>{ITEM.LASTVALUE}</opdata>
+                            <priority>HIGH</priority>
+                            <description>An S3 upload was abandoned after 24 hours of retries. The local file remains on disk but will no longer be retried.</description>
                         </trigger>
                     </triggers>
                 </item>

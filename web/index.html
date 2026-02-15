@@ -495,7 +495,7 @@
                             <span class="icon-container" x-html="icons.server"></span>
                             <h3>Zabbix</h3>
                         </div>
-                        <p class="section-desc">Zabbix trapper items sent when silence is detected.</p>
+                        <p class="section-desc">Zabbix trapper items for silence and upload alerts.</p>
                         <div class="form">
                             <div class="group">
                                 <label for="zabbix-server">Server</label>
@@ -511,9 +511,15 @@
                                     <input id="zabbix-host" type="text" placeholder="encoder-host" x-model="settingsForm.zabbix.host" @input="markSettingsDirty()">
                                 </div>
                             </div>
-                            <div class="group">
-                                <label for="zabbix-key">Key</label>
-                                <input id="zabbix-key" type="text" placeholder="silence.alert" x-model="settingsForm.zabbix.key" @input="markSettingsDirty()">
+                            <div class="row">
+                                <div class="group">
+                                    <label for="zabbix-key">Silence Key</label>
+                                    <input id="zabbix-key" type="text" placeholder="silence.alert" x-model="settingsForm.zabbix.silenceKey" @input="markSettingsDirty()">
+                                </div>
+                                <div class="group">
+                                    <label for="zabbix-upload-key">Upload Key</label>
+                                    <input id="zabbix-upload-key" type="text" placeholder="upload.alert" x-model="settingsForm.zabbix.uploadKey" @input="markSettingsDirty()">
+                                </div>
                             </div>
                         </div>
                         <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('zabbix')" :disabled="testStates.zabbix.pending" x-text="testStates.zabbix.text">Test</button>

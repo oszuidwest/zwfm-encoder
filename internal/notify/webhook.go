@@ -24,6 +24,12 @@ type WebhookPayload struct {
 	AudioDumpFilename  string `json:"audio_dump_filename,omitempty"`
 	AudioDumpSizeBytes int64  `json:"audio_dump_size_bytes,omitempty"`
 	AudioDumpError     string `json:"audio_dump_error,omitempty"`
+
+	RecorderName string `json:"recorder_name,omitempty"`
+	Filename     string `json:"filename,omitempty"`
+	S3Key        string `json:"s3_key,omitempty"`
+	RetryCount   int    `json:"retry_count,omitempty"`
+	LastError    string `json:"last_error,omitempty"`
 }
 
 // SendWebhookSilence notifies the configured webhook of critical silence detection.
@@ -47,6 +53,20 @@ func SendWebhookTest(webhookURL, stationName string) error {
 		Event:     "test",
 		Message:   "This is a test notification from " + stationName,
 		Timestamp: timestampUTC(),
+	})
+}
+
+// sendUploadAbandonedWebhook sends an upload_abandoned event to the webhook endpoint.
+func sendUploadAbandonedWebhook(webhookURL string, p UploadAbandonedParams) error {
+	return sendWebhook(webhookURL, &WebhookPayload{
+		Event:        "upload_abandoned",
+		Message:      fmt.Sprintf("Upload abandoned for %s after %d retries: %s", p.Filename, p.RetryCount, p.LastError),
+		Timestamp:    timestampUTC(),
+		RecorderName: p.RecorderName,
+		Filename:     p.Filename,
+		S3Key:        p.S3Key,
+		RetryCount:   p.RetryCount,
+		LastError:    p.LastError,
 	})
 }
 

@@ -89,10 +89,11 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 		WebhookURL: cfg.WebhookURL,
 
 		// Notifications - Zabbix
-		ZabbixServer: cfg.ZabbixServer,
-		ZabbixPort:   cfg.ZabbixPort,
-		ZabbixHost:   cfg.ZabbixHost,
-		ZabbixKey:    cfg.ZabbixKey,
+		ZabbixServer:     cfg.ZabbixServer,
+		ZabbixPort:       cfg.ZabbixPort,
+		ZabbixHost:       cfg.ZabbixHost,
+		ZabbixSilenceKey: cfg.ZabbixSilenceKey,
+		ZabbixUploadKey:  cfg.ZabbixUploadKey,
 
 		// Notifications - Email
 		GraphTenantID:    cfg.GraphTenantID,
@@ -572,8 +573,10 @@ type NotificationTestRequest struct {
 	ZabbixPort int `json:"zabbix_port,omitempty"`
 	// ZabbixHost is the monitored host name in Zabbix.
 	ZabbixHost string `json:"zabbix_host,omitempty"`
-	// ZabbixKey is the Zabbix item key.
-	ZabbixKey string `json:"zabbix_key,omitempty"`
+	// ZabbixSilenceKey is the Zabbix silence item key.
+	ZabbixSilenceKey string `json:"zabbix_silence_key,omitempty"`
+	// ZabbixUploadKey is the Zabbix upload item key.
+	ZabbixUploadKey string `json:"zabbix_upload_key,omitempty"`
 }
 
 // handleAPITestWebhook tests webhook notification connectivity.
@@ -645,16 +648,25 @@ func (s *Server) handleAPITestZabbix(w http.ResponseWriter, r *http.Request) {
 	server := cmp.Or(req.ZabbixServer, cfg.ZabbixServer)
 	port := cmp.Or(req.ZabbixPort, cfg.ZabbixPort)
 	host := cmp.Or(req.ZabbixHost, cfg.ZabbixHost)
-	key := cmp.Or(req.ZabbixKey, cfg.ZabbixKey)
+	silenceKey := cmp.Or(req.ZabbixSilenceKey, cfg.ZabbixSilenceKey)
+	uploadKey := cmp.Or(req.ZabbixUploadKey, cfg.ZabbixUploadKey)
 
-	if server == "" || host == "" || key == "" {
+	if server == "" || host == "" || (silenceKey == "" && uploadKey == "") {
 		s.writeError(w, http.StatusBadRequest, "Zabbix not fully configured")
 		return
 	}
 
-	if err := notify.SendZabbixTest(server, port, host, key); err != nil {
-		s.writeError(w, http.StatusBadGateway, err.Error())
-		return
+	if silenceKey != "" {
+		if err := notify.SendZabbixTest(server, port, host, silenceKey); err != nil {
+			s.writeError(w, http.StatusBadGateway, "silence key: "+err.Error())
+			return
+		}
+	}
+	if uploadKey != "" {
+		if err := notify.SendZabbixTest(server, port, host, uploadKey); err != nil {
+			s.writeError(w, http.StatusBadGateway, "upload key: "+err.Error())
+			return
+		}
 	}
 
 	s.writeMessage(w, "Zabbix test sent")

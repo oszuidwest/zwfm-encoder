@@ -538,8 +538,10 @@ type Snapshot struct {
 	ZabbixPort int
 	// ZabbixHost is the host name as registered in Zabbix.
 	ZabbixHost string
-	// ZabbixKey is the item key for Zabbix trapper values.
-	ZabbixKey string
+	// ZabbixSilenceKey is the item key for Zabbix silence trapper values.
+	ZabbixSilenceKey string
+	// ZabbixUploadKey is the item key for Zabbix upload trapper values.
+	ZabbixUploadKey string
 
 	// GraphTenantID is the Azure AD tenant ID for Graph API authentication.
 	GraphTenantID string
@@ -596,10 +598,11 @@ func (c *Config) Snapshot() Snapshot {
 		WebhookURL: c.Notifications.Webhook.URL,
 
 		// Zabbix
-		ZabbixServer: c.Notifications.Zabbix.Server,
-		ZabbixPort:   cmp.Or(c.Notifications.Zabbix.Port, 10051),
-		ZabbixHost:   c.Notifications.Zabbix.Host,
-		ZabbixKey:    c.Notifications.Zabbix.Key,
+		ZabbixServer:     c.Notifications.Zabbix.Server,
+		ZabbixPort:       cmp.Or(c.Notifications.Zabbix.Port, 10051),
+		ZabbixHost:       c.Notifications.Zabbix.Host,
+		ZabbixSilenceKey: c.Notifications.Zabbix.SilenceKey,
+		ZabbixUploadKey:  c.Notifications.Zabbix.UploadKey,
 
 		// Microsoft Graph
 		GraphTenantID:     c.Notifications.Email.TenantID,
@@ -629,9 +632,14 @@ func (s *Snapshot) HasGraph() bool {
 		s.GraphFromAddress != "" && s.GraphRecipients != ""
 }
 
-// HasZabbix reports whether Zabbix settings are configured.
-func (s *Snapshot) HasZabbix() bool {
-	return s.ZabbixServer != "" && s.ZabbixHost != "" && s.ZabbixKey != ""
+// HasZabbixSilence reports whether Zabbix silence alerting is configured.
+func (s *Snapshot) HasZabbixSilence() bool {
+	return s.ZabbixServer != "" && s.ZabbixHost != "" && s.ZabbixSilenceKey != ""
+}
+
+// HasZabbixUpload reports whether Zabbix upload alerting is configured.
+func (s *Snapshot) HasZabbixUpload() bool {
+	return s.ZabbixServer != "" && s.ZabbixHost != "" && s.ZabbixUploadKey != ""
 }
 
 // Atomic settings update.
@@ -658,8 +666,10 @@ type SettingsUpdate struct {
 	ZabbixPort int `json:"zabbix_port"`
 	// ZabbixHost is the host name as registered in Zabbix.
 	ZabbixHost string `json:"zabbix_host"`
-	// ZabbixKey is the item key for Zabbix trapper values.
-	ZabbixKey string `json:"zabbix_key"`
+	// ZabbixSilenceKey is the item key for Zabbix silence trapper values.
+	ZabbixSilenceKey string `json:"zabbix_silence_key"`
+	// ZabbixUploadKey is the item key for Zabbix upload trapper values.
+	ZabbixUploadKey string `json:"zabbix_upload_key"`
 	// GraphTenantID is the Azure AD tenant ID for Graph API authentication.
 	GraphTenantID string `json:"graph_tenant_id"`
 	// GraphClientID is the Azure app registration client ID.
@@ -741,7 +751,8 @@ func (c *Config) ApplySettings(s *SettingsUpdate) error {
 	c.Notifications.Zabbix.Server = s.ZabbixServer
 	c.Notifications.Zabbix.Port = s.ZabbixPort
 	c.Notifications.Zabbix.Host = s.ZabbixHost
-	c.Notifications.Zabbix.Key = s.ZabbixKey
+	c.Notifications.Zabbix.SilenceKey = s.ZabbixSilenceKey
+	c.Notifications.Zabbix.UploadKey = s.ZabbixUploadKey
 	c.Notifications.Email.TenantID = s.GraphTenantID
 	c.Notifications.Email.ClientID = s.GraphClientID
 	c.Notifications.Email.ClientSecret = s.GraphClientSecret

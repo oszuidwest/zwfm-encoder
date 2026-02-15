@@ -188,7 +188,8 @@ document.addEventListener('alpine:init', () => {
             zabbix_server: '',
             zabbix_port: 10051,
             zabbix_host: '',
-            zabbix_key: '',
+            zabbix_silence_key: '',
+            zabbix_upload_key: '',
             graph_tenant_id: '',
             graph_client_id: '',
             graph_from_address: '',
@@ -208,7 +209,7 @@ document.addEventListener('alpine:init', () => {
             silenceRecovery: 5,
             silenceDump: { enabled: true, retentionDays: 7 },
             silenceWebhook: '',
-            zabbix: { server: '', port: 10051, host: '', key: '' },
+            zabbix: { server: '', port: 10051, host: '', silenceKey: '', uploadKey: '' },
             graph: { tenantId: '', clientId: '', clientSecret: '', fromAddress: '', recipients: '' },
             recordingApiKey: '',
             platform: ''
@@ -670,7 +671,8 @@ document.addEventListener('alpine:init', () => {
                     server: this.config.zabbix_server || '',
                     port: this.config.zabbix_port || 10051,
                     host: this.config.zabbix_host || '',
-                    key: this.config.zabbix_key || ''
+                    silenceKey: this.config.zabbix_silence_key || '',
+                    uploadKey: this.config.zabbix_upload_key || ''
                 },
                 graph: {
                     tenantId: this.config.graph_tenant_id || '',
@@ -722,7 +724,8 @@ document.addEventListener('alpine:init', () => {
                         zabbix_server: this.config.zabbix_server,
                         zabbix_port: this.config.zabbix_port,
                         zabbix_host: this.config.zabbix_host,
-                        zabbix_key: this.config.zabbix_key,
+                        zabbix_silence_key: this.config.zabbix_silence_key,
+                        zabbix_upload_key: this.config.zabbix_upload_key,
                         graph_tenant_id: this.config.graph_tenant_id,
                         graph_client_id: this.config.graph_client_id,
                         graph_client_secret: '',
@@ -770,7 +773,8 @@ document.addEventListener('alpine:init', () => {
                 zabbix_server: form.zabbix.server,
                 zabbix_port: form.zabbix.port,
                 zabbix_host: form.zabbix.host,
-                zabbix_key: form.zabbix.key,
+                zabbix_silence_key: form.zabbix.silenceKey,
+                zabbix_upload_key: form.zabbix.uploadKey,
                 graph_tenant_id: form.graph.tenantId,
                 graph_client_id: form.graph.clientId,
                 graph_client_secret: form.graph.clientSecret || '', // empty = keep existing
@@ -1583,7 +1587,8 @@ document.addEventListener('alpine:init', () => {
                     payload.zabbix_server = this.settingsForm.zabbix.server;
                     payload.zabbix_port = this.settingsForm.zabbix.port;
                     payload.zabbix_host = this.settingsForm.zabbix.host;
-                    payload.zabbix_key = this.settingsForm.zabbix.key;
+                    payload.zabbix_silence_key = this.settingsForm.zabbix.silenceKey;
+                    payload.zabbix_upload_key = this.settingsForm.zabbix.uploadKey;
                 }
             }
 
