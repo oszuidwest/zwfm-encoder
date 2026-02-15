@@ -114,7 +114,7 @@ func sendZabbixPayload(server string, port int, payload zabbixRequest) error {
 
 // sendZabbixEvent sends an event to Zabbix with the given value string.
 func sendZabbixEvent(server string, port int, host, key, value string) error {
-	if server == "" || host == "" || key == "" || port <= 0 || port > 65535 {
+	if server == "" || host == "" || key == "" {
 		return nil
 	}
 	req := zabbixRequest{
