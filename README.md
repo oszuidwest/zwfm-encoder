@@ -11,7 +11,7 @@ Audio streaming software for [ZuidWest FM](https://www.zuidwestfm.nl/) and [Radi
 - **Silence detection** - Alerts via webhook, email, file log, or Zabbix when audio drops below threshold
 - **Web interface** - Configure outputs, select audio input, monitor levels
 - **Auto-recovery** - Automatic reconnection with configurable retry limits per output
-- **Multiple codecs** - MP3, MP2, Ogg Vorbis, or uncompressed WAV per output
+- **Multiple codecs** - MP3, Ogg Vorbis, or uncompressed WAV per output
 - **Update notifications** - Alerts when new versions are available
 - **Single binary** - Web interface embedded, minimal runtime dependencies
 
@@ -78,7 +78,6 @@ Connect the digital output of your audio processor to the HiFiBerry input.
 | Codec | Encoder | Bitrate | Notes |
 |-------|---------|---------|-------|
 | MP3 | libmp3lame | 320 kbit/s | — |
-| MP2 | libtwolame | 384 kbit/s | Uses psymodel 4 |
 | Ogg | libvorbis | ~500 kbit/s (Q10) | — |
 | WAV | pcm_s16le | Uncompressed | — |
 
@@ -198,11 +197,9 @@ flowchart LR
     subgraph Outputs["Streaming Outputs"]
         OM[Output Manager<br>Retry + Backoff]
         F1[FFmpeg MP3]
-        F2[FFmpeg MP2]
-        F3[FFmpeg OGG]
+        F2[FFmpeg OGG]
         S1[SRT 1]
         S2[SRT 2]
-        S3[SRT 3]
     end
 
     subgraph Recording["Recording"]
@@ -251,7 +248,6 @@ flowchart LR
     D ==>|PCM| OM
     OM ==>|PCM| F1 -->|SRT| S1
     OM ==>|PCM| F2 -->|SRT| S2
-    OM ==>|PCM| F3 -->|SRT| S3
 
     %% Recording
     D ==>|PCM| RM

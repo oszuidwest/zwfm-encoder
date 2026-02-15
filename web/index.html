@@ -708,7 +708,6 @@
                                     <label for="stream-codec">Codec</label>
                                     <select id="stream-codec" x-model="streamForm.codec" @change="streamForm.bitrate = 0; markStreamFormDirty()">
                                         <option value="mp3">MP3</option>
-                                        <option value="mp2">MP2</option>
                                         <option value="ogg">Ogg Vorbis</option>
                                         <option value="wav">WAV (uncompressed)</option>
                                     </select>
@@ -809,7 +808,6 @@
                                     <label for="recorder-codec">Codec</label>
                                     <select id="recorder-codec" x-model="recorderForm.codec" @change="recorderForm.bitrate = 0; markRecorderFormDirty()">
                                         <option value="mp3">MP3</option>
-                                        <option value="mp2">MP2</option>
                                         <option value="ogg">Ogg Vorbis</option>
                                         <option value="wav">WAV (uncompressed)</option>
                                     </select>
