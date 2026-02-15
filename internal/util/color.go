@@ -5,8 +5,8 @@ import (
 	"strings"
 )
 
-// ParseHexColor parses a hex color string (#RRGGBB) into RGB components.
-func ParseHexColor(hex string) (r, g, b uint8, err error) {
+// parseHexColor parses a hex color string (#RRGGBB) into RGB components.
+func parseHexColor(hex string) (r, g, b uint8, err error) {
 	hex = strings.TrimPrefix(hex, "#")
 	if len(hex) != 6 {
 		return 0, 0, 0, fmt.Errorf("invalid hex color length: %s", hex)
@@ -21,21 +21,21 @@ func ParseHexColor(hex string) (r, g, b uint8, err error) {
 	return uint8(ri), uint8(gi), uint8(bi), nil //nolint:gosec // Values are validated to be 0-255 by hex parsing
 }
 
-// RGBToHex converts RGB components to a hex color string (#RRGGBB).
-func RGBToHex(r, g, b uint8) string {
+// rgbToHex converts RGB components to a hex color string (#RRGGBB).
+func rgbToHex(r, g, b uint8) string {
 	return fmt.Sprintf("#%02X%02X%02X", r, g, b)
 }
 
 // DarkenColor darkens a hex color by a percentage (0-100).
 func DarkenColor(hex string, percent int) string {
-	r, g, b, err := ParseHexColor(hex)
+	r, g, b, err := parseHexColor(hex)
 	if err != nil {
 		return hex
 	}
 
 	factor := max(1.0-float64(percent)/100.0, 0.0)
 
-	return RGBToHex(
+	return rgbToHex(
 		uint8(float64(r)*factor),
 		uint8(float64(g)*factor),
 		uint8(float64(b)*factor),

@@ -89,8 +89,8 @@ const (
 	CodecOGG Codec = "ogg"
 )
 
-// ValidCodecs is the set of supported audio codecs.
-var ValidCodecs = map[Codec]bool{
+// validCodecs is the set of supported audio codecs.
+var validCodecs = map[Codec]bool{
 	CodecWAV: true, CodecMP3: true, CodecOGG: true,
 }
 
@@ -105,7 +105,7 @@ func (c *Codec) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	codec := Codec(s)
-	if !ValidCodecs[codec] {
+	if !validCodecs[codec] {
 		return fmt.Errorf("codec: must be wav, mp3, or ogg")
 	}
 	*c = codec
@@ -145,33 +145,25 @@ func (s *Stream) MaxRetriesOrDefault() int {
 	return s.MaxRetries
 }
 
-// CodecPreset defines encoding parameters for a codec.
-type CodecPreset struct {
-	Args   []string
-	Format string
+// codecPreset defines encoding parameters for a codec.
+type codecPreset struct {
+	args   []string
+	format string
 }
 
-// CodecPresets maps codecs to their encoding parameters.
-var CodecPresets = map[Codec]CodecPreset{
+// codecPresets maps codecs to their encoding parameters.
+var codecPresets = map[Codec]codecPreset{
 	CodecMP3: {[]string{"libmp3lame", "-b:a", "320k"}, "mp3"},
 	CodecOGG: {[]string{"libvorbis", "-qscale:a", "10"}, "ogg"},
 	CodecWAV: {[]string{"pcm_s16le"}, "matroska"},
 }
 
-// Args returns the encoder arguments for this codec.
-func (c Codec) Args() []string {
-	if preset, ok := CodecPresets[c]; ok {
-		return preset.Args
-	}
-	return CodecPresets[CodecWAV].Args
-}
-
 // Format returns the output format for this codec.
 func (c Codec) Format() string {
-	if preset, ok := CodecPresets[c]; ok {
-		return preset.Format
+	if preset, ok := codecPresets[c]; ok {
+		return preset.format
 	}
-	return CodecPresets[CodecWAV].Format
+	return codecPresets[CodecWAV].format
 }
 
 // BuildCodecArgs returns FFmpeg encoder arguments for the given codec and bitrate.
@@ -250,8 +242,8 @@ const (
 	RotationHourly RotationMode = "hourly"
 )
 
-// ValidRotationModes is the set of supported rotation modes.
-var ValidRotationModes = map[RotationMode]bool{
+// validRotationModes is the set of supported rotation modes.
+var validRotationModes = map[RotationMode]bool{
 	RotationHourly: true,
 }
 
@@ -266,7 +258,7 @@ func (m *RotationMode) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	mode := RotationMode(s)
-	if !ValidRotationModes[mode] {
+	if !validRotationModes[mode] {
 		return fmt.Errorf("rotation_mode: must be hourly")
 	}
 	*m = mode
@@ -285,8 +277,8 @@ const (
 	StorageBoth StorageMode = "both"
 )
 
-// ValidStorageModes is the set of supported storage modes.
-var ValidStorageModes = map[StorageMode]bool{
+// validStorageModes is the set of supported storage modes.
+var validStorageModes = map[StorageMode]bool{
 	StorageLocal: true, StorageS3: true, StorageBoth: true,
 }
 
@@ -301,7 +293,7 @@ func (m *StorageMode) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	mode := StorageMode(s)
-	if !ValidStorageModes[mode] {
+	if !validStorageModes[mode] {
 		return fmt.Errorf("storage_mode: must be local, s3, or both")
 	}
 	*m = mode
