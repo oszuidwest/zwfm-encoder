@@ -87,6 +87,7 @@ const DEFAULT_STREAM = {
     stream_id: '',
     password: '',
     codec: 'wav',
+    bitrate: 0,
     max_retries: 99
 };
 
@@ -94,6 +95,7 @@ const DEFAULT_RECORDER = {
     name: '',
     enabled: true,
     codec: 'mp3',
+    bitrate: 0,
     rotation_mode: 'hourly',
     storage_mode: 'local',
     local_path: '',
@@ -103,6 +105,16 @@ const DEFAULT_RECORDER = {
     s3_secret_access_key: '',
     retention_days: 90
 };
+
+// Bitrate options per codec (kbit/s). Exposed on window for Alpine.js template access.
+window.CODEC_BITRATES = {
+    mp3:  [64, 96, 128, 192, 256, 320],
+    mp2:  [64, 96, 128, 192, 256, 320, 384],
+    ogg:  [64, 96, 128, 192, 256, 320, 500],
+};
+
+// Default bitrate per codec (used when bitrate=0).
+window.CODEC_DEFAULT_BITRATE = { mp3: 320, mp2: 384, ogg: 500 };
 
 const DEFAULT_LEVELS = {
     left: -60,
@@ -118,6 +130,14 @@ const DEFAULT_LEVELS = {
     hold_right: -60,
     hold_left_time: 0,
     hold_right_time: 0
+};
+
+/** Formats codec and bitrate for display (e.g. "MP3 128k", "WAV"). */
+window.formatCodecBitrate = (codec, bitrate) => {
+    const label = codec.toUpperCase();
+    if (codec === 'wav') return label;
+    const br = bitrate || window.CODEC_DEFAULT_BITRATE[codec] || 0;
+    return `${label} ${br}k`;
 };
 
 const deepClone = (obj) => JSON.parse(JSON.stringify(obj));
@@ -824,6 +844,7 @@ document.addEventListener('alpine:init', () => {
                     stream_id: stream.stream_id || '',
                     password: '',
                     codec: stream.codec || 'wav',
+                    bitrate: stream.bitrate || 0,
                     max_retries: stream.max_retries || 99,
                     enabled: stream.enabled !== false
                 };
@@ -851,6 +872,7 @@ document.addEventListener('alpine:init', () => {
                 port: this.streamForm.port,
                 stream_id: this.streamForm.stream_id.trim() || 'studio',
                 codec: this.streamForm.codec,
+                bitrate: this.streamForm.codec === 'wav' ? 0 : (this.streamForm.bitrate || 0),
                 max_retries: this.streamForm.max_retries
             };
 
@@ -955,6 +977,7 @@ document.addEventListener('alpine:init', () => {
                     name: recorder.name,
                     enabled: recorder.enabled !== false,
                     codec: recorder.codec || 'mp3',
+                    bitrate: recorder.bitrate || 0,
                     rotation_mode: recorder.rotation_mode || 'hourly',
                     storage_mode: recorder.storage_mode || 'local',
                     local_path: recorder.local_path || '',
@@ -1019,6 +1042,7 @@ document.addEventListener('alpine:init', () => {
                 name: name,
                 enabled: this.recorderForm.enabled,
                 codec: this.recorderForm.codec,
+                bitrate: this.recorderForm.codec === 'wav' ? 0 : (this.recorderForm.bitrate || 0),
                 rotation_mode: this.recorderForm.rotation_mode,
                 storage_mode: storageMode,
                 local_path: localPath,

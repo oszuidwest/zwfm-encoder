@@ -209,6 +209,8 @@ type StreamRequest struct {
 	StreamID string `json:"stream_id"`
 	// Codec selects the audio codec.
 	Codec types.Codec `json:"codec"`
+	// Bitrate is the encoding bitrate in kbit/s (0 = codec default).
+	Bitrate int `json:"bitrate"`
 	// MaxRetries is the maximum number of retries before giving up.
 	MaxRetries int `json:"max_retries"`
 }
@@ -227,6 +229,7 @@ func (s *Server) handleCreateStream(w http.ResponseWriter, r *http.Request) {
 		Password:   req.Password,
 		StreamID:   req.StreamID,
 		Codec:      req.Codec, // Already validated by UnmarshalJSON
+		Bitrate:    req.Bitrate,
 		MaxRetries: req.MaxRetries,
 	}
 
@@ -276,6 +279,7 @@ func (s *Server) handleUpdateStream(w http.ResponseWriter, r *http.Request) {
 		Password:   cmp.Or(req.Password, existing.Password),
 		StreamID:   req.StreamID,
 		Codec:      req.Codec,
+		Bitrate:    req.Bitrate,
 		MaxRetries: req.MaxRetries,
 		CreatedAt:  existing.CreatedAt,
 	}
@@ -357,6 +361,8 @@ type RecorderRequest struct {
 	Enabled bool `json:"enabled"`
 	// Codec selects the recording codec.
 	Codec types.Codec `json:"codec"`
+	// Bitrate is the encoding bitrate in kbit/s (0 = codec default).
+	Bitrate int `json:"bitrate"`
 	// RotationMode selects the file rotation mode.
 	RotationMode types.RotationMode `json:"rotation_mode"`
 	// StorageMode selects local/S3 storage behavior.
@@ -385,7 +391,8 @@ func (s *Server) handleCreateRecorder(w http.ResponseWriter, r *http.Request) {
 	recorder := &types.Recorder{
 		Name:              req.Name,
 		Enabled:           true,
-		Codec:             req.Codec,        // Already validated by UnmarshalJSON
+		Codec:             req.Codec, // Already validated by UnmarshalJSON
+		Bitrate:           req.Bitrate,
 		RotationMode:      req.RotationMode, // Already validated by UnmarshalJSON
 		StorageMode:       req.StorageMode,  // Already validated by UnmarshalJSON
 		LocalPath:         req.LocalPath,
@@ -433,6 +440,7 @@ func (s *Server) handleUpdateRecorder(w http.ResponseWriter, r *http.Request) {
 		Name:              req.Name,
 		Enabled:           req.Enabled,
 		Codec:             req.Codec,
+		Bitrate:           req.Bitrate,
 		RotationMode:      req.RotationMode,
 		StorageMode:       req.StorageMode,
 		LocalPath:         req.LocalPath,

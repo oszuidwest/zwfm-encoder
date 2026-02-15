@@ -246,7 +246,7 @@
                                 </button>
                             </div>
                             <div class="details">
-                                <span class="codec" x-text="stream.codec.toUpperCase()"></span>
+                                <span class="codec" x-text="formatCodecBitrate(stream.codec, stream.bitrate)"></span>
                                 <span class="streamid" x-text="`#${stream.stream_id}`"></span>
                                 <span class="status" :class="d.stateClass" x-text="d.statusText"></span>
                             </div>
@@ -299,7 +299,7 @@
                                 </button>
                             </div>
                             <div class="details">
-                                <span class="codec" x-text="recorder.codec.toUpperCase()"></span>
+                                <span class="codec" x-text="formatCodecBitrate(recorder.codec, recorder.bitrate)"></span>
                                 <span class="streamid" x-text="recorder.rotation_mode === 'hourly' ? 'Hourly' : 'On-Demand'"></span>
                                 <span class="status" :class="d.stateClass" x-text="d.statusText"></span>
                             </div>
@@ -706,18 +706,26 @@
                             <div class="row">
                                 <div class="group">
                                     <label for="stream-codec">Codec</label>
-                                    <select id="stream-codec" x-model="streamForm.codec" @change="markStreamFormDirty()">
-                                        <option value="mp3">MP3 (320 kbit/s)</option>
-                                        <option value="mp2">MP2 (384 kbit/s)</option>
-                                        <option value="ogg">Ogg Vorbis (~500 kbit/s)</option>
+                                    <select id="stream-codec" x-model="streamForm.codec" @change="streamForm.bitrate = 0; markStreamFormDirty()">
+                                        <option value="mp3">MP3</option>
+                                        <option value="mp2">MP2</option>
+                                        <option value="ogg">Ogg Vorbis</option>
                                         <option value="wav">WAV (uncompressed)</option>
                                     </select>
                                 </div>
-                                <div class="group">
-                                    <label for="stream-retries">Max Retries</label>
-                                    <input id="stream-retries" type="number" max="9999" min="1"
-                                           x-model.number="streamForm.max_retries" @input="markStreamFormDirty()">
+                                <div class="group" x-show="streamForm.codec !== 'wav'">
+                                    <label for="stream-bitrate">Bitrate</label>
+                                    <select id="stream-bitrate" x-model.number="streamForm.bitrate" @change="markStreamFormDirty()">
+                                        <template x-for="br in (CODEC_BITRATES[streamForm.codec] || [])" :key="br">
+                                            <option :value="br" :selected="(streamForm.bitrate || CODEC_DEFAULT_BITRATE[streamForm.codec]) === br" x-text="br + ' kbit/s' + (br === CODEC_DEFAULT_BITRATE[streamForm.codec] ? ' (default)' : '')"></option>
+                                        </template>
+                                    </select>
                                 </div>
+                            </div>
+                            <div class="group">
+                                <label for="stream-retries">Max Retries</label>
+                                <input id="stream-retries" type="number" max="9999" min="1"
+                                       x-model.number="streamForm.max_retries" @input="markStreamFormDirty()">
                             </div>
                         </div>
                     </div>
@@ -798,13 +806,23 @@
                             <div class="row">
                                 <div class="group">
                                     <label for="recorder-codec">Codec</label>
-                                    <select id="recorder-codec" x-model="recorderForm.codec" @change="markRecorderFormDirty()">
-                                        <option value="mp3">MP3 (320 kbit/s)</option>
-                                        <option value="mp2">MP2 (384 kbit/s)</option>
-                                        <option value="ogg">Ogg Vorbis (~500 kbit/s)</option>
+                                    <select id="recorder-codec" x-model="recorderForm.codec" @change="recorderForm.bitrate = 0; markRecorderFormDirty()">
+                                        <option value="mp3">MP3</option>
+                                        <option value="mp2">MP2</option>
+                                        <option value="ogg">Ogg Vorbis</option>
                                         <option value="wav">WAV (uncompressed)</option>
                                     </select>
                                 </div>
+                                <div class="group" x-show="recorderForm.codec !== 'wav'">
+                                    <label for="recorder-bitrate">Bitrate</label>
+                                    <select id="recorder-bitrate" x-model.number="recorderForm.bitrate" @change="markRecorderFormDirty()">
+                                        <template x-for="br in (CODEC_BITRATES[recorderForm.codec] || [])" :key="br">
+                                            <option :value="br" :selected="(recorderForm.bitrate || CODEC_DEFAULT_BITRATE[recorderForm.codec]) === br" x-text="br + ' kbit/s' + (br === CODEC_DEFAULT_BITRATE[recorderForm.codec] ? ' (default)' : '')"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="row">
                                 <div class="group">
                                     <label for="recorder-storage">Storage</label>
                                     <select id="recorder-storage" x-model="recorderForm.storage_mode" @change="markRecorderFormDirty()">
