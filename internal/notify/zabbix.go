@@ -114,7 +114,7 @@ func sendZabbixPayload(server string, port int, payload zabbixRequest) error {
 
 // sendZabbixEvent sends an event to Zabbix with the given value string.
 func sendZabbixEvent(server string, port int, host, key, value string) error {
-	if server == "" || host == "" || key == "" {
+	if server == "" || host == "" || key == "" || port <= 0 || port > 65535 {
 		return nil
 	}
 	req := zabbixRequest{
@@ -144,8 +144,8 @@ func sendZabbixRecovery(server string, port int, host, key string, durationMs in
 
 // SendZabbixTest sends a test message to verify Zabbix config.
 func SendZabbixTest(server string, port int, host, key string) error {
-	if server == "" || host == "" || key == "" {
-		return fmt.Errorf("zabbix not fully configured (server, host, and key are required)")
+	if server == "" || host == "" || key == "" || port <= 0 || port > 65535 {
+		return fmt.Errorf("zabbix not fully configured (server, host, key, and a valid port 1-65535 are required)")
 	}
 	return sendZabbixEvent(server, port, host, key, "event=TEST source=zwfm-encoder")
 }
