@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// TimestampPatterns match timestamps in filenames (most specific first).
-var TimestampPatterns = []struct {
+// timestampPatterns match timestamps in filenames (most specific first).
+var timestampPatterns = []struct {
 	Pattern *regexp.Regexp
 	Layout  string
 }{
@@ -36,7 +36,7 @@ func TimeUntilNextHour(t time.Time) time.Duration {
 // FilenameTime extracts a timestamp from a filename.
 // Supports: YYYY-MM-DD_HH-MM-SS, YYYY-MM-DD-HH-MM, YYYY-MM-DD.
 func FilenameTime(filename string) (time.Time, bool) {
-	for _, p := range TimestampPatterns {
+	for _, p := range timestampPatterns {
 		if m := p.Pattern.FindStringSubmatch(filename); len(m) >= 2 {
 			if ts, err := time.ParseInLocation(p.Layout, m[1], time.Local); err == nil {
 				return ts, true

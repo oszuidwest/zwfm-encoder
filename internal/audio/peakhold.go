@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// DefaultPeakHoldDuration is the default duration that peak values are held before decaying.
-const DefaultPeakHoldDuration = 3000 * time.Millisecond
+// defaultPeakHoldDuration is the default duration that peak values are held before decaying.
+const defaultPeakHoldDuration = 3000 * time.Millisecond
 
 // PeakHolder tracks peak-hold state for VU meters.
 // It is safe for concurrent use.
@@ -24,7 +24,7 @@ func NewPeakHolder() *PeakHolder {
 	return &PeakHolder{
 		heldPeakL:    MinDB,
 		heldPeakR:    MinDB,
-		holdDuration: DefaultPeakHoldDuration,
+		holdDuration: defaultPeakHoldDuration,
 	}
 }
 

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"os/exec"
 	"sync"
 
@@ -155,10 +154,4 @@ func (r *StartResult) Stderr() string {
 		return ""
 	}
 	return r.stderr.String()
-}
-
-// Process returns the underlying os.Process for advanced operations.
-// Use with caution - prefer the provided methods when possible.
-func (r *StartResult) Process() *os.Process {
-	return r.cmd.Process
 }
