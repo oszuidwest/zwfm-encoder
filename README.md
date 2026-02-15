@@ -93,10 +93,10 @@ Monitors audio levels and sends alerts when silence is detected or recovered. Us
 | Recovery | 5 s | 1 to 60 | Seconds of audio before recovery |
 
 **Alerting options** (can use multiple simultaneously):
-- **Webhook** - POST request to a URL on silence start and recovery
-- **Email** - Microsoft Graph API notification to configured recipients on silence start and recovery
+- **Webhook** - POST request to a URL on silence start/recovery and abandoned uploads
+- **Email** - Microsoft Graph API notification to configured recipients on silence start/recovery and abandoned uploads
 - **File Log** - Append JSON Lines to a local file for each silence event
-- **Zabbix** - Send trapper items to a Zabbix server on silence start and recovery
+- **Zabbix** - Send trapper items to a Zabbix server on silence start/recovery and abandoned uploads
 
 Configure via the web interface under Settings → Alerts.
 
@@ -265,7 +265,7 @@ flowchart LR
 2. **Distributor**: Processes PCM in ~100ms chunks, fans out to all consumers
 3. **Metering**: Calculates RMS/peak levels in Go (no FFmpeg filters), holds peaks for 1.5s, detects clipping at ±32760
 4. **Silence Detection**: Hysteresis-based detection with configurable threshold/duration/recovery. Buffers 15s audio context before/after silence events
-5. **Alerting**: Silence triggers webhook, email (MS Graph), log (JSON Lines), and/or Zabbix. Recovery includes MP3 dump attachment
+5. **Alerting**: Silence and abandoned uploads trigger webhook, email (MS Graph), log (JSON Lines), and/or Zabbix. Recovery includes MP3 dump attachment
 6. **Streaming**: Per-output FFmpeg processes with automatic retry and exponential backoff
 7. **Recording**: Hourly rotation or on-demand, with optional S3 upload
 
