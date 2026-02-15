@@ -90,7 +90,7 @@ jobs:
 
             On Raspberry Pi 4/5 with HiFiBerry card:
             ```bash
-            curl -sSL https://raw.githubusercontent.com/oszuidwest/zwfm-encoder/main/deploy/install.sh | sudo bash
+            sudo /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/oszuidwest/zwfm-encoder/main/deploy/install.sh)"
             ```
 
             Binary downloads are available below as release assets.
