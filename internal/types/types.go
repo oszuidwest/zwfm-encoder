@@ -4,6 +4,7 @@ package types
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -122,6 +123,7 @@ type Stream struct {
 	Password   string `json:"password"`
 	StreamID   string `json:"stream_id"`
 	Codec      Codec  `json:"codec"`
+	Bitrate    int    `json:"bitrate"`     // kbit/s, 0 = codec default
 	MaxRetries int    `json:"max_retries"` // 0 = no retries
 	CreatedAt  int64  `json:"created_at"`  // Unix ms
 }
@@ -175,9 +177,60 @@ func (c Codec) Format() string {
 	return CodecPresets[CodecWAV].Format
 }
 
-// CodecArgs returns the encoder arguments for this stream's codec.
+// BuildCodecArgs returns FFmpeg encoder arguments for the given codec and bitrate.
+// A bitrate of 0 uses the codec's default settings.
+func BuildCodecArgs(codec Codec, bitrate int) []string {
+	switch codec {
+	case CodecMP3:
+		br := "320k"
+		if bitrate > 0 {
+			br = strconv.Itoa(bitrate) + "k"
+		}
+		return []string{"libmp3lame", "-b:a", br}
+	case CodecMP2:
+		br := "384k"
+		if bitrate > 0 {
+			br = strconv.Itoa(bitrate) + "k"
+		}
+		return []string{"libtwolame", "-b:a", br, "-psymodel", "4"}
+	case CodecOGG:
+		if bitrate > 0 {
+			return []string{"libvorbis", "-b:a", strconv.Itoa(bitrate) + "k"}
+		}
+		return []string{"libvorbis", "-qscale:a", "10"}
+	default:
+		return []string{"pcm_s16le"}
+	}
+}
+
+// ValidateBitrate checks whether the bitrate is valid for the given codec.
+// A bitrate of 0 is always valid (uses codec default).
+func ValidateBitrate(codec Codec, bitrate int) error {
+	if bitrate == 0 {
+		return nil
+	}
+	switch codec {
+	case CodecMP3:
+		if bitrate < 64 || bitrate > 320 {
+			return fmt.Errorf("bitrate: must be between 64 and 320 for MP3")
+		}
+	case CodecMP2:
+		if bitrate < 64 || bitrate > 384 {
+			return fmt.Errorf("bitrate: must be between 64 and 384 for MP2")
+		}
+	case CodecOGG:
+		if bitrate < 64 || bitrate > 500 {
+			return fmt.Errorf("bitrate: must be between 64 and 500 for OGG")
+		}
+	case CodecWAV:
+		return fmt.Errorf("bitrate: not supported for WAV (uncompressed)")
+	}
+	return nil
+}
+
+// CodecArgs returns the encoder arguments for this stream's codec and bitrate.
 func (s *Stream) CodecArgs() []string {
-	return s.Codec.Args()
+	return BuildCodecArgs(s.Codec, s.Bitrate)
 }
 
 // Format returns the output format for this stream's codec.
@@ -195,6 +248,9 @@ func (s *Stream) Validate() error {
 	}
 	if s.MaxRetries < 0 {
 		return fmt.Errorf("max_retries: cannot be negative")
+	}
+	if err := ValidateBitrate(s.Codec, s.Bitrate); err != nil {
+		return err
 	}
 	return nil
 }
@@ -283,6 +339,7 @@ type Recorder struct {
 	Name         string       `json:"name"`
 	Enabled      bool         `json:"enabled"`
 	Codec        Codec        `json:"codec"`
+	Bitrate      int          `json:"bitrate"` // kbit/s, 0 = codec default
 	RotationMode RotationMode `json:"rotation_mode"`
 	StorageMode  StorageMode  `json:"storage_mode"`
 	LocalPath    string       `json:"local_path"`
@@ -301,9 +358,9 @@ func (r *Recorder) IsEnabled() bool {
 	return r.Enabled
 }
 
-// CodecArgs returns the encoder arguments for this recorder's codec.
+// CodecArgs returns the encoder arguments for this recorder's codec and bitrate.
 func (r *Recorder) CodecArgs() []string {
-	return r.Codec.Args()
+	return BuildCodecArgs(r.Codec, r.Bitrate)
 }
 
 // Format returns the output format for this recorder's codec.
@@ -337,6 +394,9 @@ func (r *Recorder) Validate() error {
 	}
 	if r.RetentionDays < 0 {
 		return fmt.Errorf("retention_days: cannot be negative")
+	}
+	if err := ValidateBitrate(r.Codec, r.Bitrate); err != nil {
+		return err
 	}
 	return nil
 }
