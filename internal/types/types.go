@@ -85,15 +85,13 @@ const (
 	CodecWAV Codec = "wav"
 	// CodecMP3 is MPEG Audio Layer III.
 	CodecMP3 Codec = "mp3"
-	// CodecMP2 is MPEG Audio Layer II.
-	CodecMP2 Codec = "mp2"
 	// CodecOGG is Ogg Vorbis.
 	CodecOGG Codec = "ogg"
 )
 
 // ValidCodecs is the set of supported audio codecs.
 var ValidCodecs = map[Codec]bool{
-	CodecWAV: true, CodecMP3: true, CodecMP2: true, CodecOGG: true,
+	CodecWAV: true, CodecMP3: true, CodecOGG: true,
 }
 
 // UnmarshalJSON validates the codec value during JSON parsing.
@@ -108,7 +106,7 @@ func (c *Codec) UnmarshalJSON(data []byte) error {
 	}
 	codec := Codec(s)
 	if !ValidCodecs[codec] {
-		return fmt.Errorf("codec: must be wav, mp3, mp2, or ogg")
+		return fmt.Errorf("codec: must be wav, mp3, or ogg")
 	}
 	*c = codec
 	return nil
@@ -155,7 +153,6 @@ type CodecPreset struct {
 
 // CodecPresets maps codecs to their encoding parameters.
 var CodecPresets = map[Codec]CodecPreset{
-	CodecMP2: {[]string{"libtwolame", "-b:a", "384k", "-psymodel", "4"}, "mp2"},
 	CodecMP3: {[]string{"libmp3lame", "-b:a", "320k"}, "mp3"},
 	CodecOGG: {[]string{"libvorbis", "-qscale:a", "10"}, "ogg"},
 	CodecWAV: {[]string{"pcm_s16le"}, "matroska"},
@@ -187,12 +184,6 @@ func BuildCodecArgs(codec Codec, bitrate int) []string {
 			br = strconv.Itoa(bitrate) + "k"
 		}
 		return []string{"libmp3lame", "-b:a", br}
-	case CodecMP2:
-		br := "384k"
-		if bitrate > 0 {
-			br = strconv.Itoa(bitrate) + "k"
-		}
-		return []string{"libtwolame", "-b:a", br, "-psymodel", "4"}
 	case CodecOGG:
 		if bitrate > 0 {
 			return []string{"libvorbis", "-b:a", strconv.Itoa(bitrate) + "k"}
@@ -213,10 +204,6 @@ func ValidateBitrate(codec Codec, bitrate int) error {
 	case CodecMP3:
 		if bitrate < 64 || bitrate > 320 {
 			return fmt.Errorf("bitrate: must be between 64 and 320 for MP3")
-		}
-	case CodecMP2:
-		if bitrate < 64 || bitrate > 384 {
-			return fmt.Errorf("bitrate: must be between 64 and 384 for MP2")
 		}
 	case CodecOGG:
 		if bitrate < 64 || bitrate > 500 {

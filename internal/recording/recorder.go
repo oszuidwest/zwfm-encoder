@@ -625,8 +625,6 @@ func (r *GenericRecorder) generateS3Key(filename string) string {
 
 func (r *GenericRecorder) getFileExtension() string {
 	switch r.config.Codec {
-	case types.CodecMP2:
-		return "mp2"
 	case types.CodecMP3:
 		return "mp3"
 	case types.CodecOGG:
