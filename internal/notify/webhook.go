@@ -2,11 +2,14 @@ package notify
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
+	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
@@ -32,8 +35,8 @@ type WebhookPayload struct {
 	LastError    string `json:"last_error,omitempty"`
 }
 
-// SendWebhookSilence notifies the configured webhook of critical silence detection.
-func SendWebhookSilence(webhookURL string, levelL, levelR, threshold float64) error {
+// sendWebhookSilence notifies the configured webhook of critical silence detection.
+func sendWebhookSilence(webhookURL string, levelL, levelR, threshold float64) error {
 	return sendWebhook(webhookURL, &WebhookPayload{
 		Event:        "silence_detected",
 		LevelLeftDB:  levelL,
@@ -68,6 +71,36 @@ func sendUploadAbandonedWebhook(webhookURL string, p UploadAbandonedParams) erro
 		RetryCount:   p.RetryCount,
 		LastError:    p.LastError,
 	})
+}
+
+func sendRecoveryWebhook(webhookURL string, durationMs int64, levelL, levelR, threshold float64, dump *silencedump.EncodeResult) error {
+	payload := &WebhookPayload{
+		Event:             "silence_recovered",
+		SilenceDurationMs: durationMs,
+		LevelLeftDB:       levelL,
+		LevelRightDB:      levelR,
+		Threshold:         threshold,
+		Timestamp:         timestampUTC(),
+	}
+
+	// Add dump info
+	if dump != nil {
+		if dump.Error != nil {
+			payload.AudioDumpError = dump.Error.Error()
+		} else if dump.FilePath != "" {
+			// Read and encode the dump file
+			data, err := os.ReadFile(dump.FilePath)
+			if err != nil {
+				payload.AudioDumpError = err.Error()
+			} else {
+				payload.AudioDumpBase64 = base64.StdEncoding.EncodeToString(data)
+				payload.AudioDumpFilename = dump.Filename
+				payload.AudioDumpSizeBytes = dump.FileSize
+			}
+		}
+	}
+
+	return sendWebhook(webhookURL, payload)
 }
 
 // sendWebhook delivers a notification to the configured webhook endpoint.

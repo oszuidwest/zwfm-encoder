@@ -130,19 +130,22 @@ func sendUploadAbandonedZabbix(server string, port int, host, key string, p Uplo
 		fmt.Sprintf("event=UPLOAD_ABANDONED recorder=%q file=%q retries=%d error=%q", p.RecorderName, p.Filename, p.RetryCount, p.LastError))
 }
 
-// SendZabbixSilence sends a silence alert to Zabbix.
-func SendZabbixSilence(server string, port int, host, key string, levelL, levelR, threshold float64) error {
+// sendZabbixSilence sends a silence alert to Zabbix.
+func sendZabbixSilence(server string, port int, host, key string, levelL, levelR, threshold float64) error {
 	return sendZabbixEvent(server, port, host, key,
 		fmt.Sprintf("event=SILENCE level_l=%.1f level_r=%.1f threshold=%.1f", levelL, levelR, threshold))
 }
 
-// SendZabbixRecovery sends a recovery message to Zabbix.
-func SendZabbixRecovery(server string, port int, host, key string, durationMs int64, levelL, levelR, threshold float64) error {
+// sendZabbixRecovery sends a recovery message to Zabbix.
+func sendZabbixRecovery(server string, port int, host, key string, durationMs int64, levelL, levelR, threshold float64) error {
 	return sendZabbixEvent(server, port, host, key,
 		fmt.Sprintf("event=RECOVERY duration_ms=%d level_l=%.1f level_r=%.1f threshold=%.1f", durationMs, levelL, levelR, threshold))
 }
 
 // SendZabbixTest sends a test message to verify Zabbix config.
 func SendZabbixTest(server string, port int, host, key string) error {
+	if server == "" || host == "" || key == "" {
+		return fmt.Errorf("zabbix not fully configured (server, host, and key are required)")
+	}
 	return sendZabbixEvent(server, port, host, key, "event=TEST source=zwfm-encoder")
 }
