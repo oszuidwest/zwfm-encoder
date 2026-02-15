@@ -297,6 +297,18 @@ func (r *GenericRecorder) processRetryQueue() {
 				"attempts", p.retryCount+1,
 				"last_error", p.lastError)
 			r.logUploadEvent(eventlog.UploadAbandoned, filepath.Base(p.request.localPath), p.request.s3Key, p.lastError, p.retryCount)
+			if r.onUploadAbandoned != nil {
+				r.mu.RLock()
+				recorderName := r.config.Name
+				r.mu.RUnlock()
+				r.onUploadAbandoned(UploadAbandonedEvent{
+					RecorderName: recorderName,
+					Filename:     filepath.Base(p.request.localPath),
+					S3Key:        p.request.s3Key,
+					LastError:    p.lastError,
+					RetryCount:   p.retryCount,
+				})
+			}
 			continue
 		}
 

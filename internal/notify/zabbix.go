@@ -124,6 +124,12 @@ func sendZabbixEvent(server string, port int, host, key, value string) error {
 	return sendZabbixPayload(server, port, req)
 }
 
+// sendUploadAbandonedZabbix sends an upload abandonment event to Zabbix.
+func sendUploadAbandonedZabbix(server string, port int, host, key string, p UploadAbandonedParams) error {
+	return sendZabbixEvent(server, port, host, key,
+		fmt.Sprintf("event=UPLOAD_ABANDONED recorder=%q file=%q retries=%d error=%q", p.RecorderName, p.Filename, p.RetryCount, p.LastError))
+}
+
 // SendZabbixSilence sends a silence alert to Zabbix.
 func SendZabbixSilence(server string, port int, host, key string, levelL, levelR, threshold float64) error {
 	return sendZabbixEvent(server, port, host, key,

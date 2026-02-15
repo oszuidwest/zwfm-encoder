@@ -157,6 +157,17 @@ func (e *Encoder) InitRecording() error {
 		return fmt.Errorf("create recording manager: %w", err)
 	}
 
+	// Wire upload abandoned callback to dispatch to all configured notification channels
+	mgr.SetUploadAbandonedCallback(func(event recording.UploadAbandonedEvent) {
+		notify.NotifyUploadAbandoned(e.config.Snapshot(), notify.UploadAbandonedParams{
+			RecorderName: event.RecorderName,
+			Filename:     event.Filename,
+			S3Key:        event.S3Key,
+			LastError:    event.LastError,
+			RetryCount:   event.RetryCount,
+		})
+	})
+
 	// Add all configured recorders
 	for i := range snap.Recorders {
 		if err := mgr.AddRecorder(&snap.Recorders[i]); err != nil {
@@ -463,7 +474,7 @@ func (e *Encoder) TriggerTestWebhook() error {
 // TriggerTestZabbix sends a test notification to the configured Zabbix server.
 func (e *Encoder) TriggerTestZabbix() error {
 	cfg := e.config.Snapshot()
-	return notify.SendZabbixTest(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixKey)
+	return notify.SendZabbixTest(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixSilenceKey)
 }
 
 // runSourceLoop manages the audio capture lifecycle with automatic retry and backoff.

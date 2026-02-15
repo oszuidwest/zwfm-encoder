@@ -116,9 +116,9 @@ The encoder warns when the secret expires within 30 days.
 
 1. Import [`zabbix/template.xml`](https://github.com/oszuidwest/zwfm-encoder/blob/main/zabbix/template.xml) in Zabbix (**Data collection** → **Templates** → **Import**)
 2. Link the template to your encoder host
-3. Configure in the encoder: server, port (default 10051), host name (must match Zabbix exactly), and item key
+3. Configure in the encoder: server, port (default 10051), host name (must match Zabbix exactly), silence key, and upload key
 
-The template creates triggers for SILENCE (Disaster), RECOVERY (Info), and TEST (Info) events.
+The template creates triggers for SILENCE (Disaster), RECOVERY (Info), TEST (Info), and UPLOAD_ABANDONED (High) events.
 
 ## Configuration
 

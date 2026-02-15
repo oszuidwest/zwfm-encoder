@@ -89,10 +89,11 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 		WebhookURL: cfg.WebhookURL,
 
 		// Notifications - Zabbix
-		ZabbixServer: cfg.ZabbixServer,
-		ZabbixPort:   cfg.ZabbixPort,
-		ZabbixHost:   cfg.ZabbixHost,
-		ZabbixKey:    cfg.ZabbixKey,
+		ZabbixServer:     cfg.ZabbixServer,
+		ZabbixPort:       cfg.ZabbixPort,
+		ZabbixHost:       cfg.ZabbixHost,
+		ZabbixSilenceKey: cfg.ZabbixSilenceKey,
+		ZabbixUploadKey:  cfg.ZabbixUploadKey,
 
 		// Notifications - Email
 		GraphTenantID:    cfg.GraphTenantID,
@@ -572,8 +573,8 @@ type NotificationTestRequest struct {
 	ZabbixPort int `json:"zabbix_port,omitempty"`
 	// ZabbixHost is the monitored host name in Zabbix.
 	ZabbixHost string `json:"zabbix_host,omitempty"`
-	// ZabbixKey is the Zabbix item key.
-	ZabbixKey string `json:"zabbix_key,omitempty"`
+	// ZabbixSilenceKey is the Zabbix silence item key.
+	ZabbixSilenceKey string `json:"zabbix_silence_key,omitempty"`
 }
 
 // handleAPITestWebhook tests webhook notification connectivity.
@@ -645,7 +646,7 @@ func (s *Server) handleAPITestZabbix(w http.ResponseWriter, r *http.Request) {
 	server := cmp.Or(req.ZabbixServer, cfg.ZabbixServer)
 	port := cmp.Or(req.ZabbixPort, cfg.ZabbixPort)
 	host := cmp.Or(req.ZabbixHost, cfg.ZabbixHost)
-	key := cmp.Or(req.ZabbixKey, cfg.ZabbixKey)
+	key := cmp.Or(req.ZabbixSilenceKey, cfg.ZabbixSilenceKey)
 
 	if server == "" || host == "" || key == "" {
 		s.writeError(w, http.StatusBadRequest, "Zabbix not fully configured")

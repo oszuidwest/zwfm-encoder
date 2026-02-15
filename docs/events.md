@@ -454,7 +454,7 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
 
 - **Severity:** `error`
 - **UI Label:** Abandoned
-- **Triggered:** When an upload is abandoned after exceeding the 24-hour retry limit. The `error` field contains the last upload error encountered. The local file remains on disk but will no longer be retried.
+- **Triggered:** When an upload is abandoned after exceeding the 24-hour retry limit. The `error` field contains the last upload error encountered. The local file remains on disk but will no longer be retried. This event also triggers alerts to all configured notification channels (webhook, email, Zabbix).
 
 ```json
 {

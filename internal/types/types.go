@@ -376,10 +376,11 @@ type APIConfigResponse struct {
 
 	WebhookURL string `json:"webhook_url"`
 
-	ZabbixServer string `json:"zabbix_server"`
-	ZabbixPort   int    `json:"zabbix_port"`
-	ZabbixHost   string `json:"zabbix_host"`
-	ZabbixKey    string `json:"zabbix_key"`
+	ZabbixServer     string `json:"zabbix_server"`
+	ZabbixPort       int    `json:"zabbix_port"`
+	ZabbixHost       string `json:"zabbix_host"`
+	ZabbixSilenceKey string `json:"zabbix_silence_key"`
+	ZabbixUploadKey  string `json:"zabbix_upload_key"`
 
 	GraphTenantID    string `json:"graph_tenant_id"`
 	GraphClientID    string `json:"graph_client_id"`
@@ -410,10 +411,11 @@ type GraphConfig struct {
 
 // ZabbixConfig holds settings for Zabbix trapper monitoring alerts.
 type ZabbixConfig struct {
-	Server string `json:"server,omitempty"`
-	Port   int    `json:"port,omitempty"` // Default 10051
-	Host   string `json:"host,omitempty"`
-	Key    string `json:"key,omitempty"`
+	Server     string `json:"server,omitempty"`
+	Port       int    `json:"port,omitempty"` // Default 10051
+	Host       string `json:"host,omitempty"`
+	SilenceKey string `json:"silence_key,omitempty"`
+	UploadKey  string `json:"upload_key,omitempty"`
 }
 
 // SecretExpiryInfo holds expiration details for an Azure client secret.

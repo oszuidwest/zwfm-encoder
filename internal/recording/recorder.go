@@ -25,6 +25,7 @@ type GenericRecorder struct {
 	ffmpegPath         string
 	maxDurationMinutes int // For on-demand mode (from global config)
 	eventLogger        *eventlog.Logger
+	onUploadAbandoned  UploadAbandonedCallback
 
 	tempDir   string
 	state     types.ProcessState
@@ -59,13 +60,14 @@ type GenericRecorder struct {
 }
 
 // NewGenericRecorder creates a new recorder instance.
-func NewGenericRecorder(cfg *types.Recorder, ffmpegPath, tempDir string, maxDurationMinutes int, eventLogger *eventlog.Logger) (*GenericRecorder, error) {
+func NewGenericRecorder(cfg *types.Recorder, ffmpegPath, tempDir string, maxDurationMinutes int, eventLogger *eventlog.Logger, onUploadAbandoned UploadAbandonedCallback) (*GenericRecorder, error) {
 	r := &GenericRecorder{
 		id:                 cfg.ID,
 		config:             *cfg,
 		ffmpegPath:         ffmpegPath,
 		maxDurationMinutes: maxDurationMinutes,
 		eventLogger:        eventLogger,
+		onUploadAbandoned:  onUploadAbandoned,
 		tempDir:            tempDir,
 		state:              types.ProcessStopped,
 		uploadQueue:        make(chan uploadRequest, 100),
