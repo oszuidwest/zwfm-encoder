@@ -299,7 +299,7 @@ func (s *Server) handleUpdateStream(w http.ResponseWriter, r *http.Request) {
 	// Restart stream if encoder is running
 	if s.encoder.State() == types.StateRunning {
 		if err := s.encoder.StopStream(id); err != nil {
-			slog.Warn("failed to stop stream for restart", "stream_id", id, "error", err) //nolint:gosec // G706: stream_id is an internal UUID, not user-controlled taint
+			slog.Warn("failed to stop stream for restart", "stream_id", id, "error", err) //nolint:gosec // G706: structured logging of request-derived ID is intentional for operational diagnostics
 		}
 		go func() {
 			time.Sleep(types.StreamRestartDelay)
@@ -324,7 +324,7 @@ func (s *Server) handleDeleteStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.encoder.StopStream(id); err != nil {
-		slog.Warn("failed to stop stream before delete", "stream_id", id, "error", err) //nolint:gosec // G706: stream_id is an internal UUID, not user-controlled taint
+		slog.Warn("failed to stop stream before delete", "stream_id", id, "error", err) //nolint:gosec // G706: structured logging of request-derived ID is intentional for operational diagnostics
 	}
 
 	if err := s.config.RemoveStream(id); err != nil {
