@@ -302,7 +302,7 @@ func IsConfigured(cfg *types.GraphConfig) bool {
 // ParseRecipients splits a comma-separated recipients string into a slice.
 func ParseRecipients(recipients string) []string {
 	var result []string
-	for _, r := range strings.Split(recipients, ",") {
+	for r := range strings.SplitSeq(recipients, ",") {
 		if r = strings.TrimSpace(r); r != "" {
 			result = append(result, r)
 		}

@@ -121,7 +121,7 @@ type NotificationsConfig struct {
 	// Email contains Microsoft Graph email settings.
 	Email EmailConfig `json:"email"`
 	// Zabbix contains Zabbix notification settings.
-	Zabbix types.ZabbixConfig `json:"zabbix,omitempty"`
+	Zabbix types.ZabbixConfig `json:"zabbix"`
 }
 
 // StreamingConfig holds stream configuration.
@@ -714,7 +714,7 @@ func (s *SettingsUpdate) Validate() []string {
 		errs = append(errs, "graph_from_address: invalid email format")
 	}
 	if s.GraphRecipients != "" {
-		for _, email := range strings.Split(s.GraphRecipients, ",") {
+		for email := range strings.SplitSeq(s.GraphRecipients, ",") {
 			if trimmed := strings.TrimSpace(email); trimmed != "" && !util.EmailPattern.MatchString(trimmed) {
 				errs = append(errs, "graph_recipients: contains invalid email address")
 				break
