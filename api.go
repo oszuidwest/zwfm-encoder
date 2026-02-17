@@ -204,7 +204,7 @@ type StreamRequest struct {
 	// Port is the SRT server port.
 	Port int `json:"port"`
 	// Password is the SRT encryption passphrase.
-	Password string `json:"password"`
+	Password string `json:"password"` //nolint:gosec // G117: intentional field for SRT stream auth
 	// StreamID identifies the stream at the destination server.
 	StreamID string `json:"stream_id"`
 	// Codec selects the audio codec.
@@ -299,7 +299,7 @@ func (s *Server) handleUpdateStream(w http.ResponseWriter, r *http.Request) {
 	// Restart stream if encoder is running
 	if s.encoder.State() == types.StateRunning {
 		if err := s.encoder.StopStream(id); err != nil {
-			slog.Warn("failed to stop stream for restart", "stream_id", id, "error", err)
+			slog.Warn("failed to stop stream for restart", "stream_id", id, "error", err) //nolint:gosec // G706: stream_id is an internal UUID, not user-controlled taint
 		}
 		go func() {
 			time.Sleep(types.StreamRestartDelay)
@@ -324,7 +324,7 @@ func (s *Server) handleDeleteStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.encoder.StopStream(id); err != nil {
-		slog.Warn("failed to stop stream before delete", "stream_id", id, "error", err)
+		slog.Warn("failed to stop stream before delete", "stream_id", id, "error", err) //nolint:gosec // G706: stream_id is an internal UUID, not user-controlled taint
 	}
 
 	if err := s.config.RemoveStream(id); err != nil {
@@ -519,7 +519,7 @@ type S3TestRequest struct {
 	// Bucket is the target S3 bucket name.
 	Bucket string `json:"s3_bucket"`
 	// AccessKey is the S3 access key ID.
-	AccessKey string `json:"s3_access_key_id"`
+	AccessKey string `json:"s3_access_key_id"` //nolint:gosec // G117: intentional field for S3 auth credentials
 	// SecretKey is the S3 secret for authentication.
 	SecretKey string `json:"s3_secret_access_key"`
 }

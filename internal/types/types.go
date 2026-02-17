@@ -118,7 +118,7 @@ type Stream struct {
 	Enabled    bool   `json:"enabled"`
 	Host       string `json:"host"`
 	Port       int    `json:"port"`
-	Password   string `json:"password"`
+	Password   string `json:"password"` //nolint:gosec // G117: intentional config field for SRT stream auth
 	StreamID   string `json:"stream_id"`
 	Codec      Codec  `json:"codec"`
 	Bitrate    int    `json:"bitrate"`     // kbit/s, 0 = codec default
@@ -443,7 +443,7 @@ type WSLevelsResponse struct {
 type GraphConfig struct {
 	TenantID     string `json:"tenant_id,omitempty"`
 	ClientID     string `json:"client_id,omitempty"`
-	ClientSecret string `json:"client_secret,omitempty"`
+	ClientSecret string `json:"client_secret,omitempty"` //nolint:gosec // G117: intentional config field for Azure auth
 	FromAddress  string `json:"from_address,omitempty"`
 	Recipients   string `json:"recipients,omitempty"` // Comma-separated
 }

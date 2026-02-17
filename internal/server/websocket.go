@@ -34,7 +34,7 @@ func checkOrigin(r *http.Request) bool {
 
 	u, err := url.Parse(origin)
 	if err != nil {
-		slog.Warn("rejected WebSocket connection: invalid origin URL", "origin", origin)
+		slog.Warn("rejected WebSocket connection: invalid origin URL", "origin", origin) //nolint:gosec // G706: origin is logged as a structured slog value for security auditing
 		return false
 	}
 
@@ -62,7 +62,7 @@ func checkOrigin(r *http.Request) bool {
 		}
 	}
 
-	slog.Warn("rejected WebSocket connection", "origin", origin, "host", host)
+	slog.Warn("rejected WebSocket connection", "origin", origin, "host", host) //nolint:gosec // G706: origin/host are logged as structured slog values for security auditing
 	return false
 }
 
