@@ -125,7 +125,7 @@ func (vc *VersionChecker) check() bool {
 		req.Header.Set("If-None-Match", etag)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: URL is a constant GitHub API endpoint
 	if err != nil {
 		return false
 	}

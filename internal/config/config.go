@@ -63,7 +63,7 @@ type SystemConfig struct {
 	// Username is the web interface login username.
 	Username string `json:"username"`
 	// Password is the web interface login password.
-	Password string `json:"password"`
+	Password string `json:"password"` //nolint:gosec // G117: intentional config field for web UI auth
 }
 
 // WebConfig holds web UI branding settings.
@@ -107,7 +107,7 @@ type EmailConfig struct {
 	// ClientID is the Azure app registration client ID.
 	ClientID string `json:"client_id"`
 	// ClientSecret is the Azure app registration client secret.
-	ClientSecret string `json:"client_secret"`
+	ClientSecret string `json:"client_secret"` //nolint:gosec // G117: intentional config field for Azure auth
 	// FromAddress is the shared mailbox address to send emails from.
 	FromAddress string `json:"from_address"`
 	// Recipients is a comma-separated list of email addresses to notify.
@@ -121,7 +121,7 @@ type NotificationsConfig struct {
 	// Email contains Microsoft Graph email settings.
 	Email EmailConfig `json:"email"`
 	// Zabbix contains Zabbix notification settings.
-	Zabbix types.ZabbixConfig `json:"zabbix,omitempty"`
+	Zabbix types.ZabbixConfig `json:"zabbix"`
 }
 
 // StreamingConfig holds stream configuration.
@@ -133,7 +133,7 @@ type StreamingConfig struct {
 // RecordingConfig holds recording configuration.
 type RecordingConfig struct {
 	// APIKey is the secret key for external recording control via REST API.
-	APIKey string `json:"api_key"`
+	APIKey string `json:"api_key"` //nolint:gosec // G117: intentional config field for recording API auth
 	// MaxDurationMinutes is the maximum allowed duration for on-demand recordings.
 	MaxDurationMinutes int `json:"max_duration_minutes"`
 	// Recorders lists configured recording destinations.
@@ -714,7 +714,7 @@ func (s *SettingsUpdate) Validate() []string {
 		errs = append(errs, "graph_from_address: invalid email format")
 	}
 	if s.GraphRecipients != "" {
-		for _, email := range strings.Split(s.GraphRecipients, ",") {
+		for email := range strings.SplitSeq(s.GraphRecipients, ",") {
 			if trimmed := strings.TrimSpace(email); trimmed != "" && !util.EmailPattern.MatchString(trimmed) {
 				errs = append(errs, "graph_recipients: contains invalid email address")
 				break

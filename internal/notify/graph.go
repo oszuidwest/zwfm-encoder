@@ -158,7 +158,7 @@ func (c *GraphClient) doWithRetry(jsonData []byte) error {
 		}
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, err := c.httpClient.Do(req)
+		resp, err := c.httpClient.Do(req) //nolint:gosec // G704: URL is constructed from constant Graph API base URL + config values
 		if err != nil {
 			lastErr = fmt.Errorf("send request: %w", err)
 			continue
@@ -253,7 +253,7 @@ func (c *GraphClient) ValidateAuth() error {
 		return fmt.Errorf("create validation request: %w", err)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: URL is constructed from constant Graph API base URL + config values
 	if err != nil {
 		// Token acquisition failed
 		if strings.Contains(err.Error(), "oauth2") || strings.Contains(err.Error(), "token") {
@@ -302,7 +302,7 @@ func IsConfigured(cfg *types.GraphConfig) bool {
 // ParseRecipients splits a comma-separated recipients string into a slice.
 func ParseRecipients(recipients string) []string {
 	var result []string
-	for _, r := range strings.Split(recipients, ",") {
+	for r := range strings.SplitSeq(recipients, ",") {
 		if r = strings.TrimSpace(r); r != "" {
 			result = append(result, r)
 		}

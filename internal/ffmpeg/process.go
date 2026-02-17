@@ -47,7 +47,7 @@ func BaseInputArgs() []string {
 // StartProcess launches an FFmpeg subprocess.
 func StartProcess(ffmpegPath string, args []string) (*StartResult, error) {
 	ctx, cancel := context.WithCancelCause(context.Background())
-	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+	cmd := exec.CommandContext(ctx, ffmpegPath, args...) //nolint:gosec // G204: ffmpegPath is from config or PATH lookup, not user HTTP input
 
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {

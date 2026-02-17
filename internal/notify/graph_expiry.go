@@ -123,7 +123,7 @@ func (c *SecretExpiryChecker) fetchExpiryInfo(cfg *types.GraphConfig) (types.Sec
 	}
 	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: URL is constructed from constant Graph API base URL + config values
 	if err != nil {
 		return types.SecretExpiryInfo{}, fmt.Errorf("request failed: %w", err)
 	}
@@ -163,10 +163,7 @@ func (c *SecretExpiryChecker) fetchExpiryInfo(cfg *types.GraphConfig) (types.Sec
 		return types.SecretExpiryInfo{Error: "no valid (non-expired) credentials found"}, nil
 	}
 
-	daysLeft := int(time.Until(earliest).Hours() / 24)
-	if daysLeft < 0 {
-		daysLeft = 0
-	}
+	daysLeft := max(int(time.Until(earliest).Hours()/24), 0)
 
 	return types.SecretExpiryInfo{
 		ExpiresAt:   earliest.Format(time.RFC3339),

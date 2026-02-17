@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -24,12 +25,7 @@ var (
 
 // IsConfigured reports whether all provided values are non-empty.
 func IsConfigured(values ...string) bool {
-	for _, v := range values {
-		if v == "" {
-			return false
-		}
-	}
-	return true
+	return !slices.Contains(values, "")
 }
 
 // ValidatePath validates a file path for security.
