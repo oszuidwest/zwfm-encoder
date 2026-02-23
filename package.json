@@ -8,7 +8,7 @@
     "lint:code": "biome check web/"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.4.1",
+    "@biomejs/biome": "2.4.4",
     "htmlhint": "1.9.1"
   }
 }
