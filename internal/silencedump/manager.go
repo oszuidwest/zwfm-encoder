@@ -155,16 +155,13 @@ func (m *Manager) startCleanupScheduler() {
 func (m *Manager) runCleanup() {
 	m.mu.RLock()
 	retentionDays := m.retentionDays
+	dir := m.outputDir
 	m.mu.RUnlock()
 
 	// Skip if retention is 0 (keep forever)
 	if retentionDays == 0 {
 		return
 	}
-
-	m.mu.RLock()
-	dir := m.outputDir
-	m.mu.RUnlock()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		// Directory might not exist yet, which is fine
