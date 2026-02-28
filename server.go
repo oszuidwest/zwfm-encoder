@@ -76,9 +76,13 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	send := make(chan any, 16)
 	done := make(chan struct{})
 
-	// Register this client for broadcasts
+	// Register this client for broadcasts.
+	// Unregister before closing to prevent broadcastConfigChanged from sending on a closed channel.
 	s.registerWSClient(send)
-	defer s.unregisterWSClient(send)
+	defer func() {
+		s.unregisterWSClient(send)
+		close(send)
+	}()
 
 	// Writer goroutine - sole writer to the connection
 	go s.runWebSocketWriter(conn, send)
@@ -163,23 +167,19 @@ func (s *Server) runWebSocketEventLoop(send chan any, done <-chan struct{}) {
 
 	// Send initial status
 	if !trySend(s.buildWSRuntime()) {
-		close(send)
 		return
 	}
 
 	for {
 		select {
 		case <-done:
-			close(send)
 			return
 		case <-levelsTicker.C:
 			if !trySend(types.WSLevelsResponse{Type: "levels", Levels: s.encoder.AudioLevels()}) {
-				close(send)
 				return
 			}
 		case <-statusTicker.C:
 			if !trySend(s.buildWSRuntime()) {
-				close(send)
 				return
 			}
 		}
