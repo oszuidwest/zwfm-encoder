@@ -240,11 +240,13 @@ type RotationMode string
 const (
 	// RotationHourly rotates recordings at system clock hour boundaries.
 	RotationHourly RotationMode = "hourly"
+	// RotationOnDemand allows manual start/stop via the API.
+	RotationOnDemand RotationMode = "ondemand"
 )
 
 // validRotationModes is the set of supported rotation modes.
 var validRotationModes = map[RotationMode]bool{
-	RotationHourly: true,
+	RotationHourly: true, RotationOnDemand: true,
 }
 
 // UnmarshalJSON validates the rotation mode during JSON parsing.
@@ -259,7 +261,7 @@ func (m *RotationMode) UnmarshalJSON(data []byte) error {
 	}
 	mode := RotationMode(s)
 	if !validRotationModes[mode] {
-		return fmt.Errorf("rotation_mode: must be hourly")
+		return fmt.Errorf("rotation_mode: must be hourly or ondemand")
 	}
 	*m = mode
 	return nil
