@@ -292,7 +292,7 @@ func (c *Config) ConfiguredStreams() []types.Stream {
 	return slices.Clone(c.Streaming.Streams)
 }
 
-// Stream returns the stream with the given ID, or nil if not found.
+// Stream returns a copy of the stream with the given ID, or nil if not found.
 func (c *Config) Stream(id string) *types.Stream {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -303,7 +303,8 @@ func (c *Config) Stream(id string) *types.Stream {
 	if idx == -1 {
 		return nil
 	}
-	return &c.Streaming.Streams[idx]
+	s := c.Streaming.Streams[idx]
+	return &s
 }
 
 func (c *Config) findStreamIndex(id string) int {
@@ -370,7 +371,7 @@ func (c *Config) UpdateStream(stream *types.Stream) error {
 
 // Recorder management.
 
-// Recorder returns the recorder with the given ID, or nil if not found.
+// Recorder returns a copy of the recorder with the given ID, or nil if not found.
 func (c *Config) Recorder(id string) *types.Recorder {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -381,7 +382,8 @@ func (c *Config) Recorder(id string) *types.Recorder {
 	if idx == -1 {
 		return nil
 	}
-	return &c.Recording.Recorders[idx]
+	r := c.Recording.Recorders[idx]
+	return &r
 }
 
 func (c *Config) findRecorderIndex(id string) int {
