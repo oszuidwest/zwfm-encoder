@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -192,13 +193,14 @@ func (s *Server) buildWSRuntime() types.WSRuntimeStatus {
 	status.StreamCount = len(cfg.Streams)
 
 	return types.WSRuntimeStatus{
-		Type:              "status",
-		FFmpegAvailable:   s.ffmpegAvailable,
-		Encoder:           status,
-		StreamStatus:      s.encoder.StreamStatuses(cfg.Streams),
-		RecorderStatuses:  s.encoder.RecorderStatuses(),
-		GraphSecretExpiry: s.encoder.GraphSecretExpiry(),
-		Version:           s.version.Info(),
+		Type:               "status",
+		FFmpegAvailable:    s.ffmpegAvailable,
+		RecordingAvailable: s.encoder.RecordingAvailable(),
+		Encoder:            status,
+		StreamStatus:       s.encoder.StreamStatuses(cfg.Streams),
+		RecorderStatuses:   s.encoder.RecorderStatuses(),
+		GraphSecretExpiry:  s.encoder.GraphSecretExpiry(),
+		Version:            s.version.Info(),
 	}
 }
 
@@ -451,6 +453,10 @@ func (s *Server) handleExternalRecordingAction(w http.ResponseWriter, r *http.Re
 	}
 
 	if err != nil {
+		if errors.Is(err, encoder.ErrRecordingNotAvailable) {
+			s.writeError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

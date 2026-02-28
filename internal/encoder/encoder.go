@@ -182,6 +182,11 @@ func (e *Encoder) InitRecording() error {
 	return nil
 }
 
+// RecordingAvailable reports whether the recording manager is initialized.
+func (e *Encoder) RecordingAvailable() bool {
+	return e.recordingManager != nil
+}
+
 // RecorderStatuses returns status for all configured recorders.
 func (e *Encoder) RecorderStatuses() map[string]types.ProcessStatus {
 	if e.recordingManager == nil {

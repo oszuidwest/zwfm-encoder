@@ -13,6 +13,7 @@ import (
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
+	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/notify"
 	"github.com/oszuidwest/zwfm-encoder/internal/recording"
@@ -42,6 +43,10 @@ func (s *Server) writeNoContent(w http.ResponseWriter) {
 func (s *Server) writeConfigError(w http.ResponseWriter, err error) {
 	if errors.Is(err, config.ErrStreamNotFound) || errors.Is(err, config.ErrRecorderNotFound) {
 		s.writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if errors.Is(err, encoder.ErrRecordingNotAvailable) {
+		s.writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 	s.writeError(w, http.StatusInternalServerError, err.Error())
@@ -411,7 +416,7 @@ func (s *Server) handleCreateRecorder(w http.ResponseWriter, r *http.Request) {
 
 	// Persistence/manager failures are server errors
 	if err := s.encoder.AddRecorder(recorder); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeConfigError(w, err)
 		return
 	}
 
@@ -497,12 +502,20 @@ func (s *Server) handleRecorderAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.encoder.StartRecorder(id); err != nil {
+			if errors.Is(err, encoder.ErrRecordingNotAvailable) {
+				s.writeError(w, http.StatusServiceUnavailable, err.Error())
+				return
+			}
 			s.writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		s.writeMessage(w, "Recorder started")
 	case "stop":
 		if err := s.encoder.StopRecorder(id); err != nil {
+			if errors.Is(err, encoder.ErrRecordingNotAvailable) {
+				s.writeError(w, http.StatusServiceUnavailable, err.Error())
+				return
+			}
 			s.writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}

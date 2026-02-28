@@ -241,6 +241,7 @@ document.addEventListener('alpine:init', () => {
         version: { current: '', latest: '', update_available: false, commit: '', build_time: '' },
 
         ffmpegAvailable: true, // Assume available until we get status
+        recordingAvailable: true, // Assume available until we get status
 
         // Notification test state (unified object for all test types)
         testStates: {
@@ -591,8 +592,9 @@ document.addEventListener('alpine:init', () => {
          * @param {Object} msg - Status message with encoder state and statuses
          */
         handleStatus(msg) {
-            // FFmpeg availability
+            // Feature availability
             this.ffmpegAvailable = msg.ffmpeg_available ?? true;
+            this.recordingAvailable = msg.recording_available ?? true;
 
             // Encoder state
             this.encoder.state = msg.encoder.state;
