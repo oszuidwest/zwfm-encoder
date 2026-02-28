@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"log/slog"
-	"maps"
 	"net/http"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -76,9 +74,14 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	send := make(chan any, 16)
 	done := make(chan struct{})
 
-	// Register this client for broadcasts
+	// Register this client for broadcasts.
+	// Cleanup: unregister before closing so the channel is removed from the map
+	// while broadcastConfigChanged holds RLock during sends, preventing send-on-closed-channel.
 	s.registerWSClient(send)
-	defer s.unregisterWSClient(send)
+	defer func() {
+		s.unregisterWSClient(send)
+		close(send)
+	}()
 
 	// Writer goroutine - sole writer to the connection
 	go s.runWebSocketWriter(conn, send)
@@ -103,14 +106,11 @@ func (s *Server) unregisterWSClient(send chan any) {
 
 // broadcastConfigChanged notifies all connected WebSocket clients that config has changed.
 func (s *Server) broadcastConfigChanged() {
-	// Copy client channels while holding lock to avoid race conditions
 	s.wsClientsMu.RLock()
-	clients := slices.Collect(maps.Keys(s.wsClients))
-	s.wsClientsMu.RUnlock()
+	defer s.wsClientsMu.RUnlock()
 
-	// Send to all clients outside the lock
 	msg := map[string]string{"type": "config_changed"}
-	for _, ch := range clients {
+	for ch := range s.wsClients {
 		select {
 		case ch <- msg:
 		default:
@@ -163,23 +163,19 @@ func (s *Server) runWebSocketEventLoop(send chan any, done <-chan struct{}) {
 
 	// Send initial status
 	if !trySend(s.buildWSRuntime()) {
-		close(send)
 		return
 	}
 
 	for {
 		select {
 		case <-done:
-			close(send)
 			return
 		case <-levelsTicker.C:
 			if !trySend(types.WSLevelsResponse{Type: "levels", Levels: s.encoder.AudioLevels()}) {
-				close(send)
 				return
 			}
 		case <-statusTicker.C:
 			if !trySend(s.buildWSRuntime()) {
-				close(send)
 				return
 			}
 		}
