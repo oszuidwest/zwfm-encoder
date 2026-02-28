@@ -34,19 +34,9 @@ func ValidatePath(field, path string) error {
 		return fmt.Errorf("%s: is required", field)
 	}
 
-	// Reject path traversal attempts before cleaning
-	// This catches both explicit "../" and encoded variants
+	// Reject path traversal attempts
 	if strings.Contains(path, "..") {
 		return fmt.Errorf("%s: path cannot contain '..'", field)
-	}
-
-	// Clean the path to normalize it
-	cleaned := filepath.Clean(path)
-
-	// After cleaning, verify no traversal components remain
-	// (filepath.Clean converts "a/../b" to "b", but we already rejected "..")
-	if strings.Contains(cleaned, "..") {
-		return fmt.Errorf("%s: invalid path", field)
 	}
 
 	return nil
