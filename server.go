@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"log/slog"
-	"maps"
 	"net/http"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -77,7 +75,8 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	done := make(chan struct{})
 
 	// Register this client for broadcasts.
-	// Unregister before closing to prevent broadcastConfigChanged from sending on a closed channel.
+	// Cleanup: unregister before closing so the channel is removed from the map
+	// while broadcastConfigChanged holds RLock during sends, preventing send-on-closed-channel.
 	s.registerWSClient(send)
 	defer func() {
 		s.unregisterWSClient(send)
@@ -107,14 +106,11 @@ func (s *Server) unregisterWSClient(send chan any) {
 
 // broadcastConfigChanged notifies all connected WebSocket clients that config has changed.
 func (s *Server) broadcastConfigChanged() {
-	// Copy client channels while holding lock to avoid race conditions
 	s.wsClientsMu.RLock()
-	clients := slices.Collect(maps.Keys(s.wsClients))
-	s.wsClientsMu.RUnlock()
+	defer s.wsClientsMu.RUnlock()
 
-	// Send to all clients outside the lock
 	msg := map[string]string{"type": "config_changed"}
-	for _, ch := range clients {
+	for ch := range s.wsClients {
 		select {
 		case ch <- msg:
 		default:
