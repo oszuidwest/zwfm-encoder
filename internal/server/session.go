@@ -128,7 +128,7 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, value string, maxA
 		// Also check X-Forwarded-Proto for TLS-terminating proxies. Trusted
 		// unconditionally: spoofing this header only makes the cookie require
 		// HTTPS, causing login failure rather than a security issue.
-		Secure: r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
 		SameSite: http.SameSiteStrictMode,
 	})
 }
