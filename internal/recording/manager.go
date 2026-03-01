@@ -87,7 +87,7 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 	m.recorders[cfg.ID] = recorder
 
 	// Auto-start hourly recorders if encoder is running (ondemand never auto-starts)
-	if m.running && cfg.RotationMode == types.RotationHourly && cfg.IsEnabled() {
+	if m.running && cfg.RecordingMode == types.RecordingHourly && cfg.IsEnabled() {
 		if err := recorder.Start(); err != nil {
 			slog.Warn("failed to auto-start recorder", "id", cfg.ID, "error", err)
 		}
@@ -141,7 +141,7 @@ func (m *Manager) StartRecorder(id string) error {
 	}
 
 	// Only on-demand recorders can be started via API
-	if recorder.Config().RotationMode == types.RotationHourly {
+	if recorder.Config().RecordingMode == types.RecordingHourly {
 		return ErrHourlyRecorderNotControllable
 	}
 
@@ -164,7 +164,7 @@ func (m *Manager) StopRecorder(id string) error {
 	}
 
 	// Only on-demand recorders can be stopped via API
-	if recorder.Config().RotationMode == types.RotationHourly {
+	if recorder.Config().RecordingMode == types.RecordingHourly {
 		return ErrHourlyRecorderNotControllable
 	}
 
@@ -186,7 +186,7 @@ func (m *Manager) Start() error {
 	// Start hourly recorders (ondemand never auto-starts)
 	for id, recorder := range m.recorders {
 		cfg := recorder.Config()
-		if cfg.RotationMode == types.RotationHourly && cfg.IsEnabled() {
+		if cfg.RecordingMode == types.RecordingHourly && cfg.IsEnabled() {
 			if err := recorder.Start(); err != nil {
 				slog.Warn("failed to auto-start recorder", "id", id, "error", err)
 			}
@@ -281,7 +281,7 @@ func (m *Manager) retryFailedHourlyRecorders() {
 
 	for _, recorder := range m.recorders {
 		cfg := recorder.Config()
-		if cfg.RotationMode == types.RotationHourly && cfg.IsEnabled() {
+		if cfg.RecordingMode == types.RecordingHourly && cfg.IsEnabled() {
 			status := recorder.Status()
 			if status.State == types.ProcessError {
 				slog.Info("retrying failed hourly recorder at hour boundary", "id", cfg.ID, "name", cfg.Name)

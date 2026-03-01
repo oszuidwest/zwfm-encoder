@@ -198,8 +198,8 @@ func (r *GenericRecorder) startAsync() {
 		go r.uploadWorker()
 	}
 
-	// Schedule based on rotation mode
-	if r.config.RotationMode == types.RotationHourly {
+	// Schedule based on recording mode
+	if r.config.RecordingMode == types.RecordingHourly {
 		r.scheduleRotationLocked()
 	} else if r.maxDurationMinutes > 0 {
 		r.scheduleDurationLimitLocked()
@@ -210,7 +210,7 @@ func (r *GenericRecorder) startAsync() {
 	// Capture log params while holding lock
 	logParams := r.captureLogParamsLocked()
 	name := r.config.Name
-	mode := r.config.RotationMode
+	mode := r.config.RecordingMode
 	r.mu.Unlock()
 
 	slog.Info("recorder started", "id", r.id, "name", name, "mode", mode)
@@ -439,9 +439,9 @@ func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 func (r *GenericRecorder) startEncoderLocked() error {
 	r.startTime = time.Now()
 
-	// Generate filename based on rotation mode
+	// Generate filename based on recording mode
 	var filename string
-	if r.config.RotationMode == types.RotationHourly {
+	if r.config.RecordingMode == types.RecordingHourly {
 		hourStart := r.startTime.Truncate(time.Hour)
 		filename = r.generateFilename(hourStart)
 	} else {

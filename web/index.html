@@ -276,7 +276,7 @@
              Displays configured recorders with real-time status.
              Each recorder shows:
              - Status dot (color-coded by state)
-             - Name and rotation mode
+             - Name and recording mode
              - Status text (Recording, Idle, Disabled)
              Click to edit, + button to add new -->
         <section class="card">
@@ -312,7 +312,7 @@
                             </div>
                             <div class="details">
                                 <span class="codec" x-text="formatCodecBitrate(recorder.codec, recorder.bitrate)"></span>
-                                <span class="streamid" x-text="recorder.rotation_mode === 'hourly' ? 'Hourly' : 'On-Demand'"></span>
+                                <span class="streamid" x-text="recorder.recording_mode === 'hourly' ? 'Hourly' : 'On-Demand'"></span>
                                 <span class="status" :class="d.stateClass" x-text="d.statusText"></span>
                             </div>
                         </div>
@@ -807,13 +807,13 @@
                                        x-model="recorderForm.name" @input="markRecorderFormDirty()">
                             </div>
                             <div class="group">
-                                <label for="recorder-rotation">Rotation Mode</label>
-                                <select id="recorder-rotation" x-model="recorderForm.rotation_mode" @change="markRecorderFormDirty()" aria-describedby="recorder-rotation-hint">
+                                <label for="recorder-recording-mode">Recording Mode</label>
+                                <select id="recorder-recording-mode" x-model="recorderForm.recording_mode" @change="markRecorderFormDirty()" aria-describedby="recorder-recording-mode-hint">
                                     <option value="hourly">Hourly (auto-starts with encoder)</option>
                                     <option value="ondemand">On-Demand (API-controlled)</option>
                                 </select>
-                                <span id="recorder-rotation-hint" class="input-hint" x-show="recorderForm.rotation_mode === 'hourly'">Rotates at each hour boundary, starts automatically with encoder.</span>
-                                <span class="input-hint" x-show="recorderForm.rotation_mode === 'ondemand'" aria-hidden="true">Start/stop via API calls. Stops at max duration (configured in settings).</span>
+                                <span id="recorder-recording-mode-hint" class="input-hint" x-show="recorderForm.recording_mode === 'hourly'">Rotates at each hour boundary, starts automatically with encoder.</span>
+                                <span class="input-hint" x-show="recorderForm.recording_mode === 'ondemand'" aria-hidden="true">Start/stop via API calls. Stops at max duration (configured in settings).</span>
                             </div>
                             <div class="row">
                                 <div class="group">
@@ -940,7 +940,7 @@
                         </div>
 
                         <!-- Recording Controls - Only when on-demand mode -->
-                        <template x-if="recorderForm.rotation_mode === 'ondemand'">
+                        <template x-if="recorderForm.recording_mode === 'ondemand'">
                             <div class="form" data-spaced>
                                 <div class="group">
                                     <label>Recording Control</label>

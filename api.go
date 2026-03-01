@@ -368,8 +368,8 @@ type RecorderRequest struct {
 	Codec types.Codec `json:"codec"`
 	// Bitrate is the encoding bitrate in kbit/s (0 = codec default).
 	Bitrate int `json:"bitrate"`
-	// RotationMode selects the file rotation mode.
-	RotationMode types.RotationMode `json:"rotation_mode"`
+	// RecordingMode selects the recording mode.
+	RecordingMode types.RecordingMode `json:"recording_mode"`
 	// StorageMode selects local/S3 storage behavior.
 	StorageMode types.StorageMode `json:"storage_mode"`
 	// LocalPath is the local directory for recordings.
@@ -398,8 +398,8 @@ func (s *Server) handleCreateRecorder(w http.ResponseWriter, r *http.Request) {
 		Enabled:           true,
 		Codec:             req.Codec, // Already validated by UnmarshalJSON
 		Bitrate:           req.Bitrate,
-		RotationMode:      req.RotationMode, // Already validated by UnmarshalJSON
-		StorageMode:       req.StorageMode,  // Already validated by UnmarshalJSON
+		RecordingMode:     req.RecordingMode, // Already validated by UnmarshalJSON
+		StorageMode:       req.StorageMode,   // Already validated by UnmarshalJSON
 		LocalPath:         req.LocalPath,
 		S3Endpoint:        req.S3Endpoint,
 		S3Bucket:          req.S3Bucket,
@@ -446,7 +446,7 @@ func (s *Server) handleUpdateRecorder(w http.ResponseWriter, r *http.Request) {
 		Enabled:           req.Enabled,
 		Codec:             req.Codec,
 		Bitrate:           req.Bitrate,
-		RotationMode:      req.RotationMode,
+		RecordingMode:     req.RecordingMode,
 		StorageMode:       req.StorageMode,
 		LocalPath:         req.LocalPath,
 		S3Endpoint:        req.S3Endpoint,

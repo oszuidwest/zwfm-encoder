@@ -259,6 +259,9 @@ func (c *Config) applyDefaults() {
 		c.Recording.Recorders = []types.Recorder{}
 	}
 	for i := range c.Recording.Recorders {
+		if c.Recording.Recorders[i].RecordingMode == "" {
+			c.Recording.Recorders[i].RecordingMode = types.RecordingHourly
+		}
 		if c.Recording.Recorders[i].CreatedAt == 0 {
 			c.Recording.Recorders[i].CreatedAt = time.Now().UnixMilli()
 		}
