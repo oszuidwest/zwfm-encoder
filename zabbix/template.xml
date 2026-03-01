@@ -62,7 +62,7 @@
                     <description>Receives upload alerts from ZWFM encoder. Values contain UPLOAD_ABANDONED messages when S3 uploads fail after 24 hours of retries.</description>
                     <triggers>
                         <trigger>
-                            <uuid>c4b3a2f1d6e84b7f0a1c2d3e4f5a6b7d</uuid>
+                            <uuid>c4b3a2f1d6e84b7f8a1c2d3e4f5a6b7d</uuid>
                             <expression>find(/ZWFM Encoder Monitor/upload.alert,,&quot;like&quot;,&quot;UPLOAD_ABANDONED&quot;) = 1</expression>
                             <name>Upload Abandoned</name>
                             <opdata>{ITEM.LASTVALUE}</opdata>
