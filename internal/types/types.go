@@ -393,13 +393,14 @@ type EncoderStatus struct {
 
 // WSRuntimeStatus contains runtime status sent to clients periodically.
 type WSRuntimeStatus struct {
-	Type              string                   `json:"type"` // Always "status"
-	FFmpegAvailable   bool                     `json:"ffmpeg_available"`
-	Encoder           EncoderStatus            `json:"encoder"`
-	StreamStatus      map[string]ProcessStatus `json:"stream_status"`
-	RecorderStatuses  map[string]ProcessStatus `json:"recorder_statuses"`
-	GraphSecretExpiry SecretExpiryInfo         `json:"graph_secret_expiry"`
-	Version           VersionInfo              `json:"version"`
+	Type               string                   `json:"type"` // Always "status"
+	FFmpegAvailable    bool                     `json:"ffmpeg_available"`
+	RecordingAvailable bool                     `json:"recording_available"`
+	Encoder            EncoderStatus            `json:"encoder"`
+	StreamStatus       map[string]ProcessStatus `json:"stream_status"`
+	RecorderStatuses   map[string]ProcessStatus `json:"recorder_statuses"`
+	GraphSecretExpiry  SecretExpiryInfo         `json:"graph_secret_expiry"`
+	Version            VersionInfo              `json:"version"`
 }
 
 // APIConfigResponse contains the complete encoder configuration for API responses.

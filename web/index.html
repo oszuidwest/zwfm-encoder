@@ -71,6 +71,18 @@
         <span class="message">FFmpeg not found. Install FFmpeg and restart the application.</span>
     </div>
 
+    <!-- Recording not available banner - persistent, non-dismissable -->
+    <div class="alert-banner"
+         data-variant="warning"
+         role="alert"
+         aria-live="assertive"
+         x-show="ffmpegAvailable && !recordingAvailable"
+         x-transition:enter.duration.200ms
+         x-transition:leave.duration.150ms
+         x-cloak>
+        <span class="message">Recording unavailable. Check logs for initialization errors.</span>
+    </div>
+
     <!-- Toast notifications - transient feedback for user actions -->
     <div class="toast-container" aria-live="polite" x-cloak>
         <template x-for="toast in toasts" :key="toast.id">
@@ -273,8 +285,8 @@
                 <div class="actions">
                     <span class="badge" x-text="recorders.length" x-show="recorders.length > 0"></span>
                     <button class="add-btn" type="button" tabindex="0" aria-label="Add recorder"
-                            :disabled="!ffmpegAvailable"
-                            :title="!ffmpegAvailable ? 'FFmpeg not available' : ''"
+                            :disabled="!ffmpegAvailable || !recordingAvailable"
+                            :title="!ffmpegAvailable ? 'FFmpeg not available' : !recordingAvailable ? 'Recording not available' : ''"
                             @click="showRecorderForm()">
                         <span class="icon-container" x-html="icons.plus"></span>
                         Add
@@ -941,7 +953,7 @@
                                     <template x-if="recorderStatuses[recorderForm.id]?.state !== 'running'">
                                         <button class="btn" data-variant="primary" type="button" tabindex="0"
                                                 @click="recorderAction(recorderForm.id, 'start')"
-                                                :disabled="!recorderForm.enabled">
+                                                :disabled="!recorderForm.enabled || !recordingAvailable">
                                             Start Recording
                                         </button>
                                     </template>
