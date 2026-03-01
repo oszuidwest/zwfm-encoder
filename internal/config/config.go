@@ -64,6 +64,8 @@ type SystemConfig struct {
 	Username string `json:"username"`
 	// Password is the web interface login password.
 	Password string `json:"password"` //nolint:gosec // G117: intentional config field for web UI auth
+	// TrustProxy enables trusting X-Forwarded-Proto for the session cookie Secure flag.
+	TrustProxy bool `json:"trust_proxy"`
 }
 
 // WebConfig holds web UI branding settings.
@@ -504,6 +506,8 @@ type Snapshot struct {
 	WebUser string
 	// WebPassword is the web interface login password.
 	WebPassword string
+	// TrustProxy enables trusting X-Forwarded-Proto for the session cookie Secure flag.
+	TrustProxy bool
 
 	// StationName is the station display name shown in the web UI header.
 	StationName string
@@ -575,6 +579,7 @@ func (c *Config) Snapshot() Snapshot {
 		WebPort:     c.System.Port,
 		WebUser:     c.System.Username,
 		WebPassword: c.System.Password,
+		TrustProxy:  c.System.TrustProxy,
 
 		// Web/Branding
 		StationName:       c.Web.StationName,

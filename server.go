@@ -325,7 +325,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		username := r.FormValue("username")
 		password := r.FormValue("password")
 
-		if s.sessions.Login(w, r, username, password, cfg.WebUser, cfg.WebPassword) {
+		if s.sessions.Login(w, r, username, password, cfg.WebUser, cfg.WebPassword, cfg.TrustProxy) {
 			http.Redirect(w, r, "/", http.StatusFound)
 			return
 		}
@@ -341,7 +341,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	s.sessions.Logout(w, r)
+	cfg := s.config.Snapshot()
+	s.sessions.Logout(w, r, cfg.TrustProxy)
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
 

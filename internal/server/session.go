@@ -118,23 +118,21 @@ func (sm *SessionManager) AuthMiddleware() func(http.HandlerFunc) http.HandlerFu
 }
 
 // setSessionCookie sets or clears the session cookie.
-func setSessionCookie(w http.ResponseWriter, r *http.Request, value string, maxAge int) {
+// When trustProxy is true, X-Forwarded-Proto is checked for TLS-terminating proxies.
+func setSessionCookie(w http.ResponseWriter, r *http.Request, value string, maxAge int, trustProxy bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    value,
 		Path:     "/",
 		MaxAge:   maxAge,
 		HttpOnly: true,
-		// Also check X-Forwarded-Proto for TLS-terminating proxies. Trusted
-		// unconditionally: spoofing this header only makes the cookie require
-		// HTTPS, causing login failure rather than a security issue.
-		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+		Secure:   r.TLS != nil || (trustProxy && r.Header.Get("X-Forwarded-Proto") == "https"),
 		SameSite: http.SameSiteStrictMode,
 	})
 }
 
 // Login reports whether login succeeded and creates a session if valid.
-func (sm *SessionManager) Login(w http.ResponseWriter, r *http.Request, username, password, configUser, configPass string) bool {
+func (sm *SessionManager) Login(w http.ResponseWriter, r *http.Request, username, password, configUser, configPass string, trustProxy bool) bool {
 	userMatch := subtle.ConstantTimeCompare([]byte(username), []byte(configUser)) == 1
 	passMatch := subtle.ConstantTimeCompare([]byte(password), []byte(configPass)) == 1
 	if !userMatch || !passMatch {
@@ -146,16 +144,16 @@ func (sm *SessionManager) Login(w http.ResponseWriter, r *http.Request, username
 		return false
 	}
 
-	setSessionCookie(w, r, token, int(sessionDuration.Seconds()))
+	setSessionCookie(w, r, token, int(sessionDuration.Seconds()), trustProxy)
 	return true
 }
 
 // Logout clears the session cookie and deletes the session.
-func (sm *SessionManager) Logout(w http.ResponseWriter, r *http.Request) {
+func (sm *SessionManager) Logout(w http.ResponseWriter, r *http.Request, trustProxy bool) {
 	if cookie, err := r.Cookie(sessionCookieName); err == nil {
 		sm.Delete(cookie.Value)
 	}
-	setSessionCookie(w, r, "", -1)
+	setSessionCookie(w, r, "", -1, trustProxy)
 }
 
 // CreateCSRFToken generates a new CSRF token.
