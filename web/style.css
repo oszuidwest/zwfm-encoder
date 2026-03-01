@@ -1985,6 +1985,8 @@
     .event-list {
         display: flex;
         flex-direction: column;
+        overflow: hidden;
+        border-radius: var(--radius-lg);
     }
 
     /* Date separator between day groups */
@@ -1995,11 +1997,6 @@
         padding: var(--space-2) var(--space-3);
         background: var(--border-default);
         border-bottom: 1px solid var(--border-default);
-    }
-
-    .event-list {
-        overflow: hidden;
-        border-radius: var(--radius-lg);
     }
 
     .event-date-separator::before,
