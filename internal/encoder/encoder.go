@@ -43,6 +43,9 @@ var ErrStreamDisabled = errors.New("stream is disabled")
 // ErrStreamNotFound is returned when the stream was not found.
 var ErrStreamNotFound = errors.New("stream not found")
 
+// ErrRecordingNotAvailable is returned when the recording manager is not initialized.
+var ErrRecordingNotAvailable = errors.New("recording not available")
+
 // Encoder is the audio capture and distribution engine.
 type Encoder struct {
 	config              *config.Config
@@ -179,8 +182,16 @@ func (e *Encoder) InitRecording() error {
 	return nil
 }
 
+// RecordingAvailable reports whether the recording manager is initialized.
+func (e *Encoder) RecordingAvailable() bool {
+	return e.recordingManager != nil
+}
+
 // RecorderStatuses returns status for all configured recorders.
 func (e *Encoder) RecorderStatuses() map[string]types.ProcessStatus {
+	if e.recordingManager == nil {
+		return map[string]types.ProcessStatus{}
+	}
 	return e.recordingManager.Statuses()
 }
 
@@ -331,8 +342,10 @@ func (e *Encoder) Stop() error {
 	}
 
 	// Stop recording manager (note: compliance recording continues independently)
-	if err := e.recordingManager.Stop(); err != nil {
-		errs = append(errs, fmt.Errorf("stop recording: %w", err))
+	if e.recordingManager != nil {
+		if err := e.recordingManager.Stop(); err != nil {
+			errs = append(errs, fmt.Errorf("stop recording: %w", err))
+		}
 	}
 
 	// Send graceful termination signal to source.
@@ -623,8 +636,10 @@ func (e *Encoder) startEnabledStreams() {
 	}
 
 	// Start recording manager (starts auto-start recorders)
-	if err := e.recordingManager.Start(); err != nil {
-		slog.Error("failed to start recording manager", "error", err)
+	if e.recordingManager != nil {
+		if err := e.recordingManager.Start(); err != nil {
+			slog.Error("failed to start recording manager", "error", err)
+		}
 	}
 }
 
@@ -679,7 +694,9 @@ func (e *Encoder) runDistributor() {
 		}
 
 		// Send audio to recording manager
-		_ = e.recordingManager.WriteAudio(buf[:n]) //nolint:errcheck // Errors logged internally by recording manager
+		if e.recordingManager != nil {
+			_ = e.recordingManager.WriteAudio(buf[:n]) //nolint:errcheck // Errors logged internally by recording manager
+		}
 	}
 }
 
@@ -711,6 +728,9 @@ func (e *Encoder) pollUntil(ctx context.Context, condition func() bool) <-chan s
 
 // AddRecorder creates a new recorder.
 func (e *Encoder) AddRecorder(cfg *types.Recorder) error {
+	if e.recordingManager == nil {
+		return ErrRecordingNotAvailable
+	}
 	if err := e.config.AddRecorder(cfg); err != nil {
 		return err
 	}
@@ -719,6 +739,9 @@ func (e *Encoder) AddRecorder(cfg *types.Recorder) error {
 
 // RemoveRecorder deletes a recorder.
 func (e *Encoder) RemoveRecorder(id string) error {
+	if e.recordingManager == nil {
+		return ErrRecordingNotAvailable
+	}
 	if err := e.recordingManager.RemoveRecorder(id); err != nil {
 		slog.Warn("error removing recorder from manager", "id", id, "error", err)
 	}
@@ -727,6 +750,9 @@ func (e *Encoder) RemoveRecorder(id string) error {
 
 // UpdateRecorder modifies a recorder configuration.
 func (e *Encoder) UpdateRecorder(cfg *types.Recorder) error {
+	if e.recordingManager == nil {
+		return ErrRecordingNotAvailable
+	}
 	if err := e.config.UpdateRecorder(cfg); err != nil {
 		return err
 	}
@@ -735,10 +761,16 @@ func (e *Encoder) UpdateRecorder(cfg *types.Recorder) error {
 
 // StartRecorder initiates a recorder.
 func (e *Encoder) StartRecorder(id string) error {
+	if e.recordingManager == nil {
+		return ErrRecordingNotAvailable
+	}
 	return e.recordingManager.StartRecorder(id)
 }
 
 // StopRecorder terminates a recorder.
 func (e *Encoder) StopRecorder(id string) error {
+	if e.recordingManager == nil {
+		return ErrRecordingNotAvailable
+	}
 	return e.recordingManager.StopRecorder(id)
 }
