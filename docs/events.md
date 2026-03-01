@@ -342,7 +342,7 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
 
 - **Severity:** `info`
 - **UI Label:** New File
-- **Triggered:** When a new recording file is created (at start or hourly rotation).
+- **Triggered:** When a new recording file is created (at start or hourly boundary).
 
 ```json
 {
@@ -431,7 +431,7 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
 
 - **Severity:** `warning`
 - **UI Label:** Retry
-- **Triggered:** When a failed upload is being retried. Retries occur at hour boundaries (during file rotation). Files are retried for up to 24 hours.
+- **Triggered:** When a failed upload is being retried. Retries occur at hour boundaries. Files are retried for up to 24 hours.
 
 ```json
 {

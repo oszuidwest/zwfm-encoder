@@ -234,34 +234,35 @@ func (s *Stream) Validate() error {
 	return nil
 }
 
-// RotationMode defines how recordings are split into files.
-type RotationMode string
+// RecordingMode defines how recordings are managed.
+type RecordingMode string
 
 const (
-	// RotationHourly rotates recordings at system clock hour boundaries.
-	RotationHourly RotationMode = "hourly"
-	// RotationOnDemand allows manual start/stop via the API.
-	RotationOnDemand RotationMode = "ondemand"
+	// RecordingHourly rotates recordings at system clock hour boundaries.
+	RecordingHourly RecordingMode = "hourly"
+	// RecordingOnDemand allows manual start/stop via the API.
+	RecordingOnDemand RecordingMode = "ondemand"
 )
 
-// validRotationModes is the set of supported rotation modes.
-var validRotationModes = map[RotationMode]bool{
-	RotationHourly: true, RotationOnDemand: true,
+// validRecordingModes is the set of supported recording modes.
+var validRecordingModes = map[RecordingMode]bool{
+	RecordingHourly:   true,
+	RecordingOnDemand: true,
 }
 
-// UnmarshalJSON validates the rotation mode during JSON parsing.
-func (m *RotationMode) UnmarshalJSON(data []byte) error {
+// UnmarshalJSON validates the recording mode during JSON parsing.
+func (m *RecordingMode) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
 		return err
 	}
 	if s == "" {
-		*m = RotationHourly // default
+		*m = RecordingHourly // default
 		return nil
 	}
-	mode := RotationMode(s)
-	if !validRotationModes[mode] {
-		return fmt.Errorf("rotation_mode: must be hourly or ondemand")
+	mode := RecordingMode(s)
+	if !validRecordingModes[mode] {
+		return fmt.Errorf("recording_mode: must be hourly or ondemand")
 	}
 	*m = mode
 	return nil
@@ -316,14 +317,14 @@ type SilenceDumpConfig struct {
 
 // Recorder defines a recording destination configuration.
 type Recorder struct {
-	ID           string       `json:"id"`
-	Name         string       `json:"name"`
-	Enabled      bool         `json:"enabled"`
-	Codec        Codec        `json:"codec"`
-	Bitrate      int          `json:"bitrate"` // kbit/s, 0 = codec default
-	RotationMode RotationMode `json:"rotation_mode"`
-	StorageMode  StorageMode  `json:"storage_mode"`
-	LocalPath    string       `json:"local_path"`
+	ID            string        `json:"id"`
+	Name          string        `json:"name"`
+	Enabled       bool          `json:"enabled"`
+	Codec         Codec         `json:"codec"`
+	Bitrate       int           `json:"bitrate"` // kbit/s, 0 = codec default
+	RecordingMode RecordingMode `json:"recording_mode"`
+	StorageMode   StorageMode   `json:"storage_mode"`
+	LocalPath     string        `json:"local_path"`
 
 	S3Endpoint        string `json:"s3_endpoint"`
 	S3Bucket          string `json:"s3_bucket"`
