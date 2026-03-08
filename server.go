@@ -316,6 +316,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == http.MethodPost {
+		r.Body = http.MaxBytesReader(w, r.Body, 4096)
 		csrfToken := r.FormValue("csrf_token")
 		if !s.sessions.ValidateCSRFToken(csrfToken) {
 			http.Error(w, "Invalid request", http.StatusBadRequest)

@@ -310,7 +310,7 @@ func (s *Server) handleUpdateStream(w http.ResponseWriter, r *http.Request) {
 			time.Sleep(types.StreamRestartDelay)
 			if s.encoder.State() == types.StateRunning {
 				if err := s.encoder.StartStream(id); err != nil {
-					slog.Warn("failed to restart stream", "stream_id", id, "error", err)
+					slog.Warn("failed to restart stream", "stream_id", id, "error", err) //nolint:gosec // G706: structured logging of request-derived ID is intentional for operational diagnostics
 				}
 			}
 		}()
