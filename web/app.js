@@ -759,16 +759,19 @@ document.addEventListener('alpine:init', () => {
                         silence_dump_enabled: this.config.silence_dump.enabled,
                         silence_dump_retention_days: this.config.silence_dump.retention_days,
                         webhook_url: this.config.webhook_url,
+                        webhook_events: this.config.webhook_events,
                         zabbix_server: this.config.zabbix_server,
                         zabbix_port: this.config.zabbix_port,
                         zabbix_host: this.config.zabbix_host,
                         zabbix_silence_key: this.config.zabbix_silence_key,
                         zabbix_upload_key: this.config.zabbix_upload_key,
+                        zabbix_events: this.config.zabbix_events,
                         graph_tenant_id: this.config.graph_tenant_id,
                         graph_client_id: this.config.graph_client_id,
                         graph_client_secret: '',
                         graph_from_address: this.config.graph_from_address,
-                        graph_recipients: this.config.graph_recipients
+                        graph_recipients: this.config.graph_recipients,
+                        email_events: this.config.email_events
                     })
                 });
                 if (!response.ok) {
