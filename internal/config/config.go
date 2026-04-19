@@ -258,16 +258,6 @@ func (c *Config) applyDefaults() {
 			c.Streaming.Streams[i].CreatedAt = time.Now().UnixMilli()
 		}
 	}
-	// Notification event subscription defaults (backward compat: zero-value means all enabled)
-	if c.Notifications.Webhook.Events == (types.EventSubscriptions{}) {
-		c.Notifications.Webhook.Events = types.EventSubscriptions{SilenceStart: true, SilenceEnd: true, AudioDump: true}
-	}
-	if c.Notifications.Email.Events == (types.EventSubscriptions{}) {
-		c.Notifications.Email.Events = types.EventSubscriptions{SilenceStart: true, SilenceEnd: true, AudioDump: true}
-	}
-	if c.Notifications.Zabbix.Events == (types.ZabbixEventSubscriptions{}) {
-		c.Notifications.Zabbix.Events = types.ZabbixEventSubscriptions{SilenceStart: true, SilenceEnd: true}
-	}
 	// Recording defaults
 	if c.Recording.Recorders == nil {
 		c.Recording.Recorders = []types.Recorder{}
