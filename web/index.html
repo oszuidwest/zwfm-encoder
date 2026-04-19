@@ -452,11 +452,19 @@
                             <span class="icon-container" x-html="icons.link"></span>
                             <h3>Webhook</h3>
                         </div>
-                        <p class="section-desc">POST request sent when silence is detected.</p>
+                        <p class="section-desc">POST request sent for silence events.</p>
                         <div class="form">
                             <div class="group">
                                 <label for="silence-webhook">Webhook URL</label>
                                 <input id="silence-webhook" type="url" placeholder="https://hooks.example.com/..." x-model="settingsForm.silenceWebhook" @input="markSettingsDirty()">
+                            </div>
+                            <div class="group">
+                                <label>Events</label>
+                                <div class="checkbox-group">
+                                    <label class="checkbox-label" for="webhook-evt-start"><input id="webhook-evt-start" type="checkbox" x-model="settingsForm.webhookEvents.silence_start" @change="markSettingsDirty()"> Silence start</label>
+                                    <label class="checkbox-label" for="webhook-evt-end"><input id="webhook-evt-end" type="checkbox" x-model="settingsForm.webhookEvents.silence_end" @change="markSettingsDirty()"> Silence end</label>
+                                    <label class="checkbox-label" for="webhook-evt-dump"><input id="webhook-evt-dump" type="checkbox" x-model="settingsForm.webhookEvents.audio_dump" @change="markSettingsDirty()"> Audio dump</label>
+                                </div>
                             </div>
                         </div>
                         <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('webhook')" :disabled="testStates.webhook.pending" x-text="testStates.webhook.text">Test</button>
@@ -466,7 +474,7 @@
                             <span class="icon-container" x-html="icons.email"></span>
                             <h3>Microsoft 365 Email</h3>
                         </div>
-                        <p class="section-desc">Email notifications via Microsoft Graph API when silence is detected.</p>
+                        <p class="section-desc">Email notifications via Microsoft Graph API for silence events.</p>
                         <template x-if="graphSecretExpiry.expires_soon">
                             <div class="warning-banner">
                                 <span x-html="icons.warning"></span>
@@ -498,6 +506,14 @@
                                 <label for="graph-recipients">Recipients</label>
                                 <input id="graph-recipients" type="text" placeholder="admin@company.com, tech@company.com" x-model="settingsForm.graph.recipients" @input="markSettingsDirty()" aria-describedby="graph-recipients-hint">
                                 <span id="graph-recipients-hint" class="input-hint">Comma-separated email addresses.</span>
+                            </div>
+                            <div class="group">
+                                <label>Events</label>
+                                <div class="checkbox-group">
+                                    <label class="checkbox-label" for="email-evt-start"><input id="email-evt-start" type="checkbox" x-model="settingsForm.emailEvents.silence_start" @change="markSettingsDirty()"> Silence start</label>
+                                    <label class="checkbox-label" for="email-evt-end"><input id="email-evt-end" type="checkbox" x-model="settingsForm.emailEvents.silence_end" @change="markSettingsDirty()"> Silence end</label>
+                                    <label class="checkbox-label" for="email-evt-dump"><input id="email-evt-dump" type="checkbox" x-model="settingsForm.emailEvents.audio_dump" @change="markSettingsDirty()"> Audio dump</label>
+                                </div>
                             </div>
                         </div>
                         <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('email')" :disabled="testStates.email.pending" x-text="testStates.email.text">Test</button>
@@ -531,6 +547,13 @@
                                 <div class="group">
                                     <label for="zabbix-upload-key">Upload Key</label>
                                     <input id="zabbix-upload-key" type="text" placeholder="upload.alert" x-model="settingsForm.zabbix.uploadKey" @input="markSettingsDirty()">
+                                </div>
+                            </div>
+                            <div class="group">
+                                <label>Events</label>
+                                <div class="checkbox-group">
+                                    <label class="checkbox-label" for="zabbix-evt-start"><input id="zabbix-evt-start" type="checkbox" x-model="settingsForm.zabbixEvents.silence_start" @change="markSettingsDirty()"> Silence start</label>
+                                    <label class="checkbox-label" for="zabbix-evt-end"><input id="zabbix-evt-end" type="checkbox" x-model="settingsForm.zabbixEvents.silence_end" @change="markSettingsDirty()"> Silence end</label>
                                 </div>
                             </div>
                         </div>

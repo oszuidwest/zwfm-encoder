@@ -91,7 +91,8 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 		},
 
 		// Notifications - Webhook
-		WebhookURL: cfg.WebhookURL,
+		WebhookURL:    cfg.WebhookURL,
+		WebhookEvents: cfg.WebhookEvents,
 
 		// Notifications - Zabbix
 		ZabbixServer:     cfg.ZabbixServer,
@@ -99,6 +100,7 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 		ZabbixHost:       cfg.ZabbixHost,
 		ZabbixSilenceKey: cfg.ZabbixSilenceKey,
 		ZabbixUploadKey:  cfg.ZabbixUploadKey,
+		ZabbixEvents:     cfg.ZabbixEvents,
 
 		// Notifications - Email
 		GraphTenantID:    cfg.GraphTenantID,
@@ -106,6 +108,7 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 		GraphFromAddress: cfg.GraphFromAddress,
 		GraphRecipients:  cfg.GraphRecipients,
 		GraphHasSecret:   cfg.GraphClientSecret != "",
+		EmailEvents:      cfg.EmailEvents,
 
 		// Recording
 		RecordingAPIKey: cfg.RecordingAPIKey,

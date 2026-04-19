@@ -228,8 +228,11 @@ document.addEventListener('alpine:init', () => {
             silenceRecovery: 5,
             silenceDump: { enabled: true, retentionDays: 7 },
             silenceWebhook: '',
+            webhookEvents: { silence_start: true, silence_end: true, audio_dump: true },
             zabbix: { server: '', port: 10051, host: '', silenceKey: '', uploadKey: '' },
+            zabbixEvents: { silence_start: true, silence_end: true },
             graph: { tenantId: '', clientId: '', clientSecret: '', fromAddress: '', recipients: '' },
+            emailEvents: { silence_start: true, silence_end: true, audio_dump: true },
             recordingApiKey: '',
             platform: ''
         },
@@ -688,6 +691,11 @@ document.addEventListener('alpine:init', () => {
                     retentionDays: this.config.silence_dump?.retention_days ?? 7
                 },
                 silenceWebhook: this.config.webhook_url || '',
+                webhookEvents: {
+                    silence_start: this.config.webhook_events?.silence_start ?? true,
+                    silence_end: this.config.webhook_events?.silence_end ?? true,
+                    audio_dump: this.config.webhook_events?.audio_dump ?? true
+                },
                 zabbix: {
                     server: this.config.zabbix_server || '',
                     port: this.config.zabbix_port || 10051,
@@ -695,12 +703,21 @@ document.addEventListener('alpine:init', () => {
                     silenceKey: this.config.zabbix_silence_key || '',
                     uploadKey: this.config.zabbix_upload_key || ''
                 },
+                zabbixEvents: {
+                    silence_start: this.config.zabbix_events?.silence_start ?? true,
+                    silence_end: this.config.zabbix_events?.silence_end ?? true
+                },
                 graph: {
                     tenantId: this.config.graph_tenant_id || '',
                     clientId: this.config.graph_client_id || '',
                     clientSecret: '', // Never pre-fill, only send if user enters new value
                     fromAddress: this.config.graph_from_address || '',
                     recipients: this.config.graph_recipients || ''
+                },
+                emailEvents: {
+                    silence_start: this.config.email_events?.silence_start ?? true,
+                    silence_end: this.config.email_events?.silence_end ?? true,
+                    audio_dump: this.config.email_events?.audio_dump ?? true
                 },
                 recordingApiKey: this.config.recording_api_key || '',
                 platform: this.config.platform || ''
@@ -791,16 +808,19 @@ document.addEventListener('alpine:init', () => {
                 silence_dump_enabled: form.silenceDump.enabled,
                 silence_dump_retention_days: form.silenceDump.retentionDays,
                 webhook_url: form.silenceWebhook,
+                webhook_events: form.webhookEvents,
                 zabbix_server: form.zabbix.server,
                 zabbix_port: form.zabbix.port,
                 zabbix_host: form.zabbix.host,
                 zabbix_silence_key: form.zabbix.silenceKey,
                 zabbix_upload_key: form.zabbix.uploadKey,
+                zabbix_events: form.zabbixEvents,
                 graph_tenant_id: form.graph.tenantId,
                 graph_client_id: form.graph.clientId,
                 graph_client_secret: form.graph.clientSecret || '', // empty = keep existing
                 graph_from_address: form.graph.fromAddress,
-                graph_recipients: form.graph.recipients
+                graph_recipients: form.graph.recipients,
+                email_events: form.emailEvents
             };
 
             try {

@@ -417,19 +417,22 @@ type APIConfigResponse struct {
 	SilenceRecoveryMs int64             `json:"silence_recovery_ms"`
 	SilenceDump       SilenceDumpConfig `json:"silence_dump"`
 
-	WebhookURL string `json:"webhook_url"`
+	WebhookURL    string             `json:"webhook_url"`
+	WebhookEvents EventSubscriptions `json:"webhook_events"`
 
-	ZabbixServer     string `json:"zabbix_server"`
-	ZabbixPort       int    `json:"zabbix_port"`
-	ZabbixHost       string `json:"zabbix_host"`
-	ZabbixSilenceKey string `json:"zabbix_silence_key"`
-	ZabbixUploadKey  string `json:"zabbix_upload_key"`
+	ZabbixServer     string                   `json:"zabbix_server"`
+	ZabbixPort       int                      `json:"zabbix_port"`
+	ZabbixHost       string                   `json:"zabbix_host"`
+	ZabbixSilenceKey string                   `json:"zabbix_silence_key"`
+	ZabbixUploadKey  string                   `json:"zabbix_upload_key"`
+	ZabbixEvents     ZabbixEventSubscriptions `json:"zabbix_events"`
 
-	GraphTenantID    string `json:"graph_tenant_id"`
-	GraphClientID    string `json:"graph_client_id"`
-	GraphFromAddress string `json:"graph_from_address"`
-	GraphRecipients  string `json:"graph_recipients"` // Comma-separated
-	GraphHasSecret   bool   `json:"graph_has_secret"`
+	GraphTenantID    string             `json:"graph_tenant_id"`
+	GraphClientID    string             `json:"graph_client_id"`
+	GraphFromAddress string             `json:"graph_from_address"`
+	GraphRecipients  string             `json:"graph_recipients"` // Comma-separated
+	GraphHasSecret   bool               `json:"graph_has_secret"`
+	EmailEvents      EventSubscriptions `json:"email_events"`
 
 	RecordingAPIKey string `json:"recording_api_key"`
 
@@ -452,6 +455,24 @@ type GraphConfig struct {
 	Recipients   string `json:"recipients,omitempty"` // Comma-separated
 }
 
+// EventSubscriptions controls which silence events a notification channel receives.
+type EventSubscriptions struct {
+	// SilenceStart enables notifications when silence is first detected.
+	SilenceStart bool `json:"silence_start"`
+	// SilenceEnd enables notifications when audio recovers from silence.
+	SilenceEnd bool `json:"silence_end"`
+	// AudioDump enables notifications when the audio dump MP3 is ready.
+	AudioDump bool `json:"audio_dump"`
+}
+
+// ZabbixEventSubscriptions controls which silence events trigger Zabbix notifications.
+type ZabbixEventSubscriptions struct {
+	// SilenceStart enables notifications when silence is first detected.
+	SilenceStart bool `json:"silence_start"`
+	// SilenceEnd enables notifications when audio recovers from silence.
+	SilenceEnd bool `json:"silence_end"`
+}
+
 // ZabbixConfig holds settings for Zabbix trapper monitoring alerts.
 type ZabbixConfig struct {
 	Server     string `json:"server,omitempty"`
@@ -459,6 +480,8 @@ type ZabbixConfig struct {
 	Host       string `json:"host,omitempty"`
 	SilenceKey string `json:"silence_key,omitempty"`
 	UploadKey  string `json:"upload_key,omitempty"`
+	// Events controls which silence events trigger Zabbix notifications.
+	Events ZabbixEventSubscriptions `json:"events"`
 }
 
 // SecretExpiryInfo holds expiration details for an Azure client secret.

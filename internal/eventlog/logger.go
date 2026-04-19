@@ -1,6 +1,6 @@
 // Package eventlog provides unified event logging for the encoder.
 // It captures both stream events (started, stable, error, retry, stopped)
-// and silence events (silence_start, silence_end) in a single JSON lines file.
+// and silence events (silence_start, silence_end, audio_dump_ready) in a single JSON lines file.
 package eventlog
 
 import (
@@ -36,6 +36,8 @@ const (
 	SilenceStart EventType = "silence_start"
 	// SilenceEnd indicates a silence end event.
 	SilenceEnd EventType = "silence_end"
+	// AudioDumpReady indicates an audio dump MP3 is ready after a silence event.
+	AudioDumpReady EventType = "audio_dump_ready"
 )
 
 const (
@@ -201,10 +203,23 @@ func (l *Logger) LogSilenceStart(levelL, levelR, threshold float64) error {
 	})
 }
 
-// LogSilenceEnd records when silence ends, including duration and debug dump information.
-func (l *Logger) LogSilenceEnd(durationMs int64, levelL, levelR, threshold float64, dumpPath, dumpFilename string, dumpSize int64, dumpError string) error {
+// LogSilenceEnd records when silence ends with duration information.
+func (l *Logger) LogSilenceEnd(durationMs int64, levelL, levelR, threshold float64) error {
 	return l.Log(&Event{
 		Type: SilenceEnd,
+		Details: &SilenceDetails{
+			LevelLeftDB:  levelL,
+			LevelRightDB: levelR,
+			ThresholdDB:  threshold,
+			DurationMs:   durationMs,
+		},
+	})
+}
+
+// LogAudioDumpReady records when the audio dump MP3 is ready after a silence event.
+func (l *Logger) LogAudioDumpReady(durationMs int64, levelL, levelR, threshold float64, dumpPath, dumpFilename string, dumpSize int64, dumpError string) error {
+	return l.Log(&Event{
+		Type: AudioDumpReady,
 		Details: &SilenceDetails{
 			LevelLeftDB:   levelL,
 			LevelRightDB:  levelR,
@@ -361,7 +376,7 @@ func IsStreamEvent(t EventType) bool {
 // IsSilenceEvent reports whether t is a silence event type.
 func IsSilenceEvent(t EventType) bool {
 	switch t {
-	case SilenceStart, SilenceEnd:
+	case SilenceStart, SilenceEnd, AudioDumpReady:
 		return true
 	default:
 		return false

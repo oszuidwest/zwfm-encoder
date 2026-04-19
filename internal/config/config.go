@@ -98,6 +98,8 @@ type SilenceDetectionConfig struct {
 type WebhookConfig struct {
 	// URL is the endpoint to POST silence alerts to.
 	URL string `json:"url"`
+	// Events controls which silence events trigger webhook notifications.
+	Events types.EventSubscriptions `json:"events"`
 }
 
 // EmailConfig holds Microsoft Graph email settings.
@@ -112,6 +114,8 @@ type EmailConfig struct {
 	FromAddress string `json:"from_address"`
 	// Recipients is a comma-separated list of email addresses to notify.
 	Recipients string `json:"recipients"`
+	// Events controls which silence events trigger email notifications.
+	Events types.EventSubscriptions `json:"events"`
 }
 
 // NotificationsConfig holds notification settings.
@@ -253,6 +257,16 @@ func (c *Config) applyDefaults() {
 		if c.Streaming.Streams[i].CreatedAt == 0 {
 			c.Streaming.Streams[i].CreatedAt = time.Now().UnixMilli()
 		}
+	}
+	// Notification event subscription defaults (backward compat: zero-value means all enabled)
+	if c.Notifications.Webhook.Events == (types.EventSubscriptions{}) {
+		c.Notifications.Webhook.Events = types.EventSubscriptions{SilenceStart: true, SilenceEnd: true, AudioDump: true}
+	}
+	if c.Notifications.Email.Events == (types.EventSubscriptions{}) {
+		c.Notifications.Email.Events = types.EventSubscriptions{SilenceStart: true, SilenceEnd: true, AudioDump: true}
+	}
+	if c.Notifications.Zabbix.Events == (types.ZabbixEventSubscriptions{}) {
+		c.Notifications.Zabbix.Events = types.ZabbixEventSubscriptions{SilenceStart: true, SilenceEnd: true}
 	}
 	// Recording defaults
 	if c.Recording.Recorders == nil {
@@ -536,6 +550,12 @@ type Snapshot struct {
 
 	// WebhookURL is the endpoint to POST silence alerts to.
 	WebhookURL string
+	// WebhookEvents controls which silence events trigger webhook notifications.
+	WebhookEvents types.EventSubscriptions
+	// EmailEvents controls which silence events trigger email notifications.
+	EmailEvents types.EventSubscriptions
+	// ZabbixEvents controls which silence events trigger Zabbix notifications.
+	ZabbixEvents types.ZabbixEventSubscriptions
 
 	// ZabbixServer is the Zabbix trapper server hostname or IP.
 	ZabbixServer string
@@ -600,7 +620,10 @@ func (c *Config) Snapshot() Snapshot {
 		SilenceDumpRetentionDays: cmp.Or(c.SilenceDump.RetentionDays, types.DefaultSilenceDumpRetentionDays),
 
 		// Notifications
-		WebhookURL: c.Notifications.Webhook.URL,
+		WebhookURL:    c.Notifications.Webhook.URL,
+		WebhookEvents: c.Notifications.Webhook.Events,
+		EmailEvents:   c.Notifications.Email.Events,
+		ZabbixEvents:  c.Notifications.Zabbix.Events,
 
 		// Zabbix
 		ZabbixServer:     c.Notifications.Zabbix.Server,
@@ -665,6 +688,12 @@ type SettingsUpdate struct {
 	SilenceDumpRetentionDays int `json:"silence_dump_retention_days"`
 	// WebhookURL is the endpoint to POST silence alerts to.
 	WebhookURL string `json:"webhook_url"`
+	// WebhookEvents controls which silence events trigger webhook notifications.
+	WebhookEvents types.EventSubscriptions `json:"webhook_events"`
+	// EmailEvents controls which silence events trigger email notifications.
+	EmailEvents types.EventSubscriptions `json:"email_events"`
+	// ZabbixEvents controls which silence events trigger Zabbix notifications.
+	ZabbixEvents types.ZabbixEventSubscriptions `json:"zabbix_events"`
 	// ZabbixServer is the Zabbix trapper server hostname or IP.
 	ZabbixServer string `json:"zabbix_server"`
 	// ZabbixPort is the Zabbix trapper server port.
@@ -753,6 +782,9 @@ func (c *Config) ApplySettings(s *SettingsUpdate) error {
 
 	// Notifications
 	c.Notifications.Webhook.URL = s.WebhookURL
+	c.Notifications.Webhook.Events = s.WebhookEvents
+	c.Notifications.Email.Events = s.EmailEvents
+	c.Notifications.Zabbix.Events = s.ZabbixEvents
 	c.Notifications.Zabbix.Server = s.ZabbixServer
 	c.Notifications.Zabbix.Port = s.ZabbixPort
 	c.Notifications.Zabbix.Host = s.ZabbixHost

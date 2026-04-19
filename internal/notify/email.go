@@ -49,22 +49,31 @@ func sendUploadAbandonedEmail(cfg *GraphConfig, stationName string, p UploadAban
 	return nil
 }
 
-func (n *SilenceNotifier) sendRecoveryEmailWithClientAndDump(cfg *GraphConfig, stationName string, durationMs int64, levelL, levelR, threshold float64, dump *silencedump.EncodeResult) error {
-	if !IsConfigured(cfg) {
-		return nil
-	}
-
+func (n *SilenceNotifier) sendSilenceEndEmailWithClient(cfg *GraphConfig, stationName string, durationMs int64, levelL, levelR, threshold float64) error {
 	subject := "[OK] Audio Restored - " + stationName
-
-	// Build body with dump info
 	body := fmt.Sprintf(
 		"Audio was restored at %s.\n\n"+
 			"The silence lasted %s.\n"+
 			"Level: Left %.1f dB / Right %.1f dB (threshold: %.1f dB)",
 		util.HumanTime(), util.FormatDuration(durationMs), levelL, levelR, threshold,
 	)
+	return n.sendEmail(cfg, subject, body)
+}
 
-	// Add dump info to body
+func (n *SilenceNotifier) sendDumpReadyEmailWithClient(cfg *GraphConfig, stationName string, durationMs int64, levelL, levelR, threshold float64, dump *silencedump.EncodeResult) error {
+	if !IsConfigured(cfg) {
+		return nil
+	}
+
+	subject := "[DUMP] Audio Recording - " + stationName
+
+	body := fmt.Sprintf(
+		"Audio dump ready at %s.\n\n"+
+			"The silence lasted %s.\n"+
+			"Level: Left %.1f dB / Right %.1f dB (threshold: %.1f dB)",
+		util.HumanTime(), util.FormatDuration(durationMs), levelL, levelR, threshold,
+	)
+
 	if dump != nil {
 		if dump.Error != nil {
 			body += fmt.Sprintf("\n\nAudio recording: Failed to capture (%s)", dump.Error.Error())
@@ -83,7 +92,7 @@ func (n *SilenceNotifier) sendRecoveryEmailWithClientAndDump(cfg *GraphConfig, s
 		return fmt.Errorf("no valid recipients")
 	}
 
-	// Prepare attachment if dump is available
+	// Prepare attachment if dump is available.
 	var attachment *EmailAttachment
 	if dump != nil && dump.Error == nil && dump.FilePath != "" {
 		data, err := os.ReadFile(dump.FilePath)
