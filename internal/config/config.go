@@ -285,7 +285,7 @@ func (c *Config) validate() error {
 }
 
 func validateSilenceThreshold(field string, threshold float64) string {
-	if threshold >= 0 || threshold < -60 {
+	if threshold > -1 || threshold < -60 {
 		return field + ": must be between -60 and -1 dB"
 	}
 	return ""

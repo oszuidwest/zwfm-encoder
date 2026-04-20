@@ -165,6 +165,11 @@ func TestLoadRejectsInvalidFileSettings(t *testing.T) {
 			wantErr: "silence_detection.threshold_db: must be between -60 and -1 dB",
 		},
 		{
+			name:    "fractional silence threshold above -1",
+			data:    `{"silence_detection":{"threshold_db":-0.5}}`,
+			wantErr: "silence_detection.threshold_db: must be between -60 and -1 dB",
+		},
+		{
 			name:    "zero silence duration",
 			data:    `{"silence_detection":{"duration_ms":0}}`,
 			wantErr: "silence_detection.duration_ms: must be greater than 0",
@@ -243,6 +248,11 @@ func TestSettingsUpdateValidateAPIFieldNames(t *testing.T) {
 		{
 			name:    "zero silence threshold uses API name",
 			update:  SettingsUpdate{SilenceThreshold: 0, SilenceDurationMs: 1, SilenceRecoveryMs: 1},
+			wantErr: "silence_threshold:",
+		},
+		{
+			name:    "fractional silence threshold above -1 uses API name",
+			update:  SettingsUpdate{SilenceThreshold: -0.5, SilenceDurationMs: 1, SilenceRecoveryMs: 1},
 			wantErr: "silence_threshold:",
 		},
 		{
