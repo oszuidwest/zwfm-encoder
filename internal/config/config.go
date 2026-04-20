@@ -32,6 +32,8 @@ var (
 const (
 	// DefaultWebPort is the default HTTP server port (8080).
 	DefaultWebPort = 8080
+	// DefaultZabbixPort is the default Zabbix trapper port.
+	DefaultZabbixPort = 10051
 	// DefaultWebUsername is the default web interface username (admin).
 	DefaultWebUsername = "admin"
 	// DefaultWebPassword is the default web interface password (encoder).
@@ -180,16 +182,35 @@ func New(filePath string) *Config {
 			ColorLight:  DefaultStationColorLight,
 			ColorDark:   DefaultStationColorDark,
 		},
-		Audio:            AudioConfig{},
-		SilenceDetection: SilenceDetectionConfig{},
+		Audio: AudioConfig{},
+		SilenceDetection: SilenceDetectionConfig{
+			ThresholdDB: DefaultSilenceThreshold,
+			DurationMs:  DefaultSilenceDurationMs,
+			RecoveryMs:  DefaultSilenceRecoveryMs,
+			PeakHoldMs:  DefaultPeakHoldMs,
+		},
 		SilenceDump: types.SilenceDumpConfig{
 			Enabled:       true, // Enabled by default when FFmpeg is available
 			RetentionDays: types.DefaultSilenceDumpRetentionDays,
 		},
-		Notifications: NotificationsConfig{},
-		Streaming:     StreamingConfig{Streams: []types.Stream{}},
-		Recording:     RecordingConfig{Recorders: []types.Recorder{}},
-		filePath:      filePath,
+		Notifications: NotificationsConfig{
+			Webhook: WebhookConfig{
+				Events: types.EventSubscriptions{SilenceStart: true, SilenceEnd: true, AudioDump: true},
+			},
+			Email: EmailConfig{
+				Events: types.EventSubscriptions{SilenceStart: true, SilenceEnd: true, AudioDump: true},
+			},
+			Zabbix: types.ZabbixConfig{
+				Port:   DefaultZabbixPort,
+				Events: &types.ZabbixEventSubscriptions{SilenceStart: true, SilenceEnd: true},
+			},
+		},
+		Streaming: StreamingConfig{Streams: []types.Stream{}},
+		Recording: RecordingConfig{
+			MaxDurationMinutes: DefaultRecordingMaxDurationMinutes,
+			Recorders:          []types.Recorder{},
+		},
+		filePath: filePath,
 	}
 }
 
@@ -200,7 +221,9 @@ func (c *Config) Load() error {
 
 	data, err := os.ReadFile(c.filePath)
 	if os.IsNotExist(err) {
-		c.applyDefaults()
+		if err := c.validate(); err != nil {
+			return err
+		}
 		return c.saveLocked()
 	}
 	if err != nil {
@@ -210,8 +233,6 @@ func (c *Config) Load() error {
 	if err := json.Unmarshal(data, c); err != nil {
 		return util.WrapError("parse config", err)
 	}
-
-	c.applyDefaults()
 
 	if err := c.validate(); err != nil {
 		return err
@@ -234,53 +255,6 @@ func (c *Config) validate() error {
 		return fmt.Errorf("invalid color_dark %q: must be hex format (#RRGGBB)", c.Web.ColorDark)
 	}
 	return nil
-}
-
-func (c *Config) applyDefaults() {
-	// System defaults
-	c.System.Port = cmp.Or(c.System.Port, DefaultWebPort)
-	c.System.Username = cmp.Or(c.System.Username, DefaultWebUsername)
-	c.System.Password = cmp.Or(c.System.Password, DefaultWebPassword)
-	// Web defaults
-	c.Web.StationName = cmp.Or(c.Web.StationName, DefaultStationName)
-	c.Web.ColorLight = cmp.Or(c.Web.ColorLight, DefaultStationColorLight)
-	c.Web.ColorDark = cmp.Or(c.Web.ColorDark, DefaultStationColorDark)
-	// Silence detection defaults
-	c.SilenceDetection.ThresholdDB = cmp.Or(c.SilenceDetection.ThresholdDB, DefaultSilenceThreshold)
-	c.SilenceDetection.DurationMs = cmp.Or(c.SilenceDetection.DurationMs, DefaultSilenceDurationMs)
-	c.SilenceDetection.RecoveryMs = cmp.Or(c.SilenceDetection.RecoveryMs, DefaultSilenceRecoveryMs)
-	c.SilenceDetection.PeakHoldMs = cmp.Or(c.SilenceDetection.PeakHoldMs, DefaultPeakHoldMs)
-	// Streaming defaults
-	if c.Streaming.Streams == nil {
-		c.Streaming.Streams = []types.Stream{}
-	}
-	for i := range c.Streaming.Streams {
-		if c.Streaming.Streams[i].CreatedAt == 0 {
-			c.Streaming.Streams[i].CreatedAt = time.Now().UnixMilli()
-		}
-	}
-	// Notification event subscription defaults - enable all events if zero-value (e.g. on upgrade from older config)
-	if c.Notifications.Webhook.Events == (types.EventSubscriptions{}) {
-		c.Notifications.Webhook.Events = types.EventSubscriptions{SilenceStart: true, SilenceEnd: true, AudioDump: true}
-	}
-	if c.Notifications.Email.Events == (types.EventSubscriptions{}) {
-		c.Notifications.Email.Events = types.EventSubscriptions{SilenceStart: true, SilenceEnd: true, AudioDump: true}
-	}
-	if c.Notifications.Zabbix.Events == nil {
-		c.Notifications.Zabbix.Events = &types.ZabbixEventSubscriptions{SilenceStart: true, SilenceEnd: true}
-	}
-	// Recording defaults
-	if c.Recording.Recorders == nil {
-		c.Recording.Recorders = []types.Recorder{}
-	}
-	for i := range c.Recording.Recorders {
-		if c.Recording.Recorders[i].RecordingMode == "" {
-			c.Recording.Recorders[i].RecordingMode = types.RecordingHourly
-		}
-		if c.Recording.Recorders[i].CreatedAt == 0 {
-			c.Recording.Recorders[i].CreatedAt = time.Now().UnixMilli()
-		}
-	}
 }
 
 func (c *Config) saveLocked() error {
@@ -610,25 +584,26 @@ func (c *Config) Snapshot() Snapshot {
 		// Audio
 		AudioInput: c.Audio.Input,
 
-		// Silence Detection (with defaults)
-		SilenceThreshold:  cmp.Or(c.SilenceDetection.ThresholdDB, DefaultSilenceThreshold),
-		SilenceDurationMs: cmp.Or(c.SilenceDetection.DurationMs, DefaultSilenceDurationMs),
-		SilenceRecoveryMs: cmp.Or(c.SilenceDetection.RecoveryMs, DefaultSilenceRecoveryMs),
-		PeakHoldMs:        cmp.Or(c.SilenceDetection.PeakHoldMs, DefaultPeakHoldMs),
+		// Silence Detection
+		SilenceThreshold:  c.SilenceDetection.ThresholdDB,
+		SilenceDurationMs: c.SilenceDetection.DurationMs,
+		SilenceRecoveryMs: c.SilenceDetection.RecoveryMs,
+		PeakHoldMs:        c.SilenceDetection.PeakHoldMs,
 
 		// Silence Dump
 		SilenceDumpEnabled:       c.SilenceDump.Enabled,
-		SilenceDumpRetentionDays: cmp.Or(c.SilenceDump.RetentionDays, types.DefaultSilenceDumpRetentionDays),
+		SilenceDumpRetentionDays: c.SilenceDump.RetentionDays,
 
 		// Notifications
 		WebhookURL:    c.Notifications.Webhook.URL,
 		WebhookEvents: c.Notifications.Webhook.Events,
 		EmailEvents:   c.Notifications.Email.Events,
-		ZabbixEvents:  *c.Notifications.Zabbix.Events,
+		// Keep a nil-guard here while Zabbix events remain pointer-backed in config.
+		ZabbixEvents: *cmp.Or(c.Notifications.Zabbix.Events, &types.ZabbixEventSubscriptions{}),
 
 		// Zabbix
 		ZabbixServer:     c.Notifications.Zabbix.Server,
-		ZabbixPort:       cmp.Or(c.Notifications.Zabbix.Port, 10051),
+		ZabbixPort:       c.Notifications.Zabbix.Port,
 		ZabbixHost:       c.Notifications.Zabbix.Host,
 		ZabbixSilenceKey: c.Notifications.Zabbix.SilenceKey,
 		ZabbixUploadKey:  c.Notifications.Zabbix.UploadKey,
@@ -642,7 +617,7 @@ func (c *Config) Snapshot() Snapshot {
 
 		// Recording
 		RecordingAPIKey:             c.Recording.APIKey,
-		RecordingMaxDurationMinutes: cmp.Or(c.Recording.MaxDurationMinutes, DefaultRecordingMaxDurationMinutes),
+		RecordingMaxDurationMinutes: c.Recording.MaxDurationMinutes,
 
 		// Entities
 		Streams:   slices.Clone(c.Streaming.Streams),
