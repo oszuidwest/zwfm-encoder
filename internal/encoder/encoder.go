@@ -67,7 +67,7 @@ type Encoder struct {
 	audioLevels         audio.AudioLevels
 	lastKnownLevels     audio.AudioLevels // Cache for TryRLock fallback
 	silenceDetect       *audio.SilenceDetector
-	silenceNotifier     *notify.SilenceNotifier
+	alertOrchestrator   *notify.AlertOrchestrator
 	peakHolder          *audio.PeakHolder
 	secretExpiryChecker *notify.SecretExpiryChecker
 }
@@ -77,16 +77,19 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 	graphCfg := cfg.GraphConfig()
 	snap := cfg.Snapshot()
 
-	// Create notifier first (no dependencies)
-	notifier := notify.NewSilenceNotifier(cfg)
+	webhookCh := &notify.WebhookChannel{}
+	emailCh := &notify.EmailChannel{}
+	zabbixCh := &notify.ZabbixChannel{}
+	dispatcher := notify.NewDispatcher(webhookCh, emailCh, zabbixCh)
+	orchestrator := notify.NewAlertOrchestrator(cfg, dispatcher)
 
-	// Create dump manager with callback to notifier
+	// Create dump manager with callback to alert orchestrator
 	dumpManager := silencedump.NewManager(
 		ffmpegPath,
 		snap.WebPort,
 		snap.SilenceDumpEnabled,
 		snap.SilenceDumpRetentionDays,
-		notifier.OnDumpReady,
+		orchestrator.OnDumpReady,
 	)
 
 	// Create event logger with platform-specific path
@@ -96,8 +99,8 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 		return nil, fmt.Errorf("create event logger at %s: %w", eventLogPath, err)
 	}
 
-	// Wire event logger to notifier for silence event logging
-	notifier.SetEventLogger(logger)
+	// Wire event logger to alert orchestrator for silence event logging
+	orchestrator.SetEventLogger(logger)
 
 	// Create stream manager and wire up event callback
 	streamMgr := streaming.NewManager(ffmpegPath)
@@ -111,7 +114,7 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 		state:               types.StateStopped,
 		backoff:             util.NewBackoff(types.InitialRetryDelay, types.MaxRetryDelay),
 		silenceDetect:       audio.NewSilenceDetector(),
-		silenceNotifier:     notifier,
+		alertOrchestrator:   orchestrator,
 		peakHolder:          audio.NewPeakHolder(),
 		secretExpiryChecker: notify.NewSecretExpiryChecker(&graphCfg),
 	}
@@ -162,7 +165,7 @@ func (e *Encoder) InitRecording() error {
 
 	// Wire upload abandoned callback to dispatch to all configured notification channels
 	mgr.SetUploadAbandonedCallback(func(event recording.UploadAbandonedEvent) {
-		notify.NotifyUploadAbandoned(e.config.Snapshot(), notify.UploadAbandonedParams{
+		e.alertOrchestrator.HandleUploadAbandoned(notify.UploadAbandonedData{
 			RecorderName: event.RecorderName,
 			Filename:     event.Filename,
 			S3Key:        event.S3Key,
@@ -305,7 +308,7 @@ func (e *Encoder) Start() error {
 	e.retryCount = 0
 	e.backoff.Reset()
 	e.silenceDetect.Reset()
-	e.silenceNotifier.Reset()
+	e.alertOrchestrator.Reset()
 	e.peakHolder.Reset()
 
 	go e.runSourceLoop()
@@ -379,8 +382,7 @@ func (e *Encoder) Stop() error {
 
 	// Reset silence detection and notification state
 	e.silenceDetect.Reset()
-	e.silenceNotifier.Reset()
-	e.silenceNotifier.ResetPendingRecovery()
+	e.alertOrchestrator.Reset()
 
 	// Stop silence dump manager
 	if e.silenceDumpManager != nil {
@@ -443,7 +445,7 @@ func (e *Encoder) StopStream(streamID string) error {
 // TriggerTestEmail sends a test email.
 func (e *Encoder) TriggerTestEmail() error {
 	cfg := e.config.Snapshot()
-	return notify.SendTestEmail(notify.BuildGraphConfig(cfg), cfg.StationName)
+	return notify.SendTestEmail(notify.BuildGraphConfig(&cfg), cfg.StationName)
 }
 
 // GraphSecretExpiry returns the current Graph API client secret expiry info.
@@ -649,7 +651,7 @@ func (e *Encoder) runDistributor() {
 
 	distributor := NewDistributor(
 		e.silenceDetect,
-		e.silenceNotifier,
+		e.alertOrchestrator,
 		e.silenceDumpManager,
 		e.peakHolder,
 		e.config,

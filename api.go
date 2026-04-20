@@ -100,7 +100,7 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 		ZabbixHost:       cfg.ZabbixHost,
 		ZabbixSilenceKey: cfg.ZabbixSilenceKey,
 		ZabbixUploadKey:  cfg.ZabbixUploadKey,
-		ZabbixEvents:     cfg.ZabbixEvents,
+		ZabbixEvents:     types.ZabbixEventSubscriptionsFromEvents(cfg.ZabbixEvents),
 
 		// Notifications - Email
 		GraphTenantID:    cfg.GraphTenantID,

@@ -133,7 +133,7 @@ func TestLoadPreservesExplicitZeroAndFalseValues(t *testing.T) {
 	if snap.EmailEvents != (types.EventSubscriptions{}) {
 		t.Fatalf("EmailEvents = %+v, want all false", snap.EmailEvents)
 	}
-	if snap.ZabbixEvents != (types.ZabbixEventSubscriptions{}) {
+	if snap.ZabbixEvents != (types.EventSubscriptions{}) {
 		t.Fatalf("ZabbixEvents = %+v, want both false", snap.ZabbixEvents)
 	}
 	if snap.ZabbixPort != 0 {
@@ -150,13 +150,13 @@ func TestLoadPreservesExplicitZeroAndFalseValues(t *testing.T) {
 func TestZabbixEventsJSONSemantics(t *testing.T) {
 	t.Parallel()
 
-	defaults := types.ZabbixEventSubscriptions{SilenceStart: true, SilenceEnd: true}
-	allFalse := types.ZabbixEventSubscriptions{}
+	defaults := types.EventSubscriptions{SilenceStart: true, SilenceEnd: true}
+	allFalse := types.EventSubscriptions{}
 
 	tests := []struct {
 		name string
 		json string
-		want types.ZabbixEventSubscriptions
+		want types.EventSubscriptions
 	}{
 		{
 			name: "missing events field preserves defaults",
@@ -176,7 +176,7 @@ func TestZabbixEventsJSONSemantics(t *testing.T) {
 		{
 			name: "partial object only overrides present fields",
 			json: `{"notifications":{"zabbix":{"events":{"silence_start":false}}}}`,
-			want: types.ZabbixEventSubscriptions{SilenceStart: false, SilenceEnd: true},
+			want: types.EventSubscriptions{SilenceStart: false, SilenceEnd: true},
 		},
 		{
 			name: "explicit false values disable events",
@@ -236,7 +236,7 @@ func TestZabbixEventsRoundTrip(t *testing.T) {
 	}
 
 	got := cfg2.Snapshot().ZabbixEvents
-	want := types.ZabbixEventSubscriptions{SilenceStart: true, SilenceEnd: true}
+	want := types.EventSubscriptions{SilenceStart: true, SilenceEnd: true}
 	if got != want {
 		t.Fatalf("ZabbixEvents after round-trip = %+v, want %+v", got, want)
 	}

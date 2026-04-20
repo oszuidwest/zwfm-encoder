@@ -656,7 +656,8 @@ type Snapshot struct {
 	// EmailEvents controls which silence events trigger email notifications.
 	EmailEvents types.EventSubscriptions
 	// ZabbixEvents controls which silence events trigger Zabbix notifications.
-	ZabbixEvents types.ZabbixEventSubscriptions
+	// Internally this uses the unified event shape; AudioDump remains false for Zabbix.
+	ZabbixEvents types.EventSubscriptions
 
 	// ZabbixServer is the Zabbix trapper server hostname or IP.
 	ZabbixServer string
@@ -724,7 +725,7 @@ func (c *Config) Snapshot() Snapshot {
 		WebhookURL:    c.Notifications.Webhook.URL,
 		WebhookEvents: c.Notifications.Webhook.Events,
 		EmailEvents:   c.Notifications.Email.Events,
-		ZabbixEvents:  c.Notifications.Zabbix.Events,
+		ZabbixEvents:  c.Notifications.Zabbix.Events.ToEventSubscriptions(),
 
 		// Zabbix
 		ZabbixServer:     c.Notifications.Zabbix.Server,
@@ -794,6 +795,7 @@ type SettingsUpdate struct {
 	// EmailEvents controls which silence events trigger email notifications.
 	EmailEvents types.EventSubscriptions `json:"email_events"`
 	// ZabbixEvents controls which silence events trigger Zabbix notifications.
+	// This stays on the public Zabbix-specific shape to avoid exposing audio_dump.
 	ZabbixEvents types.ZabbixEventSubscriptions `json:"zabbix_events"`
 	// ZabbixServer is the Zabbix trapper server hostname or IP.
 	ZabbixServer string `json:"zabbix_server"`
