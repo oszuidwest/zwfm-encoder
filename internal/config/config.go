@@ -32,6 +32,8 @@ var (
 const (
 	// DefaultWebPort is the default HTTP server port (8080).
 	DefaultWebPort = 8080
+	// DefaultZabbixPort is the default Zabbix trapper port.
+	DefaultZabbixPort = 10051
 	// DefaultWebUsername is the default web interface username (admin).
 	DefaultWebUsername = "admin"
 	// DefaultWebPassword is the default web interface password (encoder).
@@ -98,6 +100,8 @@ type SilenceDetectionConfig struct {
 type WebhookConfig struct {
 	// URL is the endpoint to POST silence alerts to.
 	URL string `json:"url"`
+	// Events controls which silence events trigger webhook notifications.
+	Events types.EventSubscriptions `json:"events"`
 }
 
 // EmailConfig holds Microsoft Graph email settings.
@@ -112,6 +116,8 @@ type EmailConfig struct {
 	FromAddress string `json:"from_address"`
 	// Recipients is a comma-separated list of email addresses to notify.
 	Recipients string `json:"recipients"`
+	// Events controls which silence events trigger email notifications.
+	Events types.EventSubscriptions `json:"events"`
 }
 
 // NotificationsConfig holds notification settings.
@@ -176,16 +182,35 @@ func New(filePath string) *Config {
 			ColorLight:  DefaultStationColorLight,
 			ColorDark:   DefaultStationColorDark,
 		},
-		Audio:            AudioConfig{},
-		SilenceDetection: SilenceDetectionConfig{},
+		Audio: AudioConfig{},
+		SilenceDetection: SilenceDetectionConfig{
+			ThresholdDB: DefaultSilenceThreshold,
+			DurationMs:  DefaultSilenceDurationMs,
+			RecoveryMs:  DefaultSilenceRecoveryMs,
+			PeakHoldMs:  DefaultPeakHoldMs,
+		},
 		SilenceDump: types.SilenceDumpConfig{
 			Enabled:       true, // Enabled by default when FFmpeg is available
 			RetentionDays: types.DefaultSilenceDumpRetentionDays,
 		},
-		Notifications: NotificationsConfig{},
-		Streaming:     StreamingConfig{Streams: []types.Stream{}},
-		Recording:     RecordingConfig{Recorders: []types.Recorder{}},
-		filePath:      filePath,
+		Notifications: NotificationsConfig{
+			Webhook: WebhookConfig{
+				Events: types.EventSubscriptions{SilenceStart: true, SilenceEnd: true, AudioDump: true},
+			},
+			Email: EmailConfig{
+				Events: types.EventSubscriptions{SilenceStart: true, SilenceEnd: true, AudioDump: true},
+			},
+			Zabbix: types.ZabbixConfig{
+				Port:   DefaultZabbixPort,
+				Events: &types.ZabbixEventSubscriptions{SilenceStart: true, SilenceEnd: true},
+			},
+		},
+		Streaming: StreamingConfig{Streams: []types.Stream{}},
+		Recording: RecordingConfig{
+			MaxDurationMinutes: DefaultRecordingMaxDurationMinutes,
+			Recorders:          []types.Recorder{},
+		},
+		filePath: filePath,
 	}
 }
 
@@ -196,6 +221,9 @@ func (c *Config) Load() error {
 
 	data, err := os.ReadFile(c.filePath)
 	if os.IsNotExist(err) {
+		if err := c.validate(); err != nil {
+			return err
+		}
 		return c.saveLocked()
 	}
 	if err != nil {
@@ -205,8 +233,6 @@ func (c *Config) Load() error {
 	if err := json.Unmarshal(data, c); err != nil {
 		return util.WrapError("parse config", err)
 	}
-
-	c.applyDefaults()
 
 	if err := c.validate(); err != nil {
 		return err
@@ -228,44 +254,91 @@ func (c *Config) validate() error {
 	if !util.StationColorPattern.MatchString(c.Web.ColorDark) {
 		return fmt.Errorf("invalid color_dark %q: must be hex format (#RRGGBB)", c.Web.ColorDark)
 	}
+	if msg := validateSilenceThreshold(c.SilenceDetection.ThresholdDB); msg != "" {
+		return fmt.Errorf("invalid %s", msg)
+	}
+	if msg := validatePositiveMilliseconds("silence_duration_ms", c.SilenceDetection.DurationMs); msg != "" {
+		return fmt.Errorf("invalid %s", msg)
+	}
+	if msg := validatePositiveMilliseconds("silence_recovery_ms", c.SilenceDetection.RecoveryMs); msg != "" {
+		return fmt.Errorf("invalid %s", msg)
+	}
+	if msg := validatePositiveMilliseconds("peak_hold_ms", c.SilenceDetection.PeakHoldMs); msg != "" {
+		return fmt.Errorf("invalid %s", msg)
+	}
+	if msg := validateNonNegativeDays("silence_dump.retention_days", c.SilenceDump.RetentionDays); msg != "" {
+		return fmt.Errorf("invalid %s", msg)
+	}
+	if msg := validateOptionalWebhookURL(c.Notifications.Webhook.URL); msg != "" {
+		return fmt.Errorf("invalid %s", msg)
+	}
+	if msg := validateOptionalEmail("graph_from_address", c.Notifications.Email.FromAddress); msg != "" {
+		return fmt.Errorf("invalid %s", msg)
+	}
+	if msg := validateRecipients(c.Notifications.Email.Recipients); msg != "" {
+		return fmt.Errorf("invalid %s", msg)
+	}
+	if msg := validateZabbixPort(c.Notifications.Zabbix.Port); msg != "" {
+		return fmt.Errorf("invalid %s", msg)
+	}
 	return nil
 }
 
-func (c *Config) applyDefaults() {
-	// System defaults
-	c.System.Port = cmp.Or(c.System.Port, DefaultWebPort)
-	c.System.Username = cmp.Or(c.System.Username, DefaultWebUsername)
-	c.System.Password = cmp.Or(c.System.Password, DefaultWebPassword)
-	// Web defaults
-	c.Web.StationName = cmp.Or(c.Web.StationName, DefaultStationName)
-	c.Web.ColorLight = cmp.Or(c.Web.ColorLight, DefaultStationColorLight)
-	c.Web.ColorDark = cmp.Or(c.Web.ColorDark, DefaultStationColorDark)
-	// Silence detection defaults
-	c.SilenceDetection.ThresholdDB = cmp.Or(c.SilenceDetection.ThresholdDB, DefaultSilenceThreshold)
-	c.SilenceDetection.DurationMs = cmp.Or(c.SilenceDetection.DurationMs, DefaultSilenceDurationMs)
-	c.SilenceDetection.RecoveryMs = cmp.Or(c.SilenceDetection.RecoveryMs, DefaultSilenceRecoveryMs)
-	c.SilenceDetection.PeakHoldMs = cmp.Or(c.SilenceDetection.PeakHoldMs, DefaultPeakHoldMs)
-	// Streaming defaults
-	if c.Streaming.Streams == nil {
-		c.Streaming.Streams = []types.Stream{}
+func validateSilenceThreshold(threshold float64) string {
+	if threshold > 0 || threshold < -60 {
+		return "silence_threshold: must be between -60 and 0 dB"
 	}
-	for i := range c.Streaming.Streams {
-		if c.Streaming.Streams[i].CreatedAt == 0 {
-			c.Streaming.Streams[i].CreatedAt = time.Now().UnixMilli()
+	return ""
+}
+
+func validatePositiveMilliseconds(field string, value int64) string {
+	if value <= 0 {
+		return field + ": must be greater than 0"
+	}
+	return ""
+}
+
+func validateNonNegativeDays(field string, value int) string {
+	if value < 0 {
+		return field + ": cannot be negative"
+	}
+	return ""
+}
+
+func validateOptionalWebhookURL(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	if _, err := url.ParseRequestURI(rawURL); err != nil {
+		return "webhook_url: invalid URL format"
+	}
+	return ""
+}
+
+func validateOptionalEmail(field, email string) string {
+	if email != "" && !util.EmailPattern.MatchString(email) {
+		return field + ": invalid email format"
+	}
+	return ""
+}
+
+func validateRecipients(recipients string) string {
+	if recipients == "" {
+		return ""
+	}
+	for email := range strings.SplitSeq(recipients, ",") {
+		if trimmed := strings.TrimSpace(email); trimmed != "" && !util.EmailPattern.MatchString(trimmed) {
+			return "graph_recipients: contains invalid email address"
 		}
 	}
-	// Recording defaults
-	if c.Recording.Recorders == nil {
-		c.Recording.Recorders = []types.Recorder{}
+	return ""
+}
+
+func validateZabbixPort(port int) string {
+	if port != 0 && (port < 1 || port > 65535) {
+		return "zabbix_port: must be between 1 and 65535"
 	}
-	for i := range c.Recording.Recorders {
-		if c.Recording.Recorders[i].RecordingMode == "" {
-			c.Recording.Recorders[i].RecordingMode = types.RecordingHourly
-		}
-		if c.Recording.Recorders[i].CreatedAt == 0 {
-			c.Recording.Recorders[i].CreatedAt = time.Now().UnixMilli()
-		}
-	}
+	return ""
 }
 
 func (c *Config) saveLocked() error {
@@ -536,6 +609,12 @@ type Snapshot struct {
 
 	// WebhookURL is the endpoint to POST silence alerts to.
 	WebhookURL string
+	// WebhookEvents controls which silence events trigger webhook notifications.
+	WebhookEvents types.EventSubscriptions
+	// EmailEvents controls which silence events trigger email notifications.
+	EmailEvents types.EventSubscriptions
+	// ZabbixEvents controls which silence events trigger Zabbix notifications.
+	ZabbixEvents types.ZabbixEventSubscriptions
 
 	// ZabbixServer is the Zabbix trapper server hostname or IP.
 	ZabbixServer string
@@ -589,22 +668,26 @@ func (c *Config) Snapshot() Snapshot {
 		// Audio
 		AudioInput: c.Audio.Input,
 
-		// Silence Detection (with defaults)
-		SilenceThreshold:  cmp.Or(c.SilenceDetection.ThresholdDB, DefaultSilenceThreshold),
-		SilenceDurationMs: cmp.Or(c.SilenceDetection.DurationMs, DefaultSilenceDurationMs),
-		SilenceRecoveryMs: cmp.Or(c.SilenceDetection.RecoveryMs, DefaultSilenceRecoveryMs),
-		PeakHoldMs:        cmp.Or(c.SilenceDetection.PeakHoldMs, DefaultPeakHoldMs),
+		// Silence Detection
+		SilenceThreshold:  c.SilenceDetection.ThresholdDB,
+		SilenceDurationMs: c.SilenceDetection.DurationMs,
+		SilenceRecoveryMs: c.SilenceDetection.RecoveryMs,
+		PeakHoldMs:        c.SilenceDetection.PeakHoldMs,
 
 		// Silence Dump
 		SilenceDumpEnabled:       c.SilenceDump.Enabled,
-		SilenceDumpRetentionDays: cmp.Or(c.SilenceDump.RetentionDays, types.DefaultSilenceDumpRetentionDays),
+		SilenceDumpRetentionDays: c.SilenceDump.RetentionDays,
 
 		// Notifications
-		WebhookURL: c.Notifications.Webhook.URL,
+		WebhookURL:    c.Notifications.Webhook.URL,
+		WebhookEvents: c.Notifications.Webhook.Events,
+		EmailEvents:   c.Notifications.Email.Events,
+		// Keep a nil-guard here while Zabbix events remain pointer-backed in config.
+		ZabbixEvents: *cmp.Or(c.Notifications.Zabbix.Events, &types.ZabbixEventSubscriptions{}),
 
 		// Zabbix
 		ZabbixServer:     c.Notifications.Zabbix.Server,
-		ZabbixPort:       cmp.Or(c.Notifications.Zabbix.Port, 10051),
+		ZabbixPort:       c.Notifications.Zabbix.Port,
 		ZabbixHost:       c.Notifications.Zabbix.Host,
 		ZabbixSilenceKey: c.Notifications.Zabbix.SilenceKey,
 		ZabbixUploadKey:  c.Notifications.Zabbix.UploadKey,
@@ -618,7 +701,7 @@ func (c *Config) Snapshot() Snapshot {
 
 		// Recording
 		RecordingAPIKey:             c.Recording.APIKey,
-		RecordingMaxDurationMinutes: cmp.Or(c.Recording.MaxDurationMinutes, DefaultRecordingMaxDurationMinutes),
+		RecordingMaxDurationMinutes: c.Recording.MaxDurationMinutes,
 
 		// Entities
 		Streams:   slices.Clone(c.Streaming.Streams),
@@ -665,6 +748,12 @@ type SettingsUpdate struct {
 	SilenceDumpRetentionDays int `json:"silence_dump_retention_days"`
 	// WebhookURL is the endpoint to POST silence alerts to.
 	WebhookURL string `json:"webhook_url"`
+	// WebhookEvents controls which silence events trigger webhook notifications.
+	WebhookEvents types.EventSubscriptions `json:"webhook_events"`
+	// EmailEvents controls which silence events trigger email notifications.
+	EmailEvents types.EventSubscriptions `json:"email_events"`
+	// ZabbixEvents controls which silence events trigger Zabbix notifications.
+	ZabbixEvents types.ZabbixEventSubscriptions `json:"zabbix_events"`
 	// ZabbixServer is the Zabbix trapper server hostname or IP.
 	ZabbixServer string `json:"zabbix_server"`
 	// ZabbixPort is the Zabbix trapper server port.
@@ -694,42 +783,33 @@ func (s *SettingsUpdate) Validate() []string {
 	var errs []string
 
 	// Silence detection thresholds
-	if s.SilenceThreshold > 0 || s.SilenceThreshold < -60 {
-		errs = append(errs, "silence_threshold: must be between -60 and 0 dB")
+	if msg := validateSilenceThreshold(s.SilenceThreshold); msg != "" {
+		errs = append(errs, msg)
 	}
-	if s.SilenceDurationMs <= 0 {
-		errs = append(errs, "silence_duration_ms: must be greater than 0")
+	if msg := validatePositiveMilliseconds("silence_duration_ms", s.SilenceDurationMs); msg != "" {
+		errs = append(errs, msg)
 	}
-	if s.SilenceRecoveryMs <= 0 {
-		errs = append(errs, "silence_recovery_ms: must be greater than 0")
+	if msg := validatePositiveMilliseconds("silence_recovery_ms", s.SilenceRecoveryMs); msg != "" {
+		errs = append(errs, msg)
 	}
-	if s.SilenceDumpRetentionDays < 0 {
-		errs = append(errs, "silence_dump_retention_days: cannot be negative")
+	if msg := validateNonNegativeDays("silence_dump_retention_days", s.SilenceDumpRetentionDays); msg != "" {
+		errs = append(errs, msg)
 	}
 
 	// Webhook URL format
-	if s.WebhookURL != "" {
-		if _, err := url.ParseRequestURI(s.WebhookURL); err != nil {
-			errs = append(errs, "webhook_url: invalid URL format")
-		}
+	if msg := validateOptionalWebhookURL(s.WebhookURL); msg != "" {
+		errs = append(errs, msg)
 	}
 
 	// Email address validation
-	if s.GraphFromAddress != "" && !util.EmailPattern.MatchString(s.GraphFromAddress) {
-		errs = append(errs, "graph_from_address: invalid email format")
+	if msg := validateOptionalEmail("graph_from_address", s.GraphFromAddress); msg != "" {
+		errs = append(errs, msg)
 	}
-	if s.GraphRecipients != "" {
-		for email := range strings.SplitSeq(s.GraphRecipients, ",") {
-			if trimmed := strings.TrimSpace(email); trimmed != "" && !util.EmailPattern.MatchString(trimmed) {
-				errs = append(errs, "graph_recipients: contains invalid email address")
-				break
-			}
-		}
+	if msg := validateRecipients(s.GraphRecipients); msg != "" {
+		errs = append(errs, msg)
 	}
-
-	// Zabbix port range
-	if s.ZabbixPort != 0 && (s.ZabbixPort < 1 || s.ZabbixPort > 65535) {
-		errs = append(errs, "zabbix_port: must be between 1 and 65535")
+	if msg := validateZabbixPort(s.ZabbixPort); msg != "" {
+		errs = append(errs, msg)
 	}
 
 	return errs
@@ -753,6 +833,10 @@ func (c *Config) ApplySettings(s *SettingsUpdate) error {
 
 	// Notifications
 	c.Notifications.Webhook.URL = s.WebhookURL
+	c.Notifications.Webhook.Events = s.WebhookEvents
+	c.Notifications.Email.Events = s.EmailEvents
+	zabbixEvents := s.ZabbixEvents
+	c.Notifications.Zabbix.Events = &zabbixEvents
 	c.Notifications.Zabbix.Server = s.ZabbixServer
 	c.Notifications.Zabbix.Port = s.ZabbixPort
 	c.Notifications.Zabbix.Host = s.ZabbixHost

@@ -38,11 +38,23 @@ type WebhookPayload struct {
 // sendWebhookSilence notifies the configured webhook of critical silence detection.
 func sendWebhookSilence(webhookURL string, levelL, levelR, threshold float64) error {
 	return sendWebhook(webhookURL, &WebhookPayload{
-		Event:        "silence_detected",
+		Event:        "silence_start",
 		LevelLeftDB:  levelL,
 		LevelRightDB: levelR,
 		Threshold:    threshold,
 		Timestamp:    timestampUTC(),
+	})
+}
+
+// sendWebhookSilenceEnd notifies the configured webhook that silence has ended.
+func sendWebhookSilenceEnd(webhookURL string, durationMs int64, levelL, levelR, threshold float64) error {
+	return sendWebhook(webhookURL, &WebhookPayload{
+		Event:             "silence_end",
+		SilenceDurationMs: durationMs,
+		LevelLeftDB:       levelL,
+		LevelRightDB:      levelR,
+		Threshold:         threshold,
+		Timestamp:         timestampUTC(),
 	})
 }
 
@@ -73,9 +85,10 @@ func sendUploadAbandonedWebhook(webhookURL string, p UploadAbandonedParams) erro
 	})
 }
 
-func sendRecoveryWebhook(webhookURL string, durationMs int64, levelL, levelR, threshold float64, dump *silencedump.EncodeResult) error {
+// sendWebhookDumpReady notifies the configured webhook that an audio dump is ready.
+func sendWebhookDumpReady(webhookURL string, durationMs int64, levelL, levelR, threshold float64, dump *silencedump.EncodeResult) error {
 	payload := &WebhookPayload{
-		Event:             "silence_recovered",
+		Event:             "audio_dump_ready",
 		SilenceDurationMs: durationMs,
 		LevelLeftDB:       levelL,
 		LevelRightDB:      levelR,

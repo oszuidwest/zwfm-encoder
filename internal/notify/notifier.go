@@ -112,20 +112,24 @@ func (n *SilenceNotifier) handleSilenceStart(levelL, levelR float64) {
 
 	// Determine which notifications to send (only once per silence period)
 	n.mu.Lock()
-	shouldSendWebhook := !n.webhookSent && cfg.HasWebhook()
-	shouldSendEmail := !n.emailSent && cfg.HasGraph()
+	shouldSendWebhook := !n.webhookSent && cfg.HasWebhook() && cfg.WebhookEvents.SilenceStart
+	shouldSendEmail := !n.emailSent && cfg.HasGraph() && cfg.EmailEvents.SilenceStart
 	shouldSendLog := !n.logSent && n.eventLogger != nil
-	shouldSendZabbix := !n.zabbixSent && cfg.HasZabbixSilence()
-	if shouldSendWebhook {
+	shouldSendZabbix := !n.zabbixSent && cfg.HasZabbixSilence() && cfg.ZabbixEvents.SilenceStart
+	// Mark channels as present even if silence_start was not subscribed. sentFlags records
+	// which channels were configured at silence-start time, not whether a notification was
+	// delivered. It gates silence_end and audio_dump_ready dispatch so those events are only
+	// sent on channels that were active when the silence began.
+	if !n.webhookSent && cfg.HasWebhook() {
 		n.webhookSent = true
 	}
-	if shouldSendEmail {
+	if !n.emailSent && cfg.HasGraph() {
 		n.emailSent = true
 	}
-	if shouldSendLog {
+	if !n.logSent && n.eventLogger != nil {
 		n.logSent = true
 	}
-	if shouldSendZabbix {
+	if !n.zabbixSent && cfg.HasZabbixSilence() {
 		n.zabbixSent = true
 	}
 	n.mu.Unlock()
@@ -149,30 +153,44 @@ func (n *SilenceNotifier) handleSilenceEnd(totalDurationMs int64, levelL, levelR
 
 	// Only send recovery notifications if we sent the corresponding start notification
 	n.mu.Lock()
-	shouldSendWebhookRecovery := n.webhookSent
-	shouldSendEmailRecovery := n.emailSent
-	shouldSendLogRecovery := n.logSent
-	shouldSendZabbixRecovery := n.zabbixSent
+	sentWebhook := n.webhookSent
+	sentEmail := n.emailSent
+	sentLog := n.logSent
+	sentZabbix := n.zabbixSent
 	// Reset notification state for next silence period
 	n.webhookSent = false
 	n.emailSent = false
 	n.logSent = false
 	n.zabbixSent = false
 
-	// Store pending recovery data for when clip is ready
+	// Store pending recovery data for when audio dump is ready
 	n.pendingRecovery = &pendingRecoveryData{
 		durationMs: totalDurationMs,
 		levelL:     levelL,
 		levelR:     levelR,
 		cfg:        cfg,
 		sentFlags: recoveryFlags{
-			webhook: shouldSendWebhookRecovery,
-			email:   shouldSendEmailRecovery,
-			log:     shouldSendLogRecovery,
-			zabbix:  shouldSendZabbixRecovery,
+			webhook: sentWebhook,
+			email:   sentEmail,
+			log:     sentLog,
+			zabbix:  sentZabbix,
 		},
 	}
 	n.mu.Unlock()
+
+	// Send immediate silence_end notifications to subscribed channels
+	if sentWebhook && cfg.WebhookEvents.SilenceEnd {
+		go n.sendSilenceEndWebhook(cfg, totalDurationMs, levelL, levelR)
+	}
+	if sentEmail && cfg.EmailEvents.SilenceEnd {
+		go n.sendSilenceEndEmail(cfg, totalDurationMs, levelL, levelR)
+	}
+	if sentLog {
+		go n.logSilenceEnd(cfg, totalDurationMs, levelL, levelR) // event log is an audit trail; always records regardless of notification subscriptions
+	}
+	if sentZabbix && cfg.ZabbixEvents.SilenceEnd {
+		go n.sendRecoveryZabbix(cfg, totalDurationMs, levelL, levelR)
+	}
 }
 
 // Reset clears notification state for the current silence period.
@@ -261,7 +279,7 @@ func (n *SilenceNotifier) logSilenceStart(cfg config.Snapshot, levelL, levelR fl
 	}
 }
 
-// OnDumpReady completes pending recovery notifications with the audio dump attached.
+// OnDumpReady dispatches audio_dump_ready notifications to subscribed channels.
 func (n *SilenceNotifier) OnDumpReady(result *silencedump.EncodeResult) {
 	n.mu.Lock()
 	pending := n.pendingRecovery
@@ -272,52 +290,80 @@ func (n *SilenceNotifier) OnDumpReady(result *silencedump.EncodeResult) {
 		return
 	}
 
-	// Send recovery notifications with dump
-	if pending.sentFlags.webhook {
-		go n.sendRecoveryWebhookWithDump(pending.cfg, pending.durationMs, pending.levelL, pending.levelR, result)
+	// Send audio_dump_ready to channels subscribed to audio dumps
+	if pending.sentFlags.webhook && pending.cfg.WebhookEvents.AudioDump {
+		go n.sendDumpReadyWebhook(pending.cfg, pending.durationMs, pending.levelL, pending.levelR, result)
 	}
-	if pending.sentFlags.email {
-		go n.sendRecoveryEmailWithDump(pending.cfg, pending.durationMs, pending.levelL, pending.levelR, result)
+	if pending.sentFlags.email && pending.cfg.EmailEvents.AudioDump {
+		go n.sendDumpReadyEmail(pending.cfg, pending.durationMs, pending.levelL, pending.levelR, result)
 	}
 	if pending.sentFlags.log {
-		go n.logSilenceEndWithDump(pending.cfg, pending.durationMs, pending.levelL, pending.levelR, result)
-	}
-	if pending.sentFlags.zabbix {
-		go n.sendRecoveryZabbix(pending.cfg, pending.durationMs, pending.levelL, pending.levelR)
+		go n.logAudioDumpReady(pending.cfg, pending.durationMs, pending.levelL, pending.levelR, result) // event log is an audit trail; always records regardless of notification subscriptions
 	}
 }
 
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
-func (n *SilenceNotifier) sendRecoveryWebhookWithDump(cfg config.Snapshot, durationMs int64, levelL, levelR float64, dump *silencedump.EncodeResult) {
+func (n *SilenceNotifier) sendSilenceEndWebhook(cfg config.Snapshot, durationMs int64, levelL, levelR float64) {
 	logNotifyResult(
 		func() error {
-			return sendRecoveryWebhook(cfg.WebhookURL, durationMs, levelL, levelR, cfg.SilenceThreshold, dump)
+			return sendWebhookSilenceEnd(cfg.WebhookURL, durationMs, levelL, levelR, cfg.SilenceThreshold)
 		},
-		"Recovery webhook with dump",
+		"Silence end webhook",
 	)
 }
 
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
-func (n *SilenceNotifier) sendRecoveryEmailWithDump(cfg config.Snapshot, durationMs int64, levelL, levelR float64, dump *silencedump.EncodeResult) {
+func (n *SilenceNotifier) sendSilenceEndEmail(cfg config.Snapshot, durationMs int64, levelL, levelR float64) {
 	graphCfg := BuildGraphConfig(cfg)
 	logNotifyResult(
 		func() error {
-			return n.sendRecoveryEmailWithClientAndDump(graphCfg, cfg.StationName, durationMs, levelL, levelR, cfg.SilenceThreshold, dump)
+			return n.sendSilenceEndEmailWithClient(graphCfg, cfg.StationName, durationMs, levelL, levelR, cfg.SilenceThreshold)
 		},
-		"Recovery email with dump",
+		"Silence end email",
 	)
 }
 
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
-func (n *SilenceNotifier) logSilenceEndWithDump(cfg config.Snapshot, durationMs int64, levelL, levelR float64, dump *silencedump.EncodeResult) {
+func (n *SilenceNotifier) logSilenceEnd(cfg config.Snapshot, durationMs int64, levelL, levelR float64) {
+	if n.eventLogger == nil {
+		return
+	}
+	if err := n.eventLogger.LogSilenceEnd(durationMs, levelL, levelR, cfg.SilenceThreshold); err != nil {
+		slog.Warn("failed to log silence end", "error", err)
+	}
+}
+
+//nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
+func (n *SilenceNotifier) sendDumpReadyWebhook(cfg config.Snapshot, durationMs int64, levelL, levelR float64, dump *silencedump.EncodeResult) {
+	logNotifyResult(
+		func() error {
+			return sendWebhookDumpReady(cfg.WebhookURL, durationMs, levelL, levelR, cfg.SilenceThreshold, dump)
+		},
+		"Audio dump ready webhook",
+	)
+}
+
+//nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
+func (n *SilenceNotifier) sendDumpReadyEmail(cfg config.Snapshot, durationMs int64, levelL, levelR float64, dump *silencedump.EncodeResult) {
+	graphCfg := BuildGraphConfig(cfg)
+	logNotifyResult(
+		func() error {
+			return n.sendDumpReadyEmailWithClient(graphCfg, cfg.StationName, durationMs, levelL, levelR, cfg.SilenceThreshold, dump)
+		},
+		"Audio dump ready email",
+	)
+}
+
+//nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
+func (n *SilenceNotifier) logAudioDumpReady(cfg config.Snapshot, durationMs int64, levelL, levelR float64, dump *silencedump.EncodeResult) {
 	if n.eventLogger == nil {
 		return
 	}
 
 	dumpPath, dumpFilename, dumpSize, dumpError := extractDumpInfo(dump)
 
-	if err := n.eventLogger.LogSilenceEnd(durationMs, levelL, levelR, cfg.SilenceThreshold, dumpPath, dumpFilename, dumpSize, dumpError); err != nil {
-		slog.Warn("failed to log silence end", "error", err)
+	if err := n.eventLogger.LogAudioDumpReady(durationMs, levelL, levelR, cfg.SilenceThreshold, dumpPath, dumpFilename, dumpSize, dumpError); err != nil {
+		slog.Warn("failed to log audio dump ready", "error", err)
 	}
 }
 
@@ -361,6 +407,9 @@ type UploadAbandonedParams struct {
 }
 
 // NotifyUploadAbandoned dispatches an upload abandonment alert to all configured channels.
+// Unlike silence notifications, upload abandonment alerts are not gated by EventSubscriptions.
+// They represent a critical data-loss condition (S3 upload exhausted all retries), so they are
+// sent whenever the channel is configured. Operators opt out by leaving the channel unconfigured.
 //
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func NotifyUploadAbandoned(cfg config.Snapshot, p UploadAbandonedParams) {
