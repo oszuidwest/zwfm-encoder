@@ -93,6 +93,8 @@ type SilenceDetectionConfig struct {
 	// RecoveryMs is how long audio must be above threshold before clearing the alert.
 	RecoveryMs int64 `json:"recovery_ms"`
 	// PeakHoldMs is how long the VU meter holds peak values before decay.
+	// Config-file-only: not exposed in the settings API or web UI.
+	// Adjust in config.json under silence_detection.peak_hold_ms (default: 3000 ms).
 	PeakHoldMs int64 `json:"peak_hold_ms"`
 }
 
@@ -141,6 +143,8 @@ type RecordingConfig struct {
 	// APIKey is the secret key for external recording control via REST API.
 	APIKey string `json:"api_key"` //nolint:gosec // G117: intentional config field for recording API auth
 	// MaxDurationMinutes is the maximum allowed duration for on-demand recordings.
+	// Config-file-only: not exposed in the settings API or web UI.
+	// Adjust in config.json under recording.max_duration_minutes (default: 240 min).
 	MaxDurationMinutes int `json:"max_duration_minutes"`
 	// Recorders lists configured recording destinations.
 	Recorders []types.Recorder `json:"recorders"`
@@ -642,6 +646,7 @@ type Snapshot struct {
 	// SilenceRecoveryMs is how long audio must be above threshold before clearing the alert.
 	SilenceRecoveryMs int64
 	// PeakHoldMs is how long the VU meter holds peak values before decay.
+	// Config-file-only: not part of SettingsUpdate or the settings API.
 	PeakHoldMs int64
 
 	// SilenceDumpEnabled reports whether silence audio dumping is enabled.
@@ -684,6 +689,7 @@ type Snapshot struct {
 	// RecordingAPIKey is the secret key for external recording control via REST API.
 	RecordingAPIKey string
 	// RecordingMaxDurationMinutes is the maximum allowed duration for on-demand recordings.
+	// Config-file-only: not part of SettingsUpdate or the settings API.
 	RecordingMaxDurationMinutes int
 
 	// Streams lists configured stream destinations.
