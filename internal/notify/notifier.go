@@ -12,6 +12,10 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 )
 
+// logQueueDepth is the buffer size of the serialized log worker channel.
+// Three log events are produced per silence cycle (start, end, dump); 16 gives ample headroom.
+const logQueueDepth = 16
+
 // AlertOrchestrator manages silence and upload-abandonment alerting.
 type AlertOrchestrator struct {
 	cfg         *config.Config
@@ -21,6 +25,8 @@ type AlertOrchestrator struct {
 	mu              sync.Mutex
 	activeChannels  []AlertChannel
 	pendingRecovery *pendingRecoveryData
+
+	logQueue chan func() // serialized log writes; single worker guarantees JSONL write order
 }
 
 // pendingRecoveryData holds recovery event data while waiting for the audio dump.
@@ -34,7 +40,31 @@ type pendingRecoveryData struct {
 
 // NewAlertOrchestrator creates a new alert orchestrator.
 func NewAlertOrchestrator(cfg *config.Config, dispatcher *Dispatcher) *AlertOrchestrator {
-	return &AlertOrchestrator{cfg: cfg, dispatcher: dispatcher}
+	o := &AlertOrchestrator{
+		cfg:        cfg,
+		dispatcher: dispatcher,
+		logQueue:   make(chan func(), logQueueDepth),
+	}
+	go o.runLogWorker()
+	return o
+}
+
+// runLogWorker drains logQueue sequentially, guaranteeing that silence events are
+// written to the JSONL file in the same order they were enqueued (i.e., event order).
+func (o *AlertOrchestrator) runLogWorker() {
+	for fn := range o.logQueue {
+		fn()
+	}
+}
+
+// enqueueLog submits fn to the serialized log worker. If the queue is full (> logQueueDepth
+// pending entries), the entry is dropped and a warning is emitted.
+func (o *AlertOrchestrator) enqueueLog(fn func()) {
+	select {
+	case o.logQueue <- fn:
+	default:
+		slog.Warn("silence log queue full, log entry dropped")
+	}
 }
 
 // SetEventLogger sets the event logger for silence notifications.
@@ -71,7 +101,7 @@ func (o *AlertOrchestrator) handleSilenceStart(levelL, levelR float64) {
 
 	now := time.Now()
 	o.dispatcher.DispatchSilenceStart(active, &cfg, levelL, levelR)
-	go o.logSilenceStart(now, &cfg, levelL, levelR)
+	o.enqueueLog(func() { o.logSilenceStart(now, &cfg, levelL, levelR) })
 }
 
 func (o *AlertOrchestrator) handleSilenceEnd(durationMS int64, levelL, levelR float64) {
@@ -91,7 +121,7 @@ func (o *AlertOrchestrator) handleSilenceEnd(durationMS int64, levelL, levelR fl
 
 	now := time.Now()
 	o.dispatcher.DispatchSilenceEnd(active, &cfg, durationMS, levelL, levelR)
-	go o.logSilenceEnd(now, &cfg, durationMS, levelL, levelR)
+	o.enqueueLog(func() { o.logSilenceEnd(now, &cfg, durationMS, levelL, levelR) })
 }
 
 // OnDumpReady dispatches audio_dump_ready notifications to subscribed channels.
@@ -102,13 +132,15 @@ func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
 	o.mu.Unlock()
 
 	if pending == nil {
-		slog.Warn("audio dump ready but no pending recovery found, notifications skipped")
+		slog.Debug("audio dump ready but no pending recovery; encoder was reset before dump completed")
 		return
 	}
 
 	now := time.Now()
 	o.dispatcher.DispatchAudioDump(pending.activeChannels, &pending.cfg, pending.durationMS, pending.levelL, pending.levelR, result)
-	go o.logAudioDumpReady(now, &pending.cfg, pending.durationMS, pending.levelL, pending.levelR, result)
+	o.enqueueLog(func() {
+		o.logAudioDumpReady(now, &pending.cfg, pending.durationMS, pending.levelL, pending.levelR, result)
+	})
 }
 
 // HandleUploadAbandoned dispatches an upload-abandonment alert to all configured channels.
