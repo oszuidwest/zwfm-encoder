@@ -11,11 +11,11 @@ func timestampUTC() string {
 }
 
 // logNotifyResult logs the result of a notification attempt.
-func logNotifyResult(fn func() error, notifyType string) {
+func logNotifyResult(fn func() error, channel, kind string) {
 	err := fn()
 	if err != nil {
-		slog.Error("notification failed", "type", notifyType, "error", err)
+		slog.Error("notification failed", "channel", channel, "kind", kind, "error", err)
 	} else {
-		slog.Info("notification sent", "type", notifyType)
+		slog.Info("notification sent", "channel", channel, "kind", kind)
 	}
 }

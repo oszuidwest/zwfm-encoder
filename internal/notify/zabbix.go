@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/oszuidwest/zwfm-encoder/internal/config"
+	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
@@ -125,7 +127,7 @@ func sendZabbixEvent(server string, port int, host, key, value string) error {
 }
 
 // sendUploadAbandonedZabbix sends an upload abandonment event to Zabbix.
-func sendUploadAbandonedZabbix(server string, port int, host, key string, p UploadAbandonedParams) error {
+func sendUploadAbandonedZabbix(server string, port int, host, key string, p UploadAbandonedData) error {
 	return sendZabbixEvent(server, port, host, key,
 		fmt.Sprintf("event=UPLOAD_ABANDONED recorder=%q file=%q retries=%d error=%q", p.RecorderName, p.Filename, p.RetryCount, p.LastError))
 }
@@ -148,4 +150,49 @@ func SendZabbixTest(server string, port int, host, key string) error {
 		return fmt.Errorf("zabbix not fully configured (server, host, key, and a valid port 1-65535 are required)")
 	}
 	return sendZabbixEvent(server, port, host, key, "event=TEST source=zwfm-encoder")
+}
+
+// ZabbixChannel implements AlertChannel for Zabbix sender delivery.
+type ZabbixChannel struct{}
+
+// Name returns the channel identifier used in logs.
+func (c *ZabbixChannel) Name() string { return "zabbix" }
+
+// IsConfiguredForSilence reports whether the channel participates in silence flows.
+func (c *ZabbixChannel) IsConfiguredForSilence(cfg *config.Snapshot) bool {
+	return cfg.HasZabbixSilence()
+}
+
+// IsConfiguredForUpload reports whether the channel participates in upload-abandonment flows.
+func (c *ZabbixChannel) IsConfiguredForUpload(cfg *config.Snapshot) bool {
+	return cfg.HasZabbixUpload()
+}
+
+// SubscribesSilenceStart reports whether silence-start events should be sent.
+func (c *ZabbixChannel) SubscribesSilenceStart(cfg *config.Snapshot) bool {
+	return cfg.HasZabbixSilence() && cfg.ZabbixEvents.SilenceStart
+}
+
+// SubscribesSilenceEnd reports whether silence-end events should be sent.
+func (c *ZabbixChannel) SubscribesSilenceEnd(cfg *config.Snapshot) bool {
+	return cfg.HasZabbixSilence() && cfg.ZabbixEvents.SilenceEnd
+}
+
+// SubscribesAudioDump always reports false because Zabbix cannot carry file attachments.
+func (c *ZabbixChannel) SubscribesAudioDump(_ *config.Snapshot) bool { return false }
+
+func (c *ZabbixChannel) SendSilenceStart(cfg *config.Snapshot, levelL, levelR float64) error {
+	return sendZabbixSilence(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixSilenceKey, levelL, levelR, cfg.SilenceThreshold)
+}
+
+func (c *ZabbixChannel) SendSilenceEnd(cfg *config.Snapshot, durationMS int64, levelL, levelR float64) error {
+	return sendZabbixRecovery(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixSilenceKey, durationMS, levelL, levelR, cfg.SilenceThreshold)
+}
+
+func (c *ZabbixChannel) SendAudioDump(_ *config.Snapshot, _ int64, _, _ float64, _ *silencedump.EncodeResult) error {
+	return nil
+}
+
+func (c *ZabbixChannel) SendUploadAbandoned(cfg *config.Snapshot, params UploadAbandonedData) error {
+	return sendUploadAbandonedZabbix(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixUploadKey, params)
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
@@ -74,7 +75,7 @@ func SendWebhookTest(webhookURL, stationName string) error {
 }
 
 // sendUploadAbandonedWebhook sends an upload_abandoned event to the webhook endpoint.
-func sendUploadAbandonedWebhook(webhookURL string, p UploadAbandonedParams) error {
+func sendUploadAbandonedWebhook(webhookURL string, p UploadAbandonedData) error {
 	return sendWebhook(webhookURL, &WebhookPayload{
 		Event:        "upload_abandoned",
 		Message:      fmt.Sprintf("Upload abandoned for %s after %d retries: %s", p.Filename, p.RetryCount, p.LastError),
@@ -139,4 +140,47 @@ func sendWebhook(webhookURL string, payload *WebhookPayload) error {
 	}
 
 	return nil
+}
+
+// WebhookChannel implements AlertChannel for HTTP webhook delivery.
+type WebhookChannel struct{}
+
+// Name returns the channel identifier used in logs.
+func (c *WebhookChannel) Name() string { return "webhook" }
+
+// IsConfiguredForSilence reports whether the channel participates in silence flows.
+func (c *WebhookChannel) IsConfiguredForSilence(cfg *config.Snapshot) bool { return cfg.HasWebhook() }
+
+// IsConfiguredForUpload reports whether the channel participates in upload-abandonment flows.
+func (c *WebhookChannel) IsConfiguredForUpload(cfg *config.Snapshot) bool { return cfg.HasWebhook() }
+
+// SubscribesSilenceStart reports whether silence-start events should be sent.
+func (c *WebhookChannel) SubscribesSilenceStart(cfg *config.Snapshot) bool {
+	return cfg.HasWebhook() && cfg.WebhookEvents.SilenceStart
+}
+
+// SubscribesSilenceEnd reports whether silence-end events should be sent.
+func (c *WebhookChannel) SubscribesSilenceEnd(cfg *config.Snapshot) bool {
+	return cfg.HasWebhook() && cfg.WebhookEvents.SilenceEnd
+}
+
+// SubscribesAudioDump reports whether audio-dump events should be sent.
+func (c *WebhookChannel) SubscribesAudioDump(cfg *config.Snapshot) bool {
+	return cfg.HasWebhook() && cfg.WebhookEvents.AudioDump
+}
+
+func (c *WebhookChannel) SendSilenceStart(cfg *config.Snapshot, levelL, levelR float64) error {
+	return sendWebhookSilence(cfg.WebhookURL, levelL, levelR, cfg.SilenceThreshold)
+}
+
+func (c *WebhookChannel) SendSilenceEnd(cfg *config.Snapshot, durationMS int64, levelL, levelR float64) error {
+	return sendWebhookSilenceEnd(cfg.WebhookURL, durationMS, levelL, levelR, cfg.SilenceThreshold)
+}
+
+func (c *WebhookChannel) SendAudioDump(cfg *config.Snapshot, durationMS int64, levelL, levelR float64, result *silencedump.EncodeResult) error {
+	return sendWebhookDumpReady(cfg.WebhookURL, durationMS, levelL, levelR, cfg.SilenceThreshold, result)
+}
+
+func (c *WebhookChannel) SendUploadAbandoned(cfg *config.Snapshot, params UploadAbandonedData) error {
+	return sendUploadAbandonedWebhook(cfg.WebhookURL, params)
 }

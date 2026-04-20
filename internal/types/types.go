@@ -475,6 +475,22 @@ type ZabbixEventSubscriptions struct {
 	SilenceEnd bool `json:"silence_end"`
 }
 
+// ToEventSubscriptions converts the public Zabbix event shape to the internal unified event shape.
+func (s ZabbixEventSubscriptions) ToEventSubscriptions() EventSubscriptions {
+	return EventSubscriptions{
+		SilenceStart: s.SilenceStart,
+		SilenceEnd:   s.SilenceEnd,
+	}
+}
+
+// ZabbixEventSubscriptionsFromEvents narrows the internal unified event shape to the public Zabbix event shape.
+func ZabbixEventSubscriptionsFromEvents(s EventSubscriptions) ZabbixEventSubscriptions {
+	return ZabbixEventSubscriptions{
+		SilenceStart: s.SilenceStart,
+		SilenceEnd:   s.SilenceEnd,
+	}
+}
+
 // ZabbixConfig holds settings for Zabbix trapper monitoring alerts.
 type ZabbixConfig struct {
 	Server     string `json:"server,omitempty"`

@@ -16,7 +16,7 @@ type AudioLevelCallback func(levels *audio.AudioLevels)
 type Distributor struct {
 	levelData          *audio.LevelData
 	silenceDetect      *audio.SilenceDetector
-	silenceNotifier    *notify.SilenceNotifier
+	alertOrchestrator  *notify.AlertOrchestrator
 	silenceDumpManager *silencedump.Manager
 	peakHolder         *audio.PeakHolder
 	config             *config.Config
@@ -24,11 +24,11 @@ type Distributor struct {
 }
 
 // NewDistributor returns a new Distributor.
-func NewDistributor(silenceDetect *audio.SilenceDetector, silenceNotifier *notify.SilenceNotifier, silenceDumpManager *silencedump.Manager, peakHolder *audio.PeakHolder, cfg *config.Config, callback AudioLevelCallback) *Distributor {
+func NewDistributor(silenceDetect *audio.SilenceDetector, alertOrchestrator *notify.AlertOrchestrator, silenceDumpManager *silencedump.Manager, peakHolder *audio.PeakHolder, cfg *config.Config, callback AudioLevelCallback) *Distributor {
 	return &Distributor{
 		levelData:          &audio.LevelData{},
 		silenceDetect:      silenceDetect,
-		silenceNotifier:    silenceNotifier,
+		alertOrchestrator:  alertOrchestrator,
 		silenceDumpManager: silenceDumpManager,
 		peakHolder:         peakHolder,
 		config:             cfg,
@@ -60,8 +60,8 @@ func (d *Distributor) ProcessSamples(buf []byte, n int) {
 		}
 		silenceEvent := d.silenceDetect.Update(levels.RMSLeft, levels.RMSRight, silenceCfg, now)
 
-		// Delegate notification handling to the notifier (separation of concerns)
-		d.silenceNotifier.HandleEvent(silenceEvent)
+		// Delegate notification handling to the alert orchestrator (separation of concerns)
+		d.alertOrchestrator.HandleSilenceEvent(silenceEvent)
 
 		// Forward silence events to dump manager for capture
 		if d.silenceDumpManager != nil {
