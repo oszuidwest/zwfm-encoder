@@ -154,8 +154,19 @@ func newTestOrchestrator(t *testing.T, ch AlertChannel) *AlertOrchestrator {
 	t.Helper()
 	cfg := config.New("") // in-memory defaults, no file I/O
 	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
-	t.Cleanup(func() { o.DrainLogs(); close(o.logQueue) })
+	t.Cleanup(o.Close)
 	return o
+}
+
+// TestCloseIdempotent verifies that Close can be called multiple times without panicking.
+// The first call drains pending jobs and stops the worker; subsequent calls are no-ops.
+func TestCloseIdempotent(t *testing.T) {
+	t.Parallel()
+	ch := newTestChannel(false)
+	o := newTestOrchestrator(t, ch)
+
+	o.Close()
+	o.Close() // must not panic (t.Cleanup will call it a third time)
 }
 
 // TestOnDumpReadyNilPending verifies that OnDumpReady is a no-op when there is no
@@ -244,7 +255,7 @@ func TestAudioDumpUsesSnapshotFromSilenceEnd(t *testing.T) {
 	ch := newTestChannel(true)
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
-	t.Cleanup(func() { o.DrainLogs(); close(o.logQueue) })
+	t.Cleanup(o.Close)
 
 	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
@@ -340,7 +351,7 @@ func TestLogWriteOrder(t *testing.T) {
 	ch := newTestChannel(false)
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
-	t.Cleanup(func() { o.DrainLogs(); close(o.logQueue) })
+	t.Cleanup(o.Close)
 	o.SetEventLogger(logger)
 
 	// Fire both events without an intervening barrier. The log jobs are enqueued in call
@@ -390,7 +401,7 @@ func TestDrainLogs(t *testing.T) {
 	ch := newTestChannel(false)
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
-	t.Cleanup(func() { o.DrainLogs(); close(o.logQueue) })
+	t.Cleanup(o.Close)
 	o.SetEventLogger(logger)
 
 	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
@@ -433,17 +444,17 @@ func TestEnqueueLogDropsWhenFull(t *testing.T) {
 	// Only then is the queue slot freed and all logQueueDepth buffer positions available.
 	block := make(chan struct{})
 	started := make(chan struct{})
-	o.enqueueLog(func() { close(started); <-block })
+	o.enqueueLog("test_block", func() { close(started); <-block })
 	<-started // worker is now inside the blocking job; queue is empty
 
 	// Fill all logQueueDepth slots.
 	var wrote atomic.Int32
 	for range logQueueDepth {
-		o.enqueueLog(func() { wrote.Add(1) })
+		o.enqueueLog("test_write", func() { wrote.Add(1) })
 	}
 
 	// Queue is at capacity; this entry must be dropped, not panic.
-	o.enqueueLog(func() { wrote.Add(1) })
+	o.enqueueLog("test_overflow", func() { wrote.Add(1) })
 
 	close(block)
 	o.DrainLogs()
@@ -468,7 +479,7 @@ func TestLogWriteOrderWithDump(t *testing.T) {
 	ch := newTestChannel(true) // subscribes to audio dump
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
-	t.Cleanup(func() { o.DrainLogs(); close(o.logQueue) })
+	t.Cleanup(o.Close)
 	o.SetEventLogger(logger)
 
 	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})

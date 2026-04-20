@@ -16,6 +16,14 @@ import (
 // Three log events are produced per silence cycle (start, end, dump); 16 gives ample headroom.
 const logQueueDepth = 16
 
+// logJob is a queued silence-event log write.
+// Carrying the event type alongside the write function makes queue-full diagnostics specific
+// and keeps worker behaviour explicit without relying on opaque closures.
+type logJob struct {
+	eventType string // silence_start | silence_end | audio_dump_ready; empty for internal sentinels
+	fn        func()
+}
+
 // AlertOrchestrator manages silence and upload-abandonment alerting.
 type AlertOrchestrator struct {
 	cfg         *config.Config
@@ -26,7 +34,8 @@ type AlertOrchestrator struct {
 	activeChannels  []AlertChannel
 	pendingRecovery *pendingRecoveryData
 
-	logQueue chan func() // serialized log writes; single worker guarantees JSONL write order
+	logQueue  chan logJob // serialized log writes; single worker guarantees JSONL write order
+	closeOnce sync.Once  // ensures Close drains and stops the worker exactly once
 }
 
 // pendingRecoveryData holds recovery event data while waiting for the audio dump.
@@ -43,7 +52,7 @@ func NewAlertOrchestrator(cfg *config.Config, dispatcher *Dispatcher) *AlertOrch
 	o := &AlertOrchestrator{
 		cfg:        cfg,
 		dispatcher: dispatcher,
-		logQueue:   make(chan func(), logQueueDepth),
+		logQueue:   make(chan logJob, logQueueDepth),
 	}
 	go o.runLogWorker()
 	return o
@@ -52,21 +61,25 @@ func NewAlertOrchestrator(cfg *config.Config, dispatcher *Dispatcher) *AlertOrch
 // runLogWorker drains logQueue sequentially, guaranteeing that silence events are
 // written to the JSONL file in the same order they were enqueued (i.e., event order).
 func (o *AlertOrchestrator) runLogWorker() {
-	for fn := range o.logQueue {
-		fn()
+	for job := range o.logQueue {
+		job.fn()
 	}
 }
 
-// enqueueLog submits fn to the serialized log worker. No-ops when no event logger is set.
+// enqueueLog submits a log write for eventType to the serialized log worker.
+// No-ops when no event logger is set.
 // If the queue is full (logQueueDepth pending entries), the entry is dropped and a warning is emitted.
-func (o *AlertOrchestrator) enqueueLog(fn func()) {
+// Overflow policy: drop-and-warn. Queue saturation is only possible under extreme load
+// (more than logQueueDepth silence events backed up behind slow file I/O), so a dropped
+// entry is preferable to blocking the caller on the audio hot path.
+func (o *AlertOrchestrator) enqueueLog(eventType string, fn func()) {
 	if o.eventLogger == nil {
 		return
 	}
 	select {
-	case o.logQueue <- fn:
+	case o.logQueue <- logJob{eventType: eventType, fn: fn}:
 	default:
-		slog.Warn("silence log queue full, log entry dropped")
+		slog.Warn("silence log queue full, log entry dropped", "event_type", eventType)
 	}
 }
 
@@ -104,7 +117,7 @@ func (o *AlertOrchestrator) handleSilenceStart(levelL, levelR float64) {
 
 	now := time.Now()
 	o.dispatcher.DispatchSilenceStart(active, cfg, levelL, levelR)
-	o.enqueueLog(func() { o.logSilenceStart(now, &cfg, levelL, levelR) })
+	o.enqueueLog("silence_start", func() { o.logSilenceStart(now, &cfg, levelL, levelR) })
 }
 
 func (o *AlertOrchestrator) handleSilenceEnd(durationMS int64, levelL, levelR float64) {
@@ -124,7 +137,7 @@ func (o *AlertOrchestrator) handleSilenceEnd(durationMS int64, levelL, levelR fl
 
 	now := time.Now()
 	o.dispatcher.DispatchSilenceEnd(active, cfg, durationMS, levelL, levelR)
-	o.enqueueLog(func() { o.logSilenceEnd(now, &cfg, durationMS, levelL, levelR) })
+	o.enqueueLog("silence_end", func() { o.logSilenceEnd(now, &cfg, durationMS, levelL, levelR) })
 }
 
 // OnDumpReady dispatches audio_dump_ready notifications to subscribed channels.
@@ -141,7 +154,7 @@ func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
 
 	now := time.Now()
 	o.dispatcher.DispatchAudioDump(pending.activeChannels, pending.cfg, pending.durationMS, pending.levelL, pending.levelR, result)
-	o.enqueueLog(func() {
+	o.enqueueLog("audio_dump_ready", func() {
 		o.logAudioDumpReady(now, &pending.cfg, pending.durationMS, pending.levelL, pending.levelR, result)
 	})
 }
@@ -161,11 +174,21 @@ func (o *AlertOrchestrator) Reset() {
 }
 
 // DrainLogs blocks until all log jobs currently in the queue have been executed.
-// Safe to call multiple times (e.g. on Stop and again after a restart cycle).
+// Safe to call multiple times; does not stop the worker.
 func (o *AlertOrchestrator) DrainLogs() {
 	done := make(chan struct{})
-	o.logQueue <- func() { close(done) }
+	o.logQueue <- logJob{fn: func() { close(done) }}
 	<-done
+}
+
+// Close drains all pending log jobs and stops the log worker.
+// Safe to call multiple times; only the first call has effect.
+// Valid for both graceful process shutdown and test cleanup.
+func (o *AlertOrchestrator) Close() {
+	o.closeOnce.Do(func() {
+		o.DrainLogs()
+		close(o.logQueue)
+	})
 }
 
 // BuildGraphConfig builds a GraphConfig from a config snapshot.
