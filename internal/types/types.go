@@ -483,8 +483,9 @@ func (s ZabbixEventSubscriptions) ToEventSubscriptions() EventSubscriptions {
 	}
 }
 
-// ZabbixEventSubscriptionsFromEvents narrows the internal unified event shape to the public Zabbix event shape.
-func ZabbixEventSubscriptionsFromEvents(s EventSubscriptions) ZabbixEventSubscriptions {
+// ToZabbixEventSubscriptions narrows the internal unified event shape to the public Zabbix event shape.
+// AudioDump is deliberately omitted: Zabbix trapper items cannot carry file attachments.
+func (s EventSubscriptions) ToZabbixEventSubscriptions() ZabbixEventSubscriptions {
 	return ZabbixEventSubscriptions{
 		SilenceStart: s.SilenceStart,
 		SilenceEnd:   s.SilenceEnd,
