@@ -44,65 +44,73 @@ func (d *Dispatcher) Channels() []AlertChannel {
 }
 
 // DispatchSilenceStart sends silence-start notifications to subscribed channels from the active set.
-func (d *Dispatcher) DispatchSilenceStart(active []AlertChannel, cfg *config.Snapshot, levelL, levelR float64) {
+func (d *Dispatcher) DispatchSilenceStart(active []AlertChannel, cfg config.Snapshot, levelL, levelR float64) {
 	for _, ch := range active {
-		if !ch.SubscribesSilenceStart(cfg) {
+		if !ch.SubscribesSilenceStart(&cfg) {
 			continue
 		}
-		go func(ch AlertChannel) {
+		ch := ch
+		cfg := cfg // per-goroutine copy; prevents a future mutating Send* from racing with siblings
+		go func() {
 			logNotifyResult(
-				func() error { return ch.SendSilenceStart(cfg, levelL, levelR) },
+				func() error { return ch.SendSilenceStart(&cfg, levelL, levelR) },
 				ch.Name(),
 				"silence_start",
 			)
-		}(ch)
+		}()
 	}
 }
 
 // DispatchSilenceEnd sends silence-end notifications to the active channel subset.
-func (d *Dispatcher) DispatchSilenceEnd(active []AlertChannel, cfg *config.Snapshot, durationMS int64, levelL, levelR float64) {
+func (d *Dispatcher) DispatchSilenceEnd(active []AlertChannel, cfg config.Snapshot, durationMS int64, levelL, levelR float64) {
 	for _, ch := range active {
-		if !ch.SubscribesSilenceEnd(cfg) {
+		if !ch.SubscribesSilenceEnd(&cfg) {
 			continue
 		}
-		go func(ch AlertChannel) {
+		ch := ch
+		cfg := cfg
+		go func() {
 			logNotifyResult(
-				func() error { return ch.SendSilenceEnd(cfg, durationMS, levelL, levelR) },
+				func() error { return ch.SendSilenceEnd(&cfg, durationMS, levelL, levelR) },
 				ch.Name(),
 				"silence_end",
 			)
-		}(ch)
+		}()
 	}
 }
 
 // DispatchAudioDump sends audio-dump notifications to the active channel subset.
-func (d *Dispatcher) DispatchAudioDump(active []AlertChannel, cfg *config.Snapshot, durationMS int64, levelL, levelR float64, result *silencedump.EncodeResult) {
+func (d *Dispatcher) DispatchAudioDump(active []AlertChannel, cfg config.Snapshot, durationMS int64, levelL, levelR float64, result *silencedump.EncodeResult) {
 	for _, ch := range active {
-		if !ch.SubscribesAudioDump(cfg) {
+		if !ch.SubscribesAudioDump(&cfg) {
 			continue
 		}
-		go func(ch AlertChannel) {
+		ch := ch
+		cfg := cfg
+		go func() {
 			logNotifyResult(
-				func() error { return ch.SendAudioDump(cfg, durationMS, levelL, levelR, result) },
+				func() error { return ch.SendAudioDump(&cfg, durationMS, levelL, levelR, result) },
 				ch.Name(),
 				"audio_dump_ready",
 			)
-		}(ch)
+		}()
 	}
 }
 
 // DispatchUploadAbandoned sends upload-abandonment notifications to all configured channels.
-func (d *Dispatcher) DispatchUploadAbandoned(cfg *config.Snapshot, params UploadAbandonedData) {
+func (d *Dispatcher) DispatchUploadAbandoned(cfg config.Snapshot, params UploadAbandonedData) {
 	for _, ch := range d.channels {
-		if !ch.IsConfiguredForUpload(cfg) {
+		if !ch.IsConfiguredForUpload(&cfg) {
 			continue
 		}
-		go func(ch AlertChannel) {
+		ch := ch
+		cfg := cfg
+		go func() {
 			logNotifyResult(
-				func() error { return ch.SendUploadAbandoned(cfg, params) },
+				func() error { return ch.SendUploadAbandoned(&cfg, params) },
 				ch.Name(),
 				"upload_abandoned",
 			)
-		}(ch)
+		}()
 	}
 }
