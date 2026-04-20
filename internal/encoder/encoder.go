@@ -389,6 +389,9 @@ func (e *Encoder) Stop() error {
 		e.silenceDumpManager.Stop()
 	}
 
+	// Drain any silence log entries queued before or during shutdown.
+	e.alertOrchestrator.DrainLogs()
+
 	e.mu.Lock()
 	e.state = types.StateStopped
 	e.sourceCmd = nil

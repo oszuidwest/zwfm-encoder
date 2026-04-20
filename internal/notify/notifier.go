@@ -157,6 +157,14 @@ func (o *AlertOrchestrator) Reset() {
 	o.mu.Unlock()
 }
 
+// DrainLogs blocks until all log jobs currently in the queue have been executed.
+// Call this during shutdown to avoid losing silence log entries that are still queued.
+func (o *AlertOrchestrator) DrainLogs() {
+	done := make(chan struct{})
+	o.logQueue <- func() { close(done) }
+	<-done
+}
+
 // BuildGraphConfig builds a GraphConfig from a config snapshot.
 func BuildGraphConfig(cfg *config.Snapshot) *GraphConfig {
 	return &GraphConfig{
