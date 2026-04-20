@@ -483,7 +483,10 @@ type ZabbixConfig struct {
 	SilenceKey string `json:"silence_key,omitempty"`
 	UploadKey  string `json:"upload_key,omitempty"`
 	// Events controls which silence events trigger Zabbix notifications.
-	Events *ZabbixEventSubscriptions `json:"events,omitempty"`
+	// Value type (not pointer): JSON null and missing field both leave the
+	// preloaded default intact. To disable all events, set silence_start and
+	// silence_end to false explicitly.
+	Events ZabbixEventSubscriptions `json:"events"`
 }
 
 // SecretExpiryInfo holds expiration details for an Azure client secret.

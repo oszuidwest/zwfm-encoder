@@ -202,7 +202,7 @@ func New(filePath string) *Config {
 			},
 			Zabbix: types.ZabbixConfig{
 				Port:   DefaultZabbixPort,
-				Events: &types.ZabbixEventSubscriptions{SilenceStart: true, SilenceEnd: true},
+				Events: types.ZabbixEventSubscriptions{SilenceStart: true, SilenceEnd: true},
 			},
 		},
 		Streaming: StreamingConfig{Streams: []types.Stream{}},
@@ -725,8 +725,7 @@ func (c *Config) Snapshot() Snapshot {
 		WebhookURL:    c.Notifications.Webhook.URL,
 		WebhookEvents: c.Notifications.Webhook.Events,
 		EmailEvents:   c.Notifications.Email.Events,
-		// Keep a nil-guard here while Zabbix events remain pointer-backed in config.
-		ZabbixEvents: *cmp.Or(c.Notifications.Zabbix.Events, &types.ZabbixEventSubscriptions{}),
+		ZabbixEvents:  c.Notifications.Zabbix.Events,
 
 		// Zabbix
 		ZabbixServer:     c.Notifications.Zabbix.Server,
@@ -878,8 +877,7 @@ func (c *Config) ApplySettings(s *SettingsUpdate) error {
 	c.Notifications.Webhook.URL = s.WebhookURL
 	c.Notifications.Webhook.Events = s.WebhookEvents
 	c.Notifications.Email.Events = s.EmailEvents
-	zabbixEvents := s.ZabbixEvents
-	c.Notifications.Zabbix.Events = &zabbixEvents
+	c.Notifications.Zabbix.Events = s.ZabbixEvents
 	c.Notifications.Zabbix.Server = s.ZabbixServer
 	c.Notifications.Zabbix.Port = s.ZabbixPort
 	c.Notifications.Zabbix.Host = s.ZabbixHost

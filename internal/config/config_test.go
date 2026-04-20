@@ -95,7 +95,7 @@ func TestLoadPreservesExplicitZeroAndFalseValues(t *testing.T) {
     },
     "zabbix": {
       "port": 0,
-      "events": null
+      "events": {"silence_start": false, "silence_end": false}
     }
   }
 }`)
@@ -134,7 +134,7 @@ func TestLoadPreservesExplicitZeroAndFalseValues(t *testing.T) {
 		t.Fatalf("EmailEvents = %+v, want all false", snap.EmailEvents)
 	}
 	if snap.ZabbixEvents != (types.ZabbixEventSubscriptions{}) {
-		t.Fatalf("ZabbixEvents = %+v, want zero value after nil guard", snap.ZabbixEvents)
+		t.Fatalf("ZabbixEvents = %+v, want both false", snap.ZabbixEvents)
 	}
 	if snap.ZabbixPort != 0 {
 		t.Fatalf("ZabbixPort = %d, want 0", snap.ZabbixPort)
@@ -144,6 +144,101 @@ func TestLoadPreservesExplicitZeroAndFalseValues(t *testing.T) {
 	}
 	if snap.RecordingMaxDurationMinutes != DefaultRecordingMaxDurationMinutes {
 		t.Fatalf("RecordingMaxDurationMinutes = %d, want default %d for missing field", snap.RecordingMaxDurationMinutes, DefaultRecordingMaxDurationMinutes)
+	}
+}
+
+func TestZabbixEventsJSONSemantics(t *testing.T) {
+	t.Parallel()
+
+	defaults := types.ZabbixEventSubscriptions{SilenceStart: true, SilenceEnd: true}
+	allFalse := types.ZabbixEventSubscriptions{}
+
+	tests := []struct {
+		name string
+		json string
+		want types.ZabbixEventSubscriptions
+	}{
+		{
+			name: "missing events field preserves defaults",
+			json: `{"notifications":{"zabbix":{}}}`,
+			want: defaults,
+		},
+		{
+			name: "events null is a no-op, preserves defaults",
+			json: `{"notifications":{"zabbix":{"events":null}}}`,
+			want: defaults,
+		},
+		{
+			name: "events empty object is a no-op, preserves defaults",
+			json: `{"notifications":{"zabbix":{"events":{}}}}`,
+			want: defaults,
+		},
+		{
+			name: "partial object only overrides present fields",
+			json: `{"notifications":{"zabbix":{"events":{"silence_start":false}}}}`,
+			want: types.ZabbixEventSubscriptions{SilenceStart: false, SilenceEnd: true},
+		},
+		{
+			name: "explicit false values disable events",
+			json: `{"notifications":{"zabbix":{"events":{"silence_start":false,"silence_end":false}}}}`,
+			want: allFalse,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			configPath := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(configPath, []byte(tt.json), 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+
+			cfg := New(configPath)
+			if err := cfg.Load(); err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+
+			got := cfg.Snapshot().ZabbixEvents
+			if got != tt.want {
+				t.Fatalf("ZabbixEvents = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestZabbixEventsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	// Load a config with events: null (no-op, defaults should apply).
+	// Then trigger an unrelated save via AddStream (which calls saveLocked directly,
+	// bypassing ApplySettings) and verify defaults survive reload.
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"notifications":{"zabbix":{"events":null}}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg := New(configPath)
+	if err := cfg.Load(); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	// Trigger saveLocked via AddStream without touching settings.
+	stream := &types.Stream{Host: "127.0.0.1", Port: 1234}
+	if err := cfg.AddStream(stream); err != nil {
+		t.Fatalf("AddStream() error = %v", err)
+	}
+
+	// Reload into a fresh config to simulate a server restart.
+	cfg2 := New(configPath)
+	if err := cfg2.Load(); err != nil {
+		t.Fatalf("second Load() error = %v", err)
+	}
+
+	got := cfg2.Snapshot().ZabbixEvents
+	want := types.ZabbixEventSubscriptions{SilenceStart: true, SilenceEnd: true}
+	if got != want {
+		t.Fatalf("ZabbixEvents after round-trip = %+v, want %+v", got, want)
 	}
 }
 
