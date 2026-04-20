@@ -341,7 +341,18 @@ func validateZabbixPort(field string, port int) string {
 	return ""
 }
 
-func (c *Config) saveLocked() error {
+// saveLocked writes config to disk using a write-to-temp-then-rename strategy.
+//
+// On Linux and macOS, os.Rename within the same filesystem is atomic, so a
+// crash mid-write leaves either the old or the new config intact — never a
+// truncated file. The temp file is fsync'd before the rename, and the parent
+// directory is synced after the rename on Unix, so the replacement is
+// durable on those filesystems.
+//
+// On Windows, os.Rename (MoveFileExW) is not guaranteed to be atomic at the
+// filesystem level, but it is still significantly safer than direct overwrite
+// because the destination is only replaced after the source is fully written.
+func (c *Config) saveLocked() (retErr error) {
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return util.WrapError("marshal config", err)
@@ -352,8 +363,40 @@ func (c *Config) saveLocked() error {
 		return util.WrapError("create config directory", err)
 	}
 
-	if err := os.WriteFile(c.filePath, data, 0o600); err != nil {
-		return util.WrapError("write config", err)
+	// Write to a temp file in the same directory so the rename stays on the
+	// same filesystem (required for atomic rename on Unix).
+	tmp, err := os.CreateTemp(dir, ".config-*.tmp")
+	if err != nil {
+		return util.WrapError("create temp config", err)
+	}
+
+	tmpName := tmp.Name()
+	defer func() {
+		_ = tmp.Close()
+		if retErr != nil {
+			_ = os.Remove(tmpName)
+		}
+	}()
+
+	if _, err := tmp.Write(data); err != nil {
+		return util.WrapError("write temp config", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return util.WrapError("sync temp config", err)
+	}
+	// Chmod while the fd is open so it applies via fchmod, avoiding a
+	// symlink race between close and a path-based chmod call.
+	if err := tmp.Chmod(0o600); err != nil {
+		return util.WrapError("chmod temp config", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return util.WrapError("close temp config", err)
+	}
+	if err := os.Rename(tmpName, c.filePath); err != nil {
+		return util.WrapError("rename config", err)
+	}
+	if err := syncDirPath(dir); err != nil {
+		return err
 	}
 
 	return nil
