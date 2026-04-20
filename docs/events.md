@@ -191,11 +191,11 @@ Audio events track periods when audio levels drop below the configured threshold
 | `level_left_db` | float | Left channel RMS level in dB |
 | `level_right_db` | float | Right channel RMS level in dB |
 | `threshold_db` | float | Configured silence threshold in dB |
-| `duration_ms` | int | Silence duration in milliseconds (end event only) |
-| `dump_path` | string | Directory where dump file is saved |
-| `dump_filename` | string | Name of the audio dump file |
-| `dump_size_bytes` | int | Size of dump file in bytes |
-| `dump_error` | string | Error if dump failed |
+| `duration_ms` | int | Silence duration in milliseconds (`silence_end` and `audio_dump_ready` only) |
+| `dump_path` | string | Directory where dump file is saved (`audio_dump_ready` only) |
+| `dump_filename` | string | Name of the audio dump file (`audio_dump_ready` only) |
+| `dump_size_bytes` | int | Size of dump file in bytes (`audio_dump_ready` only) |
+| `dump_error` | string | Error if dump failed (`audio_dump_ready` only) |
 
 ---
 
@@ -233,13 +233,37 @@ Audio events track periods when audio levels drop below the configured threshold
     "level_left_db": -12.3,
     "level_right_db": -14.1,
     "threshold_db": -40.0,
-    "duration_ms": 65000,
-    "dump_path": "/var/log/encoder/8080/dumps",
-    "dump_filename": "silence-2024-01-15-143100.mp3",
-    "dump_size_bytes": 245760
+    "duration_ms": 65000
   }
 }
 ```
+
+---
+
+### `audio_dump_ready`
+
+- **Severity:** `info`
+- **UI Label:** Audio Dump
+- **Triggered:** When the MP3 audio context file (15s before + after the silence) has finished encoding. Fired as a separate event after `silence_end` because MP3 encoding takes additional time.
+
+```json
+{
+  "ts": "2024-01-15T14:32:08.000Z",
+  "type": "audio_dump_ready",
+  "details": {
+    "level_left_db": -12.3,
+    "level_right_db": -14.1,
+    "threshold_db": -40.0,
+    "duration_ms": 65000,
+    "dump_path": "/var/log/encoder/8080/dumps",
+    "dump_filename": "silence-2024-01-15-143100.mp3",
+    "dump_size_bytes": 245760,
+    "dump_error": ""
+  }
+}
+```
+
+If encoding fails, `dump_size_bytes` is `0` and `dump_error` contains the error message.
 
 ---
 
@@ -530,6 +554,7 @@ GET /api/events?limit=50&offset=0&type=stream
 | `stream_stopped` | Stream | info | Stopped | Stream intentionally stopped |
 | `silence_start` | Audio | warning | Silence | Audio below threshold |
 | `silence_end` | Audio | success | Recovered | Audio returns above threshold |
+| `audio_dump_ready` | Audio | info | Audio Dump | MP3 context file ready after silence |
 | `recorder_started` | Recorder | info | Started | Recorder begins recording |
 | `recorder_stopped` | Recorder | info | Stopped | Recorder stops recording |
 | `recorder_error` | Recorder | error | Error | Recorder encounters error |
