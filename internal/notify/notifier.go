@@ -26,7 +26,8 @@ type AlertOrchestrator struct {
 	activeChannels  []AlertChannel
 	pendingRecovery *pendingRecoveryData
 
-	logQueue chan func() // serialized log writes; single worker guarantees JSONL write order
+	logQueue  chan func()  // serialized log writes; single worker guarantees JSONL write order
+	closeOnce sync.Once   // ensures Close drains and stops the worker exactly once
 }
 
 // pendingRecoveryData holds recovery event data while waiting for the audio dump.
@@ -161,11 +162,21 @@ func (o *AlertOrchestrator) Reset() {
 }
 
 // DrainLogs blocks until all log jobs currently in the queue have been executed.
-// Safe to call multiple times (e.g. on Stop and again after a restart cycle).
+// Safe to call multiple times; does not stop the worker.
 func (o *AlertOrchestrator) DrainLogs() {
 	done := make(chan struct{})
 	o.logQueue <- func() { close(done) }
 	<-done
+}
+
+// Close drains all pending log jobs and stops the log worker.
+// Safe to call multiple times; only the first call has effect.
+// Valid for both graceful process shutdown and test cleanup.
+func (o *AlertOrchestrator) Close() {
+	o.closeOnce.Do(func() {
+		o.DrainLogs()
+		close(o.logQueue)
+	})
 }
 
 // BuildGraphConfig builds a GraphConfig from a config snapshot.
