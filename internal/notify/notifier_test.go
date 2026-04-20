@@ -323,13 +323,16 @@ func TestEnqueueLogDropsWhenFull(t *testing.T) {
 	o := newTestOrchestrator(t, ch)
 	o.SetEventLogger(logger)
 
-	// Block the worker so the queue fills up.
+	// Block the worker and wait until it has actually started executing the blocking job.
+	// Only then is the queue slot freed and all logQueueDepth buffer positions available.
 	block := make(chan struct{})
-	o.enqueueLog(func() { <-block })
+	started := make(chan struct{})
+	o.enqueueLog(func() { close(started); <-block })
+	<-started // worker is now inside the blocking job; queue is empty
 
-	// Fill the remaining logQueueDepth-1 slots.
+	// Fill all logQueueDepth slots.
 	var wrote atomic.Int32
-	for range logQueueDepth - 1 {
+	for range logQueueDepth {
 		o.enqueueLog(func() { wrote.Add(1) })
 	}
 
@@ -339,8 +342,8 @@ func TestEnqueueLogDropsWhenFull(t *testing.T) {
 	close(block)
 	o.DrainLogs()
 
-	if got := wrote.Load(); got != int32(logQueueDepth-1) {
-		t.Errorf("expected %d writes (one dropped), got %d", logQueueDepth-1, got)
+	if got := wrote.Load(); got != int32(logQueueDepth) {
+		t.Errorf("expected %d writes (one dropped), got %d", logQueueDepth, got)
 	}
 }
 
