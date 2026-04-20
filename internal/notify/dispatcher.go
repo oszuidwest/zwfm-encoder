@@ -44,7 +44,7 @@ func (d *Dispatcher) Channels() []AlertChannel {
 }
 
 // DispatchSilenceStart sends silence-start notifications to subscribed channels from the active set.
-func (d *Dispatcher) DispatchSilenceStart(active []AlertChannel, cfg config.Snapshot, levelL, levelR float64) {
+func (d *Dispatcher) DispatchSilenceStart(active []AlertChannel, cfg config.Snapshot, levelL, levelR float64) { //nolint:gocritic // hugeParam: value copy is intentional; each goroutine gets an isolated per-iteration copy
 	for _, ch := range active {
 		if !ch.SubscribesSilenceStart(&cfg) {
 			continue
@@ -62,7 +62,7 @@ func (d *Dispatcher) DispatchSilenceStart(active []AlertChannel, cfg config.Snap
 }
 
 // DispatchSilenceEnd sends silence-end notifications to the active channel subset.
-func (d *Dispatcher) DispatchSilenceEnd(active []AlertChannel, cfg config.Snapshot, durationMS int64, levelL, levelR float64) {
+func (d *Dispatcher) DispatchSilenceEnd(active []AlertChannel, cfg config.Snapshot, durationMS int64, levelL, levelR float64) { //nolint:gocritic // hugeParam: value copy is intentional; each goroutine gets an isolated per-iteration copy
 	for _, ch := range active {
 		if !ch.SubscribesSilenceEnd(&cfg) {
 			continue
@@ -80,7 +80,7 @@ func (d *Dispatcher) DispatchSilenceEnd(active []AlertChannel, cfg config.Snapsh
 }
 
 // DispatchAudioDump sends audio-dump notifications to the active channel subset.
-func (d *Dispatcher) DispatchAudioDump(active []AlertChannel, cfg config.Snapshot, durationMS int64, levelL, levelR float64, result *silencedump.EncodeResult) {
+func (d *Dispatcher) DispatchAudioDump(active []AlertChannel, cfg config.Snapshot, durationMS int64, levelL, levelR float64, result *silencedump.EncodeResult) { //nolint:gocritic // hugeParam: value copy is intentional; each goroutine gets an isolated per-iteration copy
 	for _, ch := range active {
 		if !ch.SubscribesAudioDump(&cfg) {
 			continue
@@ -98,7 +98,7 @@ func (d *Dispatcher) DispatchAudioDump(active []AlertChannel, cfg config.Snapsho
 }
 
 // DispatchUploadAbandoned sends upload-abandonment notifications to all configured channels.
-func (d *Dispatcher) DispatchUploadAbandoned(cfg config.Snapshot, params UploadAbandonedData) {
+func (d *Dispatcher) DispatchUploadAbandoned(cfg config.Snapshot, params UploadAbandonedData) { //nolint:gocritic // hugeParam: value copy is intentional; each goroutine gets an isolated per-iteration copy
 	for _, ch := range d.channels {
 		if !ch.IsConfiguredForUpload(&cfg) {
 			continue
