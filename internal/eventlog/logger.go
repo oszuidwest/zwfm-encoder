@@ -192,9 +192,12 @@ func (l *Logger) LogStream(eventType EventType, streamID, streamName, message, e
 }
 
 // LogSilenceStart records when silence is first detected.
-func (l *Logger) LogSilenceStart(levelL, levelR, threshold float64) error {
+// t must be captured at the moment the event occurs so the timestamp is
+// accurate even when the write is deferred to a background goroutine.
+func (l *Logger) LogSilenceStart(t time.Time, levelL, levelR, threshold float64) error {
 	return l.Log(&Event{
-		Type: SilenceStart,
+		Timestamp: t,
+		Type:      SilenceStart,
 		Details: &SilenceDetails{
 			LevelLeftDB:  levelL,
 			LevelRightDB: levelR,
@@ -204,9 +207,12 @@ func (l *Logger) LogSilenceStart(levelL, levelR, threshold float64) error {
 }
 
 // LogSilenceEnd records when silence ends with duration information.
-func (l *Logger) LogSilenceEnd(durationMs int64, levelL, levelR, threshold float64) error {
+// t must be captured at the moment the event occurs so the timestamp is
+// accurate even when the write is deferred to a background goroutine.
+func (l *Logger) LogSilenceEnd(t time.Time, durationMs int64, levelL, levelR, threshold float64) error {
 	return l.Log(&Event{
-		Type: SilenceEnd,
+		Timestamp: t,
+		Type:      SilenceEnd,
 		Details: &SilenceDetails{
 			LevelLeftDB:  levelL,
 			LevelRightDB: levelR,
@@ -217,9 +223,12 @@ func (l *Logger) LogSilenceEnd(durationMs int64, levelL, levelR, threshold float
 }
 
 // LogAudioDumpReady records when the audio dump MP3 is ready after a silence event.
-func (l *Logger) LogAudioDumpReady(durationMs int64, levelL, levelR, threshold float64, dumpPath, dumpFilename string, dumpSize int64, dumpError string) error {
+// t must be captured at the moment the event occurs so the timestamp is
+// accurate even when the write is deferred to a background goroutine.
+func (l *Logger) LogAudioDumpReady(t time.Time, durationMs int64, levelL, levelR, threshold float64, dumpPath, dumpFilename string, dumpSize int64, dumpError string) error {
 	return l.Log(&Event{
-		Type: AudioDumpReady,
+		Timestamp: t,
+		Type:      AudioDumpReady,
 		Details: &SilenceDetails{
 			LevelLeftDB:   levelL,
 			LevelRightDB:  levelR,

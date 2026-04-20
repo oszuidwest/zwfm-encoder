@@ -299,7 +299,7 @@ func (e *Encoder) Start() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if e.state == types.StateRunning || e.state == types.StateStarting {
+	if e.state == types.StateRunning || e.state == types.StateStarting || e.state == types.StateStopping {
 		return ErrAlreadyRunning
 	}
 
@@ -388,6 +388,9 @@ func (e *Encoder) Stop() error {
 	if e.silenceDumpManager != nil {
 		e.silenceDumpManager.Stop()
 	}
+
+	// Drain any silence log entries queued before or during shutdown.
+	e.alertOrchestrator.DrainLogs()
 
 	e.mu.Lock()
 	e.state = types.StateStopped
@@ -524,12 +527,21 @@ func (e *Encoder) runSourceLoop() {
 
 			if e.retryCount >= types.MaxRetries {
 				slog.Error("source capture failed, giving up", "attempts", types.MaxRetries)
-				e.state = types.StateStopped
+				e.state = types.StateStopping
 				e.lastError = fmt.Sprintf("Stopped after %d failed attempts: %s", types.MaxRetries, errMsg)
 				e.mu.Unlock()
 				if err := e.streamManager.StopAll(); err != nil {
 					slog.Error("failed to stop streams during source failure", "error", err)
 				}
+				e.silenceDetect.Reset()
+				e.alertOrchestrator.Reset()
+				if e.silenceDumpManager != nil {
+					e.silenceDumpManager.Stop()
+				}
+				e.alertOrchestrator.DrainLogs()
+				e.mu.Lock()
+				e.state = types.StateStopped
+				e.mu.Unlock()
 				return
 			}
 		} else {

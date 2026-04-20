@@ -2,11 +2,13 @@ package notify
 
 import (
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
+	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 )
 
@@ -90,9 +92,14 @@ func assertNoCall(t *testing.T, ch <-chan *config.Snapshot, label string) {
 	}
 }
 
-func newTestOrchestrator(ch AlertChannel) *AlertOrchestrator {
+// newTestOrchestrator creates an AlertOrchestrator backed by ch and registers t.Cleanup
+// to drain and stop the log worker when the test ends, preventing goroutine leaks.
+func newTestOrchestrator(t *testing.T, ch AlertChannel) *AlertOrchestrator {
+	t.Helper()
 	cfg := config.New("") // in-memory defaults, no file I/O
-	return NewAlertOrchestrator(cfg, NewDispatcher(ch))
+	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
+	t.Cleanup(func() { o.DrainLogs(); close(o.logQueue) })
+	return o
 }
 
 // TestOnDumpReadyNilPending verifies that OnDumpReady is a no-op when there is no
@@ -100,7 +107,7 @@ func newTestOrchestrator(ch AlertChannel) *AlertOrchestrator {
 func TestOnDumpReadyNilPending(t *testing.T) {
 	t.Parallel()
 	ch := newTestChannel(true)
-	o := newTestOrchestrator(ch)
+	o := newTestOrchestrator(t, ch)
 
 	o.OnDumpReady(nil)
 
@@ -112,7 +119,7 @@ func TestOnDumpReadyNilPending(t *testing.T) {
 func TestOnDumpReadyNilPendingAfterReset(t *testing.T) {
 	t.Parallel()
 	ch := newTestChannel(true)
-	o := newTestOrchestrator(ch)
+	o := newTestOrchestrator(t, ch)
 
 	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
@@ -132,7 +139,7 @@ func TestOnDumpReadyNilPendingAfterReset(t *testing.T) {
 func TestActiveChannelsClearedAfterRecovery(t *testing.T) {
 	t.Parallel()
 	ch := newTestChannel(false)
-	o := newTestOrchestrator(ch)
+	o := newTestOrchestrator(t, ch)
 
 	// Period 1
 	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
@@ -156,7 +163,7 @@ func TestActiveChannelsClearedAfterRecovery(t *testing.T) {
 func TestActiveChannelsNotRebuiltWithinSilencePeriod(t *testing.T) {
 	t.Parallel()
 	ch := newTestChannel(false)
-	o := newTestOrchestrator(ch)
+	o := newTestOrchestrator(t, ch)
 
 	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart first")
@@ -181,6 +188,7 @@ func TestAudioDumpUsesSnapshotFromSilenceEnd(t *testing.T) {
 	ch := newTestChannel(true)
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
+	t.Cleanup(func() { o.DrainLogs(); close(o.logQueue) })
 
 	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
@@ -206,5 +214,189 @@ func TestAudioDumpUsesSnapshotFromSilenceEnd(t *testing.T) {
 	if audioDumpSnap.SilenceThreshold != silenceEndSnap.SilenceThreshold {
 		t.Fatalf("SendAudioDump received threshold %.1f dB, want %.1f dB (from silence-end snapshot)",
 			audioDumpSnap.SilenceThreshold, silenceEndSnap.SilenceThreshold)
+	}
+}
+
+// TestLogWriteOrder verifies that silence_start is physically written before silence_end in
+// the JSONL file. Both events are enqueued back-to-back so the log worker receives them
+// together and must write them in FIFO order — the same condition that caused the original
+// out-of-order entries when two goroutines raced on Logger.mu.
+func TestLogWriteOrder(t *testing.T) {
+	t.Parallel()
+
+	logPath := filepath.Join(t.TempDir(), "encoder.jsonl")
+	logger, err := eventlog.NewLogger(logPath)
+	if err != nil {
+		t.Fatalf("create logger: %v", err)
+	}
+	defer logger.Close() //nolint:errcheck // test teardown
+
+	ch := newTestChannel(false)
+	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
+	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
+	t.Cleanup(func() { o.DrainLogs(); close(o.logQueue) })
+	o.SetEventLogger(logger)
+
+	// Fire both events without an intervening barrier. The log jobs are enqueued in call
+	// order; the worker writes them in FIFO order regardless of when it runs.
+	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
+	o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 5000})
+	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
+	awaitCall(t, ch.silenceEndCalled, "SendSilenceEnd")
+
+	// Wait for all queued log writes to complete before reading the file.
+	o.DrainLogs()
+
+	events, _, err := eventlog.ReadLast(logPath, 10, 0, eventlog.FilterAudio)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+
+	// ReadLast returns newest first (reverse file order).
+	// Correct physical order means silence_end is last in file → first returned.
+	if events[0].Type != eventlog.SilenceEnd {
+		t.Errorf("events[0]: got %s, want %s", events[0].Type, eventlog.SilenceEnd)
+	}
+	if events[1].Type != eventlog.SilenceStart {
+		t.Errorf("events[1]: got %s, want %s", events[1].Type, eventlog.SilenceStart)
+	}
+	if events[1].Timestamp.After(events[0].Timestamp) {
+		t.Errorf("silence_start timestamp (%v) is after silence_end timestamp (%v)",
+			events[1].Timestamp, events[0].Timestamp)
+	}
+}
+
+// TestDrainLogs verifies that DrainLogs blocks until all pending log jobs have been
+// executed, so callers can rely on entries being flushed to the file after it returns.
+func TestDrainLogs(t *testing.T) {
+	t.Parallel()
+
+	logPath := filepath.Join(t.TempDir(), "encoder.jsonl")
+	logger, err := eventlog.NewLogger(logPath)
+	if err != nil {
+		t.Fatalf("create logger: %v", err)
+	}
+	defer logger.Close() //nolint:errcheck // test teardown
+
+	ch := newTestChannel(false)
+	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
+	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
+	t.Cleanup(func() { o.DrainLogs(); close(o.logQueue) })
+	o.SetEventLogger(logger)
+
+	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
+	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
+
+	// DrainLogs must block until all pending log writes complete.
+	o.DrainLogs()
+
+	// The entry must be visible in the file immediately after drain returns.
+	events, _, err := eventlog.ReadLast(logPath, 10, 0, eventlog.FilterAudio)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event after drain, got %d", len(events))
+	}
+	if events[0].Type != eventlog.SilenceStart {
+		t.Errorf("got %s, want %s", events[0].Type, eventlog.SilenceStart)
+	}
+}
+
+// TestEnqueueLogDropsWhenFull verifies that enqueueLog drops entries without panicking
+// when the log queue is at capacity (logQueueDepth), and that entries already queued
+// before the overflow are not lost.
+func TestEnqueueLogDropsWhenFull(t *testing.T) {
+	t.Parallel()
+
+	logPath := filepath.Join(t.TempDir(), "encoder.jsonl")
+	logger, err := eventlog.NewLogger(logPath)
+	if err != nil {
+		t.Fatalf("create logger: %v", err)
+	}
+	defer logger.Close() //nolint:errcheck // test teardown
+
+	ch := newTestChannel(false)
+	o := newTestOrchestrator(t, ch)
+	o.SetEventLogger(logger)
+
+	// Block the worker and wait until it has actually started executing the blocking job.
+	// Only then is the queue slot freed and all logQueueDepth buffer positions available.
+	block := make(chan struct{})
+	started := make(chan struct{})
+	o.enqueueLog(func() { close(started); <-block })
+	<-started // worker is now inside the blocking job; queue is empty
+
+	// Fill all logQueueDepth slots.
+	var wrote atomic.Int32
+	for range logQueueDepth {
+		o.enqueueLog(func() { wrote.Add(1) })
+	}
+
+	// Queue is at capacity; this entry must be dropped, not panic.
+	o.enqueueLog(func() { wrote.Add(1) })
+
+	close(block)
+	o.DrainLogs()
+
+	if got := wrote.Load(); got != int32(logQueueDepth) {
+		t.Errorf("expected %d writes (one dropped), got %d", logQueueDepth, got)
+	}
+}
+
+// TestLogWriteOrderWithDump verifies that a complete silence cycle writes all three
+// JSONL events — silence_start, silence_end, audio_dump_ready — in that physical order.
+func TestLogWriteOrderWithDump(t *testing.T) {
+	t.Parallel()
+
+	logPath := filepath.Join(t.TempDir(), "encoder.jsonl")
+	logger, err := eventlog.NewLogger(logPath)
+	if err != nil {
+		t.Fatalf("create logger: %v", err)
+	}
+	defer logger.Close() //nolint:errcheck // test teardown
+
+	ch := newTestChannel(true) // subscribes to audio dump
+	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
+	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
+	t.Cleanup(func() { o.DrainLogs(); close(o.logQueue) })
+	o.SetEventLogger(logger)
+
+	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
+	o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 5000})
+	o.OnDumpReady(nil)
+	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
+	awaitCall(t, ch.silenceEndCalled, "SendSilenceEnd")
+	awaitCall(t, ch.audioDumpCalled, "SendAudioDump")
+
+	o.DrainLogs()
+
+	events, _, err := eventlog.ReadLast(logPath, 10, 0, eventlog.FilterAudio)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(events))
+	}
+
+	// ReadLast returns newest first; correct physical order is start → end → dump.
+	if events[0].Type != eventlog.AudioDumpReady {
+		t.Errorf("events[0]: got %s, want %s", events[0].Type, eventlog.AudioDumpReady)
+	}
+	if events[1].Type != eventlog.SilenceEnd {
+		t.Errorf("events[1]: got %s, want %s", events[1].Type, eventlog.SilenceEnd)
+	}
+	if events[2].Type != eventlog.SilenceStart {
+		t.Errorf("events[2]: got %s, want %s", events[2].Type, eventlog.SilenceStart)
+	}
+	// Timestamps must be non-decreasing (start ≤ end ≤ dump).
+	if events[2].Timestamp.After(events[1].Timestamp) {
+		t.Errorf("silence_start (%v) after silence_end (%v)", events[2].Timestamp, events[1].Timestamp)
+	}
+	if events[1].Timestamp.After(events[0].Timestamp) {
+		t.Errorf("silence_end (%v) after audio_dump_ready (%v)", events[1].Timestamp, events[0].Timestamp)
 	}
 }
