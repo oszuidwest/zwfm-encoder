@@ -1571,9 +1571,13 @@ document.addEventListener('alpine:init', () => {
          * @param {Object} event - Event object
          * @returns {string} Short stream identifier
          */
+        isAudioEvent(event) {
+            return event.type?.startsWith('silence_') || event.type === 'audio_dump_ready';
+        },
+
         getStreamBadgeText(event) {
             // Silence events show "Audio" (they're system-wide, not stream-specific)
-            if (event.type?.startsWith('silence_') || event.type === 'audio_dump_ready') {
+            if (this.isAudioEvent(event)) {
                 return 'Audio';
             }
             // Recorder events show recorder name
@@ -1595,7 +1599,7 @@ document.addEventListener('alpine:init', () => {
          * @returns {string} Category: 'stream', 'audio', 'recorder', or 'system'
          */
         getEventCategory(event) {
-            if (event.type?.startsWith('silence_') || event.type === 'audio_dump_ready') return 'audio';
+            if (this.isAudioEvent(event)) return 'audio';
             if (event.type?.startsWith('recorder_') || event.type?.startsWith('upload_')) return 'recorder';
             if (event.type?.startsWith('stream_')) return 'stream';
             return 'system';
