@@ -57,9 +57,12 @@ func (o *AlertOrchestrator) runLogWorker() {
 	}
 }
 
-// enqueueLog submits fn to the serialized log worker. If the queue is full (> logQueueDepth
-// pending entries), the entry is dropped and a warning is emitted.
+// enqueueLog submits fn to the serialized log worker. No-ops when no event logger is set.
+// If the queue is full (> logQueueDepth pending entries), the entry is dropped and a warning is emitted.
 func (o *AlertOrchestrator) enqueueLog(fn func()) {
+	if o.eventLogger == nil {
+		return
+	}
 	select {
 	case o.logQueue <- fn:
 	default:
@@ -157,12 +160,13 @@ func (o *AlertOrchestrator) Reset() {
 	o.mu.Unlock()
 }
 
-// DrainLogs blocks until all log jobs currently in the queue have been executed.
-// Call this during shutdown to avoid losing silence log entries that are still queued.
+// DrainLogs blocks until all log jobs currently in the queue have been executed, then
+// closes the queue and stops the worker goroutine. Call once during shutdown.
 func (o *AlertOrchestrator) DrainLogs() {
 	done := make(chan struct{})
 	o.logQueue <- func() { close(done) }
 	<-done
+	close(o.logQueue)
 }
 
 // BuildGraphConfig builds a GraphConfig from a config snapshot.
@@ -177,30 +181,19 @@ func BuildGraphConfig(cfg *config.Snapshot) *GraphConfig {
 }
 
 func (o *AlertOrchestrator) logSilenceStart(t time.Time, cfg *config.Snapshot, levelL, levelR float64) {
-	if o.eventLogger == nil {
-		return
-	}
 	if err := o.eventLogger.LogSilenceStart(t, levelL, levelR, cfg.SilenceThreshold); err != nil {
 		slog.Warn("failed to log silence start", "error", err)
 	}
 }
 
 func (o *AlertOrchestrator) logSilenceEnd(t time.Time, cfg *config.Snapshot, durationMS int64, levelL, levelR float64) {
-	if o.eventLogger == nil {
-		return
-	}
 	if err := o.eventLogger.LogSilenceEnd(t, durationMS, levelL, levelR, cfg.SilenceThreshold); err != nil {
 		slog.Warn("failed to log silence end", "error", err)
 	}
 }
 
 func (o *AlertOrchestrator) logAudioDumpReady(t time.Time, cfg *config.Snapshot, durationMS int64, levelL, levelR float64, dump *silencedump.EncodeResult) {
-	if o.eventLogger == nil {
-		return
-	}
-
 	dumpPath, dumpFilename, dumpSize, dumpError := extractDumpInfo(dump)
-
 	if err := o.eventLogger.LogAudioDumpReady(t, durationMS, levelL, levelR, cfg.SilenceThreshold, dumpPath, dumpFilename, dumpSize, dumpError); err != nil {
 		slog.Warn("failed to log audio dump ready", "error", err)
 	}
