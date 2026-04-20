@@ -68,7 +68,7 @@ func TestLoadPreservesExplicitZeroAndFalseValues(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	data := []byte(`{
   "silence_detection": {
-    "threshold_db": 0,
+    "threshold_db": -1,
     "duration_ms": 1234,
     "recovery_ms": 4321,
     "peak_hold_ms": 999
@@ -108,8 +108,8 @@ func TestLoadPreservesExplicitZeroAndFalseValues(t *testing.T) {
 	}
 
 	snap := cfg.Snapshot()
-	if snap.SilenceThreshold != 0 {
-		t.Fatalf("SilenceThreshold = %v, want 0", snap.SilenceThreshold)
+	if snap.SilenceThreshold != -1 {
+		t.Fatalf("SilenceThreshold = %v, want -1", snap.SilenceThreshold)
 	}
 	if snap.SilenceDurationMs != 1234 {
 		t.Fatalf("SilenceDurationMs = %d, want 1234", snap.SilenceDurationMs)
@@ -157,7 +157,12 @@ func TestLoadRejectsInvalidFileSettings(t *testing.T) {
 		{
 			name:    "positive silence threshold",
 			data:    `{"silence_detection":{"threshold_db":1}}`,
-			wantErr: "silence_detection.threshold_db: must be between -60 and 0 dB",
+			wantErr: "silence_detection.threshold_db: must be between -60 and -1 dB",
+		},
+		{
+			name:    "zero silence threshold",
+			data:    `{"silence_detection":{"threshold_db":0}}`,
+			wantErr: "silence_detection.threshold_db: must be between -60 and -1 dB",
 		},
 		{
 			name:    "zero silence duration",
@@ -236,6 +241,11 @@ func TestSettingsUpdateValidateAPIFieldNames(t *testing.T) {
 			wantErr: "silence_threshold:",
 		},
 		{
+			name:    "zero silence threshold uses API name",
+			update:  SettingsUpdate{SilenceThreshold: 0, SilenceDurationMs: 1, SilenceRecoveryMs: 1},
+			wantErr: "silence_threshold:",
+		},
+		{
 			name:    "zero silence duration uses API name",
 			update:  SettingsUpdate{SilenceThreshold: -40, SilenceDurationMs: 0, SilenceRecoveryMs: 1},
 			wantErr: "silence_duration_ms:",
@@ -282,4 +292,34 @@ func TestSettingsUpdateValidateAPIFieldNames(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSilenceThresholdBoundary(t *testing.T) {
+	t.Parallel()
+
+	t.Run("minus one is valid in file config", func(t *testing.T) {
+		t.Parallel()
+
+		configPath := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(configPath, []byte(`{"silence_detection":{"threshold_db":-1}}`), 0o600); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
+
+		cfg := New(configPath)
+		if err := cfg.Load(); err != nil {
+			t.Fatalf("Load() error = %v, want nil", err)
+		}
+	})
+
+	t.Run("minus one is valid in API update", func(t *testing.T) {
+		t.Parallel()
+
+		u := SettingsUpdate{SilenceThreshold: -1, SilenceDurationMs: 1, SilenceRecoveryMs: 1}
+		errs := u.Validate()
+		for _, e := range errs {
+			if strings.Contains(e, "silence_threshold") {
+				t.Fatalf("Validate() returned unexpected silence_threshold error: %q", e)
+			}
+		}
+	})
 }
