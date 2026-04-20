@@ -174,6 +174,11 @@ func TestZabbixEventsJSONSemantics(t *testing.T) {
 			want: defaults,
 		},
 		{
+			name: "partial object only overrides present fields",
+			json: `{"notifications":{"zabbix":{"events":{"silence_start":false}}}}`,
+			want: types.ZabbixEventSubscriptions{SilenceStart: false, SilenceEnd: true},
+		},
+		{
 			name: "explicit false values disable events",
 			json: `{"notifications":{"zabbix":{"events":{"silence_start":false,"silence_end":false}}}}`,
 			want: allFalse,
