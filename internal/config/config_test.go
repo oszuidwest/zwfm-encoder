@@ -157,22 +157,22 @@ func TestLoadRejectsInvalidFileSettings(t *testing.T) {
 		{
 			name:    "positive silence threshold",
 			data:    `{"silence_detection":{"threshold_db":1}}`,
-			wantErr: "silence_threshold: must be between -60 and 0 dB",
+			wantErr: "silence_detection.threshold_db: must be between -60 and 0 dB",
 		},
 		{
 			name:    "zero silence duration",
 			data:    `{"silence_detection":{"duration_ms":0}}`,
-			wantErr: "silence_duration_ms: must be greater than 0",
+			wantErr: "silence_detection.duration_ms: must be greater than 0",
 		},
 		{
 			name:    "zero silence recovery",
 			data:    `{"silence_detection":{"recovery_ms":0}}`,
-			wantErr: "silence_recovery_ms: must be greater than 0",
+			wantErr: "silence_detection.recovery_ms: must be greater than 0",
 		},
 		{
 			name:    "zero peak hold",
 			data:    `{"silence_detection":{"peak_hold_ms":0}}`,
-			wantErr: "peak_hold_ms: must be greater than 0",
+			wantErr: "silence_detection.peak_hold_ms: must be greater than 0",
 		},
 		{
 			name:    "negative silence dump retention",
@@ -182,22 +182,22 @@ func TestLoadRejectsInvalidFileSettings(t *testing.T) {
 		{
 			name:    "invalid webhook url",
 			data:    `{"notifications":{"webhook":{"url":"://broken"}}}`,
-			wantErr: "webhook_url: invalid URL format",
+			wantErr: "notifications.webhook.url: invalid URL format",
 		},
 		{
 			name:    "invalid graph from address",
 			data:    `{"notifications":{"email":{"from_address":"not-an-email"}}}`,
-			wantErr: "graph_from_address: invalid email format",
+			wantErr: "notifications.email.from_address: invalid email format",
 		},
 		{
 			name:    "invalid graph recipient",
 			data:    `{"notifications":{"email":{"recipients":"good@example.com, bad-address"}}}`,
-			wantErr: "graph_recipients: contains invalid email address",
+			wantErr: "notifications.email.recipients: contains invalid email address",
 		},
 		{
 			name:    "invalid zabbix port",
 			data:    `{"notifications":{"zabbix":{"port":70000}}}`,
-			wantErr: "zabbix_port: must be between 1 and 65535",
+			wantErr: "notifications.zabbix.port: must be between 1 and 65535",
 		},
 	}
 
@@ -217,6 +217,68 @@ func TestLoadRejectsInvalidFileSettings(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("Load() error = %q, want substring %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestSettingsUpdateValidateAPIFieldNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		update  SettingsUpdate
+		wantErr string
+	}{
+		{
+			name:    "positive silence threshold uses API name",
+			update:  SettingsUpdate{SilenceThreshold: 1, SilenceDurationMs: 1, SilenceRecoveryMs: 1},
+			wantErr: "silence_threshold:",
+		},
+		{
+			name:    "zero silence duration uses API name",
+			update:  SettingsUpdate{SilenceThreshold: -40, SilenceDurationMs: 0, SilenceRecoveryMs: 1},
+			wantErr: "silence_duration_ms:",
+		},
+		{
+			name:    "invalid webhook url uses API name",
+			update:  SettingsUpdate{SilenceThreshold: -40, SilenceDurationMs: 1, SilenceRecoveryMs: 1, WebhookURL: "://broken"},
+			wantErr: "webhook_url:",
+		},
+		{
+			name:    "invalid graph from address uses API name",
+			update:  SettingsUpdate{SilenceThreshold: -40, SilenceDurationMs: 1, SilenceRecoveryMs: 1, GraphFromAddress: "not-an-email"},
+			wantErr: "graph_from_address:",
+		},
+		{
+			name:    "invalid graph recipients uses API name",
+			update:  SettingsUpdate{SilenceThreshold: -40, SilenceDurationMs: 1, SilenceRecoveryMs: 1, GraphRecipients: "bad-address"},
+			wantErr: "graph_recipients:",
+		},
+		{
+			name:    "invalid zabbix port uses API name",
+			update:  SettingsUpdate{SilenceThreshold: -40, SilenceDurationMs: 1, SilenceRecoveryMs: 1, ZabbixPort: 70000},
+			wantErr: "zabbix_port:",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			errs := tt.update.Validate()
+			if len(errs) == 0 {
+				t.Fatal("Validate() returned no errors, want at least one")
+			}
+			found := false
+			for _, e := range errs {
+				if strings.Contains(e, tt.wantErr) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("Validate() errors = %v, want one containing %q", errs, tt.wantErr)
 			}
 		})
 	}

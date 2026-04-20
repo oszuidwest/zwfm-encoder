@@ -254,39 +254,39 @@ func (c *Config) validate() error {
 	if !util.StationColorPattern.MatchString(c.Web.ColorDark) {
 		return fmt.Errorf("invalid color_dark %q: must be hex format (#RRGGBB)", c.Web.ColorDark)
 	}
-	if msg := validateSilenceThreshold(c.SilenceDetection.ThresholdDB); msg != "" {
+	if msg := validateSilenceThreshold("silence_detection.threshold_db", c.SilenceDetection.ThresholdDB); msg != "" {
 		return fmt.Errorf("invalid %s", msg)
 	}
-	if msg := validatePositiveMilliseconds("silence_duration_ms", c.SilenceDetection.DurationMs); msg != "" {
+	if msg := validatePositiveMilliseconds("silence_detection.duration_ms", c.SilenceDetection.DurationMs); msg != "" {
 		return fmt.Errorf("invalid %s", msg)
 	}
-	if msg := validatePositiveMilliseconds("silence_recovery_ms", c.SilenceDetection.RecoveryMs); msg != "" {
+	if msg := validatePositiveMilliseconds("silence_detection.recovery_ms", c.SilenceDetection.RecoveryMs); msg != "" {
 		return fmt.Errorf("invalid %s", msg)
 	}
-	if msg := validatePositiveMilliseconds("peak_hold_ms", c.SilenceDetection.PeakHoldMs); msg != "" {
+	if msg := validatePositiveMilliseconds("silence_detection.peak_hold_ms", c.SilenceDetection.PeakHoldMs); msg != "" {
 		return fmt.Errorf("invalid %s", msg)
 	}
 	if msg := validateNonNegativeDays("silence_dump.retention_days", c.SilenceDump.RetentionDays); msg != "" {
 		return fmt.Errorf("invalid %s", msg)
 	}
-	if msg := validateOptionalWebhookURL(c.Notifications.Webhook.URL); msg != "" {
+	if msg := validateOptionalWebhookURL("notifications.webhook.url", c.Notifications.Webhook.URL); msg != "" {
 		return fmt.Errorf("invalid %s", msg)
 	}
-	if msg := validateOptionalEmail("graph_from_address", c.Notifications.Email.FromAddress); msg != "" {
+	if msg := validateOptionalEmail("notifications.email.from_address", c.Notifications.Email.FromAddress); msg != "" {
 		return fmt.Errorf("invalid %s", msg)
 	}
-	if msg := validateRecipients(c.Notifications.Email.Recipients); msg != "" {
+	if msg := validateRecipients("notifications.email.recipients", c.Notifications.Email.Recipients); msg != "" {
 		return fmt.Errorf("invalid %s", msg)
 	}
-	if msg := validateZabbixPort(c.Notifications.Zabbix.Port); msg != "" {
+	if msg := validateZabbixPort("notifications.zabbix.port", c.Notifications.Zabbix.Port); msg != "" {
 		return fmt.Errorf("invalid %s", msg)
 	}
 	return nil
 }
 
-func validateSilenceThreshold(threshold float64) string {
+func validateSilenceThreshold(field string, threshold float64) string {
 	if threshold > 0 || threshold < -60 {
-		return "silence_threshold: must be between -60 and 0 dB"
+		return field + ": must be between -60 and 0 dB"
 	}
 	return ""
 }
@@ -305,12 +305,12 @@ func validateNonNegativeDays(field string, value int) string {
 	return ""
 }
 
-func validateOptionalWebhookURL(rawURL string) string {
+func validateOptionalWebhookURL(field, rawURL string) string {
 	if rawURL == "" {
 		return ""
 	}
 	if _, err := url.ParseRequestURI(rawURL); err != nil {
-		return "webhook_url: invalid URL format"
+		return field + ": invalid URL format"
 	}
 	return ""
 }
@@ -322,21 +322,21 @@ func validateOptionalEmail(field, email string) string {
 	return ""
 }
 
-func validateRecipients(recipients string) string {
+func validateRecipients(field, recipients string) string {
 	if recipients == "" {
 		return ""
 	}
 	for email := range strings.SplitSeq(recipients, ",") {
 		if trimmed := strings.TrimSpace(email); trimmed != "" && !util.EmailPattern.MatchString(trimmed) {
-			return "graph_recipients: contains invalid email address"
+			return field + ": contains invalid email address"
 		}
 	}
 	return ""
 }
 
-func validateZabbixPort(port int) string {
+func validateZabbixPort(field string, port int) string {
 	if port != 0 && (port < 1 || port > 65535) {
-		return "zabbix_port: must be between 1 and 65535"
+		return field + ": must be between 1 and 65535"
 	}
 	return ""
 }
@@ -783,7 +783,7 @@ func (s *SettingsUpdate) Validate() []string {
 	var errs []string
 
 	// Silence detection thresholds
-	if msg := validateSilenceThreshold(s.SilenceThreshold); msg != "" {
+	if msg := validateSilenceThreshold("silence_threshold", s.SilenceThreshold); msg != "" {
 		errs = append(errs, msg)
 	}
 	if msg := validatePositiveMilliseconds("silence_duration_ms", s.SilenceDurationMs); msg != "" {
@@ -797,7 +797,7 @@ func (s *SettingsUpdate) Validate() []string {
 	}
 
 	// Webhook URL format
-	if msg := validateOptionalWebhookURL(s.WebhookURL); msg != "" {
+	if msg := validateOptionalWebhookURL("webhook_url", s.WebhookURL); msg != "" {
 		errs = append(errs, msg)
 	}
 
@@ -805,10 +805,10 @@ func (s *SettingsUpdate) Validate() []string {
 	if msg := validateOptionalEmail("graph_from_address", s.GraphFromAddress); msg != "" {
 		errs = append(errs, msg)
 	}
-	if msg := validateRecipients(s.GraphRecipients); msg != "" {
+	if msg := validateRecipients("graph_recipients", s.GraphRecipients); msg != "" {
 		errs = append(errs, msg)
 	}
-	if msg := validateZabbixPort(s.ZabbixPort); msg != "" {
+	if msg := validateZabbixPort("zabbix_port", s.ZabbixPort); msg != "" {
 		errs = append(errs, msg)
 	}
 
