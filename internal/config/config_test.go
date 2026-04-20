@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -307,6 +308,68 @@ func TestSettingsUpdateValidateAPIFieldNames(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSaveLockedWritePath(t *testing.T) {
+	t.Parallel()
+
+	t.Run("permissions are 0600 after save", func(t *testing.T) {
+		t.Parallel()
+
+		configPath := filepath.Join(t.TempDir(), "config.json")
+		cfg := New(configPath)
+		if err := cfg.Load(); err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+
+		info, err := os.Stat(configPath)
+		if err != nil {
+			t.Fatalf("Stat() error = %v", err)
+		}
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Fatalf("file permissions = %o, want 0600", got)
+		}
+	})
+
+	t.Run("no temp files left after successful save", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.json")
+		cfg := New(configPath)
+		if err := cfg.Load(); err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatalf("ReadDir() error = %v", err)
+		}
+		for _, e := range entries {
+			if strings.HasSuffix(e.Name(), ".tmp") {
+				t.Fatalf("temp file not cleaned up: %s", e.Name())
+			}
+		}
+	})
+
+	t.Run("config is valid JSON after save", func(t *testing.T) {
+		t.Parallel()
+
+		configPath := filepath.Join(t.TempDir(), "config.json")
+		cfg := New(configPath)
+		if err := cfg.Load(); err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+
+		data, err := os.ReadFile(configPath) //nolint:gosec // G304: test reads a controlled temp path
+		if err != nil {
+			t.Fatalf("ReadFile() error = %v", err)
+		}
+		var v any
+		if err := json.Unmarshal(data, &v); err != nil {
+			t.Fatalf("saved config is not valid JSON: %v", err)
+		}
+	})
 }
 
 func TestSilenceThresholdBoundary(t *testing.T) {

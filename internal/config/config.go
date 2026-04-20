@@ -341,6 +341,15 @@ func validateZabbixPort(field string, port int) string {
 	return ""
 }
 
+// saveLocked writes config to disk using a write-to-temp-then-rename strategy.
+//
+// On Linux and macOS, os.Rename within the same filesystem is atomic, so a
+// crash mid-write leaves either the old or the new config intact — never a
+// truncated file. The temp file is fsync'd before the rename for durability.
+//
+// On Windows, os.Rename (MoveFileExW) is not guaranteed to be atomic at the
+// filesystem level, but it is still significantly safer than direct overwrite
+// because the destination is only replaced after the source is fully written.
 func (c *Config) saveLocked() error {
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
@@ -352,10 +361,40 @@ func (c *Config) saveLocked() error {
 		return util.WrapError("create config directory", err)
 	}
 
-	if err := os.WriteFile(c.filePath, data, 0o600); err != nil {
-		return util.WrapError("write config", err)
+	// Write to a temp file in the same directory so the rename stays on the
+	// same filesystem (required for atomic rename on Unix).
+	tmp, err := os.CreateTemp(dir, ".config-*.tmp")
+	if err != nil {
+		return util.WrapError("create temp config", err)
 	}
 
+	tmpName := tmp.Name()
+	ok := false
+	defer func() {
+		_ = tmp.Close()
+		if !ok {
+			_ = os.Remove(tmpName)
+		}
+	}()
+
+	if _, err := tmp.Write(data); err != nil {
+		return util.WrapError("write temp config", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return util.WrapError("sync temp config", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return util.WrapError("close temp config", err)
+	}
+	// Set permissions before rename so the final file always has 0600.
+	if err := os.Chmod(tmpName, 0o600); err != nil {
+		return util.WrapError("chmod temp config", err)
+	}
+	if err := os.Rename(tmpName, c.filePath); err != nil {
+		return util.WrapError("rename config", err)
+	}
+
+	ok = true
 	return nil
 }
 
