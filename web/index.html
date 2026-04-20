@@ -353,7 +353,7 @@
 
             <div class="panels">
                 <!-- Audio Panel - Silence detection configuration
-                     - Threshold: dB level below which audio is considered silent (-60 to 0)
+                     - Threshold: dB level below which audio is considered silent (-60 to -1)
                      - Duration: Seconds of silence before triggering alerts (1-3600)
                      - Recovery: Seconds of audio before clearing silence state (1-60) -->
                 <div class="panel" role="tabpanel" id="panel-audio" aria-labelledby="tab-audio" x-show="settingsTab === 'audio'">
@@ -367,7 +367,7 @@
                             <div class="group">
                                 <label for="silence-threshold">Threshold</label>
                                 <div class="input-group">
-                                    <input id="silence-threshold" type="number" max="0" min="-60" step="1" x-model.number="settingsForm.silenceThreshold" @input="markSettingsDirty()" aria-describedby="silence-threshold-hint">
+                                    <input id="silence-threshold" type="number" max="-1" min="-60" step="1" x-model.number="settingsForm.silenceThreshold" @input="markSettingsDirty()" aria-describedby="silence-threshold-hint">
                                     <span class="input-unit">dB</span>
                                 </div>
                                 <span id="silence-threshold-hint" class="input-hint">Audio below this level is considered silence.</span>
