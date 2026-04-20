@@ -350,7 +350,7 @@ func validateZabbixPort(field string, port int) string {
 // On Windows, os.Rename (MoveFileExW) is not guaranteed to be atomic at the
 // filesystem level, but it is still significantly safer than direct overwrite
 // because the destination is only replaced after the source is fully written.
-func (c *Config) saveLocked() error {
+func (c *Config) saveLocked() (retErr error) {
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return util.WrapError("marshal config", err)
@@ -369,10 +369,9 @@ func (c *Config) saveLocked() error {
 	}
 
 	tmpName := tmp.Name()
-	ok := false
 	defer func() {
 		_ = tmp.Close()
-		if !ok {
+		if retErr != nil {
 			_ = os.Remove(tmpName)
 		}
 	}()
@@ -383,18 +382,18 @@ func (c *Config) saveLocked() error {
 	if err := tmp.Sync(); err != nil {
 		return util.WrapError("sync temp config", err)
 	}
+	// Chmod while the fd is open so it applies via fchmod, avoiding a
+	// symlink race between close and a path-based chmod call.
+	if err := tmp.Chmod(0o600); err != nil {
+		return util.WrapError("chmod temp config", err)
+	}
 	if err := tmp.Close(); err != nil {
 		return util.WrapError("close temp config", err)
-	}
-	// Set permissions before rename so the final file always has 0600.
-	if err := os.Chmod(tmpName, 0o600); err != nil {
-		return util.WrapError("chmod temp config", err)
 	}
 	if err := os.Rename(tmpName, c.filePath); err != nil {
 		return util.WrapError("rename config", err)
 	}
 
-	ok = true
 	return nil
 }
 
