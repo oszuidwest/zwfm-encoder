@@ -26,7 +26,7 @@ type AlertOrchestrator struct {
 	activeChannels  []AlertChannel
 	pendingRecovery *pendingRecoveryData
 
-	logQueue  chan func()  // serialized log writes; single worker guarantees JSONL write order
+	logQueue  chan func() // serialized log writes; single worker guarantees JSONL write order
 	closeOnce sync.Once   // ensures Close drains and stops the worker exactly once
 }
 
