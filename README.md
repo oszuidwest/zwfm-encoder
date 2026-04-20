@@ -87,15 +87,17 @@ Monitors audio levels and sends alerts when silence is detected or recovered. Us
 
 | Setting | Default | Range | Description |
 |---------|---------|-------|-------------|
-| Threshold | -40 dB | -60 to 0 | Audio level below which silence is detected |
+| Threshold | -40 dB | -60 to -1 | Audio level below which silence is detected |
 | Duration | 15 s | 1 to 300 | Seconds of silence before alerting |
 | Recovery | 5 s | 1 to 60 | Seconds of audio before recovery |
 
-**Alerting options** (can use multiple simultaneously):
-- **Webhook** - POST request to a URL on silence start/recovery and abandoned uploads
-- **Email** - Microsoft Graph API notification to configured recipients on silence start/recovery and abandoned uploads
-- **File Log** - Append JSON Lines to a local file for each silence event
-- **Zabbix** - Send trapper items to a Zabbix server on silence start/recovery and abandoned uploads
+**Alerting options** (can use multiple simultaneously, each with per-event control):
+- **Webhook** - POST request to a URL; independently enable `silence_start`, `silence_end`, `audio_dump` (MP3 attachment), and abandoned S3 uploads
+- **Email** - Microsoft Graph API notification; independently enable `silence_start`, `silence_end`, `audio_dump` (MP3 attachment), and abandoned S3 uploads
+- **File Log** - Appends JSON Lines for every silence event (always records all events, no per-event toggle)
+- **Zabbix** - Send trapper items to a Zabbix server; independently enable `silence_start` and `silence_end` (no `audio_dump` — trapper items do not support file attachments)
+
+`silence_end` is sent immediately on recovery. `audio_dump_ready` is dispatched as a separate event once the MP3 encoding completes.
 
 Configure via the web interface under Settings → Alerts.
 
@@ -261,7 +263,7 @@ flowchart LR
 2. **Distributor**: Processes PCM in ~100ms chunks, fans out to all consumers
 3. **Metering**: Calculates RMS/peak levels in Go (no FFmpeg filters), holds peaks for 1.5s, detects clipping at ±32760
 4. **Silence Detection**: Hysteresis-based detection with configurable threshold/duration/recovery. Buffers 15s audio context before/after silence events
-5. **Alerting**: Silence and abandoned uploads trigger webhook, email (MS Graph), log (JSON Lines), and/or Zabbix. Recovery includes MP3 dump attachment
+5. **Alerting**: Silence events trigger webhook, email (MS Graph), log (JSON Lines), and/or Zabbix. Each channel has per-event subscriptions for `silence_start`, `silence_end`, and `audio_dump_ready`. `silence_end` fires immediately on recovery; `audio_dump_ready` fires separately once the MP3 is ready. Abandoned S3 uploads also trigger notifications.
 6. **Streaming**: Per-output FFmpeg processes with automatic retry and exponential backoff
 7. **Recording**: Hourly rotation or on-demand, with optional S3 upload
 
