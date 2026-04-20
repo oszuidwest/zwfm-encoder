@@ -4,6 +4,7 @@ package notify
 import (
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
@@ -68,8 +69,9 @@ func (o *AlertOrchestrator) handleSilenceStart(levelL, levelR float64) {
 	active := o.activeChannels
 	o.mu.Unlock()
 
+	now := time.Now()
 	o.dispatcher.DispatchSilenceStart(active, &cfg, levelL, levelR)
-	o.logSilenceStart(&cfg, levelL, levelR)
+	go o.logSilenceStart(now, &cfg, levelL, levelR)
 }
 
 func (o *AlertOrchestrator) handleSilenceEnd(durationMS int64, levelL, levelR float64) {
@@ -87,8 +89,9 @@ func (o *AlertOrchestrator) handleSilenceEnd(durationMS int64, levelL, levelR fl
 	}
 	o.mu.Unlock()
 
+	now := time.Now()
 	o.dispatcher.DispatchSilenceEnd(active, &cfg, durationMS, levelL, levelR)
-	o.logSilenceEnd(&cfg, durationMS, levelL, levelR)
+	go o.logSilenceEnd(now, &cfg, durationMS, levelL, levelR)
 }
 
 // OnDumpReady dispatches audio_dump_ready notifications to subscribed channels.
@@ -103,8 +106,9 @@ func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
 		return
 	}
 
+	now := time.Now()
 	o.dispatcher.DispatchAudioDump(pending.activeChannels, &pending.cfg, pending.durationMS, pending.levelL, pending.levelR, result)
-	o.logAudioDumpReady(&pending.cfg, pending.durationMS, pending.levelL, pending.levelR, result)
+	go o.logAudioDumpReady(now, &pending.cfg, pending.durationMS, pending.levelL, pending.levelR, result)
 }
 
 // HandleUploadAbandoned dispatches an upload-abandonment alert to all configured channels.
@@ -132,32 +136,32 @@ func BuildGraphConfig(cfg *config.Snapshot) *GraphConfig {
 	}
 }
 
-func (o *AlertOrchestrator) logSilenceStart(cfg *config.Snapshot, levelL, levelR float64) {
+func (o *AlertOrchestrator) logSilenceStart(t time.Time, cfg *config.Snapshot, levelL, levelR float64) {
 	if o.eventLogger == nil {
 		return
 	}
-	if err := o.eventLogger.LogSilenceStart(levelL, levelR, cfg.SilenceThreshold); err != nil {
+	if err := o.eventLogger.LogSilenceStart(t, levelL, levelR, cfg.SilenceThreshold); err != nil {
 		slog.Warn("failed to log silence start", "error", err)
 	}
 }
 
-func (o *AlertOrchestrator) logSilenceEnd(cfg *config.Snapshot, durationMS int64, levelL, levelR float64) {
+func (o *AlertOrchestrator) logSilenceEnd(t time.Time, cfg *config.Snapshot, durationMS int64, levelL, levelR float64) {
 	if o.eventLogger == nil {
 		return
 	}
-	if err := o.eventLogger.LogSilenceEnd(durationMS, levelL, levelR, cfg.SilenceThreshold); err != nil {
+	if err := o.eventLogger.LogSilenceEnd(t, durationMS, levelL, levelR, cfg.SilenceThreshold); err != nil {
 		slog.Warn("failed to log silence end", "error", err)
 	}
 }
 
-func (o *AlertOrchestrator) logAudioDumpReady(cfg *config.Snapshot, durationMS int64, levelL, levelR float64, dump *silencedump.EncodeResult) {
+func (o *AlertOrchestrator) logAudioDumpReady(t time.Time, cfg *config.Snapshot, durationMS int64, levelL, levelR float64, dump *silencedump.EncodeResult) {
 	if o.eventLogger == nil {
 		return
 	}
 
 	dumpPath, dumpFilename, dumpSize, dumpError := extractDumpInfo(dump)
 
-	if err := o.eventLogger.LogAudioDumpReady(durationMS, levelL, levelR, cfg.SilenceThreshold, dumpPath, dumpFilename, dumpSize, dumpError); err != nil {
+	if err := o.eventLogger.LogAudioDumpReady(t, durationMS, levelL, levelR, cfg.SilenceThreshold, dumpPath, dumpFilename, dumpSize, dumpError); err != nil {
 		slog.Warn("failed to log audio dump ready", "error", err)
 	}
 }
