@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
@@ -142,5 +143,81 @@ func TestLoadPreservesExplicitZeroAndFalseValues(t *testing.T) {
 	}
 	if snap.RecordingMaxDurationMinutes != DefaultRecordingMaxDurationMinutes {
 		t.Fatalf("RecordingMaxDurationMinutes = %d, want default %d for missing field", snap.RecordingMaxDurationMinutes, DefaultRecordingMaxDurationMinutes)
+	}
+}
+
+func TestLoadRejectsInvalidFileSettings(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		data    string
+		wantErr string
+	}{
+		{
+			name:    "positive silence threshold",
+			data:    `{"silence_detection":{"threshold_db":1}}`,
+			wantErr: "silence_threshold: must be between -60 and 0 dB",
+		},
+		{
+			name:    "zero silence duration",
+			data:    `{"silence_detection":{"duration_ms":0}}`,
+			wantErr: "silence_duration_ms: must be greater than 0",
+		},
+		{
+			name:    "zero silence recovery",
+			data:    `{"silence_detection":{"recovery_ms":0}}`,
+			wantErr: "silence_recovery_ms: must be greater than 0",
+		},
+		{
+			name:    "zero peak hold",
+			data:    `{"silence_detection":{"peak_hold_ms":0}}`,
+			wantErr: "peak_hold_ms: must be greater than 0",
+		},
+		{
+			name:    "negative silence dump retention",
+			data:    `{"silence_dump":{"retention_days":-1}}`,
+			wantErr: "silence_dump.retention_days: cannot be negative",
+		},
+		{
+			name:    "invalid webhook url",
+			data:    `{"notifications":{"webhook":{"url":"://broken"}}}`,
+			wantErr: "webhook_url: invalid URL format",
+		},
+		{
+			name:    "invalid graph from address",
+			data:    `{"notifications":{"email":{"from_address":"not-an-email"}}}`,
+			wantErr: "graph_from_address: invalid email format",
+		},
+		{
+			name:    "invalid graph recipient",
+			data:    `{"notifications":{"email":{"recipients":"good@example.com, bad-address"}}}`,
+			wantErr: "graph_recipients: contains invalid email address",
+		},
+		{
+			name:    "invalid zabbix port",
+			data:    `{"notifications":{"zabbix":{"port":70000}}}`,
+			wantErr: "zabbix_port: must be between 1 and 65535",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			configPath := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(configPath, []byte(tt.data), 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+
+			cfg := New(configPath)
+			err := cfg.Load()
+			if err == nil {
+				t.Fatal("Load() error = nil, want validation error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Load() error = %q, want substring %q", err.Error(), tt.wantErr)
+			}
+		})
 	}
 }

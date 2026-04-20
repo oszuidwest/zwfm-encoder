@@ -254,7 +254,91 @@ func (c *Config) validate() error {
 	if !util.StationColorPattern.MatchString(c.Web.ColorDark) {
 		return fmt.Errorf("invalid color_dark %q: must be hex format (#RRGGBB)", c.Web.ColorDark)
 	}
+	if msg := validateSilenceThreshold(c.SilenceDetection.ThresholdDB); msg != "" {
+		return fmt.Errorf("invalid %s", msg)
+	}
+	if msg := validatePositiveMilliseconds("silence_duration_ms", c.SilenceDetection.DurationMs); msg != "" {
+		return fmt.Errorf("invalid %s", msg)
+	}
+	if msg := validatePositiveMilliseconds("silence_recovery_ms", c.SilenceDetection.RecoveryMs); msg != "" {
+		return fmt.Errorf("invalid %s", msg)
+	}
+	if msg := validatePositiveMilliseconds("peak_hold_ms", c.SilenceDetection.PeakHoldMs); msg != "" {
+		return fmt.Errorf("invalid %s", msg)
+	}
+	if msg := validateNonNegativeDays("silence_dump.retention_days", c.SilenceDump.RetentionDays); msg != "" {
+		return fmt.Errorf("invalid %s", msg)
+	}
+	if msg := validateOptionalWebhookURL(c.Notifications.Webhook.URL); msg != "" {
+		return fmt.Errorf("invalid %s", msg)
+	}
+	if msg := validateOptionalEmail("graph_from_address", c.Notifications.Email.FromAddress); msg != "" {
+		return fmt.Errorf("invalid %s", msg)
+	}
+	if msg := validateRecipients(c.Notifications.Email.Recipients); msg != "" {
+		return fmt.Errorf("invalid %s", msg)
+	}
+	if msg := validateZabbixPort(c.Notifications.Zabbix.Port); msg != "" {
+		return fmt.Errorf("invalid %s", msg)
+	}
 	return nil
+}
+
+func validateSilenceThreshold(threshold float64) string {
+	if threshold > 0 || threshold < -60 {
+		return "silence_threshold: must be between -60 and 0 dB"
+	}
+	return ""
+}
+
+func validatePositiveMilliseconds(field string, value int64) string {
+	if value <= 0 {
+		return field + ": must be greater than 0"
+	}
+	return ""
+}
+
+func validateNonNegativeDays(field string, value int) string {
+	if value < 0 {
+		return field + ": cannot be negative"
+	}
+	return ""
+}
+
+func validateOptionalWebhookURL(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	if _, err := url.ParseRequestURI(rawURL); err != nil {
+		return "webhook_url: invalid URL format"
+	}
+	return ""
+}
+
+func validateOptionalEmail(field, email string) string {
+	if email != "" && !util.EmailPattern.MatchString(email) {
+		return field + ": invalid email format"
+	}
+	return ""
+}
+
+func validateRecipients(recipients string) string {
+	if recipients == "" {
+		return ""
+	}
+	for email := range strings.SplitSeq(recipients, ",") {
+		if trimmed := strings.TrimSpace(email); trimmed != "" && !util.EmailPattern.MatchString(trimmed) {
+			return "graph_recipients: contains invalid email address"
+		}
+	}
+	return ""
+}
+
+func validateZabbixPort(port int) string {
+	if port != 0 && (port < 1 || port > 65535) {
+		return "zabbix_port: must be between 1 and 65535"
+	}
+	return ""
 }
 
 func (c *Config) saveLocked() error {
@@ -699,42 +783,33 @@ func (s *SettingsUpdate) Validate() []string {
 	var errs []string
 
 	// Silence detection thresholds
-	if s.SilenceThreshold > 0 || s.SilenceThreshold < -60 {
-		errs = append(errs, "silence_threshold: must be between -60 and 0 dB")
+	if msg := validateSilenceThreshold(s.SilenceThreshold); msg != "" {
+		errs = append(errs, msg)
 	}
-	if s.SilenceDurationMs <= 0 {
-		errs = append(errs, "silence_duration_ms: must be greater than 0")
+	if msg := validatePositiveMilliseconds("silence_duration_ms", s.SilenceDurationMs); msg != "" {
+		errs = append(errs, msg)
 	}
-	if s.SilenceRecoveryMs <= 0 {
-		errs = append(errs, "silence_recovery_ms: must be greater than 0")
+	if msg := validatePositiveMilliseconds("silence_recovery_ms", s.SilenceRecoveryMs); msg != "" {
+		errs = append(errs, msg)
 	}
-	if s.SilenceDumpRetentionDays < 0 {
-		errs = append(errs, "silence_dump_retention_days: cannot be negative")
+	if msg := validateNonNegativeDays("silence_dump_retention_days", s.SilenceDumpRetentionDays); msg != "" {
+		errs = append(errs, msg)
 	}
 
 	// Webhook URL format
-	if s.WebhookURL != "" {
-		if _, err := url.ParseRequestURI(s.WebhookURL); err != nil {
-			errs = append(errs, "webhook_url: invalid URL format")
-		}
+	if msg := validateOptionalWebhookURL(s.WebhookURL); msg != "" {
+		errs = append(errs, msg)
 	}
 
 	// Email address validation
-	if s.GraphFromAddress != "" && !util.EmailPattern.MatchString(s.GraphFromAddress) {
-		errs = append(errs, "graph_from_address: invalid email format")
+	if msg := validateOptionalEmail("graph_from_address", s.GraphFromAddress); msg != "" {
+		errs = append(errs, msg)
 	}
-	if s.GraphRecipients != "" {
-		for email := range strings.SplitSeq(s.GraphRecipients, ",") {
-			if trimmed := strings.TrimSpace(email); trimmed != "" && !util.EmailPattern.MatchString(trimmed) {
-				errs = append(errs, "graph_recipients: contains invalid email address")
-				break
-			}
-		}
+	if msg := validateRecipients(s.GraphRecipients); msg != "" {
+		errs = append(errs, msg)
 	}
-
-	// Zabbix port range
-	if s.ZabbixPort != 0 && (s.ZabbixPort < 1 || s.ZabbixPort > 65535) {
-		errs = append(errs, "zabbix_port: must be between 1 and 65535")
+	if msg := validateZabbixPort(s.ZabbixPort); msg != "" {
+		errs = append(errs, msg)
 	}
 
 	return errs
