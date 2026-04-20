@@ -182,7 +182,6 @@ func New(filePath string) *Config {
 			ColorLight:  DefaultStationColorLight,
 			ColorDark:   DefaultStationColorDark,
 		},
-		Audio: AudioConfig{},
 		SilenceDetection: SilenceDetectionConfig{
 			ThresholdDB: DefaultSilenceThreshold,
 			DurationMs:  DefaultSilenceDurationMs,

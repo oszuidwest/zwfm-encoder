@@ -13,6 +13,8 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
+var webhookClient = &http.Client{Timeout: 10 * time.Second}
+
 // WebhookPayload represents the data sent to webhook endpoints.
 type WebhookPayload struct {
 	Event             string  `json:"event"`
@@ -96,7 +98,6 @@ func sendWebhookDumpReady(webhookURL string, durationMs int64, levelL, levelR, t
 		Timestamp:         timestampUTC(),
 	}
 
-	// Add dump info
 	if dump != nil {
 		if dump.Error != nil {
 			payload.AudioDumpError = dump.Error.Error()
@@ -127,8 +128,7 @@ func sendWebhook(webhookURL string, payload *WebhookPayload) error {
 		return util.WrapError("marshal payload", err)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Post(webhookURL, "application/json", bytes.NewBuffer(jsonData))
+	resp, err := webhookClient.Post(webhookURL, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return util.WrapError("send webhook request", err)
 	}
