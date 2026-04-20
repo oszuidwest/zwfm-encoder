@@ -69,7 +69,7 @@ func (o *AlertOrchestrator) handleSilenceStart(levelL, levelR float64) {
 	o.mu.Unlock()
 
 	o.dispatcher.DispatchSilenceStart(active, &cfg, levelL, levelR)
-	go o.logSilenceStart(&cfg, levelL, levelR)
+	o.logSilenceStart(&cfg, levelL, levelR)
 }
 
 func (o *AlertOrchestrator) handleSilenceEnd(durationMS int64, levelL, levelR float64) {
@@ -88,7 +88,7 @@ func (o *AlertOrchestrator) handleSilenceEnd(durationMS int64, levelL, levelR fl
 	o.mu.Unlock()
 
 	o.dispatcher.DispatchSilenceEnd(active, &cfg, durationMS, levelL, levelR)
-	go o.logSilenceEnd(&cfg, durationMS, levelL, levelR)
+	o.logSilenceEnd(&cfg, durationMS, levelL, levelR)
 }
 
 // OnDumpReady dispatches audio_dump_ready notifications to subscribed channels.
@@ -104,7 +104,7 @@ func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
 	}
 
 	o.dispatcher.DispatchAudioDump(pending.activeChannels, &pending.cfg, pending.durationMS, pending.levelL, pending.levelR, result)
-	go o.logAudioDumpReady(&pending.cfg, pending.durationMS, pending.levelL, pending.levelR, result)
+	o.logAudioDumpReady(&pending.cfg, pending.durationMS, pending.levelL, pending.levelR, result)
 }
 
 // HandleUploadAbandoned dispatches an upload-abandonment alert to all configured channels.
