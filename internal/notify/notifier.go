@@ -35,7 +35,7 @@ type AlertOrchestrator struct {
 	pendingRecovery *pendingRecoveryData
 
 	logQueue  chan logJob // serialized log writes; single worker guarantees JSONL write order
-	closeOnce sync.Once  // ensures Close drains and stops the worker exactly once
+	closeOnce sync.Once   // ensures Close drains and stops the worker exactly once
 }
 
 // pendingRecoveryData holds recovery event data while waiting for the audio dump.
