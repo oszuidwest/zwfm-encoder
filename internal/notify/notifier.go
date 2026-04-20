@@ -27,6 +27,7 @@ type pendingRecoveryData struct {
 	durationMS     int64
 	levelL         float64
 	levelR         float64
+	cfg            config.Snapshot // captured at silence-end time; reused for dump dispatch
 	activeChannels []AlertChannel
 }
 
@@ -38,13 +39,6 @@ func NewAlertOrchestrator(cfg *config.Config, dispatcher *Dispatcher) *AlertOrch
 // SetEventLogger sets the event logger for silence notifications.
 func (o *AlertOrchestrator) SetEventLogger(logger *eventlog.Logger) {
 	o.eventLogger = logger
-}
-
-// ResetPendingRecovery clears any pending recovery data.
-func (o *AlertOrchestrator) ResetPendingRecovery() {
-	o.mu.Lock()
-	o.pendingRecovery = nil
-	o.mu.Unlock()
 }
 
 // HandleSilenceEvent dispatches silence start and recovery notifications based on the event.
@@ -88,6 +82,7 @@ func (o *AlertOrchestrator) handleSilenceEnd(durationMS int64, levelL, levelR fl
 		durationMS:     durationMS,
 		levelL:         levelL,
 		levelR:         levelR,
+		cfg:            cfg,
 		activeChannels: active,
 	}
 	o.mu.Unlock()
@@ -104,12 +99,12 @@ func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
 	o.mu.Unlock()
 
 	if pending == nil {
+		slog.Warn("audio dump ready but no pending recovery found, notifications skipped")
 		return
 	}
 
-	cfg := o.cfg.Snapshot()
-	o.dispatcher.DispatchAudioDump(pending.activeChannels, &cfg, pending.durationMS, pending.levelL, pending.levelR, result)
-	go o.logAudioDumpReady(&cfg, pending.durationMS, pending.levelL, pending.levelR, result)
+	o.dispatcher.DispatchAudioDump(pending.activeChannels, &pending.cfg, pending.durationMS, pending.levelL, pending.levelR, result)
+	go o.logAudioDumpReady(&pending.cfg, pending.durationMS, pending.levelL, pending.levelR, result)
 }
 
 // HandleUploadAbandoned dispatches an upload-abandonment alert to all configured channels.

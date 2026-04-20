@@ -383,7 +383,6 @@ func (e *Encoder) Stop() error {
 	// Reset silence detection and notification state
 	e.silenceDetect.Reset()
 	e.alertOrchestrator.Reset()
-	e.alertOrchestrator.ResetPendingRecovery()
 
 	// Stop silence dump manager
 	if e.silenceDumpManager != nil {
