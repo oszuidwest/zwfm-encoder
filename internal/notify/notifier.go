@@ -59,14 +59,14 @@ func (o *AlertOrchestrator) runLogWorker() {
 
 // enqueueLog submits fn to the serialized log worker. No-ops when no event logger is set.
 // If the queue is full (logQueueDepth pending entries), the entry is dropped and a warning is emitted.
-func (o *AlertOrchestrator) enqueueLog(fn func()) {
+func (o *AlertOrchestrator) enqueueLog(eventType string, fn func()) {
 	if o.eventLogger == nil {
 		return
 	}
 	select {
 	case o.logQueue <- fn:
 	default:
-		slog.Warn("silence log queue full, log entry dropped")
+		slog.Warn("silence log queue full, log entry dropped", "event_type", eventType)
 	}
 }
 
@@ -104,7 +104,7 @@ func (o *AlertOrchestrator) handleSilenceStart(levelL, levelR float64) {
 
 	now := time.Now()
 	o.dispatcher.DispatchSilenceStart(active, &cfg, levelL, levelR)
-	o.enqueueLog(func() { o.logSilenceStart(now, &cfg, levelL, levelR) })
+	o.enqueueLog("silence_start", func() { o.logSilenceStart(now, &cfg, levelL, levelR) })
 }
 
 func (o *AlertOrchestrator) handleSilenceEnd(durationMS int64, levelL, levelR float64) {
@@ -124,7 +124,7 @@ func (o *AlertOrchestrator) handleSilenceEnd(durationMS int64, levelL, levelR fl
 
 	now := time.Now()
 	o.dispatcher.DispatchSilenceEnd(active, &cfg, durationMS, levelL, levelR)
-	o.enqueueLog(func() { o.logSilenceEnd(now, &cfg, durationMS, levelL, levelR) })
+	o.enqueueLog("silence_end", func() { o.logSilenceEnd(now, &cfg, durationMS, levelL, levelR) })
 }
 
 // OnDumpReady dispatches audio_dump_ready notifications to subscribed channels.
@@ -141,7 +141,7 @@ func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
 
 	now := time.Now()
 	o.dispatcher.DispatchAudioDump(pending.activeChannels, &pending.cfg, pending.durationMS, pending.levelL, pending.levelR, result)
-	o.enqueueLog(func() {
+	o.enqueueLog("audio_dump_ready", func() {
 		o.logAudioDumpReady(now, &pending.cfg, pending.durationMS, pending.levelL, pending.levelR, result)
 	})
 }

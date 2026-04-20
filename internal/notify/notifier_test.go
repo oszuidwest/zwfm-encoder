@@ -327,17 +327,17 @@ func TestEnqueueLogDropsWhenFull(t *testing.T) {
 	// Only then is the queue slot freed and all logQueueDepth buffer positions available.
 	block := make(chan struct{})
 	started := make(chan struct{})
-	o.enqueueLog(func() { close(started); <-block })
+	o.enqueueLog("test_block", func() { close(started); <-block })
 	<-started // worker is now inside the blocking job; queue is empty
 
 	// Fill all logQueueDepth slots.
 	var wrote atomic.Int32
 	for range logQueueDepth {
-		o.enqueueLog(func() { wrote.Add(1) })
+		o.enqueueLog("test_write", func() { wrote.Add(1) })
 	}
 
 	// Queue is at capacity; this entry must be dropped, not panic.
-	o.enqueueLog(func() { wrote.Add(1) })
+	o.enqueueLog("test_overflow", func() { wrote.Add(1) })
 
 	close(block)
 	o.DrainLogs()
