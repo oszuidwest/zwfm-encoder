@@ -154,9 +154,9 @@ func TestZabbixEventsJSONSemantics(t *testing.T) {
 	allFalse := types.ZabbixEventSubscriptions{}
 
 	tests := []struct {
-		name    string
-		json    string
-		want    types.ZabbixEventSubscriptions
+		name string
+		json string
+		want types.ZabbixEventSubscriptions
 	}{
 		{
 			name: "missing events field preserves defaults",

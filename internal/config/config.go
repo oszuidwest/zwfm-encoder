@@ -725,7 +725,7 @@ func (c *Config) Snapshot() Snapshot {
 		WebhookURL:    c.Notifications.Webhook.URL,
 		WebhookEvents: c.Notifications.Webhook.Events,
 		EmailEvents:   c.Notifications.Email.Events,
-		ZabbixEvents: c.Notifications.Zabbix.Events,
+		ZabbixEvents:  c.Notifications.Zabbix.Events,
 
 		// Zabbix
 		ZabbixServer:     c.Notifications.Zabbix.Server,
