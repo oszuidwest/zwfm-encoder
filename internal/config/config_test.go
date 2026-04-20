@@ -170,6 +170,11 @@ func TestLoadRejectsInvalidFileSettings(t *testing.T) {
 			wantErr: "silence_detection.threshold_db: must be between -60 and -1 dB",
 		},
 		{
+			name:    "silence threshold below -60",
+			data:    `{"silence_detection":{"threshold_db":-61}}`,
+			wantErr: "silence_detection.threshold_db: must be between -60 and -1 dB",
+		},
+		{
 			name:    "zero silence duration",
 			data:    `{"silence_detection":{"duration_ms":0}}`,
 			wantErr: "silence_detection.duration_ms: must be greater than 0",
@@ -321,10 +326,36 @@ func TestSilenceThresholdBoundary(t *testing.T) {
 		}
 	})
 
+	t.Run("minus sixty is valid in file config", func(t *testing.T) {
+		t.Parallel()
+
+		configPath := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(configPath, []byte(`{"silence_detection":{"threshold_db":-60}}`), 0o600); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
+
+		cfg := New(configPath)
+		if err := cfg.Load(); err != nil {
+			t.Fatalf("Load() error = %v, want nil", err)
+		}
+	})
+
 	t.Run("minus one is valid in API update", func(t *testing.T) {
 		t.Parallel()
 
 		u := SettingsUpdate{SilenceThreshold: -1, SilenceDurationMs: 1, SilenceRecoveryMs: 1}
+		errs := u.Validate()
+		for _, e := range errs {
+			if strings.Contains(e, "silence_threshold") {
+				t.Fatalf("Validate() returned unexpected silence_threshold error: %q", e)
+			}
+		}
+	})
+
+	t.Run("minus sixty is valid in API update", func(t *testing.T) {
+		t.Parallel()
+
+		u := SettingsUpdate{SilenceThreshold: -60, SilenceDurationMs: 1, SilenceRecoveryMs: 1}
 		errs := u.Validate()
 		for _, e := range errs {
 			if strings.Contains(e, "silence_threshold") {
