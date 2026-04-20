@@ -116,7 +116,10 @@ func (n *SilenceNotifier) handleSilenceStart(levelL, levelR float64) {
 	shouldSendEmail := !n.emailSent && cfg.HasGraph() && cfg.EmailEvents.SilenceStart
 	shouldSendLog := !n.logSent && n.eventLogger != nil
 	shouldSendZabbix := !n.zabbixSent && cfg.HasZabbixSilence() && cfg.ZabbixEvents.SilenceStart
-	// Mark channels as sent even if event is not subscribed, so recovery tracking works
+	// Mark channels as present even if silence_start was not subscribed. sentFlags records
+	// which channels were configured at silence-start time, not whether a notification was
+	// delivered. It gates silence_end and audio_dump_ready dispatch so those events are only
+	// sent on channels that were active when the silence began.
 	if !n.webhookSent && cfg.HasWebhook() {
 		n.webhookSent = true
 	}
@@ -183,7 +186,7 @@ func (n *SilenceNotifier) handleSilenceEnd(totalDurationMs int64, levelL, levelR
 		go n.sendSilenceEndEmail(cfg, totalDurationMs, levelL, levelR)
 	}
 	if sentLog {
-		go n.logSilenceEnd(cfg, totalDurationMs, levelL, levelR)
+		go n.logSilenceEnd(cfg, totalDurationMs, levelL, levelR) // event log is an audit trail; always records regardless of notification subscriptions
 	}
 	if sentZabbix && cfg.ZabbixEvents.SilenceEnd {
 		go n.sendRecoveryZabbix(cfg, totalDurationMs, levelL, levelR)
@@ -295,7 +298,7 @@ func (n *SilenceNotifier) OnDumpReady(result *silencedump.EncodeResult) {
 		go n.sendDumpReadyEmail(pending.cfg, pending.durationMs, pending.levelL, pending.levelR, result)
 	}
 	if pending.sentFlags.log {
-		go n.logAudioDumpReady(pending.cfg, pending.durationMs, pending.levelL, pending.levelR, result)
+		go n.logAudioDumpReady(pending.cfg, pending.durationMs, pending.levelL, pending.levelR, result) // event log is an audit trail; always records regardless of notification subscriptions
 	}
 }
 
@@ -404,6 +407,9 @@ type UploadAbandonedParams struct {
 }
 
 // NotifyUploadAbandoned dispatches an upload abandonment alert to all configured channels.
+// Unlike silence notifications, upload abandonment alerts are not gated by EventSubscriptions.
+// They represent a critical data-loss condition (S3 upload exhausted all retries), so they are
+// sent whenever the channel is configured. Operators opt out by leaving the channel unconfigured.
 //
 //nolint:gocritic // hugeParam: copy is acceptable for infrequent notification events
 func NotifyUploadAbandoned(cfg config.Snapshot, p UploadAbandonedParams) {

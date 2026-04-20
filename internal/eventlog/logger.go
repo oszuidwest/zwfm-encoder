@@ -275,7 +275,7 @@ const (
 	FilterAll TypeFilter = ""
 	// FilterStream selects stream events.
 	FilterStream TypeFilter = "stream"
-	// FilterAudio selects silence events.
+	// FilterAudio selects silence and audio dump events (silence_start, silence_end, audio_dump_ready).
 	FilterAudio TypeFilter = "audio"
 	// FilterRecorder selects recorder events.
 	FilterRecorder TypeFilter = "recorder"

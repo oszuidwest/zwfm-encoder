@@ -466,6 +466,8 @@ type EventSubscriptions struct {
 }
 
 // ZabbixEventSubscriptions controls which silence events trigger Zabbix notifications.
+// Zabbix trapper items carry only numeric values and do not support file attachments,
+// so AudioDump is not available for this channel.
 type ZabbixEventSubscriptions struct {
 	// SilenceStart enables notifications when silence is first detected.
 	SilenceStart bool `json:"silence_start"`
@@ -481,7 +483,7 @@ type ZabbixConfig struct {
 	SilenceKey string `json:"silence_key,omitempty"`
 	UploadKey  string `json:"upload_key,omitempty"`
 	// Events controls which silence events trigger Zabbix notifications.
-	Events ZabbixEventSubscriptions `json:"events"`
+	Events *ZabbixEventSubscriptions `json:"events,omitempty"`
 }
 
 // SecretExpiryInfo holds expiration details for an Azure client secret.

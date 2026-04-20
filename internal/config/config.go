@@ -200,6 +200,7 @@ func (c *Config) Load() error {
 
 	data, err := os.ReadFile(c.filePath)
 	if os.IsNotExist(err) {
+		c.applyDefaults()
 		return c.saveLocked()
 	}
 	if err != nil {
@@ -257,6 +258,16 @@ func (c *Config) applyDefaults() {
 		if c.Streaming.Streams[i].CreatedAt == 0 {
 			c.Streaming.Streams[i].CreatedAt = time.Now().UnixMilli()
 		}
+	}
+	// Notification event subscription defaults - enable all events if zero-value (e.g. on upgrade from older config)
+	if c.Notifications.Webhook.Events == (types.EventSubscriptions{}) {
+		c.Notifications.Webhook.Events = types.EventSubscriptions{SilenceStart: true, SilenceEnd: true, AudioDump: true}
+	}
+	if c.Notifications.Email.Events == (types.EventSubscriptions{}) {
+		c.Notifications.Email.Events = types.EventSubscriptions{SilenceStart: true, SilenceEnd: true, AudioDump: true}
+	}
+	if c.Notifications.Zabbix.Events == nil {
+		c.Notifications.Zabbix.Events = &types.ZabbixEventSubscriptions{SilenceStart: true, SilenceEnd: true}
 	}
 	// Recording defaults
 	if c.Recording.Recorders == nil {
@@ -613,7 +624,7 @@ func (c *Config) Snapshot() Snapshot {
 		WebhookURL:    c.Notifications.Webhook.URL,
 		WebhookEvents: c.Notifications.Webhook.Events,
 		EmailEvents:   c.Notifications.Email.Events,
-		ZabbixEvents:  c.Notifications.Zabbix.Events,
+		ZabbixEvents:  *c.Notifications.Zabbix.Events,
 
 		// Zabbix
 		ZabbixServer:     c.Notifications.Zabbix.Server,
@@ -774,7 +785,8 @@ func (c *Config) ApplySettings(s *SettingsUpdate) error {
 	c.Notifications.Webhook.URL = s.WebhookURL
 	c.Notifications.Webhook.Events = s.WebhookEvents
 	c.Notifications.Email.Events = s.EmailEvents
-	c.Notifications.Zabbix.Events = s.ZabbixEvents
+	zabbixEvents := s.ZabbixEvents
+	c.Notifications.Zabbix.Events = &zabbixEvents
 	c.Notifications.Zabbix.Server = s.ZabbixServer
 	c.Notifications.Zabbix.Port = s.ZabbixPort
 	c.Notifications.Zabbix.Host = s.ZabbixHost

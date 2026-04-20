@@ -2,6 +2,7 @@ package notify
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
@@ -60,6 +61,9 @@ func (n *SilenceNotifier) sendSilenceEndEmailWithClient(cfg *GraphConfig, statio
 	return n.sendEmail(cfg, subject, body)
 }
 
+// sendDumpReadyEmailWithClient does not delegate to sendEmail because it needs to attach a file.
+// It reuses the cached Graph client (via getOrCreateGraphClient) and builds the multipart message
+// directly, unlike the simpler silence-start/end paths that only send plain text.
 func (n *SilenceNotifier) sendDumpReadyEmailWithClient(cfg *GraphConfig, stationName string, durationMs int64, levelL, levelR, threshold float64, dump *silencedump.EncodeResult) error {
 	if !IsConfigured(cfg) {
 		return nil
@@ -74,12 +78,8 @@ func (n *SilenceNotifier) sendDumpReadyEmailWithClient(cfg *GraphConfig, station
 		util.HumanTime(), util.FormatDuration(durationMs), levelL, levelR, threshold,
 	)
 
-	if dump != nil {
-		if dump.Error != nil {
-			body += fmt.Sprintf("\n\nAudio recording: Failed to capture (%s)", dump.Error.Error())
-		} else {
-			body += "\n\nAudio recording attached (15s before and after the silence)."
-		}
+	if dump != nil && dump.Error != nil {
+		body += fmt.Sprintf("\n\nAudio recording: Failed to capture (%s)", dump.Error.Error())
 	}
 
 	client, err := n.getOrCreateGraphClient(cfg)
@@ -102,6 +102,10 @@ func (n *SilenceNotifier) sendDumpReadyEmailWithClient(cfg *GraphConfig, station
 				ContentType: "audio/mpeg",
 				Data:        data,
 			}
+			body += "\n\nAudio recording attached (15s before and after the silence)."
+		} else {
+			slog.Warn("audio dump file unreadable, sending email without attachment", "path", dump.FilePath, "error", err)
+			body += fmt.Sprintf("\n\nAudio recording unavailable (file could not be read: %s).", err)
 		}
 	}
 
