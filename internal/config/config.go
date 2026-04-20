@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -347,8 +346,8 @@ func validateZabbixPort(field string, port int) string {
 // On Linux and macOS, os.Rename within the same filesystem is atomic, so a
 // crash mid-write leaves either the old or the new config intact — never a
 // truncated file. The temp file is fsync'd before the rename, and the parent
-// directory is synced after the rename when supported, so the replacement is
-// durable on Unix filesystems.
+// directory is synced after the rename on Unix, so the replacement is
+// durable on those filesystems.
 //
 // On Windows, os.Rename (MoveFileExW) is not guaranteed to be atomic at the
 // filesystem level, but it is still significantly safer than direct overwrite
@@ -398,29 +397,6 @@ func (c *Config) saveLocked() (retErr error) {
 	}
 	if err := syncDirPath(dir); err != nil {
 		return err
-	}
-
-	return nil
-}
-
-func syncDirPath(dir string) error {
-	if runtime.GOOS == "windows" {
-		return nil
-	}
-
-	f, err := os.Open(dir) //nolint:gosec // G304: dir is derived from the config file path set at startup
-	if err != nil {
-		return util.WrapError("open config directory", err)
-	}
-	defer func() {
-		_ = f.Close()
-	}()
-
-	if err := f.Sync(); err != nil {
-		return util.WrapError("sync config directory", err)
-	}
-	if err := f.Close(); err != nil {
-		return util.WrapError("close config directory", err)
 	}
 
 	return nil
