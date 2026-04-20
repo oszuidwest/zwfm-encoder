@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -178,7 +179,7 @@ func TestActiveChannelsNotRebuiltWithinSilencePeriod(t *testing.T) {
 func TestAudioDumpUsesSnapshotFromSilenceEnd(t *testing.T) {
 	t.Parallel()
 	ch := newTestChannel(true)
-	cfg := config.New("")
+	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
 
 	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
@@ -189,13 +190,15 @@ func TestAudioDumpUsesSnapshotFromSilenceEnd(t *testing.T) {
 
 	// Change the threshold in config after silence-end. A fresh Snapshot() would reflect
 	// the new value; pending.cfg must not.
-	_ = cfg.ApplySettings(&config.SettingsUpdate{
+	if err := cfg.ApplySettings(&config.SettingsUpdate{
 		SilenceThreshold:         -20,
 		SilenceDurationMs:        15000,
 		SilenceRecoveryMs:        5000,
 		SilenceDumpEnabled:       true,
 		SilenceDumpRetentionDays: 7,
-	})
+	}); err != nil {
+		t.Fatalf("ApplySettings failed: %v", err)
+	}
 
 	o.OnDumpReady(nil)
 	audioDumpSnap := awaitCall(t, ch.audioDumpCalled, "SendAudioDump")
