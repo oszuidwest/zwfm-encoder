@@ -58,7 +58,7 @@ func (o *AlertOrchestrator) runLogWorker() {
 }
 
 // enqueueLog submits fn to the serialized log worker. No-ops when no event logger is set.
-// If the queue is full (> logQueueDepth pending entries), the entry is dropped and a warning is emitted.
+// If the queue is full (logQueueDepth pending entries), the entry is dropped and a warning is emitted.
 func (o *AlertOrchestrator) enqueueLog(fn func()) {
 	if o.eventLogger == nil {
 		return
@@ -135,7 +135,7 @@ func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
 	o.mu.Unlock()
 
 	if pending == nil {
-		slog.Debug("audio dump ready but no pending recovery; encoder was reset before dump completed")
+		slog.Debug("audio dump ready but no pending silence recovery; dump ignored")
 		return
 	}
 
@@ -160,13 +160,12 @@ func (o *AlertOrchestrator) Reset() {
 	o.mu.Unlock()
 }
 
-// DrainLogs blocks until all log jobs currently in the queue have been executed, then
-// closes the queue and stops the worker goroutine. Call once during shutdown.
+// DrainLogs blocks until all log jobs currently in the queue have been executed.
+// Safe to call multiple times (e.g. on Stop and again after a restart cycle).
 func (o *AlertOrchestrator) DrainLogs() {
 	done := make(chan struct{})
 	o.logQueue <- func() { close(done) }
 	<-done
-	close(o.logQueue)
 }
 
 // BuildGraphConfig builds a GraphConfig from a config snapshot.

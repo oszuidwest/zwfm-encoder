@@ -211,8 +211,9 @@ func TestAudioDumpUsesSnapshotFromSilenceEnd(t *testing.T) {
 }
 
 // TestLogWriteOrder verifies that silence_start is physically written before silence_end in
-// the JSONL file. This guards against the regression where two goroutines raced on Logger.mu
-// and produced out-of-order entries that ReadLast (reverse file order) returned inverted.
+// the JSONL file. Both events are enqueued back-to-back so the log worker receives them
+// together and must write them in FIFO order — the same condition that caused the original
+// out-of-order entries when two goroutines raced on Logger.mu.
 func TestLogWriteOrder(t *testing.T) {
 	t.Parallel()
 
@@ -228,10 +229,11 @@ func TestLogWriteOrder(t *testing.T) {
 	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
 	o.SetEventLogger(logger)
 
+	// Fire both events without an intervening barrier. The log jobs are enqueued in call
+	// order; the worker writes them in FIFO order regardless of when it runs.
 	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
-	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
-
 	o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 5000})
+	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
 	awaitCall(t, ch.silenceEndCalled, "SendSilenceEnd")
 
 	// Wait for all queued log writes to complete before reading the file.
