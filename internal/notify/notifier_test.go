@@ -39,11 +39,11 @@ func newTestChannel(subscribesDump bool) *testChannel {
 	}
 }
 
-func (c *testChannel) Name() string                                      { return c.name }
-func (c *testChannel) IsConfiguredForUpload(_ *config.Snapshot) bool    { return false }
-func (c *testChannel) SubscribesSilenceStart(_ *config.Snapshot) bool   { return c.subscribesStart }
-func (c *testChannel) SubscribesSilenceEnd(_ *config.Snapshot) bool     { return c.subscribesEnd }
-func (c *testChannel) SubscribesAudioDump(_ *config.Snapshot) bool      { return c.subscribesDump }
+func (c *testChannel) Name() string                                   { return c.name }
+func (c *testChannel) IsConfiguredForUpload(_ *config.Snapshot) bool  { return false }
+func (c *testChannel) SubscribesSilenceStart(_ *config.Snapshot) bool { return c.subscribesStart }
+func (c *testChannel) SubscribesSilenceEnd(_ *config.Snapshot) bool   { return c.subscribesEnd }
+func (c *testChannel) SubscribesAudioDump(_ *config.Snapshot) bool    { return c.subscribesDump }
 func (c *testChannel) SendUploadAbandoned(_ *config.Snapshot, _ UploadAbandonedData) error {
 	return nil
 }
