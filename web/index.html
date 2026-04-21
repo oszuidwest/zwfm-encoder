@@ -436,13 +436,13 @@
                             <div class="group">
                                 <label for="recording-max-duration">Max Recording Duration</label>
                                 <div class="input-group">
-                                    <input id="recording-max-duration" type="number" max="1440" min="1" step="1"
+                                    <input id="recording-max-duration" type="number" max="1440" min="0" step="1"
                                            x-model.number="settingsForm.recordingMaxDurationMinutes"
                                            @input="markSettingsDirty()"
                                            aria-describedby="recording-max-duration-hint">
                                     <span class="input-unit">min</span>
                                 </div>
-                                <span id="recording-max-duration-hint" class="input-hint">Maximum duration for on-demand recordings (1–1440 min). Affects new recordings only.</span>
+                                <span id="recording-max-duration-hint" class="input-hint">Maximum duration for on-demand recordings (0–1440 min). Set to 0 for no limit. Affects new recordings only.</span>
                             </div>
                             <div class="group">
                                 <label for="api-key">API Key</label>

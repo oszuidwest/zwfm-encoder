@@ -351,8 +351,8 @@ func validatePeakHoldMs(field string, value int64) string {
 }
 
 func validateMaxDurationMinutes(field string, value int) string {
-	if value < 1 || value > 1440 {
-		return field + ": must be between 1 and 1440 minutes"
+	if value < 0 || value > 1440 {
+		return field + ": must be between 0 and 1440 minutes (0 = no limit)"
 	}
 	return ""
 }
