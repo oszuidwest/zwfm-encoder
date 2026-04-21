@@ -202,7 +202,9 @@ document.addEventListener('alpine:init', () => {
             silence_threshold: -40,
             silence_duration_ms: 15000,
             silence_recovery_ms: 5000,
+            peak_hold_ms: 3000,
             silence_dump: { enabled: true, retention_days: 7 },
+            recording_max_duration_minutes: 240,
             webhook_url: '',
             zabbix_server: '',
             zabbix_port: 10051,
@@ -226,7 +228,9 @@ document.addEventListener('alpine:init', () => {
             silenceThreshold: -40,
             silenceDuration: 15,
             silenceRecovery: 5,
+            peakHoldMs: 3000,
             silenceDump: { enabled: true, retentionDays: 7 },
+            recordingMaxDurationMinutes: 240,
             silenceWebhook: '',
             webhookEvents: { silence_start: true, silence_end: true, audio_dump: true },
             zabbix: { server: '', port: 10051, host: '', silenceKey: '', uploadKey: '' },
@@ -686,6 +690,7 @@ document.addEventListener('alpine:init', () => {
                 silenceThreshold: this.config.silence_threshold ?? -40,
                 silenceDuration: msToSeconds(this.config.silence_duration_ms ?? 15000),
                 silenceRecovery: msToSeconds(this.config.silence_recovery_ms ?? 5000),
+                peakHoldMs: this.config.peak_hold_ms ?? 3000,
                 silenceDump: {
                     enabled: this.config.silence_dump?.enabled ?? true,
                     retentionDays: this.config.silence_dump?.retention_days ?? 7
@@ -720,6 +725,7 @@ document.addEventListener('alpine:init', () => {
                     audio_dump: this.config.email_events?.audio_dump ?? true
                 },
                 recordingApiKey: this.config.recording_api_key || '',
+                recordingMaxDurationMinutes: this.config.recording_max_duration_minutes ?? 240,
                 platform: this.config.platform || ''
             };
             this.settingsDirty = false;
@@ -756,6 +762,7 @@ document.addEventListener('alpine:init', () => {
                         silence_threshold: this.config.silence_threshold,
                         silence_duration_ms: this.config.silence_duration_ms,
                         silence_recovery_ms: this.config.silence_recovery_ms,
+                        peak_hold_ms: this.config.peak_hold_ms,
                         silence_dump_enabled: this.config.silence_dump.enabled,
                         silence_dump_retention_days: this.config.silence_dump.retention_days,
                         webhook_url: this.config.webhook_url,
@@ -771,7 +778,8 @@ document.addEventListener('alpine:init', () => {
                         graph_client_secret: '',
                         graph_from_address: this.config.graph_from_address,
                         graph_recipients: this.config.graph_recipients,
-                        email_events: this.config.email_events
+                        email_events: this.config.email_events,
+                        recording_max_duration_minutes: this.config.recording_max_duration_minutes
                     })
                 });
                 if (!response.ok) {
@@ -808,6 +816,7 @@ document.addEventListener('alpine:init', () => {
                 silence_threshold: form.silenceThreshold,
                 silence_duration_ms: secondsToMs(form.silenceDuration),
                 silence_recovery_ms: secondsToMs(form.silenceRecovery),
+                peak_hold_ms: form.peakHoldMs,
                 silence_dump_enabled: form.silenceDump.enabled,
                 silence_dump_retention_days: form.silenceDump.retentionDays,
                 webhook_url: form.silenceWebhook,
@@ -823,7 +832,8 @@ document.addEventListener('alpine:init', () => {
                 graph_client_secret: form.graph.clientSecret || '', // empty = keep existing
                 graph_from_address: form.graph.fromAddress,
                 graph_recipients: form.graph.recipients,
-                email_events: form.emailEvents
+                email_events: form.emailEvents,
+                recording_max_duration_minutes: form.recordingMaxDurationMinutes
             };
 
             try {

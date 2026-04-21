@@ -70,6 +70,14 @@ func (m *Manager) SetUploadAbandonedCallback(cb UploadAbandonedCallback) {
 	m.onUploadAbandoned = cb
 }
 
+// SetMaxDurationMinutes updates the maximum allowed duration for on-demand recordings.
+// Affects new recordings only; recordings already in progress are not affected.
+func (m *Manager) SetMaxDurationMinutes(minutes int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.maxDurationMinutes = minutes
+}
+
 // AddRecorder adds a recorder to the manager.
 func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 	m.mu.Lock()

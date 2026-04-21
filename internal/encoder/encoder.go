@@ -489,6 +489,15 @@ func (e *Encoder) UpdateSilenceConfig() {
 	}
 }
 
+// UpdateRecordingMaxDuration applies the current max duration setting to the recording manager.
+func (e *Encoder) UpdateRecordingMaxDuration() {
+	if e.recordingManager == nil {
+		return
+	}
+	snap := e.config.Snapshot()
+	e.recordingManager.SetMaxDurationMinutes(snap.RecordingMaxDurationMinutes)
+}
+
 // UpdateSilenceDumpConfig applies the current silence dump configuration.
 func (e *Encoder) UpdateSilenceDumpConfig() {
 	snap := e.config.Snapshot()

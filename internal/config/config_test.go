@@ -310,7 +310,7 @@ func TestLoadRejectsInvalidFileSettings(t *testing.T) {
 		{
 			name:    "zero peak hold",
 			data:    `{"silence_detection":{"peak_hold_ms":0}}`,
-			wantErr: "silence_detection.peak_hold_ms: must be greater than 0",
+			wantErr: "silence_detection.peak_hold_ms: must be between 500 and 10000 ms",
 		},
 		{
 			name:    "negative silence dump retention",
