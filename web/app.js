@@ -484,7 +484,7 @@ document.addEventListener('alpine:init', () => {
             };
 
             const now = Date.now();
-            const peakHoldMs = 3000; // 3 second peak hold (broadcast industry standard)
+            const peakHoldMs = this.config.peak_hold_ms ?? 3000;
 
             levels.display_left = applyPPM(levels.peak_left, this.levels.display_left ?? -60);
             levels.display_right = applyPPM(levels.peak_right, this.levels.display_right ?? -60);
