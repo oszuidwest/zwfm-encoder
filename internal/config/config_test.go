@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -239,6 +240,32 @@ func TestZabbixEventsRoundTrip(t *testing.T) {
 	want := types.EventSubscriptions{SilenceStart: true, SilenceEnd: true}
 	if got != want {
 		t.Fatalf("ZabbixEvents after round-trip = %+v, want %+v", got, want)
+	}
+}
+
+func TestApplySettingsValidatesInput(t *testing.T) {
+	t.Parallel()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	cfg := New(configPath)
+
+	before := cfg.Snapshot()
+	err := cfg.ApplySettings(&SettingsUpdate{
+		AudioInput:        "test-device",
+		SilenceThreshold:  0,
+		SilenceDurationMs: 15000,
+		SilenceRecoveryMs: 5000,
+	})
+	if err == nil {
+		t.Fatal("ApplySettings() error = nil, want validation error")
+	}
+	if !strings.Contains(err.Error(), "invalid settings:") {
+		t.Fatalf("ApplySettings() error = %v, want aggregated validation error", err)
+	}
+
+	after := cfg.Snapshot()
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("Snapshot changed after rejected ApplySettings:\n got  %+v\n want %+v", after, before)
 	}
 }
 

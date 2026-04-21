@@ -17,8 +17,14 @@ import (
 func TestStartRejectsStateStopping(t *testing.T) {
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	// Set a non-empty AudioInput so Start() reaches the state guard rather than
-	// returning ErrNoAudioInput before it gets there.
-	if err := cfg.ApplySettings(&config.SettingsUpdate{AudioInput: "test-device"}); err != nil {
+	// returning ErrNoAudioInput before it gets there. All required silence fields
+	// must be valid because ApplySettings now validates before applying.
+	if err := cfg.ApplySettings(&config.SettingsUpdate{
+		AudioInput:        "test-device",
+		SilenceThreshold:  config.DefaultSilenceThreshold,
+		SilenceDurationMs: config.DefaultSilenceDurationMs,
+		SilenceRecoveryMs: config.DefaultSilenceRecoveryMs,
+	}); err != nil {
 		t.Fatalf("ApplySettings: %v", err)
 	}
 

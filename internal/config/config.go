@@ -858,9 +858,12 @@ func (s *SettingsUpdate) Validate() []string {
 	return errs
 }
 
-// ApplySettings updates all settings atomically with a single file write.
-// Validation should be performed before calling this method.
+// ApplySettings validates and updates all settings atomically with a single file write.
 func (c *Config) ApplySettings(s *SettingsUpdate) error {
+	if errs := s.Validate(); len(errs) > 0 {
+		return fmt.Errorf("invalid settings: %s", strings.Join(errs, "; "))
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
