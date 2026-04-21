@@ -190,7 +190,7 @@ func (c *ZabbixChannel) SendSilenceEnd(cfg *config.Snapshot, durationMS int64, l
 }
 
 func (c *ZabbixChannel) SendAudioDump(_ *config.Snapshot, _ int64, _, _ float64, _ *silencedump.EncodeResult) error {
-	return nil
+	return fmt.Errorf("zabbix channel does not support audio dump delivery")
 }
 
 func (c *ZabbixChannel) SendUploadAbandoned(cfg *config.Snapshot, params UploadAbandonedData) error {

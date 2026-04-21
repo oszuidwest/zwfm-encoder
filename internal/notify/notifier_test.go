@@ -2,6 +2,7 @@ package notify
 
 import (
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -214,6 +215,21 @@ func TestAudioDumpUsesSnapshotFromSilenceEnd(t *testing.T) {
 	if audioDumpSnap.SilenceThreshold != silenceEndSnap.SilenceThreshold {
 		t.Fatalf("SendAudioDump received threshold %.1f dB, want %.1f dB (from silence-end snapshot)",
 			audioDumpSnap.SilenceThreshold, silenceEndSnap.SilenceThreshold)
+	}
+}
+
+// TestZabbixChannelSendAudioDumpReturnsError verifies that a direct call to the
+// concrete Zabbix implementation fails explicitly instead of reporting success.
+func TestZabbixChannelSendAudioDumpReturnsError(t *testing.T) {
+	t.Parallel()
+
+	ch := &ZabbixChannel{}
+	err := ch.SendAudioDump(nil, 0, 0, 0, nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "does not support audio dump delivery") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
