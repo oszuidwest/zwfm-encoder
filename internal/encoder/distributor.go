@@ -61,11 +61,11 @@ func (d *Distributor) ProcessSamples(buf []byte, n int) {
 		silenceEvent := d.silenceDetect.Update(levels.RMSLeft, levels.RMSRight, silenceCfg, now)
 
 		// Delegate notification handling to the alert orchestrator (separation of concerns)
-		d.alertOrchestrator.HandleSilenceEvent(silenceEvent)
+		d.alertOrchestrator.HandleSilenceEvent(&silenceEvent)
 
 		// Forward silence events to dump manager for capture
 		if d.silenceDumpManager != nil {
-			d.silenceDumpManager.HandleSilenceEvent(silenceEvent)
+			d.silenceDumpManager.HandleSilenceEvent(&silenceEvent)
 		}
 
 		if d.callback != nil {
@@ -77,6 +77,7 @@ func (d *Distributor) ProcessSamples(buf []byte, n int) {
 				Silence:           silenceEvent.InSilence,
 				SilenceDurationMs: silenceEvent.DurationMs,
 				SilenceLevel:      silenceEvent.Level,
+				SilentChannels:    silenceEvent.SilentChannels,
 				ClipLeft:          levels.ClipLeft,
 				ClipRight:         levels.ClipRight,
 			})

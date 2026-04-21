@@ -519,10 +519,11 @@ document.addEventListener('alpine:init', () => {
             // Update banner message with current duration if silence banner is showing
             if (this.banner.visible && this.banner.type !== 'info' && levels.silence_duration_ms) {
                 const duration = formatSmartDuration(levels.silence_duration_ms);
+                const channelSuffix = levels.silent_channels && levels.silent_channels !== 'both' ? ` (${levels.silent_channels} channel)` : '';
                 if (newSilenceState === 'critical') {
-                    this.banner.message = `Critical silence: ${duration}`;
+                    this.banner.message = `Critical silence${channelSuffix}: ${duration}`;
                 } else if (newSilenceState === 'warning') {
-                    this.banner.message = `Silence detected: ${duration}`;
+                    this.banner.message = `Silence detected${channelSuffix}: ${duration}`;
                 }
             }
 
@@ -541,10 +542,12 @@ document.addEventListener('alpine:init', () => {
          */
         handleSilenceTransition(prev, next) {
             const duration = formatSmartDuration(this.levels.silence_duration_ms || 0);
+            const ch = this.levels.silent_channels;
+            const channelSuffix = ch && ch !== 'both' ? ` (${ch} channel)` : '';
             if (next === 'warning' && prev === 'active') {
-                this.showBanner(`Silence detected: ${duration}`, 'warning', false);
+                this.showBanner(`Silence detected${channelSuffix}: ${duration}`, 'warning', false);
             } else if (next === 'critical') {
-                this.showBanner(`Critical silence: ${duration}`, 'danger', true);
+                this.showBanner(`Critical silence${channelSuffix}: ${duration}`, 'danger', true);
             } else if (next === '' && prev !== '') {
                 // Silence recovered
                 this.hideBanner();

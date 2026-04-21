@@ -315,10 +315,10 @@ func TestOnDumpReadyNilPendingAfterReset(t *testing.T) {
 	ch := newTestChannel(true)
 	o := newTestOrchestrator(t, ch)
 
-	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
+	o.HandleSilenceEvent(&audio.SilenceEvent{JustEntered: true})
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
 
-	o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 5000})
+	o.HandleSilenceEvent(&audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 5000})
 	awaitCall(t, ch.silenceEndCalled, "SendSilenceEnd")
 
 	// Encoder stop clears pending state before dump callback fires.
@@ -336,15 +336,15 @@ func TestActiveChannelsClearedAfterRecovery(t *testing.T) {
 	o := newTestOrchestrator(t, ch)
 
 	// Period 1
-	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
+	o.HandleSilenceEvent(&audio.SilenceEvent{JustEntered: true})
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart period 1")
 	callsAfterPeriod1Start := ch.isConfiguredCalls
 
-	o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 3000})
+	o.HandleSilenceEvent(&audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 3000})
 	awaitCall(t, ch.silenceEndCalled, "SendSilenceEnd period 1")
 
 	// Period 2: IsConfiguredForSilence must be called again to rebuild activeChannels.
-	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
+	o.HandleSilenceEvent(&audio.SilenceEvent{JustEntered: true})
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart period 2")
 
 	if ch.isConfiguredCalls <= callsAfterPeriod1Start {
@@ -359,12 +359,12 @@ func TestActiveChannelsNotRebuiltWithinSilencePeriod(t *testing.T) {
 	ch := newTestChannel(false)
 	o := newTestOrchestrator(t, ch)
 
-	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
+	o.HandleSilenceEvent(&audio.SilenceEvent{JustEntered: true})
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart first")
 	callsAfterFirst := ch.isConfiguredCalls
 
 	// Second JustEntered during same period (abnormal but must not re-evaluate channels).
-	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
+	o.HandleSilenceEvent(&audio.SilenceEvent{JustEntered: true})
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart second")
 
 	if ch.isConfiguredCalls != callsAfterFirst {
@@ -384,10 +384,10 @@ func TestAudioDumpUsesSnapshotFromSilenceEnd(t *testing.T) {
 	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
 	t.Cleanup(o.Close)
 
-	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
+	o.HandleSilenceEvent(&audio.SilenceEvent{JustEntered: true})
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
 
-	o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 5000})
+	o.HandleSilenceEvent(&audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 5000})
 	silenceEndSnap := awaitCall(t, ch.silenceEndCalled, "SendSilenceEnd")
 
 	// Change the threshold in config after silence-end. A fresh Snapshot() would reflect
@@ -483,8 +483,8 @@ func TestLogWriteOrder(t *testing.T) {
 
 	// Fire both events without an intervening barrier. The log jobs are enqueued in call
 	// order; the worker writes them in FIFO order regardless of when it runs.
-	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
-	o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 5000})
+	o.HandleSilenceEvent(&audio.SilenceEvent{JustEntered: true})
+	o.HandleSilenceEvent(&audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 5000})
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
 	awaitCall(t, ch.silenceEndCalled, "SendSilenceEnd")
 
@@ -531,7 +531,7 @@ func TestDrainLogs(t *testing.T) {
 	t.Cleanup(o.Close)
 	o.SetEventLogger(logger)
 
-	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
+	o.HandleSilenceEvent(&audio.SilenceEvent{JustEntered: true})
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
 
 	// DrainLogs must block until all pending log writes complete.
@@ -615,8 +615,8 @@ func TestLogWriteOrderWithDump(t *testing.T) {
 	t.Cleanup(o.Close)
 	o.SetEventLogger(logger)
 
-	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
-	o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 5000})
+	o.HandleSilenceEvent(&audio.SilenceEvent{JustEntered: true})
+	o.HandleSilenceEvent(&audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 5000})
 	o.OnDumpReady(nil)
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
 	awaitCall(t, ch.silenceEndCalled, "SendSilenceEnd")

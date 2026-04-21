@@ -21,6 +21,7 @@ type SilenceEvent struct {
 	CurrentLevelL float64 // dB
 	CurrentLevelR float64 // dB
 
+	SilentChannels     SilentChannels
 	JustEntered        bool
 	JustRecovered      bool
 	TotalDurationMs    int64
@@ -31,10 +32,11 @@ type SilenceEvent struct {
 // It is safe for concurrent use.
 type SilenceDetector struct {
 	mu                sync.Mutex
-	silenceStart      time.Time // when current silence period started
-	recoveryStart     time.Time // when audio returned after silence
-	inSilence         bool      // currently in confirmed silence state
-	silenceDurationMs int64     // tracks duration in ms for recovery reporting
+	silenceStart      time.Time     // when current silence period started
+	recoveryStart     time.Time     // when audio returned after silence
+	inSilence         bool          // currently in confirmed silence state
+	silenceDurationMs int64         // tracks duration in ms for recovery reporting
+	silentChannels    SilentChannels // which channel(s) are below threshold
 }
 
 // NewSilenceDetector creates a new silence detector.
@@ -47,7 +49,9 @@ func (d *SilenceDetector) Update(dbL, dbR float64, cfg SilenceConfig, now time.T
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	audioIsSilent := dbL < cfg.Threshold && dbR < cfg.Threshold
+	leftSilent := dbL < cfg.Threshold
+	rightSilent := dbR < cfg.Threshold
+	audioIsSilent := leftSilent || rightSilent
 
 	event := SilenceEvent{
 		CurrentLevelL: dbL,
@@ -55,6 +59,17 @@ func (d *SilenceDetector) Update(dbL, dbR float64, cfg SilenceConfig, now time.T
 	}
 
 	if audioIsSilent {
+		var which SilentChannels
+		switch {
+		case leftSilent && rightSilent:
+			which = SilentChannelsBoth
+		case leftSilent:
+			which = SilentChannelsLeft
+		default:
+			which = SilentChannelsRight
+		}
+		d.silentChannels = which
+
 		d.recoveryStart = time.Time{}
 
 		if d.silenceStart.IsZero() {
@@ -69,16 +84,18 @@ func (d *SilenceDetector) Update(dbL, dbR float64, cfg SilenceConfig, now time.T
 			event.InSilence = true
 			event.DurationMs = silenceDurationMs
 			event.Level = SilenceLevelActive
+			event.SilentChannels = d.silentChannels
 		} else if silenceDurationMs >= cfg.DurationMs {
 			// Just crossed the duration threshold - enter silence state
 			d.inSilence = true
 			event.InSilence = true
 			event.DurationMs = silenceDurationMs
 			event.Level = SilenceLevelActive
+			event.SilentChannels = d.silentChannels
 			event.JustEntered = true
 		}
 	} else {
-		// Audio is above threshold - preserve silence start during recovery.
+		// Both channels are above threshold - preserve silence start during recovery.
 		if !d.inSilence {
 			d.silenceStart = time.Time{}
 		}
@@ -98,12 +115,14 @@ func (d *SilenceDetector) Update(dbL, dbR float64, cfg SilenceConfig, now time.T
 
 				d.inSilence = false
 				d.silenceDurationMs = 0
+				d.silentChannels = ""
 				d.silenceStart = time.Time{}
 				d.recoveryStart = time.Time{}
 			} else {
 				// Still in recovery period - remain in silence state
 				event.InSilence = true
 				event.Level = SilenceLevelActive
+				event.SilentChannels = d.silentChannels
 			}
 		}
 	}
@@ -119,4 +138,5 @@ func (d *SilenceDetector) Reset() {
 	d.recoveryStart = time.Time{}
 	d.inSilence = false
 	d.silenceDurationMs = 0
+	d.silentChannels = ""
 }
