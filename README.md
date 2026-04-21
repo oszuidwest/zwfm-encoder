@@ -7,7 +7,7 @@ Audio streaming software for [ZuidWest FM](https://www.zuidwestfm.nl/) (Linux), 
 ## Features
 
 - **Multi-output streaming** - Send to multiple SRT servers with different codecs simultaneously
-- **Real-time VU meters** - Peak hold (1.5 s) with peak/RMS toggle, clip detection, updated via WebSocket
+- **Real-time VU meters** - Configurable peak hold with peak/RMS toggle, clip detection, updated via WebSocket
 - **Silence detection** - Alerts via webhook, email, file log, or Zabbix when audio drops below threshold
 - **Web interface** - Configure outputs, select audio input, monitor levels
 - **Auto-recovery** - Automatic reconnection with configurable retry limits per output
@@ -121,6 +121,22 @@ The encoder warns when the secret expires within 30 days.
 
 The template creates triggers for SILENCE (Disaster), RECOVERY (Info), TEST (Info), and UPLOAD_ABANDONED (High) events.
 
+## Recording API
+
+On-demand recordings can be started and stopped via the REST API without going through the web interface. Useful for automation or external systems that need to trigger recordings.
+
+```bash
+# Start recording (recorder_id matches the ID in the web interface)
+curl -X POST "http://<host>:8080/api/recordings/start?recorder_id=1" \
+  -H "X-API-Key: <your-api-key>"
+
+# Stop recording
+curl -X POST "http://<host>:8080/api/recordings/stop?recorder_id=1" \
+  -H "X-API-Key: <your-api-key>"
+```
+
+Configure the API key and maximum recording duration under Settings → Audio → Recording API. The `max_duration_minutes` limit automatically stops a recording after the configured time (0 = no limit).
+
 ## Configuration
 
 Configuration is stored in `/etc/encoder/config.json` on production systems. For development, use the `-config` flag to specify a custom path, or place `config.json` next to the binary.
@@ -186,7 +202,7 @@ flowchart LR
 
         subgraph Metering["Metering"]
             M[RMS/Peak<br>Calculator]
-            PH[Peak Hold<br>1.5s Decay]
+            PH[Peak Hold<br>Configurable]
             CD[Clip<br>Detect]
         end
 
@@ -261,7 +277,7 @@ flowchart LR
 
 1. **Capture**: `arecord` (Linux) or FFmpeg (macOS/Windows) captures 48kHz 16-bit stereo PCM
 2. **Distributor**: Processes PCM in ~100ms chunks, fans out to all consumers
-3. **Metering**: Calculates RMS/peak levels in Go (no FFmpeg filters), holds peaks for 1.5s, detects clipping at ±32760
+3. **Metering**: Calculates RMS/peak levels in Go (no FFmpeg filters), holds peaks for a configurable duration (default 1500 ms), detects clipping at ±32760
 4. **Silence Detection**: Hysteresis-based detection with configurable threshold/duration/recovery. Buffers 15s audio context before/after silence events
 5. **Alerting**: Silence events trigger webhook, email (MS Graph), log (JSON Lines), and/or Zabbix. Each channel has per-event subscriptions for `silence_start`, `silence_end`, and `audio_dump_ready`. `silence_end` fires immediately on recovery; `audio_dump_ready` fires separately once the MP3 is ready. Abandoned S3 uploads also trigger notifications.
 6. **Streaming**: Per-output FFmpeg processes with automatic retry and exponential backoff
