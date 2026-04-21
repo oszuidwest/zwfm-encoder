@@ -1,7 +1,10 @@
 package notify
 
 import (
+	"context"
+	"log/slog"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -11,6 +14,49 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 )
+
+type captureHandler struct {
+	mu          sync.Mutex
+	attrs       []slog.Attr
+	lastMessage string
+}
+
+func (h *captureHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *captureHandler) Handle(_ context.Context, r slog.Record) error {
+	if r.Level != slog.LevelWarn || r.Message != "silence log queue full, log entry dropped" {
+		return nil
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.lastMessage = r.Message
+	h.attrs = h.attrs[:0]
+	r.Attrs(func(attr slog.Attr) bool {
+		h.attrs = append(h.attrs, attr)
+		return true
+	})
+	return nil
+}
+
+func (h *captureHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return &captureHandler{attrs: append([]slog.Attr(nil), attrs...)}
+}
+
+func (h *captureHandler) WithGroup(string) slog.Handler { return h }
+
+func (h *captureHandler) attrValue(key string) (string, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for _, attr := range h.attrs {
+		if attr.Key == key {
+			return attr.Value.String(), true
+		}
+	}
+	return "", false
+}
 
 // testChannel is a stub AlertChannel that records which Send methods were called.
 // Calls are signalled on buffered channels so tests can synchronise with dispatch goroutines.
@@ -310,14 +356,17 @@ func TestDrainLogs(t *testing.T) {
 // when the log queue is at capacity (logQueueDepth), and that entries already queued
 // before the overflow are not lost.
 func TestEnqueueLogDropsWhenFull(t *testing.T) {
-	t.Parallel()
-
 	logPath := filepath.Join(t.TempDir(), "encoder.jsonl")
 	logger, err := eventlog.NewLogger(logPath)
 	if err != nil {
 		t.Fatalf("create logger: %v", err)
 	}
 	defer logger.Close() //nolint:errcheck // test teardown
+
+	handler := &captureHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(handler))
+	defer slog.SetDefault(prev)
 
 	ch := newTestChannel(false)
 	o := newTestOrchestrator(t, ch)
@@ -344,6 +393,9 @@ func TestEnqueueLogDropsWhenFull(t *testing.T) {
 
 	if got := wrote.Load(); got != int32(logQueueDepth) {
 		t.Errorf("expected %d writes (one dropped), got %d", logQueueDepth, got)
+	}
+	if got, ok := handler.attrValue("event_type"); !ok || got != "test_overflow" {
+		t.Fatalf("warning event_type = %q, %t; want %q, true", got, ok, "test_overflow")
 	}
 }
 
