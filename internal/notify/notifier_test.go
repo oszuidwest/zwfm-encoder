@@ -169,6 +169,48 @@ func TestCloseIdempotent(t *testing.T) {
 	o.Close() // must not panic (t.Cleanup will call it a third time)
 }
 
+func TestDrainLogsAfterCloseIsNoOp(t *testing.T) {
+	t.Parallel()
+
+	o := newTestOrchestrator(t, newTestChannel(false))
+	o.Close()
+
+	done := make(chan struct{})
+	go func() {
+		o.DrainLogs()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("DrainLogs blocked after Close")
+	}
+}
+
+func TestEnqueueLogAfterCloseIsNoOp(t *testing.T) {
+	t.Parallel()
+
+	logPath := filepath.Join(t.TempDir(), "encoder.jsonl")
+	logger, err := eventlog.NewLogger(logPath)
+	if err != nil {
+		t.Fatalf("create logger: %v", err)
+	}
+	defer logger.Close() //nolint:errcheck // test teardown
+
+	o := newTestOrchestrator(t, newTestChannel(false))
+	o.SetEventLogger(logger)
+	o.Close()
+
+	var ran atomic.Bool
+	o.enqueueLog("post_close", func() { ran.Store(true) })
+	time.Sleep(50 * time.Millisecond)
+
+	if ran.Load() {
+		t.Fatal("enqueueLog executed after Close")
+	}
+}
+
 // TestOnDumpReadyNilPending verifies that OnDumpReady is a no-op when there is no
 // pending recovery (e.g. called after Reset, or before any silence event).
 func TestOnDumpReadyNilPending(t *testing.T) {
