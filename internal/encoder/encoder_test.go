@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
+	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
+	"github.com/oszuidwest/zwfm-encoder/internal/notify"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
@@ -35,5 +37,26 @@ func TestStartRejectsStateStopping(t *testing.T) {
 
 	if err := e.Start(); !errors.Is(err, ErrAlreadyRunning) {
 		t.Errorf("Start() in StateStopping = %v, want ErrAlreadyRunning", err)
+	}
+}
+
+func TestCloseIdempotent(t *testing.T) {
+	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
+
+	logger, err := eventlog.NewLogger(filepath.Join(t.TempDir(), "encoder.jsonl"))
+	if err != nil {
+		t.Fatalf("create logger: %v", err)
+	}
+
+	e := &Encoder{
+		eventLogger:       logger,
+		alertOrchestrator: notify.NewAlertOrchestrator(cfg, notify.NewDispatcher()),
+	}
+
+	if err := e.Close(); err != nil {
+		t.Fatalf("first Close() failed: %v", err)
+	}
+	if err := e.Close(); err != nil {
+		t.Fatalf("second Close() failed: %v", err)
 	}
 }
