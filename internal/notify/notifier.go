@@ -193,8 +193,8 @@ func (o *AlertOrchestrator) DrainLogs() {
 		return
 	}
 	o.logQueue <- logJob{fn: func() { close(done) }}
-	o.logMu.RUnlock()
 
+	o.logMu.RUnlock()
 	<-done
 }
 

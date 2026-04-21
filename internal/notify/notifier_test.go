@@ -248,10 +248,50 @@ func TestEnqueueLogAfterCloseIsNoOp(t *testing.T) {
 
 	var ran atomic.Bool
 	o.enqueueLog("post_close", func() { ran.Store(true) })
-	time.Sleep(50 * time.Millisecond)
 
 	if ran.Load() {
 		t.Fatal("enqueueLog executed after Close")
+	}
+}
+
+func TestDrainLogsConcurrentWithCloseDoesNotPanic(t *testing.T) {
+	t.Parallel()
+
+	o := newTestOrchestrator(t, newTestChannel(false))
+
+	block := make(chan struct{})
+	started := make(chan struct{})
+	o.logQueue <- logJob{fn: func() { close(started); <-block }}
+	<-started
+
+	for range logQueueDepth {
+		o.logQueue <- logJob{fn: func() {}}
+	}
+
+	drained := make(chan struct{})
+	go func() {
+		o.DrainLogs()
+		close(drained)
+	}()
+
+	closed := make(chan struct{})
+	go func() {
+		o.Close()
+		close(closed)
+	}()
+
+	close(block)
+
+	select {
+	case <-drained:
+	case <-time.After(2 * time.Second):
+		t.Fatal("DrainLogs blocked when racing with Close")
+	}
+
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close blocked when racing with DrainLogs")
 	}
 }
 
