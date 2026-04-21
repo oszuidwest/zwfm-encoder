@@ -85,6 +85,7 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 		SilenceThreshold:  cfg.SilenceThreshold,
 		SilenceDurationMs: cfg.SilenceDurationMs,
 		SilenceRecoveryMs: cfg.SilenceRecoveryMs,
+		PeakHoldMs:        cfg.PeakHoldMs,
 		SilenceDump: types.SilenceDumpConfig{
 			Enabled:       cfg.SilenceDumpEnabled,
 			RetentionDays: cfg.SilenceDumpRetentionDays,
@@ -111,7 +112,8 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 		EmailEvents:      cfg.EmailEvents,
 
 		// Recording
-		RecordingAPIKey: cfg.RecordingAPIKey,
+		RecordingAPIKey:             cfg.RecordingAPIKey,
+		RecordingMaxDurationMinutes: cfg.RecordingMaxDurationMinutes,
 
 		// Entities
 		Streams:   cfg.Streams,
@@ -158,6 +160,7 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	// Side effects after successful save
 	s.encoder.UpdateSilenceConfig()
 	s.encoder.UpdateSilenceDumpConfig()
+	s.encoder.UpdateRecordingMaxDuration()
 	s.encoder.InvalidateGraphSecretExpiryCache()
 
 	// Restart encoder if audio input changed

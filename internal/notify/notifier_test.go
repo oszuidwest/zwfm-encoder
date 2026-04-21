@@ -393,11 +393,13 @@ func TestAudioDumpUsesSnapshotFromSilenceEnd(t *testing.T) {
 	// Change the threshold in config after silence-end. A fresh Snapshot() would reflect
 	// the new value; pending.cfg must not.
 	if err := cfg.ApplySettings(&config.SettingsUpdate{
-		SilenceThreshold:         -20,
-		SilenceDurationMs:        15000,
-		SilenceRecoveryMs:        5000,
-		SilenceDumpEnabled:       true,
-		SilenceDumpRetentionDays: 7,
+		SilenceThreshold:            -20,
+		SilenceDurationMs:           15000,
+		SilenceRecoveryMs:           5000,
+		PeakHoldMs:                  config.DefaultPeakHoldMs,
+		SilenceDumpEnabled:          true,
+		SilenceDumpRetentionDays:    7,
+		RecordingMaxDurationMinutes: config.DefaultRecordingMaxDurationMinutes,
 	}); err != nil {
 		t.Fatalf("ApplySettings failed: %v", err)
 	}

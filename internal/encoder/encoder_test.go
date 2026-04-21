@@ -22,10 +22,12 @@ func TestStartRejectsStateStopping(t *testing.T) {
 	// returning ErrNoAudioInput before it gets there. All required silence fields
 	// must be valid because ApplySettings now validates before applying.
 	if err := cfg.ApplySettings(&config.SettingsUpdate{
-		AudioInput:        "test-device",
-		SilenceThreshold:  config.DefaultSilenceThreshold,
-		SilenceDurationMs: config.DefaultSilenceDurationMs,
-		SilenceRecoveryMs: config.DefaultSilenceRecoveryMs,
+		AudioInput:                  "test-device",
+		SilenceThreshold:            config.DefaultSilenceThreshold,
+		SilenceDurationMs:           config.DefaultSilenceDurationMs,
+		SilenceRecoveryMs:           config.DefaultSilenceRecoveryMs,
+		PeakHoldMs:                  config.DefaultPeakHoldMs,
+		RecordingMaxDurationMinutes: config.DefaultRecordingMaxDurationMinutes,
 	}); err != nil {
 		t.Fatalf("ApplySettings: %v", err)
 	}

@@ -89,6 +89,14 @@ func (r *GenericRecorder) Config() types.Recorder {
 	return r.config
 }
 
+// SetMaxDurationMinutes updates the per-recorder duration limit from global config.
+// Affects new recordings only; a recording already in progress is not interrupted.
+func (r *GenericRecorder) SetMaxDurationMinutes(minutes int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.maxDurationMinutes = minutes
+}
+
 func s3ConfigKeyFrom(cfg *types.Recorder) string {
 	return cfg.S3Endpoint + "|" + cfg.S3AccessKeyID + "|" + cfg.S3SecretAccessKey
 }
