@@ -98,9 +98,9 @@ func (o *AlertOrchestrator) SetEventLogger(logger *eventlog.Logger) {
 }
 
 // HandleSilenceEvent dispatches silence start and recovery notifications based on the event.
-func (o *AlertOrchestrator) HandleSilenceEvent(event audio.SilenceEvent) {
+func (o *AlertOrchestrator) HandleSilenceEvent(event *audio.SilenceEvent) {
 	if event.JustEntered {
-		o.handleSilenceStart(event.CurrentLevelL, event.CurrentLevelR)
+		o.handleSilenceStart(event.CurrentLevelL, event.CurrentLevelR, event.SilentChannels)
 	}
 
 	if event.JustRecovered {
@@ -108,7 +108,7 @@ func (o *AlertOrchestrator) HandleSilenceEvent(event audio.SilenceEvent) {
 	}
 }
 
-func (o *AlertOrchestrator) handleSilenceStart(levelL, levelR float64) {
+func (o *AlertOrchestrator) handleSilenceStart(levelL, levelR float64, silentChannels audio.SilentChannels) {
 	cfg := o.cfg.Snapshot()
 
 	o.mu.Lock()
@@ -126,7 +126,7 @@ func (o *AlertOrchestrator) handleSilenceStart(levelL, levelR float64) {
 
 	now := time.Now()
 	o.dispatcher.DispatchSilenceStart(active, cfg, levelL, levelR)
-	o.enqueueLog("silence_start", func() { o.logSilenceStart(now, &cfg, levelL, levelR) })
+	o.enqueueLog("silence_start", func() { o.logSilenceStart(now, &cfg, levelL, levelR, string(silentChannels)) })
 }
 
 func (o *AlertOrchestrator) handleSilenceEnd(durationMS int64, levelL, levelR float64) {
@@ -227,8 +227,8 @@ func BuildGraphConfig(cfg *config.Snapshot) *GraphConfig {
 	}
 }
 
-func (o *AlertOrchestrator) logSilenceStart(t time.Time, cfg *config.Snapshot, levelL, levelR float64) {
-	if err := o.eventLogger.LogSilenceStart(t, levelL, levelR, cfg.SilenceThreshold); err != nil {
+func (o *AlertOrchestrator) logSilenceStart(t time.Time, cfg *config.Snapshot, levelL, levelR float64, silentChannels string) {
+	if err := o.eventLogger.LogSilenceStart(t, levelL, levelR, cfg.SilenceThreshold, silentChannels); err != nil {
 		slog.Warn("failed to log silence start", "error", err)
 	}
 }

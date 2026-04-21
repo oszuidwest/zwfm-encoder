@@ -82,14 +82,15 @@ type StreamDetails struct {
 
 // SilenceDetails holds silence event information.
 type SilenceDetails struct {
-	LevelLeftDB   float64 `json:"level_left_db"`  // dB
-	LevelRightDB  float64 `json:"level_right_db"` // dB
-	ThresholdDB   float64 `json:"threshold_db"`   // dB
-	DurationMs    int64   `json:"duration_ms,omitempty"`
-	DumpPath      string  `json:"dump_path,omitempty"`
-	DumpFilename  string  `json:"dump_filename,omitempty"`
-	DumpSizeBytes int64   `json:"dump_size_bytes,omitempty"`
-	DumpError     string  `json:"dump_error,omitempty"`
+	LevelLeftDB    float64 `json:"level_left_db"`             // dB
+	LevelRightDB   float64 `json:"level_right_db"`            // dB
+	ThresholdDB    float64 `json:"threshold_db"`              // dB
+	SilentChannels string  `json:"silent_channels,omitempty"` // "left", "right", or "both"
+	DurationMs     int64   `json:"duration_ms,omitempty"`
+	DumpPath       string  `json:"dump_path,omitempty"`
+	DumpFilename   string  `json:"dump_filename,omitempty"`
+	DumpSizeBytes  int64   `json:"dump_size_bytes,omitempty"`
+	DumpError      string  `json:"dump_error,omitempty"`
 }
 
 // RecorderDetails holds recorder event information.
@@ -194,14 +195,15 @@ func (l *Logger) LogStream(eventType EventType, streamID, streamName, message, e
 // LogSilenceStart records when silence is first detected.
 // t must be captured at the moment the event occurs so the timestamp is
 // accurate even when the write is deferred to a background goroutine.
-func (l *Logger) LogSilenceStart(t time.Time, levelL, levelR, threshold float64) error {
+func (l *Logger) LogSilenceStart(t time.Time, levelL, levelR, threshold float64, silentChannels string) error {
 	return l.Log(&Event{
 		Timestamp: t,
 		Type:      SilenceStart,
 		Details: &SilenceDetails{
-			LevelLeftDB:  levelL,
-			LevelRightDB: levelR,
-			ThresholdDB:  threshold,
+			LevelLeftDB:    levelL,
+			LevelRightDB:   levelR,
+			ThresholdDB:    threshold,
+			SilentChannels: silentChannels,
 		},
 	})
 }

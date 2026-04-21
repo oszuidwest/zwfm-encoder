@@ -97,7 +97,7 @@ func (m *Manager) WriteAudio(pcm []byte) {
 }
 
 // HandleSilenceEvent processes silence detection events.
-func (m *Manager) HandleSilenceEvent(event audio.SilenceEvent) {
+func (m *Manager) HandleSilenceEvent(event *audio.SilenceEvent) {
 	if m.capturer == nil {
 		return
 	}
