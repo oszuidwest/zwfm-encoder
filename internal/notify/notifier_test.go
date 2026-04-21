@@ -78,6 +78,7 @@ type captureHandler struct {
 
 func (h *captureHandler) Enabled(context.Context, slog.Level) bool { return true }
 
+//nolint:gocritic // slog.Handler requires slog.Record by value.
 func (h *captureHandler) Handle(_ context.Context, r slog.Record) error {
 	if r.Level != slog.LevelWarn || r.Message != "silence log queue full, log entry dropped" {
 		return nil
