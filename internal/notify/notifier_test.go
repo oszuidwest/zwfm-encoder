@@ -13,6 +13,61 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 )
 
+type snapshotMutatingChannel struct {
+	mutated chan struct{}
+	release chan struct{}
+}
+
+func (c *snapshotMutatingChannel) Name() string                                   { return "mutator" }
+func (c *snapshotMutatingChannel) IsConfiguredForSilence(_ *config.Snapshot) bool { return true }
+func (c *snapshotMutatingChannel) IsConfiguredForUpload(_ *config.Snapshot) bool  { return false }
+func (c *snapshotMutatingChannel) SubscribesSilenceStart(_ *config.Snapshot) bool { return true }
+func (c *snapshotMutatingChannel) SubscribesSilenceEnd(_ *config.Snapshot) bool   { return false }
+func (c *snapshotMutatingChannel) SubscribesAudioDump(_ *config.Snapshot) bool    { return false }
+func (c *snapshotMutatingChannel) SendSilenceStart(cfg *config.Snapshot, _, _ float64) error {
+	cfg.SilenceThreshold = -20
+	close(c.mutated)
+	<-c.release
+	return nil
+}
+func (c *snapshotMutatingChannel) SendSilenceEnd(_ *config.Snapshot, _ int64, _, _ float64) error {
+	return nil
+}
+func (c *snapshotMutatingChannel) SendAudioDump(_ *config.Snapshot, _ int64, _, _ float64, _ *silencedump.EncodeResult) error {
+	return nil
+}
+func (c *snapshotMutatingChannel) SendUploadAbandoned(_ *config.Snapshot, _ UploadAbandonedData) error {
+	return nil
+}
+
+type snapshotObservingChannel struct {
+	mutated   chan struct{}
+	observed  chan float64
+	releaseMu chan struct{}
+}
+
+func (c *snapshotObservingChannel) Name() string                                   { return "observer" }
+func (c *snapshotObservingChannel) IsConfiguredForSilence(_ *config.Snapshot) bool { return true }
+func (c *snapshotObservingChannel) IsConfiguredForUpload(_ *config.Snapshot) bool  { return false }
+func (c *snapshotObservingChannel) SubscribesSilenceStart(_ *config.Snapshot) bool { return true }
+func (c *snapshotObservingChannel) SubscribesSilenceEnd(_ *config.Snapshot) bool   { return false }
+func (c *snapshotObservingChannel) SubscribesAudioDump(_ *config.Snapshot) bool    { return false }
+func (c *snapshotObservingChannel) SendSilenceStart(cfg *config.Snapshot, _, _ float64) error {
+	<-c.mutated
+	c.observed <- cfg.SilenceThreshold
+	close(c.releaseMu)
+	return nil
+}
+func (c *snapshotObservingChannel) SendSilenceEnd(_ *config.Snapshot, _ int64, _, _ float64) error {
+	return nil
+}
+func (c *snapshotObservingChannel) SendAudioDump(_ *config.Snapshot, _ int64, _, _ float64, _ *silencedump.EncodeResult) error {
+	return nil
+}
+func (c *snapshotObservingChannel) SendUploadAbandoned(_ *config.Snapshot, _ UploadAbandonedData) error {
+	return nil
+}
+
 // testChannel is a stub AlertChannel that records which Send methods were called.
 // Calls are signalled on buffered channels so tests can synchronise with dispatch goroutines.
 type testChannel struct {
@@ -231,6 +286,41 @@ func TestZabbixChannelSendAudioDumpReturnsError(t *testing.T) {
 	if !strings.Contains(err.Error(), "does not support audio dump delivery") {
 		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+func TestDispatchSilenceStartGivesEachGoroutineItsOwnSnapshotCopy(t *testing.T) {
+	t.Parallel()
+
+	mutated := make(chan struct{})
+	releaseMutator := make(chan struct{})
+	observed := make(chan float64, 1)
+	releaseObserver := make(chan struct{})
+
+	mutator := &snapshotMutatingChannel{
+		mutated: mutated,
+		release: releaseMutator,
+	}
+	observer := &snapshotObservingChannel{
+		mutated:   mutated,
+		observed:  observed,
+		releaseMu: releaseObserver,
+	}
+
+	dispatcher := NewDispatcher(mutator, observer)
+	cfg := config.Snapshot{SilenceThreshold: -40}
+	dispatcher.DispatchSilenceStart([]AlertChannel{mutator, observer}, cfg, 0, 0)
+
+	select {
+	case got := <-observed:
+		if got != -40 {
+			t.Fatalf("observed SilenceThreshold = %.1f, want -40.0", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for observer channel")
+	}
+
+	<-releaseObserver
+	close(releaseMutator)
 }
 
 // TestLogWriteOrder verifies that silence_start is physically written before silence_end in

@@ -103,7 +103,7 @@ func (o *AlertOrchestrator) handleSilenceStart(levelL, levelR float64) {
 	o.mu.Unlock()
 
 	now := time.Now()
-	o.dispatcher.DispatchSilenceStart(active, &cfg, levelL, levelR)
+	o.dispatcher.DispatchSilenceStart(active, cfg, levelL, levelR)
 	o.enqueueLog(func() { o.logSilenceStart(now, &cfg, levelL, levelR) })
 }
 
@@ -123,7 +123,7 @@ func (o *AlertOrchestrator) handleSilenceEnd(durationMS int64, levelL, levelR fl
 	o.mu.Unlock()
 
 	now := time.Now()
-	o.dispatcher.DispatchSilenceEnd(active, &cfg, durationMS, levelL, levelR)
+	o.dispatcher.DispatchSilenceEnd(active, cfg, durationMS, levelL, levelR)
 	o.enqueueLog(func() { o.logSilenceEnd(now, &cfg, durationMS, levelL, levelR) })
 }
 
@@ -140,7 +140,7 @@ func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
 	}
 
 	now := time.Now()
-	o.dispatcher.DispatchAudioDump(pending.activeChannels, &pending.cfg, pending.durationMS, pending.levelL, pending.levelR, result)
+	o.dispatcher.DispatchAudioDump(pending.activeChannels, pending.cfg, pending.durationMS, pending.levelL, pending.levelR, result)
 	o.enqueueLog(func() {
 		o.logAudioDumpReady(now, &pending.cfg, pending.durationMS, pending.levelL, pending.levelR, result)
 	})
@@ -149,7 +149,7 @@ func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
 // HandleUploadAbandoned dispatches an upload-abandonment alert to all configured channels.
 func (o *AlertOrchestrator) HandleUploadAbandoned(params UploadAbandonedData) {
 	cfg := o.cfg.Snapshot()
-	o.dispatcher.DispatchUploadAbandoned(&cfg, params)
+	o.dispatcher.DispatchUploadAbandoned(cfg, params)
 }
 
 // Reset clears alert state for the current silence period, including any pending dump dispatch.
