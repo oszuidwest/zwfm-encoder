@@ -26,8 +26,10 @@ type AlertOrchestrator struct {
 	activeChannels  []AlertChannel
 	pendingRecovery *pendingRecoveryData
 
+	logMu     sync.RWMutex
 	logQueue  chan func() // serialized log writes; single worker guarantees JSONL write order
 	closeOnce sync.Once   // ensures Close drains and stops the worker exactly once
+	closed    bool
 }
 
 // pendingRecoveryData holds recovery event data while waiting for the audio dump.
@@ -64,6 +66,13 @@ func (o *AlertOrchestrator) enqueueLog(fn func()) {
 	if o.eventLogger == nil {
 		return
 	}
+
+	o.logMu.RLock()
+	defer o.logMu.RUnlock()
+	if o.closed {
+		return
+	}
+
 	select {
 	case o.logQueue <- fn:
 	default:
@@ -162,10 +171,18 @@ func (o *AlertOrchestrator) Reset() {
 }
 
 // DrainLogs blocks until all log jobs currently in the queue have been executed.
-// Safe to call multiple times; does not stop the worker.
+// Safe to call multiple times; does not stop the worker. After Close, it becomes a no-op.
 func (o *AlertOrchestrator) DrainLogs() {
 	done := make(chan struct{})
+
+	o.logMu.RLock()
+	if o.closed {
+		o.logMu.RUnlock()
+		return
+	}
 	o.logQueue <- func() { close(done) }
+	o.logMu.RUnlock()
+
 	<-done
 }
 
@@ -174,8 +191,14 @@ func (o *AlertOrchestrator) DrainLogs() {
 // Valid for both graceful process shutdown and test cleanup.
 func (o *AlertOrchestrator) Close() {
 	o.closeOnce.Do(func() {
-		o.DrainLogs()
+		done := make(chan struct{})
+
+		o.logMu.Lock()
+		o.logQueue <- func() { close(done) }
+		<-done
+		o.closed = true
 		close(o.logQueue)
+		o.logMu.Unlock()
 	})
 }
 
