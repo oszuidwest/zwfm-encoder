@@ -206,11 +206,13 @@ func (o *AlertOrchestrator) Close() {
 		done := make(chan struct{})
 
 		o.logMu.Lock()
-		o.logQueue <- logJob{fn: func() { close(done) }}
-		<-done
 		o.closed = true
-		close(o.logQueue)
+		queue := o.logQueue
 		o.logMu.Unlock()
+
+		queue <- logJob{fn: func() { close(done) }}
+		<-done
+		close(queue)
 	})
 }
 

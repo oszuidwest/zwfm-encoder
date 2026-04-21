@@ -60,6 +60,8 @@ type Encoder struct {
 	state               types.EncoderState
 	stopChan            chan struct{}
 	mu                  sync.RWMutex
+	closeOnce           sync.Once
+	closeErr            error
 	lastError           string
 	startTime           time.Time
 	retryCount          int
@@ -408,6 +410,19 @@ func (e *Encoder) Restart() error {
 	}
 	time.Sleep(1000 * time.Millisecond)
 	return e.Start()
+}
+
+// Close releases process-lifetime resources. Callers should stop the encoder first.
+func (e *Encoder) Close() error {
+	e.closeOnce.Do(func() {
+		if e.alertOrchestrator != nil {
+			e.alertOrchestrator.Close()
+		}
+		if e.eventLogger != nil {
+			e.closeErr = e.eventLogger.Close()
+		}
+	})
+	return e.closeErr
 }
 
 // StartStream initiates a streaming process.

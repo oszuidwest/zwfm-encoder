@@ -104,6 +104,9 @@ func main() {
 	if err := enc.Stop(); err != nil {
 		slog.Error("error stopping encoder", "error", err)
 	}
+	if err := enc.Close(); err != nil {
+		slog.Error("error closing encoder resources", "error", err)
+	}
 
 	slog.Info("shutdown complete")
 }
