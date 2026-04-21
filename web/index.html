@@ -352,10 +352,11 @@
             </div>
 
             <div class="panels">
-                <!-- Audio Panel - Silence detection configuration
-                     - Threshold: dB level below which audio is considered silent (-60 to -1)
-                     - Duration: Seconds of silence before triggering alerts (1-3600)
-                     - Recovery: Seconds of audio before clearing silence state (1-60) -->
+                <!-- Audio Panel
+                     Silence Detection: threshold, duration, recovery
+                     Metering: peak hold duration
+                     Silence Dumps: capture and retention
+                     Recording API: max duration, API key -->
                 <div class="panel" role="tabpanel" id="panel-audio" aria-labelledby="tab-audio" x-show="settingsTab === 'audio'">
                     <div class="section">
                         <div class="section-header">
@@ -379,18 +380,28 @@
                                         <input id="silence-duration" type="number" max="300" min="0.5" step="0.5" x-model.number="settingsForm.silenceDuration" @input="markSettingsDirty()" aria-describedby="silence-duration-hint">
                                         <span class="input-unit">sec</span>
                                     </div>
+                                    <span id="silence-duration-hint" class="input-hint">Silence before alerting.</span>
                                 </div>
                                 <div class="group">
                                     <label for="silence-recovery">Recovery Time</label>
                                     <div class="input-group">
-                                        <input id="silence-recovery" type="number" max="60" min="0.5" step="0.5" x-model.number="settingsForm.silenceRecovery" @input="markSettingsDirty()" aria-describedby="silence-duration-hint">
+                                        <input id="silence-recovery" type="number" max="60" min="0.5" step="0.5" x-model.number="settingsForm.silenceRecovery" @input="markSettingsDirty()" aria-describedby="silence-recovery-hint">
                                         <span class="input-unit">sec</span>
                                     </div>
+                                    <span id="silence-recovery-hint" class="input-hint">Audio before clearing.</span>
                                 </div>
                             </div>
-                            <span id="silence-duration-hint" class="input-hint">Silence triggers alerts. Recovery clears after audio returns.</span>
+                        </div>
+                    </div>
+                    <div class="section">
+                        <div class="section-header">
+                            <span class="icon-container" x-html="icons.microphone"></span>
+                            <h3>Metering</h3>
+                        </div>
+                        <p class="section-desc">Controls the VU meter display in the main view.</p>
+                        <div class="form">
                             <div class="group">
-                                <label for="peak-hold">VU Peak Hold</label>
+                                <label for="peak-hold">Peak Hold</label>
                                 <div class="input-group">
                                     <input id="peak-hold" type="number" max="10000" min="500" step="100"
                                            x-model.number="settingsForm.peakHoldMs"
@@ -398,7 +409,7 @@
                                            aria-describedby="peak-hold-hint">
                                     <span class="input-unit">ms</span>
                                 </div>
-                                <span id="peak-hold-hint" class="input-hint">How long the VU meter holds peak values before decay (500–10000 ms).</span>
+                                <span id="peak-hold-hint" class="input-hint">How long the peak marker holds before decaying (500–10000 ms).</span>
                             </div>
                         </div>
                     </div>
