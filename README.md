@@ -213,7 +213,7 @@ flowchart LR
     end
 
     subgraph Outputs["Streaming Outputs"]
-        OM[Output Manager<br>Retry + Backoff]
+        OM[Stream Manager<br>Retry + Backoff]
         F1[FFmpeg MP3]
         F2[FFmpeg OGG]
         S1[SRT 1]
@@ -228,7 +228,7 @@ flowchart LR
     end
 
     subgraph Alerts["Alerting"]
-        SN[Silence Notifier]
+        SN[Alert Orchestrator]
         N1[Webhook]
         N2[Email]
         N3[Log]
@@ -237,6 +237,10 @@ flowchart LR
 
     subgraph UI["Web UI"]
         WS[WebSocket<br>10fps]
+    end
+
+    subgraph EventLog["Event Log"]
+        EL[JSON Lines<br>Logger]
     end
 
     %% Main audio flow
@@ -261,27 +265,31 @@ flowchart LR
     SN -->|Graph API| N2
     SN -->|file| N3
     SN -->|trapper| N4
+    SN -->|events| EL
 
     %% Streaming
     D ==>|PCM| OM
     OM ==>|PCM| F1 -->|SRT| S1
     OM ==>|PCM| F2 -->|SRT| S2
+    OM -->|events| EL
 
     %% Recording
     D ==>|PCM| RM
-    RM ==>|PCM| R1 -->|MP3| ST
-    RM ==>|PCM| R2 -->|MP3| ST
+    RM ==>|PCM| R1 -->|audio| ST
+    RM ==>|PCM| R2 -->|audio| ST
+    RM -->|events| EL
 ```
 
 ### Audio Flow
 
 1. **Capture**: `arecord` (Linux) or FFmpeg (macOS/Windows) captures 48kHz 16-bit stereo PCM
 2. **Distributor**: Processes PCM in ~100ms chunks, fans out to all consumers
-3. **Metering**: Calculates RMS/peak levels in Go (no FFmpeg filters), holds peaks for a configurable duration (default 1500 ms), detects clipping at ±32760
+3. **Metering**: Calculates RMS/peak levels in Go (no FFmpeg filters), holds peaks for a configurable duration (default 3000 ms), detects clipping at ±32760
 4. **Silence Detection**: Hysteresis-based detection with configurable threshold/duration/recovery. Buffers 15s audio context before/after silence events
 5. **Alerting**: Silence events trigger webhook, email (MS Graph), log (JSON Lines), and/or Zabbix. Each channel has per-event subscriptions for `silence_start`, `silence_end`, and `audio_dump_ready`. `silence_end` fires immediately on recovery; `audio_dump_ready` fires separately once the MP3 is ready. Abandoned S3 uploads also trigger notifications.
 6. **Streaming**: Per-output FFmpeg processes with automatic retry and exponential backoff
 7. **Recording**: Hourly rotation or on-demand, with optional S3 upload
+8. **Event Log**: All stream, silence, and recording events written to a JSON Lines file; accessible via web UI and REST API with pagination
 
 ## Post-installation
 
