@@ -44,73 +44,65 @@ func (d *Dispatcher) Channels() []AlertChannel {
 }
 
 // DispatchSilenceStart sends silence-start notifications to subscribed channels from the active set.
-func (d *Dispatcher) DispatchSilenceStart(active []AlertChannel, cfg config.Snapshot, levelL, levelR float64) { //nolint:gocritic // hugeParam: value copy is intentional; each goroutine gets an isolated per-iteration copy
+func (d *Dispatcher) DispatchSilenceStart(active []AlertChannel, cfg config.Snapshot, levelL, levelR float64) { //nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
 	for _, ch := range active {
 		if !ch.SubscribesSilenceStart(&cfg) {
 			continue
 		}
-		ch := ch
-		cfg := cfg // per-goroutine copy; prevents a future mutating Send* from racing with siblings
-		go func() {
+		go func(ch AlertChannel, cfg config.Snapshot) {
 			logNotifyResult(
 				func() error { return ch.SendSilenceStart(&cfg, levelL, levelR) },
 				ch.Name(),
 				"silence_start",
 			)
-		}()
+		}(ch, cfg)
 	}
 }
 
 // DispatchSilenceEnd sends silence-end notifications to the active channel subset.
-func (d *Dispatcher) DispatchSilenceEnd(active []AlertChannel, cfg config.Snapshot, durationMS int64, levelL, levelR float64) { //nolint:gocritic // hugeParam: value copy is intentional; each goroutine gets an isolated per-iteration copy
+func (d *Dispatcher) DispatchSilenceEnd(active []AlertChannel, cfg config.Snapshot, durationMS int64, levelL, levelR float64) { //nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
 	for _, ch := range active {
 		if !ch.SubscribesSilenceEnd(&cfg) {
 			continue
 		}
-		ch := ch
-		cfg := cfg
-		go func() {
+		go func(ch AlertChannel, cfg config.Snapshot) {
 			logNotifyResult(
 				func() error { return ch.SendSilenceEnd(&cfg, durationMS, levelL, levelR) },
 				ch.Name(),
 				"silence_end",
 			)
-		}()
+		}(ch, cfg)
 	}
 }
 
 // DispatchAudioDump sends audio-dump notifications to the active channel subset.
-func (d *Dispatcher) DispatchAudioDump(active []AlertChannel, cfg config.Snapshot, durationMS int64, levelL, levelR float64, result *silencedump.EncodeResult) { //nolint:gocritic // hugeParam: value copy is intentional; each goroutine gets an isolated per-iteration copy
+func (d *Dispatcher) DispatchAudioDump(active []AlertChannel, cfg config.Snapshot, durationMS int64, levelL, levelR float64, result *silencedump.EncodeResult) { //nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
 	for _, ch := range active {
 		if !ch.SubscribesAudioDump(&cfg) {
 			continue
 		}
-		ch := ch
-		cfg := cfg
-		go func() {
+		go func(ch AlertChannel, cfg config.Snapshot) {
 			logNotifyResult(
 				func() error { return ch.SendAudioDump(&cfg, durationMS, levelL, levelR, result) },
 				ch.Name(),
 				"audio_dump_ready",
 			)
-		}()
+		}(ch, cfg)
 	}
 }
 
 // DispatchUploadAbandoned sends upload-abandonment notifications to all configured channels.
-func (d *Dispatcher) DispatchUploadAbandoned(cfg config.Snapshot, params UploadAbandonedData) { //nolint:gocritic // hugeParam: value copy is intentional; each goroutine gets an isolated per-iteration copy
+func (d *Dispatcher) DispatchUploadAbandoned(cfg config.Snapshot, params UploadAbandonedData) { //nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
 	for _, ch := range d.channels {
 		if !ch.IsConfiguredForUpload(&cfg) {
 			continue
 		}
-		ch := ch
-		cfg := cfg
-		go func() {
+		go func(ch AlertChannel, cfg config.Snapshot) {
 			logNotifyResult(
 				func() error { return ch.SendUploadAbandoned(&cfg, params) },
 				ch.Name(),
 				"upload_abandoned",
 			)
-		}()
+		}(ch, cfg)
 	}
 }
