@@ -484,6 +484,7 @@ document.addEventListener('alpine:init', () => {
             };
 
             const now = Date.now();
+            // Must read from config, not a hardcoded constant — the user sets this via Settings.
             const peakHoldMs = this.config.peak_hold_ms ?? 3000;
 
             levels.display_left = applyPPM(levels.peak_left, this.levels.display_left ?? -60);
