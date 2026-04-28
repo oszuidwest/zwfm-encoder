@@ -21,8 +21,8 @@ import (
 )
 
 const (
-	graphBaseURL     = "https://graph.microsoft.com/v1.0"
-	graphScope       = "https://graph.microsoft.com/.default"
+	graphBaseURL = "https://graph.microsoft.com/v1.0"
+	graphScope   = "https://graph.microsoft.com/.default"
 	//nolint:gosec // URL template, not a credential
 	tokenURLTemplate = "https://login.microsoftonline.com/%s/oauth2/v2.0/token"
 

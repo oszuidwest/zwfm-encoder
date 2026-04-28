@@ -34,7 +34,7 @@ type silenceEventData struct {
 	LevelL     float64
 	LevelR     float64
 	Threshold  float64
-	DurationMs int64                    // zero for silence-start events
+	DurationMs int64                     // zero for silence-start events
 	Dump       *silencedump.EncodeResult // nil except for audio-dump events
 }
 
