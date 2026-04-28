@@ -218,7 +218,9 @@ type uploadProgressListener struct {
 	lastLoggedPct int
 }
 
-func (l *uploadProgressListener) OnObjectBytesTransferred(_ context.Context, e *transfermanager.ObjectBytesTransferredEvent) {
+func (l *uploadProgressListener) OnObjectBytesTransferred(
+	_ context.Context, e *transfermanager.ObjectBytesTransferredEvent,
+) {
 	if l.fileSize == 0 {
 		return
 	}
@@ -296,7 +298,9 @@ func (r *GenericRecorder) processRetryQueue() {
 				"file", filepath.Base(p.request.localPath),
 				"attempts", p.retryCount+1,
 				"last_error", p.lastError)
-			r.logUploadEvent(eventlog.UploadAbandoned, filepath.Base(p.request.localPath), p.request.s3Key, p.lastError, p.retryCount)
+			r.logUploadEvent(eventlog.UploadAbandoned,
+				filepath.Base(p.request.localPath), p.request.s3Key,
+				p.lastError, p.retryCount)
 			if r.onUploadAbandoned != nil {
 				r.mu.RLock()
 				recorderName := r.config.Name
@@ -341,7 +345,9 @@ func (r *GenericRecorder) retryUpload(p *pendingUpload) bool {
 	if err != nil {
 		p.lastError = err.Error()
 		slog.Error("retry upload failed", "id", r.id, "s3_key", p.request.s3Key, "error", err)
-		r.logUploadEvent(eventlog.UploadFailed, filepath.Base(p.request.localPath), p.request.s3Key, err.Error(), p.retryCount)
+		r.logUploadEvent(eventlog.UploadFailed,
+			filepath.Base(p.request.localPath), p.request.s3Key,
+			err.Error(), p.retryCount)
 		return false
 	}
 

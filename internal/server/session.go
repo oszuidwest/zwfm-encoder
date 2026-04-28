@@ -131,7 +131,10 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, value string, maxA
 }
 
 // Login reports whether login succeeded and creates a session if valid.
-func (sm *SessionManager) Login(w http.ResponseWriter, r *http.Request, username, password, configUser, configPass string) bool {
+func (sm *SessionManager) Login(
+	w http.ResponseWriter, r *http.Request,
+	username, password, configUser, configPass string,
+) bool {
 	userMatch := subtle.ConstantTimeCompare([]byte(username), []byte(configUser)) == 1
 	passMatch := subtle.ConstantTimeCompare([]byte(password), []byte(configPass)) == 1
 	if !userMatch || !passMatch {

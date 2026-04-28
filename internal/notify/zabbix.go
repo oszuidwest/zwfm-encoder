@@ -128,20 +128,24 @@ func sendZabbixEvent(server string, port int, host, key, value string) error {
 
 // sendUploadAbandonedZabbix sends an upload abandonment event to Zabbix.
 func sendUploadAbandonedZabbix(server string, port int, host, key string, p UploadAbandonedData) error {
-	return sendZabbixEvent(server, port, host, key,
-		fmt.Sprintf("event=UPLOAD_ABANDONED recorder=%q file=%q retries=%d error=%q", p.RecorderName, p.Filename, p.RetryCount, p.LastError))
+	return sendZabbixEvent(server, port, host, key, fmt.Sprintf(
+		"event=UPLOAD_ABANDONED recorder=%q file=%q retries=%d error=%q",
+		p.RecorderName, p.Filename, p.RetryCount, p.LastError,
+	))
 }
 
 // sendZabbixSilence sends a silence alert to Zabbix.
-func sendZabbixSilence(server string, port int, host, key string, levelL, levelR, threshold float64) error {
+func sendZabbixSilence(server string, port int, host, key string, e silenceEventData) error {
 	return sendZabbixEvent(server, port, host, key,
-		fmt.Sprintf("event=SILENCE level_l=%.1f level_r=%.1f threshold=%.1f", levelL, levelR, threshold))
+		fmt.Sprintf("event=SILENCE level_l=%.1f level_r=%.1f threshold=%.1f",
+			e.LevelL, e.LevelR, e.Threshold))
 }
 
 // sendZabbixRecovery sends a recovery message to Zabbix.
-func sendZabbixRecovery(server string, port int, host, key string, durationMs int64, levelL, levelR, threshold float64) error {
+func sendZabbixRecovery(server string, port int, host, key string, e silenceEventData) error {
 	return sendZabbixEvent(server, port, host, key,
-		fmt.Sprintf("event=RECOVERY duration_ms=%d level_l=%.1f level_r=%.1f threshold=%.1f", durationMs, levelL, levelR, threshold))
+		fmt.Sprintf("event=RECOVERY duration_ms=%d level_l=%.1f level_r=%.1f threshold=%.1f",
+			e.DurationMs, e.LevelL, e.LevelR, e.Threshold))
 }
 
 // SendZabbixTest sends a test message to verify Zabbix config.
@@ -182,11 +186,20 @@ func (c *ZabbixChannel) SubscribesSilenceEnd(cfg *config.Snapshot) bool {
 func (c *ZabbixChannel) SubscribesAudioDump(_ *config.Snapshot) bool { return false }
 
 func (c *ZabbixChannel) SendSilenceStart(cfg *config.Snapshot, levelL, levelR float64) error {
-	return sendZabbixSilence(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixSilenceKey, levelL, levelR, cfg.SilenceThreshold)
+	return sendZabbixSilence(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixSilenceKey, silenceEventData{
+		LevelL:    levelL,
+		LevelR:    levelR,
+		Threshold: cfg.SilenceThreshold,
+	})
 }
 
 func (c *ZabbixChannel) SendSilenceEnd(cfg *config.Snapshot, durationMS int64, levelL, levelR float64) error {
-	return sendZabbixRecovery(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixSilenceKey, durationMS, levelL, levelR, cfg.SilenceThreshold)
+	return sendZabbixRecovery(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixSilenceKey, silenceEventData{
+		DurationMs: durationMS,
+		LevelL:     levelL,
+		LevelR:     levelR,
+		Threshold:  cfg.SilenceThreshold,
+	})
 }
 
 func (c *ZabbixChannel) SendAudioDump(_ *config.Snapshot, _ int64, _, _ float64, _ *silencedump.EncodeResult) error {

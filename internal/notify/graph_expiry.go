@@ -123,7 +123,8 @@ func (c *SecretExpiryChecker) fetchExpiryInfo(cfg *types.GraphConfig) (types.Sec
 	}
 	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 
-	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: URL is constructed from constant Graph API base URL + config values
+	//nolint:gosec // G704: URL is constructed from constant Graph API base URL + config values
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return types.SecretExpiryInfo{}, fmt.Errorf("request failed: %w", err)
 	}

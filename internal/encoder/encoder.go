@@ -132,7 +132,10 @@ func (e *Encoder) onStreamEvent(streamID, streamName, eventType, message, errMsg
 		return
 	}
 
-	if err := e.eventLogger.LogStream(eventlog.EventType(eventType), streamID, streamName, message, errMsg, retryCount, maxRetries); err != nil {
+	if err := e.eventLogger.LogStream(
+		eventlog.EventType(eventType), streamID, streamName, message, errMsg,
+		retryCount, maxRetries,
+	); err != nil {
 		slog.Warn("failed to log stream event", "error", err)
 	}
 }
@@ -568,7 +571,9 @@ func (e *Encoder) runSourceLoop() {
 				e.mu.Unlock()
 				return
 			}
-		} else {
+		}
+
+		if err == nil {
 			e.retryCount = 0
 			e.backoff.Reset()
 		}
@@ -603,7 +608,8 @@ func (e *Encoder) runSource() (string, error) {
 	slog.Info("starting audio capture", "command", cmdName, "input", audioInput)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, cmdName, args...) //nolint:gosec // cmdName is from internal platform config (arecord/ffmpeg)
+	//nolint:gosec // cmdName is from internal platform config (arecord/ffmpeg)
+	cmd := exec.CommandContext(ctx, cmdName, args...)
 
 	// Go 1.20+: Declarative graceful shutdown - sends signal first, waits, then kills.
 	cmd.Cancel = func() error {
@@ -685,14 +691,14 @@ func (e *Encoder) startEnabledStreams() {
 func (e *Encoder) runDistributor() {
 	buf := make([]byte, 19200) // ~100ms of audio at 48kHz stereo
 
-	distributor := NewDistributor(
-		e.silenceDetect,
-		e.alertOrchestrator,
-		e.silenceDumpManager,
-		e.peakHolder,
-		e.config,
-		e.updateAudioLevels,
-	)
+	distributor := NewDistributor(DistributorConfig{
+		SilenceDetect:      e.silenceDetect,
+		AlertOrchestrator:  e.alertOrchestrator,
+		SilenceDumpManager: e.silenceDumpManager,
+		PeakHolder:         e.peakHolder,
+		Config:             e.config,
+		Callback:           e.updateAudioLevels,
+	})
 
 	for {
 		e.mu.RLock()

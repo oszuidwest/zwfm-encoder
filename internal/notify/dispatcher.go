@@ -28,6 +28,16 @@ type UploadAbandonedData struct {
 	RetryCount   int
 }
 
+// silenceEventData groups audio level and silence parameters shared across
+// silence-start, silence-end, and audio-dump notification functions.
+type silenceEventData struct {
+	LevelL     float64
+	LevelR     float64
+	Threshold  float64
+	DurationMs int64                    // zero for silence-start events
+	Dump       *silencedump.EncodeResult // nil except for audio-dump events
+}
+
 // Dispatcher routes alert events to alert channels.
 type Dispatcher struct {
 	channels []AlertChannel
@@ -44,7 +54,9 @@ func (d *Dispatcher) Channels() []AlertChannel {
 }
 
 // DispatchSilenceStart sends silence-start notifications to subscribed channels from the active set.
-func (d *Dispatcher) DispatchSilenceStart(active []AlertChannel, cfg config.Snapshot, levelL, levelR float64) { //nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
+//
+//nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
+func (d *Dispatcher) DispatchSilenceStart(active []AlertChannel, cfg config.Snapshot, levelL, levelR float64) {
 	for _, ch := range active {
 		if !ch.SubscribesSilenceStart(&cfg) {
 			continue
@@ -60,7 +72,11 @@ func (d *Dispatcher) DispatchSilenceStart(active []AlertChannel, cfg config.Snap
 }
 
 // DispatchSilenceEnd sends silence-end notifications to the active channel subset.
-func (d *Dispatcher) DispatchSilenceEnd(active []AlertChannel, cfg config.Snapshot, durationMS int64, levelL, levelR float64) { //nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
+//
+//nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
+func (d *Dispatcher) DispatchSilenceEnd(
+	active []AlertChannel, cfg config.Snapshot, durationMS int64, levelL, levelR float64,
+) {
 	for _, ch := range active {
 		if !ch.SubscribesSilenceEnd(&cfg) {
 			continue
@@ -76,7 +92,12 @@ func (d *Dispatcher) DispatchSilenceEnd(active []AlertChannel, cfg config.Snapsh
 }
 
 // DispatchAudioDump sends audio-dump notifications to the active channel subset.
-func (d *Dispatcher) DispatchAudioDump(active []AlertChannel, cfg config.Snapshot, durationMS int64, levelL, levelR float64, result *silencedump.EncodeResult) { //nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
+//
+//nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
+func (d *Dispatcher) DispatchAudioDump(
+	active []AlertChannel, cfg config.Snapshot, durationMS int64,
+	levelL, levelR float64, result *silencedump.EncodeResult,
+) {
 	for _, ch := range active {
 		if !ch.SubscribesAudioDump(&cfg) {
 			continue
@@ -92,7 +113,9 @@ func (d *Dispatcher) DispatchAudioDump(active []AlertChannel, cfg config.Snapsho
 }
 
 // DispatchUploadAbandoned sends upload-abandonment notifications to all configured channels.
-func (d *Dispatcher) DispatchUploadAbandoned(cfg config.Snapshot, params UploadAbandonedData) { //nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
+//
+//nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
+func (d *Dispatcher) DispatchUploadAbandoned(cfg config.Snapshot, params UploadAbandonedData) {
 	for _, ch := range d.channels {
 		if !ch.IsConfiguredForUpload(&cfg) {
 			continue

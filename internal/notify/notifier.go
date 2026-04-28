@@ -162,9 +162,15 @@ func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
 	}
 
 	now := time.Now()
-	o.dispatcher.DispatchAudioDump(pending.activeChannels, pending.cfg, pending.durationMS, pending.levelL, pending.levelR, result)
+	o.dispatcher.DispatchAudioDump(
+		pending.activeChannels, pending.cfg, pending.durationMS,
+		pending.levelL, pending.levelR, result,
+	)
 	o.enqueueLog("audio_dump_ready", func() {
-		o.logAudioDumpReady(now, &pending.cfg, pending.durationMS, pending.levelL, pending.levelR, result)
+		o.logAudioDumpReady(
+			now, &pending.cfg, pending.durationMS,
+			pending.levelL, pending.levelR, result,
+		)
 	})
 }
 
@@ -239,9 +245,15 @@ func (o *AlertOrchestrator) logSilenceEnd(t time.Time, cfg *config.Snapshot, dur
 	}
 }
 
-func (o *AlertOrchestrator) logAudioDumpReady(t time.Time, cfg *config.Snapshot, durationMS int64, levelL, levelR float64, dump *silencedump.EncodeResult) {
+func (o *AlertOrchestrator) logAudioDumpReady(
+	t time.Time, cfg *config.Snapshot, durationMS int64,
+	levelL, levelR float64, dump *silencedump.EncodeResult,
+) {
 	dumpPath, dumpFilename, dumpSize, dumpError := extractDumpInfo(dump)
-	if err := o.eventLogger.LogAudioDumpReady(t, durationMS, levelL, levelR, cfg.SilenceThreshold, dumpPath, dumpFilename, dumpSize, dumpError); err != nil {
+	if err := o.eventLogger.LogAudioDumpReady(
+		t, durationMS, levelL, levelR, cfg.SilenceThreshold,
+		dumpPath, dumpFilename, dumpSize, dumpError,
+	); err != nil {
 		slog.Warn("failed to log audio dump ready", "error", err)
 	}
 }

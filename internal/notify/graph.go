@@ -23,7 +23,8 @@ import (
 const (
 	graphBaseURL     = "https://graph.microsoft.com/v1.0"
 	graphScope       = "https://graph.microsoft.com/.default"
-	tokenURLTemplate = "https://login.microsoftonline.com/%s/oauth2/v2.0/token" //nolint:gosec // URL template, not a credential
+	//nolint:gosec // URL template, not a credential
+	tokenURLTemplate = "https://login.microsoftonline.com/%s/oauth2/v2.0/token"
 
 	// Retry settings.
 	maxRetries       = 3
@@ -158,7 +159,8 @@ func (c *GraphClient) doWithRetry(jsonData []byte) error {
 		}
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, err := c.httpClient.Do(req) //nolint:gosec // G704: URL is constructed from constant Graph API base URL + config values
+		//nolint:gosec // G704: URL is constructed from constant Graph API base URL + config values
+		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("send request: %w", err)
 			continue
@@ -193,7 +195,9 @@ func (c *GraphClient) doWithRetry(jsonData []byte) error {
 }
 
 // SendMailWithAttachment sends an email with an optional attachment.
-func (c *GraphClient) SendMailWithAttachment(recipients []string, subject, body string, attachment *EmailAttachment) error {
+func (c *GraphClient) SendMailWithAttachment(
+	recipients []string, subject, body string, attachment *EmailAttachment,
+) error {
 	if len(recipients) == 0 {
 		return fmt.Errorf("no recipients specified")
 	}
@@ -253,7 +257,8 @@ func (c *GraphClient) ValidateAuth() error {
 		return fmt.Errorf("create validation request: %w", err)
 	}
 
-	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: URL is constructed from constant Graph API base URL + config values
+	//nolint:gosec // G704: URL is constructed from constant Graph API base URL + config values
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		// Token acquisition failed
 		if strings.Contains(err.Error(), "oauth2") || strings.Contains(err.Error(), "token") {

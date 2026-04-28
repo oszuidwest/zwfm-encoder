@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"os/exec"
+	"strconv"
 	"sync"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
@@ -38,8 +39,8 @@ type StartResult struct {
 func BaseInputArgs() []string {
 	return []string{
 		"-f", "s16le",
-		"-ar", fmt.Sprintf("%d", audio.SampleRate),
-		"-ac", fmt.Sprintf("%d", audio.Channels),
+		"-ar", strconv.Itoa(audio.SampleRate),
+		"-ac", strconv.Itoa(audio.Channels),
 		"-i", "pipe:0",
 	}
 }
@@ -47,7 +48,8 @@ func BaseInputArgs() []string {
 // StartProcess launches an FFmpeg subprocess.
 func StartProcess(ffmpegPath string, args []string) (*StartResult, error) {
 	ctx, cancel := context.WithCancelCause(context.Background())
-	cmd := exec.CommandContext(ctx, ffmpegPath, args...) //nolint:gosec // G204: ffmpegPath is from config or PATH lookup, not user HTTP input
+	//nolint:gosec // G204: ffmpegPath is from config or PATH lookup, not user HTTP input
+	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
 
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {

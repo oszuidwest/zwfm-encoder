@@ -59,16 +59,26 @@ type GenericRecorder struct {
 	durationTimer *time.Timer
 }
 
+// GenericRecorderConfig holds the parameters for creating a GenericRecorder.
+type GenericRecorderConfig struct {
+	Recorder           *types.Recorder
+	FFmpegPath         string
+	TempDir            string
+	MaxDurationMinutes int
+	EventLogger        *eventlog.Logger
+	OnUploadAbandoned  UploadAbandonedCallback
+}
+
 // NewGenericRecorder creates a new recorder instance.
-func NewGenericRecorder(cfg *types.Recorder, ffmpegPath, tempDir string, maxDurationMinutes int, eventLogger *eventlog.Logger, onUploadAbandoned UploadAbandonedCallback) (*GenericRecorder, error) {
+func NewGenericRecorder(cfg GenericRecorderConfig) (*GenericRecorder, error) {
 	r := &GenericRecorder{
-		id:                 cfg.ID,
-		config:             *cfg,
-		ffmpegPath:         ffmpegPath,
-		maxDurationMinutes: maxDurationMinutes,
-		eventLogger:        eventLogger,
-		onUploadAbandoned:  onUploadAbandoned,
-		tempDir:            tempDir,
+		id:                 cfg.Recorder.ID,
+		config:             *cfg.Recorder,
+		ffmpegPath:         cfg.FFmpegPath,
+		maxDurationMinutes: cfg.MaxDurationMinutes,
+		eventLogger:        cfg.EventLogger,
+		onUploadAbandoned:  cfg.OnUploadAbandoned,
+		tempDir:            cfg.TempDir,
 		state:              types.ProcessStopped,
 		uploadQueue:        make(chan uploadRequest, 100),
 		uploadStopCh:       make(chan struct{}),
@@ -164,11 +174,14 @@ func (r *GenericRecorder) startAsync() {
 	// Validate and prepare output directory based on storage mode
 	if storageMode == types.StorageS3 {
 		// S3-only: create temp directory (should always be writable)
-		if err := os.MkdirAll(filepath.Join(tempDir, "recorders", id), 0o755); err != nil { //nolint:gosec // Temp directory needs to be readable
+		//nolint:gosec // Temp directory needs to be readable
+		if err := os.MkdirAll(filepath.Join(tempDir, "recorders", id), 0o755); err != nil {
 			r.setError(fmt.Sprintf("failed to create temp directory: %v", err))
 			return
 		}
-	} else {
+	}
+
+	if storageMode != types.StorageS3 {
 		// Local or Both: validate path and check writability
 		// CheckPathWritable also creates the directory if needed
 		if err := util.ValidatePath("local_path", localPath); err != nil {
