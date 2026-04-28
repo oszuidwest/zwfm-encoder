@@ -67,6 +67,9 @@ jobs:
       - name: Run govulncheck
         run: go tool govulncheck ./...
 
+      - name: Run staticcheck
+        run: go tool staticcheck ./...
+
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
