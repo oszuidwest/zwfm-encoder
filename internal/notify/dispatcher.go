@@ -31,10 +31,10 @@ type UploadAbandonedData struct {
 // silenceEventData groups audio level and silence parameters shared across
 // silence-start, silence-end, and audio-dump notification functions.
 type silenceEventData struct {
-	LevelL     float64
-	LevelR     float64
-	Threshold  float64
-	DurationMs int64                     // zero for silence-start events
+	LevelL     float64                   // dB
+	LevelR     float64                   // dB
+	Threshold  float64                   // dB
+	DurationMs int64                     // ms; zero for silence-start events
 	Dump       *silencedump.EncodeResult // nil except for audio-dump events
 }
 
