@@ -248,7 +248,10 @@ func (c *Capturer) copyFromRing(dst []byte, startPos int64) {
 }
 
 // encodeToMP3 encodes PCM audio to an MP3 file.
-func encodeToMP3(ffmpegPath, outputDir string, pcm []byte, silenceStart time.Time, duration time.Duration) *EncodeResult {
+func encodeToMP3(
+	ffmpegPath, outputDir string, pcm []byte,
+	silenceStart time.Time, duration time.Duration,
+) *EncodeResult {
 	result := &EncodeResult{
 		Duration:  duration,
 		DumpStart: silenceStart,

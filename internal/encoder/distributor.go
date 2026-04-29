@@ -23,16 +23,26 @@ type Distributor struct {
 	callback           AudioLevelCallback
 }
 
+// DistributorConfig holds the parameters for creating a Distributor.
+type DistributorConfig struct {
+	SilenceDetect      *audio.SilenceDetector
+	AlertOrchestrator  *notify.AlertOrchestrator
+	SilenceDumpManager *silencedump.Manager
+	PeakHolder         *audio.PeakHolder
+	Config             *config.Config
+	Callback           AudioLevelCallback
+}
+
 // NewDistributor returns a new Distributor.
-func NewDistributor(silenceDetect *audio.SilenceDetector, alertOrchestrator *notify.AlertOrchestrator, silenceDumpManager *silencedump.Manager, peakHolder *audio.PeakHolder, cfg *config.Config, callback AudioLevelCallback) *Distributor {
+func NewDistributor(cfg DistributorConfig) *Distributor {
 	return &Distributor{
 		levelData:          &audio.LevelData{},
-		silenceDetect:      silenceDetect,
-		alertOrchestrator:  alertOrchestrator,
-		silenceDumpManager: silenceDumpManager,
-		peakHolder:         peakHolder,
-		config:             cfg,
-		callback:           callback,
+		silenceDetect:      cfg.SilenceDetect,
+		alertOrchestrator:  cfg.AlertOrchestrator,
+		silenceDumpManager: cfg.SilenceDumpManager,
+		peakHolder:         cfg.PeakHolder,
+		config:             cfg.Config,
+		callback:           cfg.Callback,
 	}
 }
 

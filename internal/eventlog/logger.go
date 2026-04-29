@@ -152,7 +152,8 @@ func NewLogger(filePath string) (*Logger, error) {
 	}
 
 	// Open file for appending
-	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644) //nolint:gosec // Log file needs to be readable
+	//nolint:gosec // Log file needs to be readable
+	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("open log file: %w", err)
 	}
@@ -177,7 +178,10 @@ func (l *Logger) Log(event *Event) error {
 }
 
 // LogStream records a stream event with error and retry details.
-func (l *Logger) LogStream(eventType EventType, streamID, streamName, message, errMsg string, retryCount, maxRetries int) error {
+func (l *Logger) LogStream(
+	eventType EventType, streamID, streamName, message, errMsg string,
+	retryCount, maxRetries int,
+) error {
 	return l.Log(&Event{
 		Type:     eventType,
 		StreamID: streamID,
@@ -225,7 +229,10 @@ func (l *Logger) LogSilenceEnd(t time.Time, durationMs int64, levelL, levelR, th
 // LogAudioDumpReady records when the audio dump MP3 is ready after a silence event.
 // t must be captured at the moment the event occurs so the timestamp is
 // accurate even when the write is deferred to a background goroutine.
-func (l *Logger) LogAudioDumpReady(t time.Time, durationMs int64, levelL, levelR, threshold float64, dumpPath, dumpFilename string, dumpSize int64, dumpError string) error {
+func (l *Logger) LogAudioDumpReady(
+	t time.Time, durationMs int64, levelL, levelR, threshold float64,
+	dumpPath, dumpFilename string, dumpSize int64, dumpError string,
+) error {
 	return l.Log(&Event{
 		Timestamp: t,
 		Type:      AudioDumpReady,

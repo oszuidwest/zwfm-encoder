@@ -312,7 +312,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Year:        time.Now().Year(),
 		CSRFToken:   s.sessions.CreateCSRFToken(),
 		StationName: cfg.StationName,
-		PrimaryCSS:  template.CSS(util.GenerateBrandCSS(cfg.StationColorLight, cfg.StationColorDark)), //nolint:gosec // CSS from validated hex colors
+		//nolint:gosec // CSS from validated hex colors
+		PrimaryCSS: template.CSS(util.GenerateBrandCSS(cfg.StationColorLight, cfg.StationColorDark)),
 	}
 
 	if r.Method == http.MethodPost {
@@ -392,7 +393,8 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 			Version:     Version,
 			Year:        time.Now().Year(),
 			StationName: cfg.StationName,
-			PrimaryCSS:  template.CSS(util.GenerateBrandCSS(cfg.StationColorLight, cfg.StationColorDark)), //nolint:gosec // CSS from validated hex colors
+			//nolint:gosec // CSS from validated hex colors
+			PrimaryCSS: template.CSS(util.GenerateBrandCSS(cfg.StationColorLight, cfg.StationColorDark)),
 		}); err != nil {
 			slog.Error("failed to write index.html", "error", err)
 		}

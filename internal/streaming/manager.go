@@ -32,7 +32,10 @@ type StreamContext interface {
 }
 
 // EventCallback handles stream event notifications.
-type EventCallback func(streamID, streamName string, event string, message string, err string, retryCount, maxRetries int)
+type EventCallback func(
+	streamID, streamName string, event string, message string,
+	err string, retryCount, maxRetries int,
+)
 
 // Manager orchestrates multiple streams.
 type Manager struct {
@@ -486,7 +489,10 @@ func (m *Manager) RetryCount(streamID string) int {
 	return 0
 }
 
-func (m *Manager) handleStreamExit(streamID string, result *ffmpeg.StartResult, backoff *util.Backoff, err error, runDuration time.Duration) {
+func (m *Manager) handleStreamExit(
+	streamID string, result *ffmpeg.StartResult, backoff *util.Backoff,
+	err error, runDuration time.Duration,
+) {
 	// Check if this was an intentional stop - don't treat as error
 	cause := context.Cause(result.Context())
 	if errors.Is(cause, errStoppedByUser) {
@@ -577,7 +583,9 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 		maxRetries := stream.MaxRetriesOrDefault()
 		slog.Info("stream stopped, waiting before retry",
 			"stream_id", streamID, "delay", retryDelay, "retry", retryCount, "max_retries", maxRetries)
-		m.emitEvent(streamID, "stream_retry", fmt.Sprintf("Retrying in %s", retryDelay.Round(time.Second)), "", retryCount, maxRetries)
+		m.emitEvent(streamID, "stream_retry",
+			fmt.Sprintf("Retrying in %s", retryDelay.Round(time.Second)),
+			"", retryCount, maxRetries)
 
 		select {
 		case <-stopChan:

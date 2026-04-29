@@ -68,42 +68,44 @@ func sendEmailWithClient(cfg *GraphConfig, client *GraphClient, subject, body st
 	return nil
 }
 
-func sendSilenceEmailWithClient(cfg *GraphConfig, client *GraphClient, stationName string, levelL, levelR, threshold float64) error {
+func sendSilenceEmailWithClient(cfg *GraphConfig, client *GraphClient, stationName string, e silenceEventData) error {
 	subject := "[ALERT] Silence Detected - " + stationName
 	body := fmt.Sprintf(
 		"The encoder detected silence at %s.\n\n"+
 			"Audio level dropped below the %.0f dB threshold.\n"+
 			"Current level: Left %.1f dB / Right %.1f dB\n\n"+
 			"Silence is ongoing. Please check the audio source.",
-		util.HumanTime(), threshold, levelL, levelR,
+		util.HumanTime(), e.Threshold, e.LevelL, e.LevelR,
 	)
 	return sendEmailWithClient(cfg, client, subject, body)
 }
 
-func sendSilenceEndEmailWithClient(cfg *GraphConfig, client *GraphClient, stationName string, durationMs int64, levelL, levelR, threshold float64) error {
+func sendSilenceEndEmailWithClient(
+	cfg *GraphConfig, client *GraphClient, stationName string, e silenceEventData,
+) error {
 	subject := "[OK] Audio Restored - " + stationName
 	body := fmt.Sprintf(
 		"Audio was restored at %s.\n\n"+
 			"The silence lasted %s.\n"+
 			"Level: Left %.1f dB / Right %.1f dB (threshold: %.1f dB)",
-		util.HumanTime(), util.FormatDuration(durationMs), levelL, levelR, threshold,
+		util.HumanTime(), util.FormatDuration(e.DurationMs), e.LevelL, e.LevelR, e.Threshold,
 	)
 	return sendEmailWithClient(cfg, client, subject, body)
 }
 
 // sendDumpReadyEmailWithClient does not delegate to sendEmailWithClient because it needs to attach a file.
-func sendDumpReadyEmailWithClient(cfg *GraphConfig, client *GraphClient, stationName string, durationMs int64, levelL, levelR, threshold float64, dump *silencedump.EncodeResult) error {
+func sendDumpReadyEmailWithClient(cfg *GraphConfig, client *GraphClient, stationName string, e silenceEventData) error {
 	subject := "[DUMP] Audio Recording - " + stationName
 
 	body := fmt.Sprintf(
 		"Audio dump ready at %s.\n\n"+
 			"The silence lasted %s.\n"+
 			"Level: Left %.1f dB / Right %.1f dB (threshold: %.1f dB)",
-		util.HumanTime(), util.FormatDuration(durationMs), levelL, levelR, threshold,
+		util.HumanTime(), util.FormatDuration(e.DurationMs), e.LevelL, e.LevelR, e.Threshold,
 	)
 
-	if dump != nil && dump.Error != nil {
-		body += fmt.Sprintf("\n\nAudio recording: Failed to capture (%s)", dump.Error.Error())
+	if e.Dump != nil && e.Dump.Error != nil {
+		body += fmt.Sprintf("\n\nAudio recording: Failed to capture (%s)", e.Dump.Error.Error())
 	}
 
 	recipients := ParseRecipients(cfg.Recipients)
@@ -113,17 +115,18 @@ func sendDumpReadyEmailWithClient(cfg *GraphConfig, client *GraphClient, station
 
 	// Prepare attachment if dump is available.
 	var attachment *EmailAttachment
-	if dump != nil && dump.Error == nil && dump.FilePath != "" {
-		data, err := os.ReadFile(dump.FilePath)
+	if e.Dump != nil && e.Dump.Error == nil && e.Dump.FilePath != "" {
+		data, err := os.ReadFile(e.Dump.FilePath)
 		if err == nil {
 			attachment = &EmailAttachment{
-				Filename:    dump.Filename,
+				Filename:    e.Dump.Filename,
 				ContentType: "audio/mpeg",
 				Data:        data,
 			}
 			body += "\n\nAudio recording attached (15s before and after the silence)."
 		} else {
-			slog.Warn("audio dump file unreadable, sending email without attachment", "path", dump.FilePath, "error", err)
+			slog.Warn("audio dump file unreadable, sending email without attachment",
+				"path", e.Dump.FilePath, "error", err)
 			body += fmt.Sprintf("\n\nAudio recording unavailable (file could not be read: %s).", err)
 		}
 	}
@@ -192,7 +195,11 @@ func (c *EmailChannel) SendSilenceStart(cfg *config.Snapshot, levelL, levelR flo
 	if err != nil {
 		return util.WrapError("create Graph client", err)
 	}
-	return sendSilenceEmailWithClient(graphCfg, client, cfg.StationName, levelL, levelR, cfg.SilenceThreshold)
+	return sendSilenceEmailWithClient(graphCfg, client, cfg.StationName, silenceEventData{
+		LevelL:    levelL,
+		LevelR:    levelR,
+		Threshold: cfg.SilenceThreshold,
+	})
 }
 
 func (c *EmailChannel) SendSilenceEnd(cfg *config.Snapshot, durationMs int64, levelL, levelR float64) error {
@@ -201,16 +208,30 @@ func (c *EmailChannel) SendSilenceEnd(cfg *config.Snapshot, durationMs int64, le
 	if err != nil {
 		return util.WrapError("create Graph client", err)
 	}
-	return sendSilenceEndEmailWithClient(graphCfg, client, cfg.StationName, durationMs, levelL, levelR, cfg.SilenceThreshold)
+	return sendSilenceEndEmailWithClient(graphCfg, client, cfg.StationName, silenceEventData{
+		DurationMs: durationMs,
+		LevelL:     levelL,
+		LevelR:     levelR,
+		Threshold:  cfg.SilenceThreshold,
+	})
 }
 
-func (c *EmailChannel) SendAudioDump(cfg *config.Snapshot, durationMs int64, levelL, levelR float64, result *silencedump.EncodeResult) error {
+func (c *EmailChannel) SendAudioDump(
+	cfg *config.Snapshot, durationMs int64, levelL, levelR float64,
+	result *silencedump.EncodeResult,
+) error {
 	graphCfg := BuildGraphConfig(cfg)
 	client, err := c.getOrCreateClient(graphCfg)
 	if err != nil {
 		return util.WrapError("create Graph client", err)
 	}
-	return sendDumpReadyEmailWithClient(graphCfg, client, cfg.StationName, durationMs, levelL, levelR, cfg.SilenceThreshold, result)
+	return sendDumpReadyEmailWithClient(graphCfg, client, cfg.StationName, silenceEventData{
+		DurationMs: durationMs,
+		LevelL:     levelL,
+		LevelR:     levelR,
+		Threshold:  cfg.SilenceThreshold,
+		Dump:       result,
+	})
 }
 
 func (c *EmailChannel) SendUploadAbandoned(cfg *config.Snapshot, params UploadAbandonedData) error {

@@ -42,7 +42,8 @@ func parseDeviceList(cfg DeviceListConfig) []Device {
 		return cfg.FallbackDevices
 	}
 
-	cmd := exec.Command(cfg.Command[0], cfg.Command[1:]...) //nolint:gosec // Command is from internal platform config, not user input
+	//nolint:gosec // Command is from internal platform config, not user input
+	cmd := exec.Command(cfg.Command[0], cfg.Command[1:]...)
 	output, err := cmd.CombinedOutput()
 	if err != nil && len(output) == 0 {
 		slog.Error("failed to list audio devices", "error", err)

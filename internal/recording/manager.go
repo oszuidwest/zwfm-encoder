@@ -95,7 +95,14 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 		return fmt.Errorf("recorder already exists: %s", cfg.ID)
 	}
 
-	recorder, err := NewGenericRecorder(cfg, m.ffmpegPath, m.tempDir, m.maxDurationMinutes, m.eventLogger, m.onUploadAbandoned)
+	recorder, err := NewGenericRecorder(GenericRecorderConfig{
+		Recorder:           cfg,
+		FFmpegPath:         m.ffmpegPath,
+		TempDir:            m.tempDir,
+		MaxDurationMinutes: m.maxDurationMinutes,
+		EventLogger:        m.eventLogger,
+		OnUploadAbandoned:  m.onUploadAbandoned,
+	})
 	if err != nil {
 		return fmt.Errorf("create recorder: %w", err)
 	}
