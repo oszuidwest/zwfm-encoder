@@ -119,6 +119,7 @@ func (sm *SessionManager) AuthMiddleware() func(http.HandlerFunc) http.HandlerFu
 
 // setSessionCookie sets or clears the session cookie.
 func setSessionCookie(w http.ResponseWriter, r *http.Request, value string, maxAge int) {
+	//nolint:gosec // G124: Secure depends on request TLS/proxy state so local HTTP deployments keep working.
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    value,
