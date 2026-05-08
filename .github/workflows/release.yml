@@ -16,58 +16,73 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
           cache: true
 
       - name: Set version
         id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
-            echo "is_release=true" >> $GITHUB_OUTPUT
-          elif [[ "${{ inputs.version }}" == "edge" ]]; then
-            echo "version=edge" >> $GITHUB_OUTPUT
-            echo "is_release=false" >> $GITHUB_OUTPUT
+          if [ "$REF_TYPE" = "tag" ]; then
+            echo "version=$REF_NAME" >> "$GITHUB_OUTPUT"
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+          elif [ "$INPUT_VERSION" = "edge" ]; then
+            echo "version=edge" >> "$GITHUB_OUTPUT"
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
           else
-            TAG="v${{ inputs.version }}"
-            echo "version=$TAG" >> $GITHUB_OUTPUT
-            echo "is_release=true" >> $GITHUB_OUTPUT
-            git config --global user.email "github-actions[bot]@users.noreply.github.com"
-            git config --global user.name "github-actions[bot]"
-            git tag "$TAG"
-            git push origin "$TAG"
+            TAG="v$INPUT_VERSION"
+            echo "version=$TAG" >> "$GITHUB_OUTPUT"
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create git tag (manual release)
+        if: github.event_name == 'workflow_dispatch' && steps.version.outputs.is_release == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            echo "Tag $VERSION already exists; reusing it for the release."
+          else
+            git tag "$VERSION"
+            git push origin "refs/tags/$VERSION"
           fi
 
       - name: Test
         run: |
           go mod download
-          go test -v ./...
+          go test -race -shuffle=on -v ./...
           go vet ./...
 
       - name: Build binaries
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          COMMIT: ${{ github.sha }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          if [[ "$VERSION" == "edge" ]]; then
+          if [ "$VERSION" = "edge" ]; then
             VERSION="edge-$(git rev-parse --short HEAD)"
           fi
-
-          MODULE="github.com/oszuidwest/zwfm-encoder"
-          LDFLAGS="-w -s -X main.Version=$VERSION -X main.Commit=${{ github.sha }} -X main.BuildTime=$(date -u +%FT%TZ)"
+          BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          LDFLAGS="-w -s -X main.Version=$VERSION -X main.Commit=$COMMIT -X main.BuildTime=$BUILD_TIME"
 
           build() {
             local os=$1 arch=$2
             local output="encoder-${os}-${arch}"
-            if [[ "$os" == "windows" ]]; then
+            if [ "$os" = "windows" ]; then
               output="${output}.exe"
             fi
             echo "Building $output"
-            GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o "dist/$output" .
+            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o "dist/$output" .
           }
 
           mkdir -p dist
@@ -80,7 +95,7 @@ jobs:
 
       - name: Create release
         if: steps.version.outputs.is_release == 'true'
-        uses: softprops/action-gh-release@v3.0.0
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.version.outputs.version }}
           name: ${{ steps.version.outputs.version }}
@@ -99,8 +114,8 @@ jobs:
 
       - name: Upload edge artifacts
         if: steps.version.outputs.is_release == 'false'
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7
         with:
-          name: edge-${{ github.sha }}
+          name: encoder-edge-${{ github.sha }}
           path: dist/*
           retention-days: 7
