@@ -25,6 +25,12 @@ Audio streaming software for [ZuidWest FM](https://www.zuidwestfm.nl/) (Linux), 
 
 Linux on Raspberry Pi is the primary target. macOS works for development. Windows is experimental.
 
+## Deployment Model
+
+This is bare-metal software for a Raspberry Pi with a HiFiBerry sound card — there is no Docker target. Audio capture goes directly through ALSA (`arecord`) on the host, which needs the kernel sound device, the HiFiBerry overlay, and predictable real-time scheduling. Containerizing it would add a layer without solving anything for this hardware path.
+
+Install via the curl script in [Installation](#installation) below. CI publishes the binary as a GitHub release asset; no container image is published.
+
 ## Requirements
 
 - Raspberry Pi 4 or 5
