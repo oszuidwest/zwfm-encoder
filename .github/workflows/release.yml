@@ -44,7 +44,13 @@ jobs:
             echo "is_release=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Create git tag (manual release)
+      - name: Test
+        run: |
+          go mod download
+          go test -race -shuffle=on -v ./...
+          go vet ./...
+
+      - name: Create or check out version tag (manual release)
         if: github.event_name == 'workflow_dispatch' && steps.version.outputs.is_release == 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -52,17 +58,14 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
-            echo "Tag $VERSION already exists; reusing it for the release."
+            echo "Tag $VERSION already exists; checking it out so the build matches the tag."
           else
             git tag "$VERSION"
             git push origin "refs/tags/$VERSION"
           fi
-
-      - name: Test
-        run: |
-          go mod download
-          go test -race -shuffle=on -v ./...
-          go vet ./...
+          # Always end on the tag commit so binaries come from the same source
+          # as the version label.
+          git checkout "refs/tags/$VERSION"
 
       - name: Build binaries
         env:
