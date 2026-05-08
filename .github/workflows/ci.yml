@@ -1,3 +1,7 @@
+---
+# Thin shim — Go job delegates to oszuidwest/.github-templates go-ci.yml@v1.
+# Frontend job stays inline because it needs a project-specific lockfile-commit
+# step for dependabot PRs (not generic enough for v1).
 name: CI
 
 on:
@@ -31,44 +35,9 @@ permissions:
 
 jobs:
   go:
-    name: Go
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: 'go.mod'
-          cache: true
-
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Run tests
-        run: go test -race -shuffle=on -v ./...
-
-      - name: Run vet
-        run: go vet ./...
-
-      - name: Check formatting
-        run: |
-          go fmt ./...
-          git diff --exit-code
-
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.12.1
-          args: --timeout=5m
-
-      - name: Check for dead code
-        run: go tool deadcode ./...
-
-      - name: Run govulncheck
-        run: go tool govulncheck ./...
-
-      - name: Run staticcheck
-        run: go tool staticcheck ./...
+    uses: oszuidwest/.github-templates/.github/workflows/go-ci.yml@v1
+    with:
+      golangci-lint-version: v2.12.1
 
   frontend:
     name: Frontend

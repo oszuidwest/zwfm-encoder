@@ -1,3 +1,6 @@
+---
+# Thin shim — delegates to oszuidwest/.github-templates go-release.yml@v1.
+# enable-docker: false — encoder is bare-metal Pi software (no Docker target).
 name: Release
 
 on:
@@ -6,119 +9,33 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version without v prefix (e.g., 1.0.0) or "edge" for development build'
+        description: 'Version (edge, vX.Y.Z, or X.Y.Z auto-prefixed)'
         required: true
-        default: '1.0.0'
+        default: 'edge'
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    uses: oszuidwest/.github-templates/.github/workflows/go-release.yml@v1
+    with:
+      project-name: encoder
+      ldflags-target: main
+      build-matrix: >-
+        [{"os":"linux","arch":"arm64"},
+         {"os":"darwin","arch":"arm64"},
+         {"os":"darwin","arch":"amd64"},
+         {"os":"windows","arch":"amd64"},
+         {"os":"windows","arch":"arm64"}]
+      version: ${{ inputs.version }}
+      enable-docker: false
+      release-body: |
+        ## Installation
+
+        On Raspberry Pi 4/5 with HiFiBerry card:
+        ```bash
+        sudo /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/oszuidwest/zwfm-encoder/main/deploy/install.sh)"
+        ```
+
+        Binary downloads are available below as release assets.
     permissions:
       contents: write
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: 'go.mod'
-          cache: true
-
-      - name: Set version
-        id: version
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
-          REF_TYPE: ${{ github.ref_type }}
-          REF_NAME: ${{ github.ref_name }}
-        run: |
-          if [ "$REF_TYPE" = "tag" ]; then
-            echo "version=$REF_NAME" >> "$GITHUB_OUTPUT"
-            echo "is_release=true" >> "$GITHUB_OUTPUT"
-          elif [ "$INPUT_VERSION" = "edge" ]; then
-            echo "version=edge" >> "$GITHUB_OUTPUT"
-            echo "is_release=false" >> "$GITHUB_OUTPUT"
-          else
-            TAG="v$INPUT_VERSION"
-            echo "version=$TAG" >> "$GITHUB_OUTPUT"
-            echo "is_release=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Test
-        run: |
-          go mod download
-          go test -race -shuffle=on -v ./...
-          go vet ./...
-
-      - name: Create or check out version tag (manual release)
-        if: github.event_name == 'workflow_dispatch' && steps.version.outputs.is_release == 'true'
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
-            echo "Tag $VERSION already exists; checking it out so the build matches the tag."
-          else
-            git tag "$VERSION"
-            git push origin "refs/tags/$VERSION"
-          fi
-          # Always end on the tag commit so binaries come from the same source
-          # as the version label.
-          git checkout "refs/tags/$VERSION"
-
-      - name: Build binaries
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-          COMMIT: ${{ github.sha }}
-        run: |
-          if [ "$VERSION" = "edge" ]; then
-            VERSION="edge-$(git rev-parse --short HEAD)"
-          fi
-          BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          LDFLAGS="-w -s -X main.Version=$VERSION -X main.Commit=$COMMIT -X main.BuildTime=$BUILD_TIME"
-
-          build() {
-            local os=$1 arch=$2
-            local output="encoder-${os}-${arch}"
-            if [ "$os" = "windows" ]; then
-              output="${output}.exe"
-            fi
-            echo "Building $output"
-            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o "dist/$output" .
-          }
-
-          mkdir -p dist
-
-          build linux arm64
-          build darwin arm64
-          build darwin amd64
-          build windows amd64
-          build windows arm64
-
-      - name: Create release
-        if: steps.version.outputs.is_release == 'true'
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ steps.version.outputs.version }}
-          name: ${{ steps.version.outputs.version }}
-          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
-          body: |
-            ## Installation
-
-            On Raspberry Pi 4/5 with HiFiBerry card:
-            ```bash
-            sudo /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/oszuidwest/zwfm-encoder/main/deploy/install.sh)"
-            ```
-
-            Binary downloads are available below as release assets.
-          files: dist/*
-          generate_release_notes: true
-
-      - name: Upload edge artifacts
-        if: steps.version.outputs.is_release == 'false'
-        uses: actions/upload-artifact@v7
-        with:
-          name: encoder-edge-${{ github.sha }}
-          path: dist/*
-          retention-days: 7
+      packages: write  # Required even with enable-docker: false (parse-time validation)
