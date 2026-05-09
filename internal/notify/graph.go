@@ -298,12 +298,6 @@ func ValidateConfig(cfg *types.GraphConfig) error {
 	return nil
 }
 
-// IsConfigured reports whether the Graph configuration has the minimum required fields.
-func IsConfigured(cfg *types.GraphConfig) bool {
-	return cfg.TenantID != "" && cfg.ClientID != "" && cfg.ClientSecret != "" &&
-		cfg.FromAddress != "" && cfg.Recipients != ""
-}
-
 // ParseRecipients splits a comma-separated recipients string into a slice.
 func ParseRecipients(recipients string) []string {
 	var result []string
