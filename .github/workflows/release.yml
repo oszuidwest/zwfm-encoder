@@ -3,7 +3,7 @@
 # enable-docker: false — encoder is bare-metal Pi software (no Docker target).
 name: Release
 
-on:
+'on':
   push:
     tags: ['v*']
   workflow_dispatch:
@@ -12,6 +12,9 @@ on:
         description: 'Version (edge, vX.Y.Z, or X.Y.Z auto-prefixed)'
         required: true
         default: 'edge'
+
+permissions:
+  contents: read
 
 jobs:
   release:
@@ -32,10 +35,12 @@ jobs:
 
         On Raspberry Pi 4/5 with HiFiBerry card:
         ```bash
-        sudo /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/oszuidwest/zwfm-encoder/main/deploy/install.sh)"
+        BASE=https://raw.githubusercontent.com/oszuidwest/zwfm-encoder/main
+        curl -fsSL "$BASE/deploy/install.sh" | sudo /bin/bash
         ```
 
         Binary downloads are available below as release assets.
     permissions:
       contents: write
-      packages: write  # Required even with enable-docker: false (parse-time validation)
+      # Required even with enable-docker: false (parse-time validation).
+      packages: write
