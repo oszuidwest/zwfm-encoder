@@ -3,7 +3,7 @@
 # enable-docker: false — encoder is bare-metal Pi software (no Docker target).
 name: Release
 
-'on':
+on:
   push:
     tags: ['v*']
   workflow_dispatch:
