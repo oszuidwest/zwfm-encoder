@@ -1,5 +1,5 @@
 ---
-# Thin shim — Go job delegates to oszuidwest/.github-templates go-ci.yml@v1.
+# Thin shim — Go job delegates to oszuidwest/.github-templates go-ci.yml@v2.
 # Frontend job stays inline because it needs a project-specific lockfile-commit
 # step for dependabot PRs (not generic enough for v1).
 name: CI
@@ -35,7 +35,7 @@ permissions:
 
 jobs:
   go:
-    uses: oszuidwest/.github-templates/.github/workflows/go-ci.yml@v1
+    uses: oszuidwest/.github-templates/.github/workflows/go-ci.yml@v2
     with:
       golangci-lint-version: v2.12.1
 
