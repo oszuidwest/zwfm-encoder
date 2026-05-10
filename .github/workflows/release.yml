@@ -1,6 +1,6 @@
 ---
-# Thin shim — delegates to oszuidwest/.github-templates go-release.yml@v1.
-# enable-docker: false — encoder is bare-metal Pi software (no Docker target).
+# Thin shim — delegates to oszuidwest/.github-templates go-release.yml@v2.
+# Encoder is bare-metal Pi software (no Docker target), so no docker job.
 name: Release
 
 on:
@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   release:
-    uses: oszuidwest/.github-templates/.github/workflows/go-release.yml@v1
+    uses: oszuidwest/.github-templates/.github/workflows/go-release.yml@v2
     with:
       project-name: encoder
       ldflags-target: main
@@ -29,7 +29,6 @@ jobs:
          {"os":"windows","arch":"amd64"},
          {"os":"windows","arch":"arm64"}]
       version: ${{ inputs.version }}
-      enable-docker: false
       release-body: |
         ## Installation
 
@@ -42,5 +41,3 @@ jobs:
         Binary downloads are available below as release assets.
     permissions:
       contents: write
-      # Required even with enable-docker: false (parse-time validation).
-      packages: write
