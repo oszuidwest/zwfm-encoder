@@ -1,7 +1,6 @@
 ---
-# Thin shim — Go job delegates to oszuidwest/.github-templates go-ci.yml@v2.
-# Frontend job stays inline because it needs a project-specific lockfile-commit
-# step for dependabot PRs (not generic enough for v1).
+# Hybrid: `go` delegates to go-ci.yml; `frontend` stays inline for the
+# dependabot lockfile-commit step.
 name: CI
 
 on:
@@ -42,9 +41,9 @@ jobs:
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
-    # Needs write to commit refreshed bun.lockb on dependabot PRs.
     permissions:
-      contents: write
+      contents: write  # commit refreshed bun.lockb on dependabot PRs
+
     steps:
       - uses: actions/checkout@v6
         with:
