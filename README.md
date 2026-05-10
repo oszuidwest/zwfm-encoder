@@ -27,7 +27,7 @@ Linux on Raspberry Pi is the primary target. macOS works for development. Window
 
 ## Deployment Model
 
-This is bare-metal software for a Raspberry Pi with a HiFiBerry sound card — there is no Docker target. Audio capture goes directly through ALSA (`arecord`) on the host, which needs the kernel sound device, the HiFiBerry overlay, and predictable real-time scheduling. Containerizing it would add a layer without solving anything for this hardware path.
+This is bare-metal software for a Raspberry Pi with a HiFiBerry sound card - there is no Docker target. Audio capture goes directly through ALSA (`arecord`) on the host, which needs the kernel sound device, the HiFiBerry overlay, and predictable real-time scheduling. Containerizing it would add a layer without solving anything for this hardware path.
 
 Install via the curl script in [Installation](#installation) below. CI publishes the binary as a GitHub release asset; no container image is published.
 
@@ -83,9 +83,9 @@ Connect the digital output of your audio processor to the HiFiBerry input.
 
 | Codec | Encoder | Bitrate | Notes |
 |-------|---------|---------|-------|
-| MP3 | libmp3lame | 320 kbit/s | — |
-| Ogg | libvorbis | ~500 kbit/s (Q10) | — |
-| WAV | pcm_s16le | Uncompressed | — |
+| MP3 | libmp3lame | 320 kbit/s | - |
+| Ogg | libvorbis | ~500 kbit/s (Q10) | - |
+| WAV | pcm_s16le | Uncompressed | - |
 
 ## Silence Detection
 
@@ -101,7 +101,7 @@ Monitors audio levels and sends alerts when silence is detected or recovered. Us
 - **Webhook** - POST request to a URL; independently enable `silence_start`, `silence_end`, `audio_dump` (MP3 attachment), and abandoned S3 uploads
 - **Email** - Microsoft Graph API notification; independently enable `silence_start`, `silence_end`, `audio_dump` (MP3 attachment), and abandoned S3 uploads
 - **File Log** - Appends JSON Lines for every silence event (always records all events, no per-event toggle)
-- **Zabbix** - Send trapper items to a Zabbix server; independently enable `silence_start` and `silence_end` (no `audio_dump` — trapper items do not support file attachments)
+- **Zabbix** - Send trapper items to a Zabbix server; independently enable `silence_start` and `silence_end` (no `audio_dump` - trapper items do not support file attachments)
 
 `silence_end` is sent immediately on recovery. `audio_dump_ready` is dispatched as a separate event once the MP3 encoding completes.
 

@@ -465,7 +465,7 @@ func TestDispatchSilenceStartGivesEachGoroutineItsOwnSnapshotCopy(t *testing.T) 
 
 // TestLogWriteOrder verifies that silence_start is physically written before silence_end in
 // the JSONL file. Both events are enqueued back-to-back so the log worker receives them
-// together and must write them in FIFO order — the same condition that caused the original
+// together and must write them in FIFO order - the same condition that caused the original
 // out-of-order entries when two goroutines raced on Logger.mu.
 func TestLogWriteOrder(t *testing.T) {
 	t.Parallel()
@@ -600,7 +600,7 @@ func TestEnqueueLogDropsWhenFull(t *testing.T) {
 }
 
 // TestLogWriteOrderWithDump verifies that a complete silence cycle writes all three
-// JSONL events — silence_start, silence_end, audio_dump_ready — in that physical order.
+// JSONL events - silence_start, silence_end, audio_dump_ready - in that physical order.
 func TestLogWriteOrderWithDump(t *testing.T) {
 	t.Parallel()
 

@@ -360,7 +360,7 @@ func validateMaxDurationMinutes(field string, value int) string {
 // saveLocked writes config to disk using a write-to-temp-then-rename strategy.
 //
 // On Linux and macOS, os.Rename within the same filesystem is atomic, so a
-// crash mid-write leaves either the old or the new config intact — never a
+// crash mid-write leaves either the old or the new config intact - never a
 // truncated file. The temp file is fsync'd before the rename, and the parent
 // directory is synced after the rename on Unix, so the replacement is
 // durable on those filesystems.
