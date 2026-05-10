@@ -1,15 +1,4 @@
 ---
-# Shell Quality Workflow Template
-# Source: oszuidwest/.github-templates
-#
-# This workflow lints shell scripts using ShellCheck.
-# Only triggers when .sh files are modified (path filter).
-#
-# Copy to: .github/workflows/shell-quality.yml
-#
-# Note: This workflow is "forward-looking" - it will activate
-# automatically when .sh files are added to the repository.
-
 name: Shell Quality
 
 on:

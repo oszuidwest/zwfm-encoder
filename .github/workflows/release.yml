@@ -1,6 +1,5 @@
 ---
-# Thin shim — delegates to oszuidwest/.github-templates go-release.yml@v2.
-# Encoder is bare-metal Pi software (no Docker target), so no docker job.
+# Encoder is bare-metal Pi software — no docker job.
 name: Release
 
 on:
