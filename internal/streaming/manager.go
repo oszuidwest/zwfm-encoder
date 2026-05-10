@@ -114,7 +114,7 @@ func (m *Manager) runWriter(streamID string, s *Stream) {
 			continue
 		}
 
-		// ErrStdinClosed is expected during shutdown — not a real error
+		// ErrStdinClosed is expected during shutdown - not a real error
 		if errors.Is(err, ffmpeg.ErrStdinClosed) {
 			return
 		}
@@ -162,7 +162,7 @@ func (m *Manager) Start(stream *types.Stream) error {
 
 	// Insert placeholder to claim this stream ID. Carries retry state
 	// so concurrent callers see the correct backoff. Has no result,
-	// audioCh, or writer — those are created after StartProcess succeeds.
+	// audioCh, or writer - those are created after StartProcess succeeds.
 	placeholder := &Stream{
 		state:      types.ProcessStarting,
 		retryCount: retryCount,
@@ -172,7 +172,7 @@ func (m *Manager) Start(stream *types.Stream) error {
 	m.mu.Unlock()
 
 	// Clean up old writer goroutine outside the lock.
-	// The writer's error path acquires m.mu — waiting while holding
+	// The writer's error path acquires m.mu - waiting while holding
 	// the lock would deadlock.
 	if oldStream != nil {
 		oldStream.closeAudioCh()
@@ -270,17 +270,17 @@ func (m *Manager) Stop(streamID string) error {
 
 	slog.Info("stopping stream", "stream_id", streamID)
 
-	// 1. Close audio channel — no more data from distributor.
+	// 1. Close audio channel - no more data from distributor.
 	//    Writer's for-range will exit after draining remaining items.
 	stream.closeAudioCh()
 
-	// 2. Cancel context — marks stop as intentional. For stream processes
+	// 2. Cancel context - marks stop as intentional. For stream processes
 	//    (no cmd.Cancel set), exec.CommandContext sends SIGKILL, breaking
 	//    the pipe and unblocking any writer stuck in stdin.Write().
 	result.Cancel(errStoppedByUser)
 
 	// 3. Wait for process exit with timeout escalation.
-	//    Must complete before writerWg.Wait — guarantees the process is
+	//    Must complete before writerWg.Wait - guarantees the process is
 	//    dead and the pipe is broken, so the writer can exit.
 	done := make(chan error, 1)
 	go func() {
@@ -302,11 +302,11 @@ func (m *Manager) Stop(streamID string) error {
 		}
 	}
 
-	// 4. Writer goroutine — process is dead, pipe is broken,
+	// 4. Writer goroutine - process is dead, pipe is broken,
 	//    any blocked Write() has returned. This returns quickly.
 	stream.writerWg.Wait()
 
-	// 5. CloseStdin — best-effort cleanup. Writer released stdinMu,
+	// 5. CloseStdin - best-effort cleanup. Writer released stdinMu,
 	//    so this won't block. May be a no-op if writer already closed it.
 	result.CloseStdin()
 
@@ -350,7 +350,7 @@ func (m *Manager) WriteAudio(streamID string, data []byte) error {
 	}
 	ch := stream.audioCh
 
-	// Copy data — the caller reuses the buffer
+	// Copy data - the caller reuses the buffer
 	buf := make([]byte, len(data))
 	copy(buf, data)
 
@@ -471,7 +471,7 @@ func (m *Manager) Remove(streamID string) {
 	m.mu.Unlock()
 
 	// Close channel and wait for writer AFTER releasing m.mu.
-	// The writer's error path acquires m.mu — waiting while holding
+	// The writer's error path acquires m.mu - waiting while holding
 	// the lock would deadlock.
 	if exists {
 		stream.closeAudioCh()

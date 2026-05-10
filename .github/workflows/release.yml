@@ -1,5 +1,5 @@
 ---
-# Encoder is bare-metal Pi software — no docker job.
+# Encoder is bare-metal Pi software - no docker job.
 name: Release
 
 on:

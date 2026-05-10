@@ -484,7 +484,7 @@ document.addEventListener('alpine:init', () => {
             };
 
             const now = Date.now();
-            // Must read from config, not a hardcoded constant — the user sets this via Settings.
+            // Must read from config, not a hardcoded constant - the user sets this via Settings.
             const peakHoldMs = this.config.peak_hold_ms ?? 3000;
 
             levels.display_left = applyPPM(levels.peak_left, this.levels.display_left ?? -60);
@@ -1537,7 +1537,7 @@ document.addEventListener('alpine:init', () => {
             if (event.type === 'stream_retry') {
                 const retryNum = details.retry ? `Retry #${details.retry}` : '';
                 const error = details.error || '';
-                return [retryNum, error].filter(Boolean).join(' — ');
+                return [retryNum, error].filter(Boolean).join(' - ');
             }
             if (event.type === 'silence_start') {
                 if (details.level_left_db !== undefined) {
@@ -1560,7 +1560,7 @@ document.addEventListener('alpine:init', () => {
             if (event.type === 'recorder_file' || event.type === 'upload_queued' || event.type === 'upload_completed') {
                 const filename = details.filename || '';
                 const codec = details.codec || '';
-                return [filename, codec.toUpperCase()].filter(Boolean).join(' — ');
+                return [filename, codec.toUpperCase()].filter(Boolean).join(' - ');
             }
             if (event.type === 'cleanup_completed') {
                 const count = details.files_deleted || 0;
@@ -1571,7 +1571,7 @@ document.addEventListener('alpine:init', () => {
                 const codec = details.codec ? details.codec.toUpperCase() : '';
                 const mode = details.storage_mode || '';
                 const modeLabel = mode === 'both' ? 'Local + S3' : mode === 's3' ? 'S3' : mode === 'local' ? 'Local' : '';
-                return [codec, modeLabel].filter(Boolean).join(' — ');
+                return [codec, modeLabel].filter(Boolean).join(' - ');
             }
             // For started/stable/stopped, show stream name
             return streamName;
