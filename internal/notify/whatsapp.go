@@ -254,6 +254,9 @@ func validateWhatsAppConfig(cfg *WhatsAppConfig) ([]string, error) {
 	if strings.TrimSpace(cfg.PhoneNumberID) == "" {
 		return nil, fmt.Errorf("%w: phone number ID is required", ErrWhatsAppConfig)
 	}
+	if !util.AllDigits(strings.TrimSpace(cfg.PhoneNumberID)) {
+		return nil, fmt.Errorf("%w: phone number ID must contain digits only", ErrWhatsAppConfig)
+	}
 	if strings.TrimSpace(cfg.AccessToken) == "" {
 		return nil, fmt.Errorf("%w: access token is required", ErrWhatsAppConfig)
 	}

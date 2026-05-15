@@ -351,6 +351,15 @@ func TestValidateWhatsAppConfig(t *testing.T) {
 			want: "phone number ID is required",
 		},
 		{
+			name: "invalid phone number id",
+			cfg: &WhatsAppConfig{
+				PhoneNumberID: "abc123",
+				AccessToken:   "token",
+				Recipients:    "+31612345678",
+			},
+			want: "phone number ID must contain digits only",
+		},
+		{
 			name: "whitespace access token",
 			cfg: &WhatsAppConfig{
 				PhoneNumberID: "12345",
