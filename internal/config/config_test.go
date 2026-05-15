@@ -59,6 +59,9 @@ func TestLoadCreatesDefaultConfig(t *testing.T) {
 	if !snap.EmailEvents.SilenceStart || !snap.EmailEvents.SilenceEnd || !snap.EmailEvents.AudioDump {
 		t.Fatalf("EmailEvents = %+v, want all true", snap.EmailEvents)
 	}
+	if !snap.WhatsAppEvents.SilenceStart || !snap.WhatsAppEvents.SilenceEnd || !snap.WhatsAppEvents.AudioDump {
+		t.Fatalf("WhatsAppEvents = %+v, want all true", snap.WhatsAppEvents)
+	}
 	if !snap.ZabbixEvents.SilenceStart || !snap.ZabbixEvents.SilenceEnd {
 		t.Fatalf("ZabbixEvents = %+v, want both true", snap.ZabbixEvents)
 	}
@@ -88,6 +91,13 @@ func TestLoadPreservesExplicitZeroAndFalseValues(t *testing.T) {
       }
     },
     "email": {
+      "events": {
+        "silence_start": false,
+        "silence_end": false,
+        "audio_dump": false
+      }
+    },
+    "whatsapp": {
       "events": {
         "silence_start": false,
         "silence_end": false,
@@ -133,6 +143,9 @@ func TestLoadPreservesExplicitZeroAndFalseValues(t *testing.T) {
 	}
 	if snap.EmailEvents != (types.EventSubscriptions{}) {
 		t.Fatalf("EmailEvents = %+v, want all false", snap.EmailEvents)
+	}
+	if snap.WhatsAppEvents != (types.EventSubscriptions{}) {
+		t.Fatalf("WhatsAppEvents = %+v, want all false", snap.WhatsAppEvents)
 	}
 	if snap.ZabbixEvents != (types.EventSubscriptions{}) {
 		t.Fatalf("ZabbixEvents = %+v, want both false", snap.ZabbixEvents)
@@ -333,6 +346,11 @@ func TestLoadRejectsInvalidFileSettings(t *testing.T) {
 			wantErr: "notifications.email.recipients: contains invalid email address",
 		},
 		{
+			name:    "invalid whatsapp recipient",
+			data:    `{"notifications":{"whatsapp":{"recipients":"+31612345678, bad-address"}}}`,
+			wantErr: "notifications.whatsapp.recipients: contains invalid phone number",
+		},
+		{
 			name:    "invalid zabbix port",
 			data:    `{"notifications":{"zabbix":{"port":70000}}}`,
 			wantErr: "notifications.zabbix.port: must be between 1 and 65535",
@@ -402,6 +420,16 @@ func TestSettingsUpdateValidateAPIFieldNames(t *testing.T) {
 			name:    "invalid graph recipients uses API name",
 			update:  SettingsUpdate{SilenceThreshold: -40, SilenceDurationMs: 1, SilenceRecoveryMs: 1, GraphRecipients: "bad-address"},
 			wantErr: "graph_recipients:",
+		},
+		{
+			name: "invalid whatsapp recipients uses API name",
+			update: SettingsUpdate{
+				SilenceThreshold:   -40,
+				SilenceDurationMs:  1,
+				SilenceRecoveryMs:  1,
+				WhatsAppRecipients: "bad-address",
+			},
+			wantErr: "whatsapp_recipients:",
 		},
 		{
 			name:    "invalid zabbix port uses API name",

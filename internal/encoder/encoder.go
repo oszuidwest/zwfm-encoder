@@ -81,8 +81,9 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 
 	webhookCh := &notify.WebhookChannel{}
 	emailCh := &notify.EmailChannel{}
+	whatsAppCh := &notify.WhatsAppChannel{}
 	zabbixCh := &notify.ZabbixChannel{}
-	dispatcher := notify.NewDispatcher(webhookCh, emailCh, zabbixCh)
+	dispatcher := notify.NewDispatcher(webhookCh, emailCh, whatsAppCh, zabbixCh)
 	orchestrator := notify.NewAlertOrchestrator(cfg, dispatcher)
 
 	// Create dump manager with callback to alert orchestrator

@@ -111,6 +111,14 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 		GraphHasSecret:   cfg.GraphClientSecret != "",
 		EmailEvents:      cfg.EmailEvents,
 
+		// Notifications - WhatsApp
+		WhatsAppPhoneNumberID:    cfg.WhatsAppPhoneNumberID,
+		WhatsAppRecipients:       cfg.WhatsAppRecipients,
+		WhatsAppTemplateName:     cfg.WhatsAppTemplateName,
+		WhatsAppTemplateLanguage: cfg.WhatsAppTemplateLanguage,
+		WhatsAppHasToken:         cfg.WhatsAppAccessToken != "",
+		WhatsAppEvents:           cfg.WhatsAppEvents,
+
 		// Recording
 		RecordingAPIKey:             cfg.RecordingAPIKey,
 		RecordingMaxDurationMinutes: cfg.RecordingMaxDurationMinutes,
@@ -150,6 +158,7 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 
 	// Preserve existing secret if not provided (empty = keep existing)
 	req.GraphClientSecret = cmp.Or(req.GraphClientSecret, cfg.GraphClientSecret)
+	req.WhatsAppAccessToken = cmp.Or(req.WhatsAppAccessToken, cfg.WhatsAppAccessToken)
 
 	// Apply ALL settings atomically (single lock, single file write)
 	if err := s.config.ApplySettings(&req); err != nil {
@@ -597,6 +606,17 @@ type NotificationTestRequest struct {
 	// GraphRecipients is a comma-separated recipient list.
 	GraphRecipients string `json:"graph_recipients,omitempty"`
 
+	// WhatsAppPhoneNumberID is the Meta WhatsApp Business phone number ID.
+	WhatsAppPhoneNumberID string `json:"whatsapp_phone_number_id,omitempty"`
+	// WhatsAppAccessToken is the Meta Graph API access token.
+	WhatsAppAccessToken string `json:"whatsapp_access_token,omitempty"`
+	// WhatsAppRecipients is a comma-separated recipient phone number list.
+	WhatsAppRecipients string `json:"whatsapp_recipients,omitempty"`
+	// WhatsAppTemplateName is an approved Meta template name.
+	WhatsAppTemplateName string `json:"whatsapp_template_name,omitempty"`
+	// WhatsAppTemplateLanguage is the template language code.
+	WhatsAppTemplateLanguage string `json:"whatsapp_template_language,omitempty"`
+
 	// ZabbixServer is the Zabbix server hostname.
 	ZabbixServer string `json:"zabbix_server,omitempty"`
 	// ZabbixPort is the Zabbix server port.
@@ -665,6 +685,41 @@ func (s *Server) handleAPITestEmail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeMessage(w, "Test email sent")
+}
+
+// handleAPITestWhatsApp tests WhatsApp notification delivery.
+func (s *Server) handleAPITestWhatsApp(w http.ResponseWriter, r *http.Request) {
+	req, ok := parseJSON[NotificationTestRequest](s, w, r)
+	if !ok {
+		return
+	}
+
+	cfg := s.config.Snapshot()
+	phoneNumberID := cmp.Or(req.WhatsAppPhoneNumberID, cfg.WhatsAppPhoneNumberID)
+	accessToken := cmp.Or(req.WhatsAppAccessToken, cfg.WhatsAppAccessToken)
+	recipients := cmp.Or(req.WhatsAppRecipients, cfg.WhatsAppRecipients)
+	templateName := cmp.Or(req.WhatsAppTemplateName, cfg.WhatsAppTemplateName)
+	templateLanguage := cmp.Or(req.WhatsAppTemplateLanguage, cfg.WhatsAppTemplateLanguage)
+
+	if phoneNumberID == "" || accessToken == "" || recipients == "" {
+		s.writeError(w, http.StatusBadRequest, "WhatsApp not fully configured")
+		return
+	}
+
+	whatsAppCfg := &notify.WhatsAppConfig{
+		PhoneNumberID:    phoneNumberID,
+		AccessToken:      accessToken,
+		Recipients:       recipients,
+		TemplateName:     templateName,
+		TemplateLanguage: templateLanguage,
+	}
+
+	if err := notify.SendWhatsAppTest(whatsAppCfg, cfg.StationName); err != nil {
+		s.writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	s.writeMessage(w, "WhatsApp test sent")
 }
 
 // handleAPITestZabbix tests Zabbix trapper notification connectivity.

@@ -435,6 +435,13 @@ type APIConfigResponse struct {
 	GraphHasSecret   bool               `json:"graph_has_secret"`
 	EmailEvents      EventSubscriptions `json:"email_events"`
 
+	WhatsAppPhoneNumberID    string             `json:"whatsapp_phone_number_id"`
+	WhatsAppRecipients       string             `json:"whatsapp_recipients"` // Comma-separated phone numbers
+	WhatsAppTemplateName     string             `json:"whatsapp_template_name"`
+	WhatsAppTemplateLanguage string             `json:"whatsapp_template_language"`
+	WhatsAppHasToken         bool               `json:"whatsapp_has_token"`
+	WhatsAppEvents           EventSubscriptions `json:"whatsapp_events"`
+
 	RecordingAPIKey             string `json:"recording_api_key"`
 	RecordingMaxDurationMinutes int    `json:"recording_max_duration_minutes"`
 
@@ -455,6 +462,17 @@ type GraphConfig struct {
 	ClientSecret string `json:"client_secret,omitempty"` //nolint:gosec // G117: intentional config field for Azure auth
 	FromAddress  string `json:"from_address,omitempty"`
 	Recipients   string `json:"recipients,omitempty"` // Comma-separated
+}
+
+// WhatsAppConfig holds credentials for WhatsApp Business Cloud API notifications.
+type WhatsAppConfig struct {
+	PhoneNumberID    string `json:"phone_number_id,omitempty"`
+	AccessToken      string `json:"access_token,omitempty"` //nolint:gosec // G117: intentional config field for Meta auth
+	Recipients       string `json:"recipients,omitempty"`   // Comma-separated phone numbers
+	TemplateName     string `json:"template_name,omitempty"`
+	TemplateLanguage string `json:"template_language,omitempty"`
+	// Events controls which silence events trigger WhatsApp notifications.
+	Events EventSubscriptions `json:"events"`
 }
 
 // EventSubscriptions controls which silence events a notification channel receives.
