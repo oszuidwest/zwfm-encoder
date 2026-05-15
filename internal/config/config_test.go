@@ -26,44 +26,47 @@ func TestLoadCreatesDefaultConfig(t *testing.T) {
 	}
 
 	snap := cfg.Snapshot()
-	if snap.WebPort != DefaultWebPort {
-		t.Fatalf("WebPort = %d, want %d", snap.WebPort, DefaultWebPort)
+	assertDefaultScalarSettings(t, &snap)
+	assertDefaultEventSettings(t, &snap)
+}
+
+func assertDefaultScalarSettings(t *testing.T, snap *Snapshot) {
+	t.Helper()
+
+	assertEqual(t, "WebPort", snap.WebPort, DefaultWebPort)
+	assertEqual(t, "SilenceThreshold", snap.SilenceThreshold, DefaultSilenceThreshold)
+	assertEqual(t, "SilenceDurationMs", snap.SilenceDurationMs, DefaultSilenceDurationMs)
+	assertEqual(t, "SilenceRecoveryMs", snap.SilenceRecoveryMs, DefaultSilenceRecoveryMs)
+	assertEqual(t, "PeakHoldMs", snap.PeakHoldMs, DefaultPeakHoldMs)
+	assertTrue(t, "SilenceDumpEnabled", snap.SilenceDumpEnabled)
+	assertEqual(t, "SilenceDumpRetentionDays", snap.SilenceDumpRetentionDays, types.DefaultSilenceDumpRetentionDays)
+	assertEqual(t, "ZabbixPort", snap.ZabbixPort, DefaultZabbixPort)
+	assertEqual(t, "RecordingMaxDurationMinutes", snap.RecordingMaxDurationMinutes, DefaultRecordingMaxDurationMinutes)
+}
+
+func assertDefaultEventSettings(t *testing.T, snap *Snapshot) {
+	t.Helper()
+
+	defaultEvents := types.EventSubscriptions{SilenceStart: true, SilenceEnd: true, AudioDump: true}
+	assertEqual(t, "WebhookEvents", snap.WebhookEvents, defaultEvents)
+	assertEqual(t, "EmailEvents", snap.EmailEvents, defaultEvents)
+	assertEqual(t, "WhatsAppEvents", snap.WhatsAppEvents, defaultEvents)
+	assertEqual(t, "ZabbixEvents", snap.ZabbixEvents, types.EventSubscriptions{SilenceStart: true, SilenceEnd: true})
+}
+
+func assertEqual[T comparable](t *testing.T, name string, got, want T) {
+	t.Helper()
+
+	if got != want {
+		t.Fatalf("%s = %v, want %v", name, got, want)
 	}
-	if snap.SilenceThreshold != DefaultSilenceThreshold {
-		t.Fatalf("SilenceThreshold = %v, want %v", snap.SilenceThreshold, DefaultSilenceThreshold)
-	}
-	if snap.SilenceDurationMs != DefaultSilenceDurationMs {
-		t.Fatalf("SilenceDurationMs = %d, want %d", snap.SilenceDurationMs, DefaultSilenceDurationMs)
-	}
-	if snap.SilenceRecoveryMs != DefaultSilenceRecoveryMs {
-		t.Fatalf("SilenceRecoveryMs = %d, want %d", snap.SilenceRecoveryMs, DefaultSilenceRecoveryMs)
-	}
-	if snap.PeakHoldMs != DefaultPeakHoldMs {
-		t.Fatalf("PeakHoldMs = %d, want %d", snap.PeakHoldMs, DefaultPeakHoldMs)
-	}
-	if !snap.SilenceDumpEnabled {
-		t.Fatal("SilenceDumpEnabled = false, want true")
-	}
-	if snap.SilenceDumpRetentionDays != types.DefaultSilenceDumpRetentionDays {
-		t.Fatalf("SilenceDumpRetentionDays = %d, want %d", snap.SilenceDumpRetentionDays, types.DefaultSilenceDumpRetentionDays)
-	}
-	if snap.ZabbixPort != DefaultZabbixPort {
-		t.Fatalf("ZabbixPort = %d, want %d", snap.ZabbixPort, DefaultZabbixPort)
-	}
-	if snap.RecordingMaxDurationMinutes != DefaultRecordingMaxDurationMinutes {
-		t.Fatalf("RecordingMaxDurationMinutes = %d, want %d", snap.RecordingMaxDurationMinutes, DefaultRecordingMaxDurationMinutes)
-	}
-	if !snap.WebhookEvents.SilenceStart || !snap.WebhookEvents.SilenceEnd || !snap.WebhookEvents.AudioDump {
-		t.Fatalf("WebhookEvents = %+v, want all true", snap.WebhookEvents)
-	}
-	if !snap.EmailEvents.SilenceStart || !snap.EmailEvents.SilenceEnd || !snap.EmailEvents.AudioDump {
-		t.Fatalf("EmailEvents = %+v, want all true", snap.EmailEvents)
-	}
-	if !snap.WhatsAppEvents.SilenceStart || !snap.WhatsAppEvents.SilenceEnd || !snap.WhatsAppEvents.AudioDump {
-		t.Fatalf("WhatsAppEvents = %+v, want all true", snap.WhatsAppEvents)
-	}
-	if !snap.ZabbixEvents.SilenceStart || !snap.ZabbixEvents.SilenceEnd {
-		t.Fatalf("ZabbixEvents = %+v, want both true", snap.ZabbixEvents)
+}
+
+func assertTrue(t *testing.T, name string, got bool) {
+	t.Helper()
+
+	if !got {
+		t.Fatalf("%s = false, want true", name)
 	}
 }
 
