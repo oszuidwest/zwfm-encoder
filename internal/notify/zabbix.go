@@ -2,6 +2,7 @@ package notify
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -44,9 +45,13 @@ type zabbixResponse struct {
 }
 
 // sendZabbixPayload sends a payload to the Zabbix server.
-func sendZabbixPayload(server string, port int, payload zabbixRequest) error {
+func sendZabbixPayload(ctx context.Context, server string, port int, payload zabbixRequest) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	addr := net.JoinHostPort(server, strconv.Itoa(port))
-	conn, err := net.DialTimeout("tcp", addr, zabbixTimeout)
+	dialer := net.Dialer{Timeout: zabbixTimeout}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return util.WrapError("connect to zabbix", err)
 	}
@@ -115,7 +120,7 @@ func sendZabbixPayload(server string, port int, payload zabbixRequest) error {
 }
 
 // sendZabbixEvent sends an event to Zabbix with the given value string.
-func sendZabbixEvent(server string, port int, host, key, value string) error {
+func sendZabbixEvent(ctx context.Context, server string, port int, host, key, value string) error {
 	if server == "" || host == "" || key == "" {
 		return nil
 	}
@@ -123,27 +128,29 @@ func sendZabbixEvent(server string, port int, host, key, value string) error {
 		Request: "sender data",
 		Data:    []zabbixItem{{Host: host, Key: key, Value: value}},
 	}
-	return sendZabbixPayload(server, port, req)
+	return sendZabbixPayload(ctx, server, port, req)
 }
 
 // sendUploadAbandonedZabbix sends an upload abandonment event to Zabbix.
-func sendUploadAbandonedZabbix(server string, port int, host, key string, p UploadAbandonedData) error {
-	return sendZabbixEvent(server, port, host, key, fmt.Sprintf(
+func sendUploadAbandonedZabbix(
+	ctx context.Context, server string, port int, host, key string, p UploadAbandonedData,
+) error {
+	return sendZabbixEvent(ctx, server, port, host, key, fmt.Sprintf(
 		"event=UPLOAD_ABANDONED recorder=%q file=%q retries=%d error=%q",
 		p.RecorderName, p.Filename, p.RetryCount, p.LastError,
 	))
 }
 
 // sendZabbixSilence sends a silence alert to Zabbix.
-func sendZabbixSilence(server string, port int, host, key string, e silenceEventData) error {
-	return sendZabbixEvent(server, port, host, key,
+func sendZabbixSilence(ctx context.Context, server string, port int, host, key string, e silenceEventData) error {
+	return sendZabbixEvent(ctx, server, port, host, key,
 		fmt.Sprintf("event=SILENCE level_l=%.1f level_r=%.1f threshold=%.1f",
 			e.LevelL, e.LevelR, e.Threshold))
 }
 
 // sendZabbixRecovery sends a recovery message to Zabbix.
-func sendZabbixRecovery(server string, port int, host, key string, e silenceEventData) error {
-	return sendZabbixEvent(server, port, host, key,
+func sendZabbixRecovery(ctx context.Context, server string, port int, host, key string, e silenceEventData) error {
+	return sendZabbixEvent(ctx, server, port, host, key,
 		fmt.Sprintf("event=RECOVERY duration_ms=%d level_l=%.1f level_r=%.1f threshold=%.1f",
 			e.DurationMs, e.LevelL, e.LevelR, e.Threshold))
 }
@@ -153,7 +160,7 @@ func SendZabbixTest(server string, port int, host, key string) error {
 	if server == "" || host == "" || key == "" || port <= 0 || port > 65535 {
 		return fmt.Errorf("zabbix not fully configured (server, host, key, and a valid port 1-65535 are required)")
 	}
-	return sendZabbixEvent(server, port, host, key, "event=TEST source=zwfm-encoder")
+	return sendZabbixEvent(context.Background(), server, port, host, key, "event=TEST source=zwfm-encoder")
 }
 
 // ZabbixChannel implements AlertChannel for Zabbix sender delivery.
@@ -185,16 +192,18 @@ func (c *ZabbixChannel) SubscribesSilenceEnd(cfg *config.Snapshot) bool {
 // SubscribesAudioDump always reports false because Zabbix cannot carry file attachments.
 func (c *ZabbixChannel) SubscribesAudioDump(_ *config.Snapshot) bool { return false }
 
-func (c *ZabbixChannel) SendSilenceStart(cfg *config.Snapshot, levelL, levelR float64) error {
-	return sendZabbixSilence(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixSilenceKey, silenceEventData{
+func (c *ZabbixChannel) SendSilenceStart(ctx context.Context, cfg *config.Snapshot, levelL, levelR float64) error {
+	return sendZabbixSilence(ctx, cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixSilenceKey, silenceEventData{
 		LevelL:    levelL,
 		LevelR:    levelR,
 		Threshold: cfg.SilenceThreshold,
 	})
 }
 
-func (c *ZabbixChannel) SendSilenceEnd(cfg *config.Snapshot, durationMS int64, levelL, levelR float64) error {
-	return sendZabbixRecovery(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixSilenceKey, silenceEventData{
+func (c *ZabbixChannel) SendSilenceEnd(
+	ctx context.Context, cfg *config.Snapshot, durationMS int64, levelL, levelR float64,
+) error {
+	return sendZabbixRecovery(ctx, cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixSilenceKey, silenceEventData{
 		DurationMs: durationMS,
 		LevelL:     levelL,
 		LevelR:     levelR,
@@ -202,10 +211,12 @@ func (c *ZabbixChannel) SendSilenceEnd(cfg *config.Snapshot, durationMS int64, l
 	})
 }
 
-func (c *ZabbixChannel) SendAudioDump(_ *config.Snapshot, _ int64, _, _ float64, _ *silencedump.EncodeResult) error {
+func (c *ZabbixChannel) SendAudioDump(
+	_ context.Context, _ *config.Snapshot, _ int64, _, _ float64, _ *silencedump.EncodeResult,
+) error {
 	return fmt.Errorf("zabbix channel does not support audio dump delivery")
 }
 
-func (c *ZabbixChannel) SendUploadAbandoned(cfg *config.Snapshot, params UploadAbandonedData) error {
-	return sendUploadAbandonedZabbix(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixUploadKey, params)
+func (c *ZabbixChannel) SendUploadAbandoned(ctx context.Context, cfg *config.Snapshot, params UploadAbandonedData) error {
+	return sendUploadAbandonedZabbix(ctx, cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixUploadKey, params)
 }

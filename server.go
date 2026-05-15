@@ -243,6 +243,7 @@ func (s *Server) SetupRoutes() http.Handler {
 	// Notification test routes
 	mux.HandleFunc("POST /api/notifications/test/webhook", auth(s.handleAPITestWebhook))
 	mux.HandleFunc("POST /api/notifications/test/email", auth(s.handleAPITestEmail))
+	mux.HandleFunc("POST /api/notifications/test/whatsapp", auth(s.handleAPITestWhatsApp))
 	mux.HandleFunc("POST /api/notifications/test/zabbix", auth(s.handleAPITestZabbix))
 
 	// Recording API key management

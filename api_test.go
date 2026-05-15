@@ -1,0 +1,266 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/oszuidwest/zwfm-encoder/internal/config"
+)
+
+func TestDerefReturnsValueWhenPresentFallbackWhenNil(t *testing.T) {
+	t.Parallel()
+
+	empty := ""
+	value := "explicit"
+	if got := deref((*string)(nil), "saved"); got != "saved" {
+		t.Fatalf("deref(nil, saved) = %q, want %q", got, "saved")
+	}
+	if got := deref(&empty, "saved"); got != "" {
+		t.Fatalf("deref(&\"\", saved) = %q, want empty string", got)
+	}
+	if got := deref(&value, "saved"); got != "explicit" {
+		t.Fatalf("deref(&explicit, saved) = %q, want %q", got, "explicit")
+	}
+}
+
+func TestHandleAPITestWhatsAppValidationErrorReturnsBadRequest(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
+	if err := cfg.Load(); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	s := &Server{config: cfg}
+	body := bytes.NewBufferString(`{
+		"whatsapp_phone_number_id": "12345",
+		"whatsapp_access_token": "token",
+		"whatsapp_recipients": "bad-address"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/notifications/test/whatsapp", body)
+	rec := httptest.NewRecorder()
+
+	s.handleAPITestWhatsApp(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+
+	var payload map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("response JSON = %q, error = %v", rec.Body.String(), err)
+	}
+	if !strings.Contains(payload["error"], "recipient") {
+		t.Fatalf("error = %q, want recipient validation message", payload["error"])
+	}
+}
+
+// parseWhatsAppTestRequest unmarshals a WhatsApp test request JSON body, mirroring
+// what handleAPITestWhatsApp does before calling mergeWhatsAppTestConfig.
+func parseWhatsAppTestRequest(t *testing.T, body string) NotificationTestRequest {
+	t.Helper()
+	var req NotificationTestRequest
+	if err := json.Unmarshal([]byte(body), &req); err != nil {
+		t.Fatalf("unmarshal request body: %v", err)
+	}
+	return req
+}
+
+// savedWhatsAppSnapshot mirrors a saved config that has a WhatsApp template configured.
+// The merge tests verify whether request fields fall back to or override these values.
+var savedWhatsAppSnapshot = config.Snapshot{
+	WhatsAppPhoneNumberID:    "12345",
+	WhatsAppAccessToken:      "saved-token",
+	WhatsAppRecipients:       "+31612345678",
+	WhatsAppTemplateName:     "saved_template",
+	WhatsAppTemplateLanguage: "en_US",
+}
+
+// TestMergeWhatsAppTestConfigOmittedTemplateFallsBackToSaved verifies that a request
+// without a `whatsapp_template_name` field inherits the saved template (#243 regression).
+// This is the path that drove pointer fields + deref over cmp.Or: omitted JSON keys
+// must keep using the saved value.
+func TestMergeWhatsAppTestConfigOmittedTemplateFallsBackToSaved(t *testing.T) {
+	t.Parallel()
+
+	req := parseWhatsAppTestRequest(t, `{}`)
+	got := mergeWhatsAppTestConfig(&req, &savedWhatsAppSnapshot)
+
+	if got.TemplateName != "saved_template" {
+		t.Fatalf("TemplateName = %q, want %q (omitted field must fall back to saved value)",
+			got.TemplateName, "saved_template")
+	}
+	if got.TemplateLanguage != "en_US" {
+		t.Fatalf("TemplateLanguage = %q, want %q (omitted field must fall back to saved value)",
+			got.TemplateLanguage, "en_US")
+	}
+}
+
+// TestMergeWhatsAppTestConfigExplicitEmptyTemplateClearsSaved verifies that an
+// explicit `"whatsapp_template_name": ""` overrides the saved value rather than
+// falling back to it (#243 regression: the exact bug delta that would fail under
+// the previous cmp.Or-based merge). Sending an empty template name is how the UI
+// signals "send as free text on this one test", which must not be silently rewritten
+// to the saved template.
+func TestMergeWhatsAppTestConfigExplicitEmptyTemplateClearsSaved(t *testing.T) {
+	t.Parallel()
+
+	req := parseWhatsAppTestRequest(t, `{"whatsapp_template_name": "", "whatsapp_template_language": ""}`)
+	got := mergeWhatsAppTestConfig(&req, &savedWhatsAppSnapshot)
+
+	if got.TemplateName != "" {
+		t.Fatalf("TemplateName = %q, want \"\" (explicit empty must override saved value)", got.TemplateName)
+	}
+	if got.TemplateLanguage != "" {
+		t.Fatalf("TemplateLanguage = %q, want \"\" (explicit empty must override saved value)", got.TemplateLanguage)
+	}
+	// Sanity: untouched fields still fall back, so the merge is partial-override, not all-or-nothing.
+	if got.PhoneNumberID != "12345" || got.AccessToken != "saved-token" || got.Recipients != "+31612345678" {
+		t.Fatalf("unrelated fields lost saved values: %+v", got)
+	}
+}
+
+// TestMergeWhatsAppTestConfigClearedTemplateNameDropsSavedLanguage verifies that
+// clearing only the template name (while leaving template language at the saved
+// value) does not produce a "language without name" config; that combination
+// would fail downstream validation and surface as a confusing 400. The merge must
+// drop the language so free-text mode is reachable by clearing just the name.
+func TestMergeWhatsAppTestConfigClearedTemplateNameDropsSavedLanguage(t *testing.T) {
+	t.Parallel()
+
+	req := parseWhatsAppTestRequest(t, `{"whatsapp_template_name": ""}`)
+	got := mergeWhatsAppTestConfig(&req, &savedWhatsAppSnapshot)
+
+	if got.TemplateName != "" {
+		t.Fatalf("TemplateName = %q, want \"\"", got.TemplateName)
+	}
+	if got.TemplateLanguage != "" {
+		t.Fatalf("TemplateLanguage = %q, want \"\" (cleared name must also drop saved language)",
+			got.TemplateLanguage)
+	}
+}
+
+// TestPreserveWhatsAppAccessTokenAllowsDisable verifies that submitting an
+// all-empty WhatsApp settings save does NOT silently restore the saved token.
+// Without this guard, a saved token combined with an empty-form save would trip
+// validateWhatsAppConfigFields' all-or-nothing check and 400 the user out of
+// disabling WhatsApp. Companion to the Graph asymmetry comment on the helper.
+func TestPreserveWhatsAppAccessTokenAllowsDisable(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Snapshot{WhatsAppAccessToken: "saved-token"}
+	req := config.SettingsUpdate{} // every WhatsApp field empty
+
+	preserveWhatsAppAccessToken(&req, &cfg)
+
+	if req.WhatsAppAccessToken != "" {
+		t.Fatalf("WhatsAppAccessToken = %q, want \"\" (all visible fields empty must allow disable)",
+			req.WhatsAppAccessToken)
+	}
+}
+
+// TestPreserveWhatsAppAccessTokenInheritsSavedTokenWhenVisibleConfigRemains
+// verifies the inverse: when the user keeps WhatsApp enabled but leaves the token
+// blank in the form (so the UI can omit it), the saved token is restored.
+func TestPreserveWhatsAppAccessTokenInheritsSavedTokenWhenVisibleConfigRemains(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Snapshot{WhatsAppAccessToken: "saved-token"}
+	req := config.SettingsUpdate{
+		WhatsAppPhoneNumberID: "12345",
+		WhatsAppRecipients:    "+31612345678",
+		// AccessToken left empty in the form
+	}
+
+	preserveWhatsAppAccessToken(&req, &cfg)
+
+	if req.WhatsAppAccessToken != "saved-token" {
+		t.Fatalf("WhatsAppAccessToken = %q, want %q (visible config remains, preserve saved token)",
+			req.WhatsAppAccessToken, "saved-token")
+	}
+}
+
+// TestPreserveWhatsAppAccessTokenTreatsWhitespaceOnlyFieldsAsEmpty mirrors the
+// UI's TrimSpace contract: a form that contains only whitespace counts as empty
+// and the disable path must still be reachable.
+func TestPreserveWhatsAppAccessTokenTreatsWhitespaceOnlyFieldsAsEmpty(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Snapshot{WhatsAppAccessToken: "saved-token"}
+	req := config.SettingsUpdate{
+		WhatsAppPhoneNumberID: "  ",
+		WhatsAppRecipients:    "\t",
+	}
+
+	preserveWhatsAppAccessToken(&req, &cfg)
+
+	if req.WhatsAppAccessToken != "" {
+		t.Fatalf("WhatsAppAccessToken = %q, want \"\" (whitespace-only fields must be treated as empty)",
+			req.WhatsAppAccessToken)
+	}
+}
+
+// TestPreserveWhatsAppAccessTokenIgnoresStaleLanguage verifies that template
+// language alone is not a "visible config" signal. The UI pre-fills language
+// from the saved config, so a user who clears every other WhatsApp field can
+// still have a stale "en_US" in the request; that must not silently restore
+// the saved token and trip the all-or-nothing partial-config check.
+func TestPreserveWhatsAppAccessTokenIgnoresStaleLanguage(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Snapshot{WhatsAppAccessToken: "saved-token"}
+	req := config.SettingsUpdate{
+		WhatsAppTemplateLanguage: "en_US",
+	}
+
+	preserveWhatsAppAccessToken(&req, &cfg)
+
+	if req.WhatsAppAccessToken != "" {
+		t.Fatalf("WhatsAppAccessToken = %q, want \"\" (language alone must not preserve token)",
+			req.WhatsAppAccessToken)
+	}
+}
+
+// TestPrepareWhatsAppSettingsRequestAllowsDisableWithStaleLanguage covers the
+// UI-realistic disable path: the user clears phone, recipients, template name,
+// and the token input, but the form pre-fill leaves a stale "en_US" template
+// language in the request. The prepare helper must produce an all-empty WhatsApp
+// config so the SettingsUpdate validator accepts the disable. Guards against
+// both the order bug (preserve before normalize) and any regression that lets
+// language alone count as visible config.
+func TestPrepareWhatsAppSettingsRequestAllowsDisableWithStaleLanguage(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Snapshot{
+		WhatsAppAccessToken:      "saved-token",
+		WhatsAppTemplateLanguage: "en_US",
+	}
+	req := config.SettingsUpdate{
+		WhatsAppTemplateLanguage: "en_US", // stale form pre-fill, every other field cleared
+	}
+
+	prepareWhatsAppSettingsRequest(&req, &cfg)
+
+	if req.WhatsAppAccessToken != "" {
+		t.Fatalf("WhatsAppAccessToken = %q, want \"\" (stale language must not block disable)",
+			req.WhatsAppAccessToken)
+	}
+	if req.WhatsAppTemplateLanguage != "" {
+		t.Fatalf("WhatsAppTemplateLanguage = %q, want \"\" (normalize must drop language when name is empty)",
+			req.WhatsAppTemplateLanguage)
+	}
+
+	// Belt-and-suspenders: the resulting SettingsUpdate must pass partial-config validation.
+	// validateWhatsAppConfigFields treats any non-empty WhatsApp field as a sign of
+	// partial configuration and then demands the rest; the disable path requires *all* empty.
+	for _, e := range req.Validate() {
+		if strings.Contains(e, "whatsapp_") {
+			t.Fatalf("Validate() returned WhatsApp error after disable prep: %q", e)
+		}
+	}
+}

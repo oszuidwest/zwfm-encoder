@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -25,7 +26,7 @@ type EmailChannel struct {
 // sendUploadAbandonedEmail sends an upload abandonment alert via Microsoft Graph.
 // A fresh client is created each time because upload abandonments are rare one-off events
 // where caching would add complexity without meaningful benefit.
-func sendUploadAbandonedEmail(cfg *GraphConfig, stationName string, p UploadAbandonedData) error {
+func sendUploadAbandonedEmail(ctx context.Context, cfg *GraphConfig, stationName string, p UploadAbandonedData) error {
 	client, err := NewGraphClient(cfg)
 	if err != nil {
 		return util.WrapError("create Graph client", err)
@@ -48,27 +49,29 @@ func sendUploadAbandonedEmail(cfg *GraphConfig, stationName string, p UploadAban
 		return fmt.Errorf("no valid recipients")
 	}
 
-	if err := client.SendMail(recipients, subject, body); err != nil {
+	if err := client.SendMail(ctx, recipients, subject, body); err != nil {
 		return util.WrapError("send email via Graph", err)
 	}
 
 	return nil
 }
 
-func sendEmailWithClient(cfg *GraphConfig, client *GraphClient, subject, body string) error {
+func sendEmailWithClient(ctx context.Context, cfg *GraphConfig, client *GraphClient, subject, body string) error {
 	recipients := ParseRecipients(cfg.Recipients)
 	if len(recipients) == 0 {
 		return fmt.Errorf("no valid recipients")
 	}
 
-	if err := client.SendMail(recipients, subject, body); err != nil {
+	if err := client.SendMail(ctx, recipients, subject, body); err != nil {
 		return util.WrapError("send email via Graph", err)
 	}
 
 	return nil
 }
 
-func sendSilenceEmailWithClient(cfg *GraphConfig, client *GraphClient, stationName string, e silenceEventData) error {
+func sendSilenceEmailWithClient(
+	ctx context.Context, cfg *GraphConfig, client *GraphClient, stationName string, e silenceEventData,
+) error {
 	subject := "[ALERT] Silence Detected - " + stationName
 	body := fmt.Sprintf(
 		"The encoder detected silence at %s.\n\n"+
@@ -77,11 +80,11 @@ func sendSilenceEmailWithClient(cfg *GraphConfig, client *GraphClient, stationNa
 			"Silence is ongoing. Please check the audio source.",
 		util.HumanTime(), e.Threshold, e.LevelL, e.LevelR,
 	)
-	return sendEmailWithClient(cfg, client, subject, body)
+	return sendEmailWithClient(ctx, cfg, client, subject, body)
 }
 
 func sendSilenceEndEmailWithClient(
-	cfg *GraphConfig, client *GraphClient, stationName string, e silenceEventData,
+	ctx context.Context, cfg *GraphConfig, client *GraphClient, stationName string, e silenceEventData,
 ) error {
 	subject := "[OK] Audio Restored - " + stationName
 	body := fmt.Sprintf(
@@ -90,11 +93,13 @@ func sendSilenceEndEmailWithClient(
 			"Level: Left %.1f dB / Right %.1f dB (threshold: %.1f dB)",
 		util.HumanTime(), util.FormatDuration(e.DurationMs), e.LevelL, e.LevelR, e.Threshold,
 	)
-	return sendEmailWithClient(cfg, client, subject, body)
+	return sendEmailWithClient(ctx, cfg, client, subject, body)
 }
 
 // sendDumpReadyEmailWithClient does not delegate to sendEmailWithClient because it needs to attach a file.
-func sendDumpReadyEmailWithClient(cfg *GraphConfig, client *GraphClient, stationName string, e silenceEventData) error {
+func sendDumpReadyEmailWithClient(
+	ctx context.Context, cfg *GraphConfig, client *GraphClient, stationName string, e silenceEventData,
+) error {
 	subject := "[DUMP] Audio Recording - " + stationName
 
 	body := fmt.Sprintf(
@@ -131,7 +136,7 @@ func sendDumpReadyEmailWithClient(cfg *GraphConfig, client *GraphClient, station
 		}
 	}
 
-	if err := client.SendMailWithAttachment(recipients, subject, body, attachment); err != nil {
+	if err := client.SendMailWithAttachment(ctx, recipients, subject, body, attachment); err != nil {
 		return util.WrapError("send email via Graph", err)
 	}
 
@@ -189,26 +194,28 @@ func (c *EmailChannel) getOrCreateClient(graphCfg *GraphConfig) (*GraphClient, e
 	return client, nil
 }
 
-func (c *EmailChannel) SendSilenceStart(cfg *config.Snapshot, levelL, levelR float64) error {
+func (c *EmailChannel) SendSilenceStart(ctx context.Context, cfg *config.Snapshot, levelL, levelR float64) error {
 	graphCfg := BuildGraphConfig(cfg)
 	client, err := c.getOrCreateClient(graphCfg)
 	if err != nil {
 		return util.WrapError("create Graph client", err)
 	}
-	return sendSilenceEmailWithClient(graphCfg, client, cfg.StationName, silenceEventData{
+	return sendSilenceEmailWithClient(ctx, graphCfg, client, cfg.StationName, silenceEventData{
 		LevelL:    levelL,
 		LevelR:    levelR,
 		Threshold: cfg.SilenceThreshold,
 	})
 }
 
-func (c *EmailChannel) SendSilenceEnd(cfg *config.Snapshot, durationMs int64, levelL, levelR float64) error {
+func (c *EmailChannel) SendSilenceEnd(
+	ctx context.Context, cfg *config.Snapshot, durationMs int64, levelL, levelR float64,
+) error {
 	graphCfg := BuildGraphConfig(cfg)
 	client, err := c.getOrCreateClient(graphCfg)
 	if err != nil {
 		return util.WrapError("create Graph client", err)
 	}
-	return sendSilenceEndEmailWithClient(graphCfg, client, cfg.StationName, silenceEventData{
+	return sendSilenceEndEmailWithClient(ctx, graphCfg, client, cfg.StationName, silenceEventData{
 		DurationMs: durationMs,
 		LevelL:     levelL,
 		LevelR:     levelR,
@@ -217,7 +224,7 @@ func (c *EmailChannel) SendSilenceEnd(cfg *config.Snapshot, durationMs int64, le
 }
 
 func (c *EmailChannel) SendAudioDump(
-	cfg *config.Snapshot, durationMs int64, levelL, levelR float64,
+	ctx context.Context, cfg *config.Snapshot, durationMs int64, levelL, levelR float64,
 	result *silencedump.EncodeResult,
 ) error {
 	graphCfg := BuildGraphConfig(cfg)
@@ -225,7 +232,7 @@ func (c *EmailChannel) SendAudioDump(
 	if err != nil {
 		return util.WrapError("create Graph client", err)
 	}
-	return sendDumpReadyEmailWithClient(graphCfg, client, cfg.StationName, silenceEventData{
+	return sendDumpReadyEmailWithClient(ctx, graphCfg, client, cfg.StationName, silenceEventData{
 		DurationMs: durationMs,
 		LevelL:     levelL,
 		LevelR:     levelR,
@@ -234,8 +241,8 @@ func (c *EmailChannel) SendAudioDump(
 	})
 }
 
-func (c *EmailChannel) SendUploadAbandoned(cfg *config.Snapshot, params UploadAbandonedData) error {
-	return sendUploadAbandonedEmail(BuildGraphConfig(cfg), cfg.StationName, params)
+func (c *EmailChannel) SendUploadAbandoned(ctx context.Context, cfg *config.Snapshot, params UploadAbandonedData) error {
+	return sendUploadAbandonedEmail(ctx, BuildGraphConfig(cfg), cfg.StationName, params)
 }
 
 // SendTestEmail sends a test email to verify email configuration.
@@ -263,7 +270,7 @@ func SendTestEmail(cfg *GraphConfig, stationName string) error {
 	)
 
 	recipients := ParseRecipients(cfg.Recipients)
-	if err := client.SendMail(recipients, subject, body); err != nil {
+	if err := client.SendMail(context.Background(), recipients, subject, body); err != nil {
 		return util.WrapError("send email", err)
 	}
 

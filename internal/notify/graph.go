@@ -138,22 +138,26 @@ type EmailAttachment struct {
 }
 
 // SendMail sends an email to the specified recipients.
-func (c *GraphClient) SendMail(recipients []string, subject, body string) error {
-	return c.SendMailWithAttachment(recipients, subject, body, nil)
+func (c *GraphClient) SendMail(ctx context.Context, recipients []string, subject, body string) error {
+	return c.SendMailWithAttachment(ctx, recipients, subject, body, nil)
 }
 
 // doWithRetry sends the email request with automatic retries.
-func (c *GraphClient) doWithRetry(jsonData []byte) error {
+func (c *GraphClient) doWithRetry(ctx context.Context, jsonData []byte) error {
 	apiURL := fmt.Sprintf("%s/users/%s/sendMail", graphBaseURL, url.PathEscape(c.fromAddress))
 	backoff := util.NewBackoff(initialRetryWait, maxRetryWait)
 
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			time.Sleep(backoff.Next())
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff.Next()):
+			}
 		}
 
-		req, err := http.NewRequest(http.MethodPost, apiURL, bytes.NewReader(jsonData))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(jsonData))
 		if err != nil {
 			return fmt.Errorf("create request: %w", err)
 		}
@@ -176,7 +180,11 @@ func (c *GraphClient) doWithRetry(jsonData []byte) error {
 			// Parse Retry-After header if present (integer seconds only)
 			if retryAfter := resp.Header.Get("Retry-After"); retryAfter != "" {
 				if seconds, err := strconv.Atoi(retryAfter); err == nil && seconds > 0 {
-					time.Sleep(time.Duration(seconds) * time.Second)
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-time.After(time.Duration(seconds) * time.Second):
+					}
 				}
 			}
 			lastErr = fmt.Errorf("graph API rate limited (429): %s", string(respBody))
@@ -196,8 +204,11 @@ func (c *GraphClient) doWithRetry(jsonData []byte) error {
 
 // SendMailWithAttachment sends an email with an optional attachment.
 func (c *GraphClient) SendMailWithAttachment(
-	recipients []string, subject, body string, attachment *EmailAttachment,
+	ctx context.Context, recipients []string, subject, body string, attachment *EmailAttachment,
 ) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if len(recipients) == 0 {
 		return fmt.Errorf("no recipients specified")
 	}
@@ -242,7 +253,7 @@ func (c *GraphClient) SendMailWithAttachment(
 	if err != nil {
 		return fmt.Errorf("marshal request: %w", err)
 	}
-	return c.doWithRetry(jsonData)
+	return c.doWithRetry(ctx, jsonData)
 }
 
 // ValidateAuth verifies that the email credentials are valid.

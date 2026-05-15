@@ -8,7 +8,7 @@ Audio streaming software for [ZuidWest FM](https://www.zuidwestfm.nl/) (Linux), 
 
 - **Multi-output streaming** - Send to multiple SRT servers with different codecs simultaneously
 - **Real-time VU meters** - Configurable peak hold with peak/RMS toggle, clip detection, updated via WebSocket
-- **Silence detection** - Alerts via webhook, email, file log, or Zabbix when audio drops below threshold
+- **Silence detection** - Alerts via webhook, email, WhatsApp, file log, or Zabbix when audio drops below threshold
 - **Web interface** - Configure outputs, select audio input, monitor levels
 - **Auto-recovery** - Automatic reconnection with configurable retry limits per output
 - **Multiple codecs** - MP3, Ogg Vorbis, or uncompressed WAV per output
@@ -98,14 +98,15 @@ Monitors audio levels and sends alerts when silence is detected or recovered. Us
 | Recovery | 5 s | 1 to 60 | Seconds of audio before recovery |
 
 **Alerting options** (can use multiple simultaneously, each with per-event control):
-- **Webhook** - POST request to a URL; independently enable `silence_start`, `silence_end`, `audio_dump` (MP3 attachment), and abandoned S3 uploads
-- **Email** - Microsoft Graph API notification; independently enable `silence_start`, `silence_end`, `audio_dump` (MP3 attachment), and abandoned S3 uploads
+- **Webhook** - POST request to a URL; independently enable `silence_start`, `silence_end`, and `audio_dump` (MP3 attachment). Abandoned S3 uploads are always sent when the channel is configured.
+- **Email** - Microsoft Graph API notification; independently enable `silence_start`, `silence_end`, and `audio_dump` (MP3 attachment). Abandoned S3 uploads are always sent when the channel is configured.
+- **WhatsApp** - WhatsApp Business Cloud API text or template messages; independently enable `silence_start`, `silence_end`, and `audio_dump` (filename/status only). Abandoned S3 uploads are always sent when the channel is configured.
 - **File Log** - Appends JSON Lines for every silence event (always records all events, no per-event toggle)
-- **Zabbix** - Send trapper items to a Zabbix server; independently enable `silence_start` and `silence_end` (no `audio_dump` - trapper items do not support file attachments)
+- **Zabbix** - Send trapper items to a Zabbix server; independently enable `silence_start` and `silence_end` (no `audio_dump` - trapper items do not support file attachments). Abandoned S3 uploads are always sent when the upload key is configured.
 
 `silence_end` is sent immediately on recovery. `audio_dump_ready` is dispatched as a separate event once the MP3 encoding completes.
 
-Configure via the web interface under Settings → Alerts.
+Configure via the web interface under Settings → Notifications.
 
 ### Microsoft 365 Email Setup
 
@@ -118,6 +119,16 @@ Email notifications use Microsoft Graph API with app-only authentication.
 5. [Create a shared mailbox](https://admin.exchange.microsoft.com/#/sharedmailboxes) as the sender (no license required)
 
 The encoder warns when the secret expires within 30 days.
+
+### WhatsApp Setup
+
+WhatsApp notifications use the official WhatsApp Business Cloud API. Free-form text messages only work inside an open customer-service window. For reliable business-initiated alerts, create an approved utility template with one body variable and configure its template name and language in the encoder.
+
+1. Create or select a Meta app with WhatsApp Business Platform access
+2. Copy the WhatsApp **Phone Number ID** and a long-lived access token
+3. Add recipient phone numbers with country code, for example `+31612345678`
+4. Optional but recommended: create an approved template such as `encoder_alert` with body text like `{{1}}`
+5. Configure in the encoder: phone number ID, token, recipients, and optionally template name/language
 
 ### Zabbix Setup
 
@@ -292,7 +303,7 @@ flowchart LR
 2. **Distributor**: Processes PCM in ~100ms chunks, fans out to all consumers
 3. **Metering**: Calculates RMS/peak levels in Go (no FFmpeg filters), holds peaks for a configurable duration (default 3000 ms), detects clipping at ±32760
 4. **Silence Detection**: Hysteresis-based detection with configurable threshold/duration/recovery. Buffers 15s audio context before/after silence events
-5. **Alerting**: Silence events trigger webhook, email (MS Graph), log (JSON Lines), and/or Zabbix. Each channel has per-event subscriptions for `silence_start`, `silence_end`, and `audio_dump_ready`. `silence_end` fires immediately on recovery; `audio_dump_ready` fires separately once the MP3 is ready. Abandoned S3 uploads also trigger notifications.
+5. **Alerting**: Silence events trigger webhook, email (MS Graph), WhatsApp, log (JSON Lines), and/or Zabbix. Each channel has per-event subscriptions for `silence_start`, `silence_end`, and `audio_dump_ready`. `silence_end` fires immediately on recovery; `audio_dump_ready` fires separately once the MP3 is ready. Abandoned S3 uploads also trigger notifications.
 6. **Streaming**: Per-output FFmpeg processes with automatic retry and exponential backoff
 7. **Recording**: Hourly rotation or on-demand, with optional S3 upload
 8. **Event Log**: All stream, silence, and recording events written to a JSON Lines file; accessible via web UI and REST API with pagination
