@@ -562,7 +562,7 @@
                             <div class="group">
                                 <label for="whatsapp-access-token">Access Token</label>
                                 <input id="whatsapp-access-token" type="password" :placeholder="config.whatsapp_has_token ? '••••••••' : 'Meta access token'" x-model="settingsForm.whatsapp.accessToken" @input="markSettingsDirty()" aria-describedby="whatsapp-token-hint">
-                                <span id="whatsapp-token-hint" class="input-hint">Leave empty to keep existing token</span>
+                                <span id="whatsapp-token-hint" class="input-hint">Leave empty to use the saved token for save and test.</span>
                             </div>
                             <div class="group">
                                 <label for="whatsapp-recipients">Recipients</label>

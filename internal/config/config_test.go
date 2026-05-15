@@ -70,6 +70,54 @@ func assertTrue(t *testing.T, name string, got bool) {
 	}
 }
 
+func TestSnapshotHasWhatsApp(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		snap Snapshot
+		want bool
+	}{
+		{
+			name: "fully configured",
+			snap: Snapshot{
+				WhatsAppPhoneNumberID: "12345",
+				WhatsAppAccessToken:   "token",
+				WhatsAppRecipients:    "+31612345678",
+			},
+			want: true,
+		},
+		{
+			name: "empty split recipients",
+			snap: Snapshot{
+				WhatsAppPhoneNumberID: "12345",
+				WhatsAppAccessToken:   "token",
+				WhatsAppRecipients:    ",,, ",
+			},
+			want: false,
+		},
+		{
+			name: "whitespace token",
+			snap: Snapshot{
+				WhatsAppPhoneNumberID: "12345",
+				WhatsAppAccessToken:   " ",
+				WhatsAppRecipients:    "+31612345678",
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := tt.snap.HasWhatsApp(); got != tt.want {
+				t.Fatalf("HasWhatsApp() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadPreservesExplicitZeroAndFalseValues(t *testing.T) {
 	t.Parallel()
 
@@ -354,6 +402,36 @@ func TestLoadRejectsInvalidFileSettings(t *testing.T) {
 			wantErr: "notifications.whatsapp.recipients: contains invalid phone number",
 		},
 		{
+			name:    "whatsapp phone number id required",
+			data:    `{"notifications":{"whatsapp":{"access_token":"token","recipients":"+31612345678"}}}`,
+			wantErr: "notifications.whatsapp.phone_number_id: is required when WhatsApp is configured",
+		},
+		{
+			name:    "whatsapp phone number id digits only",
+			data:    `{"notifications":{"whatsapp":{"phone_number_id":"abc","access_token":"token","recipients":"+31612345678"}}}`,
+			wantErr: "notifications.whatsapp.phone_number_id: must contain digits only",
+		},
+		{
+			name:    "whatsapp access token required",
+			data:    `{"notifications":{"whatsapp":{"phone_number_id":"12345","recipients":"+31612345678"}}}`,
+			wantErr: "notifications.whatsapp.access_token: is required when WhatsApp is configured",
+		},
+		{
+			name:    "whatsapp split recipients required",
+			data:    `{"notifications":{"whatsapp":{"phone_number_id":"12345","access_token":"token","recipients":",,, "}}}`,
+			wantErr: "notifications.whatsapp.recipients: is required when WhatsApp is configured",
+		},
+		{
+			name:    "whatsapp template language requires template name",
+			data:    `{"notifications":{"whatsapp":{"phone_number_id":"12345","access_token":"token","recipients":"+31612345678","template_language":"nl"}}}`,
+			wantErr: "notifications.whatsapp.template_language: requires notifications.whatsapp.template_name",
+		},
+		{
+			name:    "whatsapp template name format",
+			data:    `{"notifications":{"whatsapp":{"phone_number_id":"12345","access_token":"token","recipients":"+31612345678","template_name":"Encoder Alert"}}}`,
+			wantErr: "notifications.whatsapp.template_name: must contain only lowercase letters, digits, and underscores",
+		},
+		{
 			name:    "invalid zabbix port",
 			data:    `{"notifications":{"zabbix":{"port":70000}}}`,
 			wantErr: "notifications.zabbix.port: must be between 1 and 65535",
@@ -433,6 +511,30 @@ func TestSettingsUpdateValidateAPIFieldNames(t *testing.T) {
 				WhatsAppRecipients: "bad-address",
 			},
 			wantErr: "whatsapp_recipients:",
+		},
+		{
+			name: "missing whatsapp token uses API name",
+			update: SettingsUpdate{
+				SilenceThreshold:      -40,
+				SilenceDurationMs:     1,
+				SilenceRecoveryMs:     1,
+				WhatsAppPhoneNumberID: "12345",
+				WhatsAppRecipients:    "+31612345678",
+			},
+			wantErr: "whatsapp_access_token:",
+		},
+		{
+			name: "invalid whatsapp template name uses API name",
+			update: SettingsUpdate{
+				SilenceThreshold:      -40,
+				SilenceDurationMs:     1,
+				SilenceRecoveryMs:     1,
+				WhatsAppPhoneNumberID: "12345",
+				WhatsAppAccessToken:   "token",
+				WhatsAppRecipients:    "+31612345678",
+				WhatsAppTemplateName:  "Encoder Alert",
+			},
+			wantErr: "whatsapp_template_name:",
 		},
 		{
 			name:    "invalid zabbix port uses API name",

@@ -285,8 +285,8 @@ func (c *Config) validate() error {
 	if msg := validateRecipients("notifications.email.recipients", c.Notifications.Email.Recipients); msg != "" {
 		return fmt.Errorf("invalid %s", msg)
 	}
-	if msg := validateWhatsAppRecipients("notifications.whatsapp.recipients", c.Notifications.WhatsApp.Recipients); msg != "" {
-		return fmt.Errorf("invalid %s", msg)
+	if errs := validateWhatsAppConfigFields(&fileWhatsAppFields, &c.Notifications.WhatsApp); len(errs) > 0 {
+		return fmt.Errorf("invalid %s", errs[0])
 	}
 	if msg := validateZabbixPort("notifications.zabbix.port", c.Notifications.Zabbix.Port); msg != "" {
 		return fmt.Errorf("invalid %s", msg)
@@ -344,36 +344,76 @@ func validateRecipients(field, recipients string) string {
 	return ""
 }
 
-func validateWhatsAppRecipients(field, recipients string) string {
-	if recipients == "" {
-		return ""
-	}
-	for recipient := range strings.SplitSeq(recipients, ",") {
-		if trimmed := strings.TrimSpace(recipient); trimmed != "" && !validWhatsAppRecipient(trimmed) {
-			return field + ": contains invalid phone number"
-		}
-	}
-	return ""
+type whatsAppFieldNames struct {
+	phoneNumberID    string
+	accessToken      string
+	recipients       string
+	templateName     string
+	templateLanguage string
 }
 
-func validWhatsAppRecipient(recipient string) bool {
-	normalized := normalizeWhatsAppRecipient(recipient)
-	if len(normalized) < 8 || len(normalized) > 15 {
-		return false
+var (
+	fileWhatsAppFields = whatsAppFieldNames{
+		phoneNumberID:    "notifications.whatsapp.phone_number_id",
+		accessToken:      "notifications.whatsapp.access_token",
+		recipients:       "notifications.whatsapp.recipients",
+		templateName:     "notifications.whatsapp.template_name",
+		templateLanguage: "notifications.whatsapp.template_language",
 	}
-	for _, r := range normalized {
-		if r < '0' || r > '9' {
-			return false
+	apiWhatsAppFields = whatsAppFieldNames{
+		phoneNumberID:    "whatsapp_phone_number_id",
+		accessToken:      "whatsapp_access_token",
+		recipients:       "whatsapp_recipients",
+		templateName:     "whatsapp_template_name",
+		templateLanguage: "whatsapp_template_language",
+	}
+)
+
+func validateWhatsAppConfigFields(fields *whatsAppFieldNames, whatsApp *types.WhatsAppConfig) []string {
+	errs := []string{}
+	if msg := util.ValidateWhatsAppRecipients(fields.recipients, whatsApp.Recipients); msg != "" {
+		errs = append(errs, msg)
+	}
+
+	phoneNumberID := strings.TrimSpace(whatsApp.PhoneNumberID)
+	accessToken := strings.TrimSpace(whatsApp.AccessToken)
+	recipients := strings.TrimSpace(whatsApp.Recipients)
+	templateName := strings.TrimSpace(whatsApp.TemplateName)
+	templateLanguage := strings.TrimSpace(whatsApp.TemplateLanguage)
+
+	partiallyConfigured := phoneNumberID != "" ||
+		accessToken != "" ||
+		recipients != "" ||
+		templateName != "" ||
+		templateLanguage != ""
+	if !partiallyConfigured {
+		return errs
+	}
+
+	if phoneNumberID == "" {
+		errs = append(errs, fields.phoneNumberID+": is required when WhatsApp is configured")
+	} else if !util.AllDigits(phoneNumberID) {
+		errs = append(errs, fields.phoneNumberID+": must contain digits only")
+	}
+	if accessToken == "" {
+		errs = append(errs, fields.accessToken+": is required when WhatsApp is configured")
+	}
+	if len(util.ParseWhatsAppRecipients(recipients)) == 0 {
+		errs = append(errs, fields.recipients+": is required when WhatsApp is configured")
+	}
+	if templateName != "" && !util.ValidWhatsAppTemplateName(templateName) {
+		errs = append(errs, fields.templateName+": must contain only lowercase letters, digits, and underscores")
+	}
+	if templateLanguage != "" {
+		if templateName == "" {
+			errs = append(errs, fields.templateLanguage+": requires "+fields.templateName)
+		}
+		if strings.ContainsAny(templateLanguage, " \t\n\r\f\v") {
+			errs = append(errs, fields.templateLanguage+": cannot contain whitespace")
 		}
 	}
-	return true
-}
 
-func normalizeWhatsAppRecipient(recipient string) string {
-	trimmed := strings.TrimSpace(recipient)
-	trimmed = strings.TrimPrefix(trimmed, "+")
-	replacer := strings.NewReplacer(" ", "", "-", "", "(", "", ")", "")
-	return replacer.Replace(trimmed)
+	return errs
 }
 
 func validateZabbixPort(field string, port int) string {
@@ -742,7 +782,7 @@ type Snapshot struct {
 
 	// WhatsAppPhoneNumberID is the Meta WhatsApp Business phone number ID.
 	WhatsAppPhoneNumberID string
-	// WhatsAppAccessToken is the Meta Graph API access token.
+	// WhatsAppAccessToken is the WhatsApp Cloud API access token.
 	WhatsAppAccessToken string
 	// WhatsAppRecipients is a comma-separated list of phone numbers to notify.
 	WhatsAppRecipients string
@@ -842,7 +882,9 @@ func (s *Snapshot) HasGraph() bool {
 
 // HasWhatsApp reports whether WhatsApp Cloud API notifications are configured.
 func (s *Snapshot) HasWhatsApp() bool {
-	return s.WhatsAppPhoneNumberID != "" && s.WhatsAppAccessToken != "" && s.WhatsAppRecipients != ""
+	return strings.TrimSpace(s.WhatsAppPhoneNumberID) != "" &&
+		strings.TrimSpace(s.WhatsAppAccessToken) != "" &&
+		len(util.ParseWhatsAppRecipients(s.WhatsAppRecipients)) > 0
 }
 
 // HasZabbixSilence reports whether Zabbix silence alerting is configured.
@@ -881,7 +923,7 @@ type SettingsUpdate struct {
 	EmailEvents types.EventSubscriptions `json:"email_events"`
 	// WhatsAppPhoneNumberID is the Meta WhatsApp Business phone number ID.
 	WhatsAppPhoneNumberID string `json:"whatsapp_phone_number_id"`
-	// WhatsAppAccessToken is the Meta Graph API access token.
+	// WhatsAppAccessToken is the WhatsApp Cloud API access token.
 	WhatsAppAccessToken string `json:"whatsapp_access_token"`
 	// WhatsAppRecipients is a comma-separated list of phone numbers to notify.
 	WhatsAppRecipients string `json:"whatsapp_recipients"`
@@ -953,9 +995,13 @@ func (s *SettingsUpdate) Validate() []string {
 	if msg := validateRecipients("graph_recipients", s.GraphRecipients); msg != "" {
 		errs = append(errs, msg)
 	}
-	if msg := validateWhatsAppRecipients("whatsapp_recipients", s.WhatsAppRecipients); msg != "" {
-		errs = append(errs, msg)
-	}
+	errs = append(errs, validateWhatsAppConfigFields(&apiWhatsAppFields, &types.WhatsAppConfig{
+		PhoneNumberID:    s.WhatsAppPhoneNumberID,
+		AccessToken:      s.WhatsAppAccessToken,
+		Recipients:       s.WhatsAppRecipients,
+		TemplateName:     s.WhatsAppTemplateName,
+		TemplateLanguage: s.WhatsAppTemplateLanguage,
+	})...)
 	if msg := validateZabbixPort("zabbix_port", s.ZabbixPort); msg != "" {
 		errs = append(errs, msg)
 	}

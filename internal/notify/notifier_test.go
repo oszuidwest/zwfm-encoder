@@ -27,19 +27,21 @@ func (c *snapshotMutatingChannel) IsConfiguredForUpload(_ *config.Snapshot) bool
 func (c *snapshotMutatingChannel) SubscribesSilenceStart(_ *config.Snapshot) bool { return true }
 func (c *snapshotMutatingChannel) SubscribesSilenceEnd(_ *config.Snapshot) bool   { return false }
 func (c *snapshotMutatingChannel) SubscribesAudioDump(_ *config.Snapshot) bool    { return false }
-func (c *snapshotMutatingChannel) SendSilenceStart(cfg *config.Snapshot, _, _ float64) error {
+func (c *snapshotMutatingChannel) SendSilenceStart(_ context.Context, cfg *config.Snapshot, _, _ float64) error {
 	cfg.SilenceThreshold = -20
 	close(c.mutated)
 	<-c.release
 	return nil
 }
-func (c *snapshotMutatingChannel) SendSilenceEnd(_ *config.Snapshot, _ int64, _, _ float64) error {
+func (c *snapshotMutatingChannel) SendSilenceEnd(_ context.Context, _ *config.Snapshot, _ int64, _, _ float64) error {
 	return nil
 }
-func (c *snapshotMutatingChannel) SendAudioDump(_ *config.Snapshot, _ int64, _, _ float64, _ *silencedump.EncodeResult) error {
+func (c *snapshotMutatingChannel) SendAudioDump(
+	_ context.Context, _ *config.Snapshot, _ int64, _, _ float64, _ *silencedump.EncodeResult,
+) error {
 	return nil
 }
-func (c *snapshotMutatingChannel) SendUploadAbandoned(_ *config.Snapshot, _ UploadAbandonedData) error {
+func (c *snapshotMutatingChannel) SendUploadAbandoned(_ context.Context, _ *config.Snapshot, _ UploadAbandonedData) error {
 	return nil
 }
 
@@ -55,19 +57,21 @@ func (c *snapshotObservingChannel) IsConfiguredForUpload(_ *config.Snapshot) boo
 func (c *snapshotObservingChannel) SubscribesSilenceStart(_ *config.Snapshot) bool { return true }
 func (c *snapshotObservingChannel) SubscribesSilenceEnd(_ *config.Snapshot) bool   { return false }
 func (c *snapshotObservingChannel) SubscribesAudioDump(_ *config.Snapshot) bool    { return false }
-func (c *snapshotObservingChannel) SendSilenceStart(cfg *config.Snapshot, _, _ float64) error {
+func (c *snapshotObservingChannel) SendSilenceStart(_ context.Context, cfg *config.Snapshot, _, _ float64) error {
 	<-c.mutated
 	c.observed <- cfg.SilenceThreshold
 	close(c.releaseMu)
 	return nil
 }
-func (c *snapshotObservingChannel) SendSilenceEnd(_ *config.Snapshot, _ int64, _, _ float64) error {
+func (c *snapshotObservingChannel) SendSilenceEnd(_ context.Context, _ *config.Snapshot, _ int64, _, _ float64) error {
 	return nil
 }
-func (c *snapshotObservingChannel) SendAudioDump(_ *config.Snapshot, _ int64, _, _ float64, _ *silencedump.EncodeResult) error {
+func (c *snapshotObservingChannel) SendAudioDump(
+	_ context.Context, _ *config.Snapshot, _ int64, _, _ float64, _ *silencedump.EncodeResult,
+) error {
 	return nil
 }
-func (c *snapshotObservingChannel) SendUploadAbandoned(_ *config.Snapshot, _ UploadAbandonedData) error {
+func (c *snapshotObservingChannel) SendUploadAbandoned(_ context.Context, _ *config.Snapshot, _ UploadAbandonedData) error {
 	return nil
 }
 
@@ -147,7 +151,7 @@ func (c *testChannel) IsConfiguredForUpload(_ *config.Snapshot) bool  { return f
 func (c *testChannel) SubscribesSilenceStart(_ *config.Snapshot) bool { return c.subscribesStart }
 func (c *testChannel) SubscribesSilenceEnd(_ *config.Snapshot) bool   { return c.subscribesEnd }
 func (c *testChannel) SubscribesAudioDump(_ *config.Snapshot) bool    { return c.subscribesDump }
-func (c *testChannel) SendUploadAbandoned(_ *config.Snapshot, _ UploadAbandonedData) error {
+func (c *testChannel) SendUploadAbandoned(_ context.Context, _ *config.Snapshot, _ UploadAbandonedData) error {
 	return nil
 }
 
@@ -156,17 +160,19 @@ func (c *testChannel) IsConfiguredForSilence(_ *config.Snapshot) bool {
 	return c.configuredSilence
 }
 
-func (c *testChannel) SendSilenceStart(cfg *config.Snapshot, _, _ float64) error {
+func (c *testChannel) SendSilenceStart(_ context.Context, cfg *config.Snapshot, _, _ float64) error {
 	c.silenceStartCalled <- cfg
 	return nil
 }
 
-func (c *testChannel) SendSilenceEnd(cfg *config.Snapshot, _ int64, _, _ float64) error {
+func (c *testChannel) SendSilenceEnd(_ context.Context, cfg *config.Snapshot, _ int64, _, _ float64) error {
 	c.silenceEndCalled <- cfg
 	return nil
 }
 
-func (c *testChannel) SendAudioDump(cfg *config.Snapshot, _ int64, _, _ float64, _ *silencedump.EncodeResult) error {
+func (c *testChannel) SendAudioDump(
+	_ context.Context, cfg *config.Snapshot, _ int64, _, _ float64, _ *silencedump.EncodeResult,
+) error {
 	c.audioDumpCalled <- cfg
 	return nil
 }
@@ -419,7 +425,7 @@ func TestZabbixChannelSendAudioDumpReturnsError(t *testing.T) {
 	t.Parallel()
 
 	ch := &ZabbixChannel{}
-	err := ch.SendAudioDump(nil, 0, 0, 0, nil)
+	err := ch.SendAudioDump(context.Background(), nil, 0, 0, 0, nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -448,7 +454,7 @@ func TestDispatchSilenceStartGivesEachGoroutineItsOwnSnapshotCopy(t *testing.T) 
 
 	dispatcher := NewDispatcher(mutator, observer)
 	cfg := config.Snapshot{SilenceThreshold: -40}
-	dispatcher.DispatchSilenceStart([]AlertChannel{mutator, observer}, cfg, 0, 0)
+	dispatcher.DispatchSilenceStart(context.Background(), []AlertChannel{mutator, observer}, cfg, 0, 0)
 
 	select {
 	case got := <-observed:

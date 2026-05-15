@@ -2,6 +2,7 @@ package notify
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -39,8 +40,8 @@ type WebhookPayload struct {
 }
 
 // sendWebhookSilence notifies the configured webhook of critical silence detection.
-func sendWebhookSilence(webhookURL string, e silenceEventData) error {
-	return sendWebhook(webhookURL, &WebhookPayload{
+func sendWebhookSilence(ctx context.Context, webhookURL string, e silenceEventData) error {
+	return sendWebhook(ctx, webhookURL, &WebhookPayload{
 		Event:        "silence_start",
 		LevelLeftDB:  e.LevelL,
 		LevelRightDB: e.LevelR,
@@ -50,8 +51,8 @@ func sendWebhookSilence(webhookURL string, e silenceEventData) error {
 }
 
 // sendWebhookSilenceEnd notifies the configured webhook that silence has ended.
-func sendWebhookSilenceEnd(webhookURL string, e silenceEventData) error {
-	return sendWebhook(webhookURL, &WebhookPayload{
+func sendWebhookSilenceEnd(ctx context.Context, webhookURL string, e silenceEventData) error {
+	return sendWebhook(ctx, webhookURL, &WebhookPayload{
 		Event:             "silence_end",
 		SilenceDurationMs: e.DurationMs,
 		LevelLeftDB:       e.LevelL,
@@ -67,7 +68,7 @@ func SendWebhookTest(webhookURL, stationName string) error {
 		return fmt.Errorf("webhook URL not configured")
 	}
 
-	return sendWebhook(webhookURL, &WebhookPayload{
+	return sendWebhook(context.Background(), webhookURL, &WebhookPayload{
 		Event:     "test",
 		Message:   "This is a test notification from " + stationName,
 		Timestamp: timestampUTC(),
@@ -75,8 +76,8 @@ func SendWebhookTest(webhookURL, stationName string) error {
 }
 
 // sendUploadAbandonedWebhook sends an upload_abandoned event to the webhook endpoint.
-func sendUploadAbandonedWebhook(webhookURL string, p UploadAbandonedData) error {
-	return sendWebhook(webhookURL, &WebhookPayload{
+func sendUploadAbandonedWebhook(ctx context.Context, webhookURL string, p UploadAbandonedData) error {
+	return sendWebhook(ctx, webhookURL, &WebhookPayload{
 		Event:        "upload_abandoned",
 		Message:      fmt.Sprintf("Upload abandoned for %s after %d retries: %s", p.Filename, p.RetryCount, p.LastError),
 		Timestamp:    timestampUTC(),
@@ -89,7 +90,7 @@ func sendUploadAbandonedWebhook(webhookURL string, p UploadAbandonedData) error 
 }
 
 // sendWebhookDumpReady notifies the configured webhook that an audio dump is ready.
-func sendWebhookDumpReady(webhookURL string, e silenceEventData) error {
+func sendWebhookDumpReady(ctx context.Context, webhookURL string, e silenceEventData) error {
 	payload := &WebhookPayload{
 		Event:             "audio_dump_ready",
 		SilenceDurationMs: e.DurationMs,
@@ -115,11 +116,14 @@ func sendWebhookDumpReady(webhookURL string, e silenceEventData) error {
 		}
 	}
 
-	return sendWebhook(webhookURL, payload)
+	return sendWebhook(ctx, webhookURL, payload)
 }
 
 // sendWebhook delivers a notification to the configured webhook endpoint.
-func sendWebhook(webhookURL string, payload *WebhookPayload) error {
+func sendWebhook(ctx context.Context, webhookURL string, payload *WebhookPayload) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if !util.IsConfigured(webhookURL) {
 		return nil // Silently skip if not configured
 	}
@@ -129,7 +133,13 @@ func sendWebhook(webhookURL string, payload *WebhookPayload) error {
 		return util.WrapError("marshal payload", err)
 	}
 
-	resp, err := webhookClient.Post(webhookURL, "application/json", bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return util.WrapError("create webhook request", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := webhookClient.Do(req)
 	if err != nil {
 		return util.WrapError("send webhook request", err)
 	}
@@ -169,16 +179,18 @@ func (c *WebhookChannel) SubscribesAudioDump(cfg *config.Snapshot) bool {
 	return cfg.HasWebhook() && cfg.WebhookEvents.AudioDump
 }
 
-func (c *WebhookChannel) SendSilenceStart(cfg *config.Snapshot, levelL, levelR float64) error {
-	return sendWebhookSilence(cfg.WebhookURL, silenceEventData{
+func (c *WebhookChannel) SendSilenceStart(ctx context.Context, cfg *config.Snapshot, levelL, levelR float64) error {
+	return sendWebhookSilence(ctx, cfg.WebhookURL, silenceEventData{
 		LevelL:    levelL,
 		LevelR:    levelR,
 		Threshold: cfg.SilenceThreshold,
 	})
 }
 
-func (c *WebhookChannel) SendSilenceEnd(cfg *config.Snapshot, durationMS int64, levelL, levelR float64) error {
-	return sendWebhookSilenceEnd(cfg.WebhookURL, silenceEventData{
+func (c *WebhookChannel) SendSilenceEnd(
+	ctx context.Context, cfg *config.Snapshot, durationMS int64, levelL, levelR float64,
+) error {
+	return sendWebhookSilenceEnd(ctx, cfg.WebhookURL, silenceEventData{
 		DurationMs: durationMS,
 		LevelL:     levelL,
 		LevelR:     levelR,
@@ -187,10 +199,10 @@ func (c *WebhookChannel) SendSilenceEnd(cfg *config.Snapshot, durationMS int64, 
 }
 
 func (c *WebhookChannel) SendAudioDump(
-	cfg *config.Snapshot, durationMS int64, levelL, levelR float64,
+	ctx context.Context, cfg *config.Snapshot, durationMS int64, levelL, levelR float64,
 	result *silencedump.EncodeResult,
 ) error {
-	return sendWebhookDumpReady(cfg.WebhookURL, silenceEventData{
+	return sendWebhookDumpReady(ctx, cfg.WebhookURL, silenceEventData{
 		DurationMs: durationMS,
 		LevelL:     levelL,
 		LevelR:     levelR,
@@ -199,6 +211,6 @@ func (c *WebhookChannel) SendAudioDump(
 	})
 }
 
-func (c *WebhookChannel) SendUploadAbandoned(cfg *config.Snapshot, params UploadAbandonedData) error {
-	return sendUploadAbandonedWebhook(cfg.WebhookURL, params)
+func (c *WebhookChannel) SendUploadAbandoned(ctx context.Context, cfg *config.Snapshot, params UploadAbandonedData) error {
+	return sendUploadAbandonedWebhook(ctx, cfg.WebhookURL, params)
 }

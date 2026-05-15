@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
@@ -145,20 +146,18 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate ALL settings upfront (no side effects)
+	cfg := s.config.Snapshot()
+	audioInputChanged := req.AudioInput != cfg.AudioInput
+
+	req.GraphClientSecret = cmp.Or(req.GraphClientSecret, cfg.GraphClientSecret)
+	preserveWhatsAppAccessToken(&req, &cfg)
+
 	if errs := req.Validate(); len(errs) > 0 {
 		s.writeJSON(w, http.StatusBadRequest, map[string]any{
 			"errors": errs,
 		})
 		return
 	}
-
-	cfg := s.config.Snapshot()
-	audioInputChanged := req.AudioInput != cfg.AudioInput
-
-	// Preserve existing secret if not provided (empty = keep existing)
-	req.GraphClientSecret = cmp.Or(req.GraphClientSecret, cfg.GraphClientSecret)
-	req.WhatsAppAccessToken = cmp.Or(req.WhatsAppAccessToken, cfg.WhatsAppAccessToken)
 
 	// Apply ALL settings atomically (single lock, single file write)
 	if err := s.config.ApplySettings(&req); err != nil {
@@ -196,6 +195,20 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 
 	s.broadcastConfigChanged()
 	s.writeNoContent(w)
+}
+
+func preserveWhatsAppAccessToken(req *config.SettingsUpdate, cfg *config.Snapshot) {
+	if !settingsHasWhatsAppFields(req) {
+		return
+	}
+	req.WhatsAppAccessToken = cmp.Or(req.WhatsAppAccessToken, cfg.WhatsAppAccessToken)
+}
+
+func settingsHasWhatsAppFields(req *config.SettingsUpdate) bool {
+	return strings.TrimSpace(req.WhatsAppPhoneNumberID) != "" ||
+		strings.TrimSpace(req.WhatsAppRecipients) != "" ||
+		strings.TrimSpace(req.WhatsAppTemplateName) != "" ||
+		strings.TrimSpace(req.WhatsAppTemplateLanguage) != ""
 }
 
 // handleListStreams returns all configured streams.
@@ -608,7 +621,7 @@ type NotificationTestRequest struct {
 
 	// WhatsAppPhoneNumberID is the Meta WhatsApp Business phone number ID.
 	WhatsAppPhoneNumberID string `json:"whatsapp_phone_number_id,omitempty"`
-	// WhatsAppAccessToken is the Meta Graph API access token.
+	// WhatsAppAccessToken is the WhatsApp Cloud API access token.
 	WhatsAppAccessToken string `json:"whatsapp_access_token,omitempty"`
 	// WhatsAppRecipients is a comma-separated recipient phone number list.
 	WhatsAppRecipients string `json:"whatsapp_recipients,omitempty"`
@@ -714,8 +727,12 @@ func (s *Server) handleAPITestWhatsApp(w http.ResponseWriter, r *http.Request) {
 		TemplateLanguage: templateLanguage,
 	}
 
-	if err := notify.SendWhatsAppTest(whatsAppCfg, cfg.StationName); err != nil {
-		s.writeError(w, http.StatusBadGateway, err.Error())
+	if err := notify.SendWhatsAppTest(r.Context(), whatsAppCfg, cfg.StationName); err != nil {
+		status := http.StatusBadGateway
+		if errors.Is(err, notify.ErrWhatsAppConfig) {
+			status = http.StatusBadRequest
+		}
+		s.writeError(w, status, err.Error())
 		return
 	}
 

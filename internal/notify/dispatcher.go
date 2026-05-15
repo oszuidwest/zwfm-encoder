@@ -1,6 +1,8 @@
 package notify
 
 import (
+	"context"
+
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 )
@@ -13,10 +15,13 @@ type AlertChannel interface {
 	SubscribesSilenceStart(cfg *config.Snapshot) bool
 	SubscribesSilenceEnd(cfg *config.Snapshot) bool
 	SubscribesAudioDump(cfg *config.Snapshot) bool
-	SendSilenceStart(cfg *config.Snapshot, levelL, levelR float64) error
-	SendSilenceEnd(cfg *config.Snapshot, durationMS int64, levelL, levelR float64) error
-	SendAudioDump(cfg *config.Snapshot, durationMS int64, levelL, levelR float64, result *silencedump.EncodeResult) error
-	SendUploadAbandoned(cfg *config.Snapshot, params UploadAbandonedData) error
+	SendSilenceStart(ctx context.Context, cfg *config.Snapshot, levelL, levelR float64) error
+	SendSilenceEnd(ctx context.Context, cfg *config.Snapshot, durationMS int64, levelL, levelR float64) error
+	SendAudioDump(
+		ctx context.Context, cfg *config.Snapshot, durationMS int64, levelL, levelR float64,
+		result *silencedump.EncodeResult,
+	) error
+	SendUploadAbandoned(ctx context.Context, cfg *config.Snapshot, params UploadAbandonedData) error
 }
 
 // UploadAbandonedData contains details about an abandoned upload for notification dispatch.
@@ -56,14 +61,16 @@ func (d *Dispatcher) Channels() []AlertChannel {
 // DispatchSilenceStart sends silence-start notifications to subscribed channels from the active set.
 //
 //nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
-func (d *Dispatcher) DispatchSilenceStart(active []AlertChannel, cfg config.Snapshot, levelL, levelR float64) {
+func (d *Dispatcher) DispatchSilenceStart(
+	ctx context.Context, active []AlertChannel, cfg config.Snapshot, levelL, levelR float64,
+) {
 	for _, ch := range active {
 		if !ch.SubscribesSilenceStart(&cfg) {
 			continue
 		}
 		go func(ch AlertChannel, cfg config.Snapshot) {
 			logNotifyResult(
-				func() error { return ch.SendSilenceStart(&cfg, levelL, levelR) },
+				func() error { return ch.SendSilenceStart(ctx, &cfg, levelL, levelR) },
 				ch.Name(),
 				"silence_start",
 			)
@@ -75,7 +82,7 @@ func (d *Dispatcher) DispatchSilenceStart(active []AlertChannel, cfg config.Snap
 //
 //nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
 func (d *Dispatcher) DispatchSilenceEnd(
-	active []AlertChannel, cfg config.Snapshot, durationMS int64, levelL, levelR float64,
+	ctx context.Context, active []AlertChannel, cfg config.Snapshot, durationMS int64, levelL, levelR float64,
 ) {
 	for _, ch := range active {
 		if !ch.SubscribesSilenceEnd(&cfg) {
@@ -83,7 +90,7 @@ func (d *Dispatcher) DispatchSilenceEnd(
 		}
 		go func(ch AlertChannel, cfg config.Snapshot) {
 			logNotifyResult(
-				func() error { return ch.SendSilenceEnd(&cfg, durationMS, levelL, levelR) },
+				func() error { return ch.SendSilenceEnd(ctx, &cfg, durationMS, levelL, levelR) },
 				ch.Name(),
 				"silence_end",
 			)
@@ -95,7 +102,7 @@ func (d *Dispatcher) DispatchSilenceEnd(
 //
 //nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
 func (d *Dispatcher) DispatchAudioDump(
-	active []AlertChannel, cfg config.Snapshot, durationMS int64,
+	ctx context.Context, active []AlertChannel, cfg config.Snapshot, durationMS int64,
 	levelL, levelR float64, result *silencedump.EncodeResult,
 ) {
 	for _, ch := range active {
@@ -104,7 +111,7 @@ func (d *Dispatcher) DispatchAudioDump(
 		}
 		go func(ch AlertChannel, cfg config.Snapshot) {
 			logNotifyResult(
-				func() error { return ch.SendAudioDump(&cfg, durationMS, levelL, levelR, result) },
+				func() error { return ch.SendAudioDump(ctx, &cfg, durationMS, levelL, levelR, result) },
 				ch.Name(),
 				"audio_dump_ready",
 			)
@@ -115,14 +122,14 @@ func (d *Dispatcher) DispatchAudioDump(
 // DispatchUploadAbandoned sends upload-abandonment notifications to all configured channels.
 //
 //nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
-func (d *Dispatcher) DispatchUploadAbandoned(cfg config.Snapshot, params UploadAbandonedData) {
+func (d *Dispatcher) DispatchUploadAbandoned(ctx context.Context, cfg config.Snapshot, params UploadAbandonedData) {
 	for _, ch := range d.channels {
 		if !ch.IsConfiguredForUpload(&cfg) {
 			continue
 		}
 		go func(ch AlertChannel, cfg config.Snapshot) {
 			logNotifyResult(
-				func() error { return ch.SendUploadAbandoned(&cfg, params) },
+				func() error { return ch.SendUploadAbandoned(ctx, &cfg, params) },
 				ch.Name(),
 				"upload_abandoned",
 			)

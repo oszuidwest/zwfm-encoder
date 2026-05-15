@@ -21,11 +21,22 @@ import (
 const (
 	defaultWhatsAppTemplateLanguage = "en_US"
 	maxWhatsAppTextRunes            = 4096
+	maxWhatsAppErrorBodyBytes       = 4096
+	maxWhatsAppErrorSnippetRunes    = 256
+	whatsAppSendTimeout             = 10 * time.Second
+
+	whatsAppMessagingProduct = "whatsapp"
+	whatsAppRecipientType    = "individual"
+	whatsAppMessageText      = "text"
+	whatsAppMessageTemplate  = "template"
+	whatsAppComponentBody    = "body"
 )
 
 var (
-	whatsappClient     = &http.Client{Timeout: 10 * time.Second}
+	whatsappClient = &http.Client{Timeout: whatsAppSendTimeout}
+	// whatsappAPIBaseURL is mutable so tests can point requests at httptest.Server.
 	whatsappAPIBaseURL = "https://graph.facebook.com/v24.0"
+	ErrWhatsAppConfig  = errors.New("invalid WhatsApp configuration")
 )
 
 // WhatsAppConfig is the configuration for WhatsApp Cloud API notifications.
@@ -74,11 +85,38 @@ type whatsappTemplateParameter struct {
 
 type whatsappErrorResponse struct {
 	Error struct {
-		Message string `json:"message"`
-		Type    string `json:"type"`
-		Code    int    `json:"code"`
+		Message   string `json:"message"`
+		Type      string `json:"type"`
+		Code      int    `json:"code"`
+		ErrorData struct {
+			Details string `json:"details"`
+		} `json:"error_data"`
 		TraceID string `json:"fbtrace_id"`
 	} `json:"error"`
+}
+
+// WhatsAppRecipientError aggregates delivery failures across all configured recipients.
+type WhatsAppRecipientError struct {
+	RecipientCount int
+	FailedCount    int
+	Err            error
+}
+
+func (e *WhatsAppRecipientError) Error() string {
+	return fmt.Sprintf("%d of %d WhatsApp recipients failed: %v", e.FailedCount, e.RecipientCount, e.Err)
+}
+
+func (e *WhatsAppRecipientError) Unwrap() error {
+	return e.Err
+}
+
+// LogAttrs returns slog key/value pairs describing the partial-failure shape.
+func (e *WhatsAppRecipientError) LogAttrs() []any {
+	return []any{
+		"recipient_count", e.RecipientCount,
+		"failed_count", e.FailedCount,
+		"partial_failure", e.FailedCount < e.RecipientCount,
+	}
 }
 
 // WhatsAppChannel implements AlertChannel for WhatsApp Business Cloud API delivery.
@@ -108,7 +146,8 @@ func (c *WhatsAppChannel) SubscribesAudioDump(cfg *config.Snapshot) bool {
 	return cfg.HasWhatsApp() && cfg.WhatsAppEvents.AudioDump
 }
 
-func (c *WhatsAppChannel) SendSilenceStart(cfg *config.Snapshot, levelL, levelR float64) error {
+// SendSilenceStart sends a WhatsApp alert when silence starts.
+func (c *WhatsAppChannel) SendSilenceStart(ctx context.Context, cfg *config.Snapshot, levelL, levelR float64) error {
 	whatsAppCfg := BuildWhatsAppConfig(cfg)
 	body := fmt.Sprintf(
 		"[ALERT] Silence Detected - %s\n\n"+
@@ -118,10 +157,13 @@ func (c *WhatsAppChannel) SendSilenceStart(cfg *config.Snapshot, levelL, levelR 
 			"Silence is ongoing. Please check the audio source.",
 		cfg.StationName, util.HumanTime(), cfg.SilenceThreshold, levelL, levelR,
 	)
-	return sendWhatsAppMessage(context.Background(), whatsAppCfg, body)
+	return sendWhatsAppMessage(ctx, whatsAppCfg, body)
 }
 
-func (c *WhatsAppChannel) SendSilenceEnd(cfg *config.Snapshot, durationMS int64, levelL, levelR float64) error {
+// SendSilenceEnd sends a WhatsApp alert when audio recovers after silence.
+func (c *WhatsAppChannel) SendSilenceEnd(
+	ctx context.Context, cfg *config.Snapshot, durationMS int64, levelL, levelR float64,
+) error {
 	whatsAppCfg := BuildWhatsAppConfig(cfg)
 	body := fmt.Sprintf(
 		"[OK] Audio Restored - %s\n\n"+
@@ -130,11 +172,12 @@ func (c *WhatsAppChannel) SendSilenceEnd(cfg *config.Snapshot, durationMS int64,
 			"Level: Left %.1f dB / Right %.1f dB (threshold: %.1f dB)",
 		cfg.StationName, util.HumanTime(), util.FormatDuration(durationMS), levelL, levelR, cfg.SilenceThreshold,
 	)
-	return sendWhatsAppMessage(context.Background(), whatsAppCfg, body)
+	return sendWhatsAppMessage(ctx, whatsAppCfg, body)
 }
 
+// SendAudioDump sends a WhatsApp alert with the status of the silence audio dump.
 func (c *WhatsAppChannel) SendAudioDump(
-	cfg *config.Snapshot, durationMS int64, levelL, levelR float64,
+	ctx context.Context, cfg *config.Snapshot, durationMS int64, levelL, levelR float64,
 	result *silencedump.EncodeResult,
 ) error {
 	whatsAppCfg := BuildWhatsAppConfig(cfg)
@@ -152,10 +195,13 @@ func (c *WhatsAppChannel) SendAudioDump(
 		cfg.SilenceThreshold,
 		whatsAppDumpDetail(result),
 	)
-	return sendWhatsAppMessage(context.Background(), whatsAppCfg, body)
+	return sendWhatsAppMessage(ctx, whatsAppCfg, body)
 }
 
-func (c *WhatsAppChannel) SendUploadAbandoned(cfg *config.Snapshot, params UploadAbandonedData) error {
+// SendUploadAbandoned sends a WhatsApp alert for a recording upload that exhausted retries.
+func (c *WhatsAppChannel) SendUploadAbandoned(
+	ctx context.Context, cfg *config.Snapshot, params UploadAbandonedData,
+) error {
 	whatsAppCfg := BuildWhatsAppConfig(cfg)
 	body := fmt.Sprintf(
 		"[ALERT] Upload Abandoned - %s\n\n"+
@@ -174,11 +220,11 @@ func (c *WhatsAppChannel) SendUploadAbandoned(cfg *config.Snapshot, params Uploa
 		params.RetryCount,
 		params.LastError,
 	)
-	return sendWhatsAppMessage(context.Background(), whatsAppCfg, body)
+	return sendWhatsAppMessage(ctx, whatsAppCfg, body)
 }
 
 // SendWhatsAppTest sends a test WhatsApp notification.
-func SendWhatsAppTest(cfg *WhatsAppConfig, stationName string) error {
+func SendWhatsAppTest(ctx context.Context, cfg *WhatsAppConfig, stationName string) error {
 	body := fmt.Sprintf(
 		"[TEST] %s\n\n"+
 			"Test WhatsApp notification from the audio encoder.\n\n"+
@@ -186,7 +232,7 @@ func SendWhatsAppTest(cfg *WhatsAppConfig, stationName string) error {
 		stationName,
 		util.HumanTime(),
 	)
-	return sendWhatsAppMessage(context.Background(), cfg, body)
+	return sendWhatsAppMessage(ctx, cfg, body)
 }
 
 // BuildWhatsAppConfig builds a WhatsAppConfig from a config snapshot.
@@ -201,64 +247,130 @@ func BuildWhatsAppConfig(cfg *config.Snapshot) *WhatsAppConfig {
 	}
 }
 
-func validateWhatsAppConfig(cfg *WhatsAppConfig) error {
+func validateWhatsAppConfig(cfg *WhatsAppConfig) ([]string, error) {
 	if cfg == nil {
-		return fmt.Errorf("configuration is required")
+		return nil, fmt.Errorf("%w: configuration is required", ErrWhatsAppConfig)
 	}
 	if strings.TrimSpace(cfg.PhoneNumberID) == "" {
-		return fmt.Errorf("phone number ID is required")
+		return nil, fmt.Errorf("%w: phone number ID is required", ErrWhatsAppConfig)
 	}
 	if strings.TrimSpace(cfg.AccessToken) == "" {
-		return fmt.Errorf("access token is required")
+		return nil, fmt.Errorf("%w: access token is required", ErrWhatsAppConfig)
 	}
-
-	recipients := parseWhatsAppRecipients(cfg.Recipients)
-	if len(recipients) == 0 {
-		return fmt.Errorf("recipients are required")
+	templateName := strings.TrimSpace(cfg.TemplateName)
+	templateLanguage := strings.TrimSpace(cfg.TemplateLanguage)
+	if templateName != "" && !util.ValidWhatsAppTemplateName(templateName) {
+		return nil, fmt.Errorf("%w: template name is invalid", ErrWhatsAppConfig)
 	}
-	for _, recipient := range recipients {
-		if !validWhatsAppRecipient(recipient) {
-			return fmt.Errorf("recipient %q is invalid", recipient)
+	if templateLanguage != "" {
+		if templateName == "" {
+			return nil, fmt.Errorf("%w: template language requires template name", ErrWhatsAppConfig)
+		}
+		if strings.ContainsAny(templateLanguage, " \t\n\r\f\v") {
+			return nil, fmt.Errorf("%w: template language cannot contain whitespace", ErrWhatsAppConfig)
 		}
 	}
 
-	return nil
+	recipients := util.ParseWhatsAppRecipients(cfg.Recipients)
+	if len(recipients) == 0 {
+		return nil, fmt.Errorf("%w: recipients are required", ErrWhatsAppConfig)
+	}
+	for _, recipient := range recipients {
+		if !util.ValidWhatsAppRecipient(recipient) {
+			return nil, fmt.Errorf("%w: recipient %q is invalid", ErrWhatsAppConfig, recipient)
+		}
+	}
+
+	return recipients, nil
 }
 
 func sendWhatsAppMessage(ctx context.Context, cfg *WhatsAppConfig, body string) error {
-	if err := validateWhatsAppConfig(cfg); err != nil {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	recipients, err := validateWhatsAppConfig(cfg)
+	if err != nil {
 		return err
 	}
 
-	recipients := parseWhatsAppRecipients(cfg.Recipients)
+	useTemplate := strings.TrimSpace(cfg.TemplateName) != ""
+	var (
+		textBody     string
+		templateBody string
+	)
+	if useTemplate {
+		templateBody = sanitizeWhatsAppTemplateText(body)
+	} else {
+		textBody = truncateWhatsAppText(body)
+	}
+
 	var errs []error
 	for _, recipient := range recipients {
-		if err := sendWhatsAppMessageToRecipient(ctx, cfg, recipient, body); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", recipient, err))
+		var sendErr error
+		if useTemplate {
+			sendErr = sendWhatsAppPayload(ctx, cfg, whatsappTemplatePayload(cfg, recipient, templateBody))
+		} else {
+			sendErr = sendWhatsAppPayload(ctx, cfg, whatsappTextPayload(recipient, textBody))
+		}
+		if sendErr != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", recipient, sendErr))
 		}
 	}
-	return errors.Join(errs...)
-}
-
-func sendWhatsAppMessageToRecipient(ctx context.Context, cfg *WhatsAppConfig, recipient, body string) error {
-	if strings.TrimSpace(cfg.TemplateName) != "" {
-		return sendWhatsAppTemplateToRecipient(ctx, cfg, recipient, body)
+	if len(errs) > 0 {
+		return &WhatsAppRecipientError{
+			RecipientCount: len(recipients),
+			FailedCount:    len(errs),
+			Err:            errors.Join(errs...),
+		}
 	}
-	return sendWhatsAppFreeTextToRecipient(ctx, cfg, recipient, body)
+	return nil
 }
 
-func sendWhatsAppFreeTextToRecipient(ctx context.Context, cfg *WhatsAppConfig, recipient, body string) error {
-	payload := whatsappTextRequest{
-		MessagingProduct: "whatsapp",
-		RecipientType:    "individual",
+func whatsappTextPayload(recipient, body string) whatsappTextRequest {
+	return whatsappTextRequest{
+		MessagingProduct: whatsAppMessagingProduct,
+		RecipientType:    whatsAppRecipientType,
 		To:               recipient,
-		Type:             "text",
+		Type:             whatsAppMessageText,
 		Text: whatsappText{
 			PreviewURL: false,
-			Body:       truncateWhatsAppText(body),
+			Body:       body,
 		},
 	}
+}
 
+func whatsappTemplatePayload(cfg *WhatsAppConfig, recipient, body string) whatsappTemplateRequest {
+	language := strings.TrimSpace(cfg.TemplateLanguage)
+	if language == "" {
+		language = defaultWhatsAppTemplateLanguage
+	}
+
+	return whatsappTemplateRequest{
+		MessagingProduct: whatsAppMessagingProduct,
+		RecipientType:    whatsAppRecipientType,
+		To:               recipient,
+		Type:             whatsAppMessageTemplate,
+		Template: whatsappTemplate{
+			Name: strings.TrimSpace(cfg.TemplateName),
+			Language: whatsappTemplateLanguage{
+				Code: language,
+			},
+			Components: []whatsappTemplateComponent{
+				{
+					Type: whatsAppComponentBody,
+					Parameters: []whatsappTemplateParameter{
+						{
+							Type: whatsAppMessageText,
+							Text: body,
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func sendWhatsAppPayload(ctx context.Context, cfg *WhatsAppConfig, payload any) error {
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return util.WrapError("marshal WhatsApp payload", err)
@@ -289,126 +401,61 @@ func sendWhatsAppFreeTextToRecipient(ctx context.Context, cfg *WhatsAppConfig, r
 	return nil
 }
 
-func sendWhatsAppTemplateToRecipient(ctx context.Context, cfg *WhatsAppConfig, recipient, body string) error {
-	language := strings.TrimSpace(cfg.TemplateLanguage)
-	if language == "" {
-		language = defaultWhatsAppTemplateLanguage
-	}
-
-	payload := whatsappTemplateRequest{
-		MessagingProduct: "whatsapp",
-		RecipientType:    "individual",
-		To:               recipient,
-		Type:             "template",
-		Template: whatsappTemplate{
-			Name: strings.TrimSpace(cfg.TemplateName),
-			Language: whatsappTemplateLanguage{
-				Code: language,
-			},
-			Components: []whatsappTemplateComponent{
-				{
-					Type: "body",
-					Parameters: []whatsappTemplateParameter{
-						{
-							Type: "text",
-							Text: truncateWhatsAppText(body),
-						},
-					},
-				},
-			},
-		},
-	}
-
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return util.WrapError("marshal WhatsApp template payload", err)
-	}
-
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		whatsappMessagesURL(cfg.PhoneNumberID),
-		bytes.NewReader(jsonData),
-	)
-	if err != nil {
-		return util.WrapError("create WhatsApp template request", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(cfg.AccessToken))
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := whatsappClient.Do(req)
-	if err != nil {
-		return util.WrapError("send WhatsApp template request", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return whatsappStatusError(resp)
-	}
-
-	return nil
-}
-
 func whatsappMessagesURL(phoneNumberID string) string {
 	base := strings.TrimRight(whatsappAPIBaseURL, "/")
 	return base + "/" + url.PathEscape(strings.TrimSpace(phoneNumberID)) + "/messages"
 }
 
 func whatsappStatusError(resp *http.Response) error {
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	bodyText := strings.TrimSpace(string(body))
-
-	var apiErr whatsappErrorResponse
-	if err := json.Unmarshal(body, &apiErr); err == nil && apiErr.Error.Message != "" {
-		if apiErr.Error.Code != 0 {
-			return fmt.Errorf("WhatsApp API returned status %d: %s (code %d)",
-				resp.StatusCode, apiErr.Error.Message, apiErr.Error.Code)
-		}
-		return fmt.Errorf("WhatsApp API returned status %d: %s", resp.StatusCode, apiErr.Error.Message)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxWhatsAppErrorBodyBytes))
+	if err != nil {
+		return fmt.Errorf("WhatsApp API returned status %d: read error body: %w", resp.StatusCode, err)
 	}
-
+	bodyText := strings.TrimSpace(string(body))
 	if bodyText == "" {
 		return fmt.Errorf("WhatsApp API returned status %d", resp.StatusCode)
 	}
-	return fmt.Errorf("WhatsApp API returned status %d: %s", resp.StatusCode, bodyText)
+
+	var apiErr whatsappErrorResponse
+	if err := json.Unmarshal(body, &apiErr); err == nil && apiErr.Error.Message != "" {
+		return whatsappAPIError(resp.StatusCode, apiErr)
+	}
+
+	return fmt.Errorf(
+		"WhatsApp API returned status %d: error body snippet: %s",
+		resp.StatusCode,
+		truncateRunes(bodyText, maxWhatsAppErrorSnippetRunes),
+	)
 }
 
-func parseWhatsAppRecipients(recipients string) []string {
-	var result []string
-	for recipient := range strings.SplitSeq(recipients, ",") {
-		if normalized := normalizeWhatsAppRecipient(recipient); normalized != "" {
-			result = append(result, normalized)
-		}
+func whatsappAPIError(statusCode int, apiErr whatsappErrorResponse) error {
+	parts := []string{fmt.Sprintf("WhatsApp API returned status %d: %s", statusCode, apiErr.Error.Message)}
+	if apiErr.Error.ErrorData.Details != "" {
+		parts = append(parts, "details: "+apiErr.Error.ErrorData.Details)
 	}
-	return result
-}
-
-func normalizeWhatsAppRecipient(recipient string) string {
-	trimmed := strings.TrimSpace(recipient)
-	trimmed = strings.TrimPrefix(trimmed, "+")
-	replacer := strings.NewReplacer(" ", "", "-", "", "(", "", ")", "")
-	return replacer.Replace(trimmed)
-}
-
-func validWhatsAppRecipient(recipient string) bool {
-	normalized := normalizeWhatsAppRecipient(recipient)
-	if len(normalized) < 8 || len(normalized) > 15 {
-		return false
+	if apiErr.Error.Code != 0 {
+		parts = append(parts, fmt.Sprintf("code: %d", apiErr.Error.Code))
 	}
-	for _, r := range normalized {
-		if r < '0' || r > '9' {
-			return false
-		}
+	if apiErr.Error.TraceID != "" {
+		parts = append(parts, "trace: "+apiErr.Error.TraceID)
 	}
-	return true
+	return errors.New(strings.Join(parts, "; "))
 }
 
 func truncateWhatsAppText(body string) string {
-	runes := []rune(body)
-	if len(runes) <= maxWhatsAppTextRunes {
-		return body
+	return truncateRunes(body, maxWhatsAppTextRunes)
+}
+
+func sanitizeWhatsAppTemplateText(body string) string {
+	return truncateWhatsAppText(strings.Join(strings.Fields(body), " "))
+}
+
+func truncateRunes(s string, maxRunes int) string {
+	runes := []rune(s)
+	if len(runes) <= maxRunes {
+		return s
 	}
-	return string(runes[:maxWhatsAppTextRunes-3]) + "..."
+	return string(runes[:maxRunes-3]) + "..."
 }
 
 func whatsAppDumpDetail(result *silencedump.EncodeResult) string {

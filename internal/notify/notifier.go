@@ -2,6 +2,7 @@
 package notify
 
 import (
+	"context"
 	"log/slog"
 	"sync"
 	"time"
@@ -33,6 +34,8 @@ type AlertOrchestrator struct {
 	mu              sync.Mutex
 	activeChannels  []AlertChannel
 	pendingRecovery *pendingRecoveryData
+	notifyCtx       context.Context
+	notifyCancel    context.CancelFunc
 
 	logMu     sync.RWMutex
 	logQueue  chan logJob // serialized log writes; single worker guarantees JSONL write order
@@ -51,10 +54,13 @@ type pendingRecoveryData struct {
 
 // NewAlertOrchestrator creates a new alert orchestrator.
 func NewAlertOrchestrator(cfg *config.Config, dispatcher *Dispatcher) *AlertOrchestrator {
+	notifyCtx, notifyCancel := context.WithCancel(context.Background())
 	o := &AlertOrchestrator{
-		cfg:        cfg,
-		dispatcher: dispatcher,
-		logQueue:   make(chan logJob, logQueueDepth),
+		cfg:          cfg,
+		dispatcher:   dispatcher,
+		notifyCtx:    notifyCtx,
+		notifyCancel: notifyCancel,
+		logQueue:     make(chan logJob, logQueueDepth),
 	}
 	go o.runLogWorker()
 	return o
@@ -122,10 +128,11 @@ func (o *AlertOrchestrator) handleSilenceStart(levelL, levelR float64) {
 		o.activeChannels = active
 	}
 	active := o.activeChannels
+	ctx := o.notifyCtx
 	o.mu.Unlock()
 
 	now := time.Now()
-	o.dispatcher.DispatchSilenceStart(active, cfg, levelL, levelR)
+	o.dispatcher.DispatchSilenceStart(ctx, active, cfg, levelL, levelR)
 	o.enqueueLog("silence_start", func() { o.logSilenceStart(now, &cfg, levelL, levelR) })
 }
 
@@ -142,10 +149,11 @@ func (o *AlertOrchestrator) handleSilenceEnd(durationMS int64, levelL, levelR fl
 		cfg:            cfg,
 		activeChannels: active,
 	}
+	ctx := o.notifyCtx
 	o.mu.Unlock()
 
 	now := time.Now()
-	o.dispatcher.DispatchSilenceEnd(active, cfg, durationMS, levelL, levelR)
+	o.dispatcher.DispatchSilenceEnd(ctx, active, cfg, durationMS, levelL, levelR)
 	o.enqueueLog("silence_end", func() { o.logSilenceEnd(now, &cfg, durationMS, levelL, levelR) })
 }
 
@@ -154,6 +162,7 @@ func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
 	o.mu.Lock()
 	pending := o.pendingRecovery
 	o.pendingRecovery = nil
+	ctx := o.notifyCtx
 	o.mu.Unlock()
 
 	if pending == nil {
@@ -163,7 +172,7 @@ func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
 
 	now := time.Now()
 	o.dispatcher.DispatchAudioDump(
-		pending.activeChannels, pending.cfg, pending.durationMS,
+		ctx, pending.activeChannels, pending.cfg, pending.durationMS,
 		pending.levelL, pending.levelR, result,
 	)
 	o.enqueueLog("audio_dump_ready", func() {
@@ -177,7 +186,10 @@ func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
 // HandleUploadAbandoned dispatches an upload-abandonment alert to all configured channels.
 func (o *AlertOrchestrator) HandleUploadAbandoned(params UploadAbandonedData) {
 	cfg := o.cfg.Snapshot()
-	o.dispatcher.DispatchUploadAbandoned(cfg, params)
+	o.mu.Lock()
+	ctx := o.notifyCtx
+	o.mu.Unlock()
+	o.dispatcher.DispatchUploadAbandoned(ctx, cfg, params)
 }
 
 // Reset clears alert state for the current silence period, including any pending dump dispatch.
@@ -185,7 +197,13 @@ func (o *AlertOrchestrator) Reset() {
 	o.mu.Lock()
 	o.activeChannels = nil
 	o.pendingRecovery = nil
+	o.resetNotifyContextLocked()
 	o.mu.Unlock()
+}
+
+func (o *AlertOrchestrator) resetNotifyContextLocked() {
+	o.notifyCancel()
+	o.notifyCtx, o.notifyCancel = context.WithCancel(context.Background())
 }
 
 // DrainLogs blocks until all log jobs currently in the queue have been executed.
@@ -210,6 +228,10 @@ func (o *AlertOrchestrator) DrainLogs() {
 func (o *AlertOrchestrator) Close() {
 	o.closeOnce.Do(func() {
 		done := make(chan struct{})
+
+		o.mu.Lock()
+		o.notifyCancel()
+		o.mu.Unlock()
 
 		o.logMu.Lock()
 		o.closed = true
