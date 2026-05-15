@@ -193,17 +193,14 @@ func (o *AlertOrchestrator) HandleUploadAbandoned(params UploadAbandonedData) {
 }
 
 // Reset clears alert state for the current silence period, including any pending dump dispatch.
+// In-flight notifications are intentionally NOT cancelled here: Reset runs on encoder
+// start/stop/source-failure, and a short silence followed by a Stop would otherwise abort
+// a still-pending silence_start delivery. The notify context is cancelled only on Close.
 func (o *AlertOrchestrator) Reset() {
 	o.mu.Lock()
 	o.activeChannels = nil
 	o.pendingRecovery = nil
-	o.resetNotifyContextLocked()
 	o.mu.Unlock()
-}
-
-func (o *AlertOrchestrator) resetNotifyContextLocked() {
-	o.notifyCancel()
-	o.notifyCtx, o.notifyCancel = context.WithCancel(context.Background())
 }
 
 // DrainLogs blocks until all log jobs currently in the queue have been executed.

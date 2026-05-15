@@ -470,14 +470,6 @@ func TestSendWhatsAppMessageAggregatesRecipientErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("SendWhatsAppTest() error = nil, want partial failure")
 	}
-	var recipientErr *WhatsAppRecipientError
-	if !errors.As(err, &recipientErr) {
-		t.Fatalf("SendWhatsAppTest() error = %T, want WhatsAppRecipientError", err)
-	}
-	if recipientErr.RecipientCount != 2 || recipientErr.FailedCount != 1 {
-		t.Fatalf("recipient counts = %d/%d, want 1 failed of 2",
-			recipientErr.FailedCount, recipientErr.RecipientCount)
-	}
 	if !strings.Contains(err.Error(), "1 of 2 WhatsApp recipients failed") {
 		t.Fatalf("SendWhatsAppTest() error = %q, want recipient counts", err.Error())
 	}

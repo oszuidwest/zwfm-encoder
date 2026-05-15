@@ -7,7 +7,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 )
 
-// AlertChannel is a notification delivery channel (webhook, email, Zabbix).
+// AlertChannel is a notification delivery channel (webhook, email, WhatsApp, Zabbix).
 type AlertChannel interface {
 	Name() string
 	IsConfiguredForSilence(cfg *config.Snapshot) bool

@@ -150,7 +150,7 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	audioInputChanged := req.AudioInput != cfg.AudioInput
 
 	req.GraphClientSecret = cmp.Or(req.GraphClientSecret, cfg.GraphClientSecret)
-	preserveWhatsAppAccessToken(&req, &cfg)
+	prepareWhatsAppSettingsRequest(&req, &cfg)
 
 	if errs := req.Validate(); len(errs) > 0 {
 		s.writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -195,20 +195,6 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 
 	s.broadcastConfigChanged()
 	s.writeNoContent(w)
-}
-
-func preserveWhatsAppAccessToken(req *config.SettingsUpdate, cfg *config.Snapshot) {
-	if !settingsHasWhatsAppFields(req) {
-		return
-	}
-	req.WhatsAppAccessToken = cmp.Or(req.WhatsAppAccessToken, cfg.WhatsAppAccessToken)
-}
-
-func settingsHasWhatsAppFields(req *config.SettingsUpdate) bool {
-	return strings.TrimSpace(req.WhatsAppPhoneNumberID) != "" ||
-		strings.TrimSpace(req.WhatsAppRecipients) != "" ||
-		strings.TrimSpace(req.WhatsAppTemplateName) != "" ||
-		strings.TrimSpace(req.WhatsAppTemplateLanguage) != ""
 }
 
 // handleListStreams returns all configured streams.
@@ -604,42 +590,99 @@ func (s *Server) handleTestS3(w http.ResponseWriter, r *http.Request) {
 }
 
 // NotificationTestRequest contains fields for testing notifications.
+//
+// Pointer fields distinguish "omitted" (nil means fall back to saved config) from "explicitly
+// empty" (non-nil empty string means intentional, e.g. clearing a saved template to test
+// free-form mode). Without this, cmp.Or treats both alike and tests cannot exercise
+// the cleared-field path.
 type NotificationTestRequest struct {
-	// WebhookURL is the endpoint for silence notifications.
-	WebhookURL string `json:"webhook_url,omitempty"`
+	WebhookURL *string `json:"webhook_url,omitempty"`
 
-	// GraphTenantID is the Microsoft Graph tenant ID.
-	GraphTenantID string `json:"graph_tenant_id,omitempty"`
-	// GraphClientID is the Microsoft Graph client ID.
-	GraphClientID string `json:"graph_client_id,omitempty"`
-	// GraphClientSecret is the Microsoft Graph client secret.
-	GraphClientSecret string `json:"graph_client_secret,omitempty"`
-	// GraphFromAddress is the sender email address.
-	GraphFromAddress string `json:"graph_from_address,omitempty"`
-	// GraphRecipients is a comma-separated recipient list.
-	GraphRecipients string `json:"graph_recipients,omitempty"`
+	GraphTenantID     *string `json:"graph_tenant_id,omitempty"`
+	GraphClientID     *string `json:"graph_client_id,omitempty"`
+	GraphClientSecret *string `json:"graph_client_secret,omitempty"`
+	GraphFromAddress  *string `json:"graph_from_address,omitempty"`
+	GraphRecipients   *string `json:"graph_recipients,omitempty"`
 
-	// WhatsAppPhoneNumberID is the Meta WhatsApp Business phone number ID.
-	WhatsAppPhoneNumberID string `json:"whatsapp_phone_number_id,omitempty"`
-	// WhatsAppAccessToken is the WhatsApp Cloud API access token.
-	WhatsAppAccessToken string `json:"whatsapp_access_token,omitempty"`
-	// WhatsAppRecipients is a comma-separated recipient phone number list.
-	WhatsAppRecipients string `json:"whatsapp_recipients,omitempty"`
-	// WhatsAppTemplateName is an approved Meta template name.
-	WhatsAppTemplateName string `json:"whatsapp_template_name,omitempty"`
-	// WhatsAppTemplateLanguage is the template language code.
-	WhatsAppTemplateLanguage string `json:"whatsapp_template_language,omitempty"`
+	WhatsAppPhoneNumberID    *string `json:"whatsapp_phone_number_id,omitempty"`
+	WhatsAppAccessToken      *string `json:"whatsapp_access_token,omitempty"`
+	WhatsAppRecipients       *string `json:"whatsapp_recipients,omitempty"`
+	WhatsAppTemplateName     *string `json:"whatsapp_template_name,omitempty"`
+	WhatsAppTemplateLanguage *string `json:"whatsapp_template_language,omitempty"`
 
-	// ZabbixServer is the Zabbix server hostname.
-	ZabbixServer string `json:"zabbix_server,omitempty"`
-	// ZabbixPort is the Zabbix server port.
-	ZabbixPort int `json:"zabbix_port,omitempty"`
-	// ZabbixHost is the monitored host name in Zabbix.
-	ZabbixHost string `json:"zabbix_host,omitempty"`
-	// ZabbixSilenceKey is the Zabbix silence item key.
-	ZabbixSilenceKey string `json:"zabbix_silence_key,omitempty"`
-	// ZabbixUploadKey is the Zabbix upload item key.
-	ZabbixUploadKey string `json:"zabbix_upload_key,omitempty"`
+	ZabbixServer     *string `json:"zabbix_server,omitempty"`
+	ZabbixPort       *int    `json:"zabbix_port,omitempty"`
+	ZabbixHost       *string `json:"zabbix_host,omitempty"`
+	ZabbixSilenceKey *string `json:"zabbix_silence_key,omitempty"`
+	ZabbixUploadKey  *string `json:"zabbix_upload_key,omitempty"`
+}
+
+// deref returns *p when p is non-nil, otherwise fallback. Used by notification-test
+// handlers to merge request fields with saved config: omitted JSON fields fall back,
+// explicit values (including "") are used as-is.
+func deref[T any](p *T, fallback T) T {
+	if p != nil {
+		return *p
+	}
+	return fallback
+}
+
+// preserveWhatsAppAccessToken keeps the saved access token when the request omits it
+// but still references WhatsApp via another visible field. Graph uses an unconditional
+// preserve because Graph has no partial-config validator, but WhatsApp's validator
+// rejects "token set, other fields empty"; reintroducing the token on a fully-empty
+// request would block the user from disabling WhatsApp via the UI.
+//
+// Template language is intentionally NOT a visible-config signal: it is metadata
+// for template_name, not a standalone configuration. The UI pre-fills language
+// from the saved config, so a stale "en_US" can survive the user clearing every
+// other field; counting it here would silently re-introduce the token and
+// trip the all-or-nothing partial-config check.
+func preserveWhatsAppAccessToken(req *config.SettingsUpdate, cfg *config.Snapshot) {
+	hasVisibleConfig := strings.TrimSpace(req.WhatsAppPhoneNumberID) != "" ||
+		strings.TrimSpace(req.WhatsAppRecipients) != "" ||
+		strings.TrimSpace(req.WhatsAppTemplateName) != ""
+	if hasVisibleConfig {
+		req.WhatsAppAccessToken = cmp.Or(req.WhatsAppAccessToken, cfg.WhatsAppAccessToken)
+	}
+}
+
+// prepareWhatsAppSettingsRequest applies the WhatsApp-specific request preprocessing
+// that handleAPISettings needs before validation: normalize first so a cleared
+// template name drops its stale language, then preserve so the access-token
+// inheritance sees a request free of stale form state. Centralizing the order here
+// keeps tests from having to mirror the handler manually.
+func prepareWhatsAppSettingsRequest(req *config.SettingsUpdate, cfg *config.Snapshot) {
+	normalizeWhatsAppTemplateLanguage(&req.WhatsAppTemplateName, &req.WhatsAppTemplateLanguage)
+	preserveWhatsAppAccessToken(req, cfg)
+}
+
+// normalizeWhatsAppTemplateLanguage drops the language when the template name is
+// empty (free-text mode). Language is only meaningful alongside a name, and both
+// validateWhatsAppConfigFields and validateWhatsAppConfig reject "language without
+// name". Without this, clearing only the template name in the UI while leaving the
+// saved language intact would fail validation with a confusing error.
+func normalizeWhatsAppTemplateLanguage(name, language *string) {
+	if strings.TrimSpace(*name) == "" {
+		*language = ""
+	}
+}
+
+// mergeWhatsAppTestConfig produces the WhatsApp config used by the test handler by
+// combining the request with the saved snapshot: omitted request fields inherit from
+// the snapshot, while explicit values (including "") override the snapshot. The
+// distinction matters for template name/language, where "" must be honored to send
+// free text rather than the previously-saved template (#243).
+func mergeWhatsAppTestConfig(req *NotificationTestRequest, cfg *config.Snapshot) *notify.WhatsAppConfig {
+	out := &notify.WhatsAppConfig{
+		PhoneNumberID:    deref(req.WhatsAppPhoneNumberID, cfg.WhatsAppPhoneNumberID),
+		AccessToken:      deref(req.WhatsAppAccessToken, cfg.WhatsAppAccessToken),
+		Recipients:       deref(req.WhatsAppRecipients, cfg.WhatsAppRecipients),
+		TemplateName:     deref(req.WhatsAppTemplateName, cfg.WhatsAppTemplateName),
+		TemplateLanguage: deref(req.WhatsAppTemplateLanguage, cfg.WhatsAppTemplateLanguage),
+	}
+	normalizeWhatsAppTemplateLanguage(&out.TemplateName, &out.TemplateLanguage)
+	return out
 }
 
 // handleAPITestWebhook tests webhook notification connectivity.
@@ -650,7 +693,7 @@ func (s *Server) handleAPITestWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := s.config.Snapshot()
-	webhookURL := cmp.Or(req.WebhookURL, cfg.WebhookURL)
+	webhookURL := deref(req.WebhookURL, cfg.WebhookURL)
 
 	if webhookURL == "" {
 		s.writeError(w, http.StatusBadRequest, "No webhook URL configured")
@@ -673,11 +716,11 @@ func (s *Server) handleAPITestEmail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := s.config.Snapshot()
-	tenantID := cmp.Or(req.GraphTenantID, cfg.GraphTenantID)
-	clientID := cmp.Or(req.GraphClientID, cfg.GraphClientID)
-	clientSecret := cmp.Or(req.GraphClientSecret, cfg.GraphClientSecret)
-	fromAddress := cmp.Or(req.GraphFromAddress, cfg.GraphFromAddress)
-	recipients := cmp.Or(req.GraphRecipients, cfg.GraphRecipients)
+	tenantID := deref(req.GraphTenantID, cfg.GraphTenantID)
+	clientID := deref(req.GraphClientID, cfg.GraphClientID)
+	clientSecret := deref(req.GraphClientSecret, cfg.GraphClientSecret)
+	fromAddress := deref(req.GraphFromAddress, cfg.GraphFromAddress)
+	recipients := deref(req.GraphRecipients, cfg.GraphRecipients)
 
 	if tenantID == "" || clientID == "" || clientSecret == "" {
 		s.writeError(w, http.StatusBadRequest, "Email not fully configured")
@@ -708,23 +751,11 @@ func (s *Server) handleAPITestWhatsApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := s.config.Snapshot()
-	phoneNumberID := cmp.Or(req.WhatsAppPhoneNumberID, cfg.WhatsAppPhoneNumberID)
-	accessToken := cmp.Or(req.WhatsAppAccessToken, cfg.WhatsAppAccessToken)
-	recipients := cmp.Or(req.WhatsAppRecipients, cfg.WhatsAppRecipients)
-	templateName := cmp.Or(req.WhatsAppTemplateName, cfg.WhatsAppTemplateName)
-	templateLanguage := cmp.Or(req.WhatsAppTemplateLanguage, cfg.WhatsAppTemplateLanguage)
+	whatsAppCfg := mergeWhatsAppTestConfig(&req, &cfg)
 
-	if phoneNumberID == "" || accessToken == "" || recipients == "" {
+	if whatsAppCfg.PhoneNumberID == "" || whatsAppCfg.AccessToken == "" || whatsAppCfg.Recipients == "" {
 		s.writeError(w, http.StatusBadRequest, "WhatsApp not fully configured")
 		return
-	}
-
-	whatsAppCfg := &notify.WhatsAppConfig{
-		PhoneNumberID:    phoneNumberID,
-		AccessToken:      accessToken,
-		Recipients:       recipients,
-		TemplateName:     templateName,
-		TemplateLanguage: templateLanguage,
 	}
 
 	if err := notify.SendWhatsAppTest(r.Context(), whatsAppCfg, cfg.StationName); err != nil {
@@ -747,11 +778,11 @@ func (s *Server) handleAPITestZabbix(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := s.config.Snapshot()
-	server := cmp.Or(req.ZabbixServer, cfg.ZabbixServer)
-	port := cmp.Or(req.ZabbixPort, cfg.ZabbixPort)
-	host := cmp.Or(req.ZabbixHost, cfg.ZabbixHost)
-	silenceKey := cmp.Or(req.ZabbixSilenceKey, cfg.ZabbixSilenceKey)
-	uploadKey := cmp.Or(req.ZabbixUploadKey, cfg.ZabbixUploadKey)
+	server := deref(req.ZabbixServer, cfg.ZabbixServer)
+	port := deref(req.ZabbixPort, cfg.ZabbixPort)
+	host := deref(req.ZabbixHost, cfg.ZabbixHost)
+	silenceKey := deref(req.ZabbixSilenceKey, cfg.ZabbixSilenceKey)
+	uploadKey := deref(req.ZabbixUploadKey, cfg.ZabbixUploadKey)
 
 	if server == "" || host == "" || (silenceKey == "" && uploadKey == "") {
 		s.writeError(w, http.StatusBadRequest, "Zabbix not fully configured")

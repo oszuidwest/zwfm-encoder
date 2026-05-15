@@ -95,30 +95,6 @@ type whatsappErrorResponse struct {
 	} `json:"error"`
 }
 
-// WhatsAppRecipientError aggregates delivery failures across all configured recipients.
-type WhatsAppRecipientError struct {
-	RecipientCount int
-	FailedCount    int
-	Err            error
-}
-
-func (e *WhatsAppRecipientError) Error() string {
-	return fmt.Sprintf("%d of %d WhatsApp recipients failed: %v", e.FailedCount, e.RecipientCount, e.Err)
-}
-
-func (e *WhatsAppRecipientError) Unwrap() error {
-	return e.Err
-}
-
-// LogAttrs returns slog key/value pairs describing the partial-failure shape.
-func (e *WhatsAppRecipientError) LogAttrs() []any {
-	return []any{
-		"recipient_count", e.RecipientCount,
-		"failed_count", e.FailedCount,
-		"partial_failure", e.FailedCount < e.RecipientCount,
-	}
-}
-
 // WhatsAppChannel implements AlertChannel for WhatsApp Business Cloud API delivery.
 type WhatsAppChannel struct{}
 
@@ -320,11 +296,7 @@ func sendWhatsAppMessage(ctx context.Context, cfg *WhatsAppConfig, body string) 
 		}
 	}
 	if len(errs) > 0 {
-		return &WhatsAppRecipientError{
-			RecipientCount: len(recipients),
-			FailedCount:    len(errs),
-			Err:            errors.Join(errs...),
-		}
+		return fmt.Errorf("%d of %d WhatsApp recipients failed: %w", len(errs), len(recipients), errors.Join(errs...))
 	}
 	return nil
 }

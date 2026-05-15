@@ -98,11 +98,11 @@ Monitors audio levels and sends alerts when silence is detected or recovered. Us
 | Recovery | 5 s | 1 to 60 | Seconds of audio before recovery |
 
 **Alerting options** (can use multiple simultaneously, each with per-event control):
-- **Webhook** - POST request to a URL; independently enable `silence_start`, `silence_end`, `audio_dump` (MP3 attachment), and abandoned S3 uploads
-- **Email** - Microsoft Graph API notification; independently enable `silence_start`, `silence_end`, `audio_dump` (MP3 attachment), and abandoned S3 uploads
-- **WhatsApp** - WhatsApp Business Cloud API text or template messages; independently enable `silence_start`, `silence_end`, `audio_dump` (filename/status only), and abandoned S3 uploads
+- **Webhook** - POST request to a URL; independently enable `silence_start`, `silence_end`, and `audio_dump` (MP3 attachment). Abandoned S3 uploads are always sent when the channel is configured.
+- **Email** - Microsoft Graph API notification; independently enable `silence_start`, `silence_end`, and `audio_dump` (MP3 attachment). Abandoned S3 uploads are always sent when the channel is configured.
+- **WhatsApp** - WhatsApp Business Cloud API text or template messages; independently enable `silence_start`, `silence_end`, and `audio_dump` (filename/status only). Abandoned S3 uploads are always sent when the channel is configured.
 - **File Log** - Appends JSON Lines for every silence event (always records all events, no per-event toggle)
-- **Zabbix** - Send trapper items to a Zabbix server; independently enable `silence_start` and `silence_end` (no `audio_dump` - trapper items do not support file attachments)
+- **Zabbix** - Send trapper items to a Zabbix server; independently enable `silence_start` and `silence_end` (no `audio_dump` - trapper items do not support file attachments). Abandoned S3 uploads are always sent when the upload key is configured.
 
 `silence_end` is sent immediately on recovery. `audio_dump_ready` is dispatched as a separate event once the MP3 encoding completes.
 
