@@ -356,10 +356,8 @@ func validateWhatsAppConfigFields(prefix string, whatsApp *types.WhatsAppConfig)
 }
 
 func formatWhatsAppConfigIssue(prefix string, issue types.WhatsAppValidationIssue) string {
-	field := whatsappConfigField(prefix, issue.Field)
+	field := prefix + issue.Field
 	switch issue.Code {
-	case types.WhatsAppConfigRequired:
-		return field + ": is required"
 	case types.WhatsAppPhoneNumberIDRequired:
 		return field + ": is required when WhatsApp is configured"
 	case types.WhatsAppPhoneNumberIDDigits:
@@ -373,19 +371,12 @@ func formatWhatsAppConfigIssue(prefix string, issue types.WhatsAppValidationIssu
 	case types.WhatsAppTemplateNameFormat:
 		return field + ": must contain only lowercase letters, digits, and underscores"
 	case types.WhatsAppTemplateLanguageRequiresName:
-		return field + ": requires " + whatsappConfigField(prefix, "template_name")
+		return field + ": requires " + prefix + "template_name"
 	case types.WhatsAppTemplateLanguageWhitespace:
 		return field + ": cannot contain whitespace"
 	default:
 		return field + ": invalid WhatsApp configuration"
 	}
-}
-
-func whatsappConfigField(prefix, field string) string {
-	if field == "" {
-		return strings.TrimRight(prefix, "._")
-	}
-	return prefix + field
 }
 
 func validateZabbixPort(field string, port int) string {

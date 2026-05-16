@@ -46,7 +46,7 @@ const (
 type WhatsAppValidationIssue struct {
 	Field string
 	Code  WhatsAppValidationCode
-	// Value contains the invalid input value for codes that need it.
+	// Value carries the offending input; only WhatsAppRecipientInvalid sets it.
 	Value string
 }
 
@@ -60,7 +60,7 @@ func (c *WhatsAppConfig) Validate(mode WhatsAppValidationMode) []WhatsAppValidat
 	}
 
 	issues := []WhatsAppValidationIssue{}
-	if invalidRecipient, ok := firstInvalidWhatsAppRecipient(c.Recipients); ok {
+	if invalidRecipient, ok := util.FirstInvalidWhatsAppRecipient(c.Recipients); ok {
 		issues = append(issues, WhatsAppValidationIssue{
 			Field: "recipients",
 			Code:  WhatsAppRecipientInvalid,
@@ -123,18 +123,4 @@ func hasAnyWhatsAppConfig(fields ...string) bool {
 		}
 	}
 	return false
-}
-
-func firstInvalidWhatsAppRecipient(recipients string) (string, bool) {
-	for recipient := range strings.SplitSeq(recipients, ",") {
-		trimmed := strings.TrimSpace(recipient)
-		if trimmed != "" && !util.ValidWhatsAppRecipient(trimmed) {
-			normalized := util.NormalizeWhatsAppRecipient(trimmed)
-			if normalized != "" {
-				return normalized, true
-			}
-			return trimmed, true
-		}
-	}
-	return "", false
 }

@@ -37,6 +37,21 @@ var (
 	// whatsappAPIBaseURL is mutable so tests can point requests at httptest.Server.
 	whatsappAPIBaseURL = "https://graph.facebook.com/v24.0"
 	ErrWhatsAppConfig  = errors.New("invalid WhatsApp configuration")
+
+	// whatsAppRuntimePriority preserves the previous validator's first-error
+	// behavior: more fundamental misconfiguration is reported before downstream
+	// issues like recipients-required.
+	whatsAppRuntimePriority = []types.WhatsAppValidationCode{
+		types.WhatsAppConfigRequired,
+		types.WhatsAppPhoneNumberIDRequired,
+		types.WhatsAppPhoneNumberIDDigits,
+		types.WhatsAppAccessTokenRequired,
+		types.WhatsAppTemplateNameFormat,
+		types.WhatsAppTemplateLanguageRequiresName,
+		types.WhatsAppTemplateLanguageWhitespace,
+		types.WhatsAppRecipientsRequired,
+		types.WhatsAppRecipientInvalid,
+	}
 )
 
 // WhatsAppConfig is the configuration for WhatsApp Cloud API notifications.
@@ -235,18 +250,7 @@ func validateWhatsAppConfig(cfg *WhatsAppConfig) ([]string, error) {
 }
 
 func formatWhatsAppRuntimeError(issues []types.WhatsAppValidationIssue) error {
-	// Keep this order aligned with the previous runtime validator's first-error behavior.
-	for _, code := range []types.WhatsAppValidationCode{
-		types.WhatsAppConfigRequired,
-		types.WhatsAppPhoneNumberIDRequired,
-		types.WhatsAppPhoneNumberIDDigits,
-		types.WhatsAppAccessTokenRequired,
-		types.WhatsAppTemplateNameFormat,
-		types.WhatsAppTemplateLanguageRequiresName,
-		types.WhatsAppTemplateLanguageWhitespace,
-		types.WhatsAppRecipientsRequired,
-		types.WhatsAppRecipientInvalid,
-	} {
+	for _, code := range whatsAppRuntimePriority {
 		for _, issue := range issues {
 			if issue.Code == code {
 				return formatWhatsAppRuntimeIssue(issue)
