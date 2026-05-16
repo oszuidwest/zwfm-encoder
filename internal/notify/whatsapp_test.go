@@ -387,6 +387,25 @@ func TestValidateWhatsAppConfig(t *testing.T) {
 			want: "recipient",
 		},
 		{
+			name: "separator-only extra recipient reports original token",
+			cfg: &WhatsAppConfig{
+				PhoneNumberID: "12345",
+				AccessToken:   "token",
+				Recipients:    "+31612345678,---",
+			},
+			want: `recipient "---" is invalid`,
+		},
+		{
+			name: "multiple issues preserve runtime priority",
+			cfg: &WhatsAppConfig{
+				PhoneNumberID: "abc",
+				AccessToken:   " ",
+				Recipients:    ",,, ",
+				TemplateName:  "Encoder Alert",
+			},
+			want: "phone number ID must contain digits only",
+		},
+		{
 			name: "template language without name",
 			cfg: &WhatsAppConfig{
 				PhoneNumberID:    "12345",
@@ -434,6 +453,23 @@ func TestValidateWhatsAppConfig(t *testing.T) {
 				t.Fatalf("validateWhatsAppConfig() error = %q, want substring %q", err.Error(), tt.want)
 			}
 		})
+	}
+}
+
+func TestFormatWhatsAppRuntimeErrorUnknownCode(t *testing.T) {
+	t.Parallel()
+
+	err := formatWhatsAppRuntimeError([]types.WhatsAppValidationIssue{{
+		Code: types.WhatsAppValidationCode("future_code"),
+	}})
+	if err == nil {
+		t.Fatal("formatWhatsAppRuntimeError() error = nil, want error")
+	}
+	if !errors.Is(err, ErrWhatsAppConfig) {
+		t.Fatalf("formatWhatsAppRuntimeError() error = %v, want ErrWhatsAppConfig", err)
+	}
+	if !strings.Contains(err.Error(), "invalid WhatsApp configuration") {
+		t.Fatalf("formatWhatsAppRuntimeError() error = %q, want generic config error", err.Error())
 	}
 }
 

@@ -37,6 +37,21 @@ var (
 	// whatsappAPIBaseURL is mutable so tests can point requests at httptest.Server.
 	whatsappAPIBaseURL = "https://graph.facebook.com/v24.0"
 	ErrWhatsAppConfig  = errors.New("invalid WhatsApp configuration")
+
+	// whatsAppRuntimePriority preserves the previous validator's first-error
+	// behavior: more fundamental misconfiguration is reported before downstream
+	// issues like recipients-required.
+	whatsAppRuntimePriority = []types.WhatsAppValidationCode{
+		types.WhatsAppConfigRequired,
+		types.WhatsAppPhoneNumberIDRequired,
+		types.WhatsAppPhoneNumberIDDigits,
+		types.WhatsAppAccessTokenRequired,
+		types.WhatsAppTemplateNameFormat,
+		types.WhatsAppTemplateLanguageRequiresName,
+		types.WhatsAppTemplateLanguageWhitespace,
+		types.WhatsAppRecipientsRequired,
+		types.WhatsAppRecipientInvalid,
+	}
 )
 
 // WhatsAppConfig is the configuration for WhatsApp Cloud API notifications.
@@ -227,40 +242,50 @@ func validateWhatsAppConfig(cfg *WhatsAppConfig) ([]string, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("%w: configuration is required", ErrWhatsAppConfig)
 	}
-	if strings.TrimSpace(cfg.PhoneNumberID) == "" {
-		return nil, fmt.Errorf("%w: phone number ID is required", ErrWhatsAppConfig)
-	}
-	if !util.AllDigits(strings.TrimSpace(cfg.PhoneNumberID)) {
-		return nil, fmt.Errorf("%w: phone number ID must contain digits only", ErrWhatsAppConfig)
-	}
-	if strings.TrimSpace(cfg.AccessToken) == "" {
-		return nil, fmt.Errorf("%w: access token is required", ErrWhatsAppConfig)
-	}
-	templateName := strings.TrimSpace(cfg.TemplateName)
-	templateLanguage := strings.TrimSpace(cfg.TemplateLanguage)
-	if templateName != "" && !util.ValidWhatsAppTemplateName(templateName) {
-		return nil, fmt.Errorf("%w: template name is invalid", ErrWhatsAppConfig)
-	}
-	if templateLanguage != "" {
-		if templateName == "" {
-			return nil, fmt.Errorf("%w: template language requires template name", ErrWhatsAppConfig)
-		}
-		if strings.ContainsAny(templateLanguage, " \t\n\r\f\v") {
-			return nil, fmt.Errorf("%w: template language cannot contain whitespace", ErrWhatsAppConfig)
-		}
+	if err := formatWhatsAppRuntimeError(cfg.Validate(types.WhatsAppRequireComplete)); err != nil {
+		return nil, err
 	}
 
-	recipients := util.ParseWhatsAppRecipients(cfg.Recipients)
-	if len(recipients) == 0 {
-		return nil, fmt.Errorf("%w: recipients are required", ErrWhatsAppConfig)
-	}
-	for _, recipient := range recipients {
-		if !util.ValidWhatsAppRecipient(recipient) {
-			return nil, fmt.Errorf("%w: recipient %q is invalid", ErrWhatsAppConfig, recipient)
+	return util.ParseWhatsAppRecipients(cfg.Recipients), nil
+}
+
+func formatWhatsAppRuntimeError(issues []types.WhatsAppValidationIssue) error {
+	for _, code := range whatsAppRuntimePriority {
+		for _, issue := range issues {
+			if issue.Code == code {
+				return formatWhatsAppRuntimeIssue(issue)
+			}
 		}
 	}
+	if len(issues) > 0 {
+		return formatWhatsAppRuntimeIssue(issues[0])
+	}
+	return nil
+}
 
-	return recipients, nil
+func formatWhatsAppRuntimeIssue(issue types.WhatsAppValidationIssue) error {
+	switch issue.Code {
+	case types.WhatsAppConfigRequired:
+		return fmt.Errorf("%w: configuration is required", ErrWhatsAppConfig)
+	case types.WhatsAppPhoneNumberIDRequired:
+		return fmt.Errorf("%w: phone number ID is required", ErrWhatsAppConfig)
+	case types.WhatsAppPhoneNumberIDDigits:
+		return fmt.Errorf("%w: phone number ID must contain digits only", ErrWhatsAppConfig)
+	case types.WhatsAppAccessTokenRequired:
+		return fmt.Errorf("%w: access token is required", ErrWhatsAppConfig)
+	case types.WhatsAppTemplateNameFormat:
+		return fmt.Errorf("%w: template name is invalid", ErrWhatsAppConfig)
+	case types.WhatsAppTemplateLanguageRequiresName:
+		return fmt.Errorf("%w: template language requires template name", ErrWhatsAppConfig)
+	case types.WhatsAppTemplateLanguageWhitespace:
+		return fmt.Errorf("%w: template language cannot contain whitespace", ErrWhatsAppConfig)
+	case types.WhatsAppRecipientsRequired:
+		return fmt.Errorf("%w: recipients are required", ErrWhatsAppConfig)
+	case types.WhatsAppRecipientInvalid:
+		return fmt.Errorf("%w: recipient %q is invalid", ErrWhatsAppConfig, issue.Value)
+	default:
+		return fmt.Errorf("%w: invalid WhatsApp configuration", ErrWhatsAppConfig)
+	}
 }
 
 func sendWhatsAppMessage(ctx context.Context, cfg *WhatsAppConfig, body string) error {
