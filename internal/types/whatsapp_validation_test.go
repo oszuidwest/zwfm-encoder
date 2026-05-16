@@ -1,0 +1,105 @@
+package types
+
+import (
+	"slices"
+	"testing"
+)
+
+func TestWhatsAppConfigValidate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		cfg       *WhatsAppConfig
+		mode      WhatsAppValidationMode
+		wantCodes []WhatsAppValidationCode
+		wantValue string
+	}{
+		{
+			name:      "nil allowed",
+			cfg:       nil,
+			mode:      WhatsAppAllowEmpty,
+			wantCodes: []WhatsAppValidationCode{},
+		},
+		{
+			name:      "empty allowed",
+			cfg:       &WhatsAppConfig{},
+			mode:      WhatsAppAllowEmpty,
+			wantCodes: []WhatsAppValidationCode{},
+		},
+		{
+			name:      "nil requires complete config",
+			cfg:       nil,
+			mode:      WhatsAppRequireComplete,
+			wantCodes: []WhatsAppValidationCode{WhatsAppConfigRequired},
+		},
+		{
+			name: "partial config requires token",
+			cfg: &WhatsAppConfig{
+				PhoneNumberID: "12345",
+				Recipients:    "+31612345678",
+			},
+			mode:      WhatsAppAllowEmpty,
+			wantCodes: []WhatsAppValidationCode{WhatsAppAccessTokenRequired},
+		},
+		{
+			name: "invalid recipient is normalized",
+			cfg: &WhatsAppConfig{
+				Recipients: "bad-address",
+			},
+			mode: WhatsAppAllowEmpty,
+			wantCodes: []WhatsAppValidationCode{
+				WhatsAppRecipientInvalid,
+				WhatsAppPhoneNumberIDRequired,
+				WhatsAppAccessTokenRequired,
+			},
+			wantValue: "badaddress",
+		},
+		{
+			name: "empty split recipients required",
+			cfg: &WhatsAppConfig{
+				PhoneNumberID: "12345",
+				AccessToken:   "token",
+				Recipients:    ",,, ",
+			},
+			mode:      WhatsAppAllowEmpty,
+			wantCodes: []WhatsAppValidationCode{WhatsAppRecipientsRequired},
+		},
+		{
+			name: "template language requires name and no whitespace",
+			cfg: &WhatsAppConfig{
+				PhoneNumberID:    "12345",
+				AccessToken:      "token",
+				Recipients:       "+31612345678",
+				TemplateLanguage: "nl NL",
+			},
+			mode: WhatsAppAllowEmpty,
+			wantCodes: []WhatsAppValidationCode{
+				WhatsAppTemplateLanguageRequiresName,
+				WhatsAppTemplateLanguageWhitespace,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			issues := tt.cfg.Validate(tt.mode)
+			if got := whatsAppValidationCodes(issues); !slices.Equal(got, tt.wantCodes) {
+				t.Fatalf("Validate() codes = %v, want %v", got, tt.wantCodes)
+			}
+			if tt.wantValue != "" && issues[0].Value != tt.wantValue {
+				t.Fatalf("Validate() first value = %q, want %q", issues[0].Value, tt.wantValue)
+			}
+		})
+	}
+}
+
+func whatsAppValidationCodes(issues []WhatsAppValidationIssue) []WhatsAppValidationCode {
+	codes := make([]WhatsAppValidationCode, 0, len(issues))
+	for _, issue := range issues {
+		codes = append(codes, issue.Code)
+	}
+	return codes
+}

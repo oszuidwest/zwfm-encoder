@@ -345,56 +345,47 @@ func validateRecipients(field, recipients string) string {
 }
 
 func validateWhatsAppConfigFields(prefix string, whatsApp *types.WhatsAppConfig) []string {
-	phoneNumberIDField := prefix + "phone_number_id"
-	accessTokenField := prefix + "access_token"
-	recipientsField := prefix + "recipients"
-	templateNameField := prefix + "template_name"
-	templateLanguageField := prefix + "template_language"
-
 	errs := []string{}
-	if msg := util.ValidateWhatsAppRecipients(recipientsField, whatsApp.Recipients); msg != "" {
-		errs = append(errs, msg)
-	}
-
-	phoneNumberID := strings.TrimSpace(whatsApp.PhoneNumberID)
-	accessToken := strings.TrimSpace(whatsApp.AccessToken)
-	recipients := strings.TrimSpace(whatsApp.Recipients)
-	templateName := strings.TrimSpace(whatsApp.TemplateName)
-	templateLanguage := strings.TrimSpace(whatsApp.TemplateLanguage)
-
-	partiallyConfigured := phoneNumberID != "" ||
-		accessToken != "" ||
-		recipients != "" ||
-		templateName != "" ||
-		templateLanguage != ""
-	if !partiallyConfigured {
-		return errs
-	}
-
-	if phoneNumberID == "" {
-		errs = append(errs, phoneNumberIDField+": is required when WhatsApp is configured")
-	} else if !util.AllDigits(phoneNumberID) {
-		errs = append(errs, phoneNumberIDField+": must contain digits only")
-	}
-	if accessToken == "" {
-		errs = append(errs, accessTokenField+": is required when WhatsApp is configured")
-	}
-	if len(util.ParseWhatsAppRecipients(recipients)) == 0 {
-		errs = append(errs, recipientsField+": is required when WhatsApp is configured")
-	}
-	if templateName != "" && !util.ValidWhatsAppTemplateName(templateName) {
-		errs = append(errs, templateNameField+": must contain only lowercase letters, digits, and underscores")
-	}
-	if templateLanguage != "" {
-		if templateName == "" {
-			errs = append(errs, templateLanguageField+": requires "+templateNameField)
-		}
-		if strings.ContainsAny(templateLanguage, " \t\n\r\f\v") {
-			errs = append(errs, templateLanguageField+": cannot contain whitespace")
+	for _, issue := range whatsApp.Validate(types.WhatsAppAllowEmpty) {
+		if msg := formatWhatsAppConfigIssue(prefix, issue); msg != "" {
+			errs = append(errs, msg)
 		}
 	}
 
 	return errs
+}
+
+func formatWhatsAppConfigIssue(prefix string, issue types.WhatsAppValidationIssue) string {
+	field := whatsappConfigField(prefix, issue.Field)
+	switch issue.Code {
+	case types.WhatsAppConfigRequired:
+		return field + ": is required"
+	case types.WhatsAppPhoneNumberIDRequired:
+		return field + ": is required when WhatsApp is configured"
+	case types.WhatsAppPhoneNumberIDDigits:
+		return field + ": must contain digits only"
+	case types.WhatsAppAccessTokenRequired:
+		return field + ": is required when WhatsApp is configured"
+	case types.WhatsAppRecipientsRequired:
+		return field + ": is required when WhatsApp is configured"
+	case types.WhatsAppRecipientInvalid:
+		return field + ": contains invalid phone number"
+	case types.WhatsAppTemplateNameFormat:
+		return field + ": must contain only lowercase letters, digits, and underscores"
+	case types.WhatsAppTemplateLanguageRequiresName:
+		return field + ": requires " + whatsappConfigField(prefix, "template_name")
+	case types.WhatsAppTemplateLanguageWhitespace:
+		return field + ": cannot contain whitespace"
+	default:
+		return ""
+	}
+}
+
+func whatsappConfigField(prefix, field string) string {
+	if field == "" {
+		return strings.TrimRight(prefix, "._")
+	}
+	return prefix + field
 }
 
 func validateZabbixPort(field string, port int) string {

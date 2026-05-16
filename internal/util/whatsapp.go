@@ -46,19 +46,6 @@ func AllDigits(s string) bool {
 	return true
 }
 
-// ValidateWhatsAppRecipients validates a comma-separated recipient list.
-func ValidateWhatsAppRecipients(field, recipients string) string {
-	if recipients == "" {
-		return ""
-	}
-	for recipient := range strings.SplitSeq(recipients, ",") {
-		if trimmed := strings.TrimSpace(recipient); trimmed != "" && !ValidWhatsAppRecipient(trimmed) {
-			return field + ": contains invalid phone number"
-		}
-	}
-	return ""
-}
-
 // ValidWhatsAppTemplateName reports whether name matches Meta's lowercase
 // alphanumeric plus underscore template-name format.
 func ValidWhatsAppTemplateName(name string) bool {
