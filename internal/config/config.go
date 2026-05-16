@@ -377,7 +377,7 @@ func formatWhatsAppConfigIssue(prefix string, issue types.WhatsAppValidationIssu
 	case types.WhatsAppTemplateLanguageWhitespace:
 		return field + ": cannot contain whitespace"
 	default:
-		return ""
+		return field + ": invalid WhatsApp configuration"
 	}
 }
 

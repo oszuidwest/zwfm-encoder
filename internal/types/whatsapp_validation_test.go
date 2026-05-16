@@ -43,6 +43,16 @@ func TestWhatsAppConfigValidate(t *testing.T) {
 			wantCodes: []WhatsAppValidationCode{WhatsAppAccessTokenRequired},
 		},
 		{
+			name: "phone number id must contain digits only",
+			cfg: &WhatsAppConfig{
+				PhoneNumberID: "abc",
+				AccessToken:   "token",
+				Recipients:    "+31612345678",
+			},
+			mode:      WhatsAppAllowEmpty,
+			wantCodes: []WhatsAppValidationCode{WhatsAppPhoneNumberIDDigits},
+		},
+		{
 			name: "invalid recipient is normalized",
 			cfg: &WhatsAppConfig{
 				Recipients: "bad-address",
@@ -54,6 +64,17 @@ func TestWhatsAppConfigValidate(t *testing.T) {
 				WhatsAppAccessTokenRequired,
 			},
 			wantValue: "badaddress",
+		},
+		{
+			name: "separator-only invalid recipient keeps original value",
+			cfg: &WhatsAppConfig{
+				PhoneNumberID: "12345",
+				AccessToken:   "token",
+				Recipients:    "+31612345678,---",
+			},
+			mode:      WhatsAppAllowEmpty,
+			wantCodes: []WhatsAppValidationCode{WhatsAppRecipientInvalid},
+			wantValue: "---",
 		},
 		{
 			name: "empty split recipients required",

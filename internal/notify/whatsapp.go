@@ -224,6 +224,9 @@ func BuildWhatsAppConfig(cfg *config.Snapshot) *WhatsAppConfig {
 }
 
 func validateWhatsAppConfig(cfg *WhatsAppConfig) ([]string, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("%w: configuration is required", ErrWhatsAppConfig)
+	}
 	if err := formatWhatsAppRuntimeError(cfg.Validate(types.WhatsAppRequireComplete)); err != nil {
 		return nil, err
 	}
@@ -232,6 +235,7 @@ func validateWhatsAppConfig(cfg *WhatsAppConfig) ([]string, error) {
 }
 
 func formatWhatsAppRuntimeError(issues []types.WhatsAppValidationIssue) error {
+	// Keep this order aligned with the previous runtime validator's first-error behavior.
 	for _, code := range []types.WhatsAppValidationCode{
 		types.WhatsAppConfigRequired,
 		types.WhatsAppPhoneNumberIDRequired,
@@ -248,6 +252,9 @@ func formatWhatsAppRuntimeError(issues []types.WhatsAppValidationIssue) error {
 				return formatWhatsAppRuntimeIssue(issue)
 			}
 		}
+	}
+	if len(issues) > 0 {
+		return formatWhatsAppRuntimeIssue(issues[0])
 	}
 	return nil
 }
@@ -273,7 +280,7 @@ func formatWhatsAppRuntimeIssue(issue types.WhatsAppValidationIssue) error {
 	case types.WhatsAppRecipientInvalid:
 		return fmt.Errorf("%w: recipient %q is invalid", ErrWhatsAppConfig, issue.Value)
 	default:
-		return nil
+		return fmt.Errorf("%w: invalid WhatsApp configuration", ErrWhatsAppConfig)
 	}
 }
 

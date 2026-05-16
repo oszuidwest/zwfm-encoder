@@ -46,6 +46,7 @@ const (
 type WhatsAppValidationIssue struct {
 	Field string
 	Code  WhatsAppValidationCode
+	// Value contains the invalid input value for codes that need it.
 	Value string
 }
 
@@ -128,7 +129,11 @@ func firstInvalidWhatsAppRecipient(recipients string) (string, bool) {
 	for recipient := range strings.SplitSeq(recipients, ",") {
 		trimmed := strings.TrimSpace(recipient)
 		if trimmed != "" && !util.ValidWhatsAppRecipient(trimmed) {
-			return util.NormalizeWhatsAppRecipient(trimmed), true
+			normalized := util.NormalizeWhatsAppRecipient(trimmed)
+			if normalized != "" {
+				return normalized, true
+			}
+			return trimmed, true
 		}
 	}
 	return "", false
