@@ -176,7 +176,7 @@ func decodeError(t *testing.T, body []byte) string {
 // preflight behavior: an empty webhook URL is rejected at the handler with
 // HTTP 400 and the user-visible message "No webhook URL configured".
 // Non-empty URLs (even malformed) fall through to the runtime layer and
-// surface as HTTP 502 — see TestHandleAPITestWebhookInvalidURLReachesRuntime.
+// surface as HTTP 502 - see TestHandleAPITestWebhookInvalidURLReachesRuntime.
 func TestHandleAPITestWebhookEmptyURLReturnsBadRequest(t *testing.T) {
 	t.Parallel()
 
@@ -223,7 +223,7 @@ func TestHandleAPITestEmailMissingCredentialsReturnsBadRequest(t *testing.T) {
 // status-code split: an incomplete Zabbix config is rejected by the handler
 // preflight (400), but a complete config with an out-of-range port falls
 // through to SendZabbixTest and surfaces as HTTP 502. The refactor preserves
-// this split intentionally — port-range checks at the handler would have
+// this split intentionally - port-range checks at the handler would have
 // shifted port=70000 from 502 → 400 (a behavior change out of scope for #249).
 func TestHandleAPITestZabbixOutOfRangePortReachesRuntime(t *testing.T) {
 	t.Parallel()
@@ -521,7 +521,7 @@ func applyWithPreserve(t *testing.T, cfg *config.Config, upd *config.SettingsUpd
 	return cfg.Snapshot(), nil
 }
 
-// #247 — Graph secret keep/replace/clear (Niveau 2 pipeline tests).
+// #247 - Graph secret keep/replace/clear (Niveau 2 pipeline tests).
 
 // TestApplyWithPreserve_GraphSecret_KeepWhenEmpty pins that an empty submitted
 // secret with ClearGraphClientSecret=false falls back to the saved secret via
@@ -583,7 +583,7 @@ func TestApplyWithPreserve_GraphSecret_ClearWhenFlagSet(t *testing.T) {
 	}
 }
 
-// #247 — WhatsApp access token keep/replace/clear (Niveau 2 pipeline tests).
+// #247 - WhatsApp access token keep/replace/clear (Niveau 2 pipeline tests).
 
 // TestApplyWithPreserve_WhatsAppToken_KeepWhenEmpty pins that an empty
 // submitted token with visible WhatsApp fields still set falls back to the
@@ -675,7 +675,7 @@ func TestApplyWithPreserve_WhatsAppClearedTemplateNameDropsStaleLanguage(t *test
 	// Stale form state: user cleared template_name but language pre-fill remains.
 	upd.WhatsAppTemplateName = ""
 	upd.WhatsAppTemplateLanguage = "en_US"
-	// Token left empty in form — preserve must restore saved token.
+	// Token left empty in form - preserve must restore saved token.
 	upd.WhatsAppAccessToken = ""
 	upd.ClearWhatsAppAccessToken = false
 
@@ -697,11 +697,11 @@ func TestApplyWithPreserve_WhatsAppClearedTemplateNameDropsStaleLanguage(t *test
 	}
 }
 
-// #247 — Handler 400 paths (Niveau 3).
+// #247 - Handler 400 paths (Niveau 3).
 
 // postSettingsBody marshals upd to JSON and runs handleAPISettings against
 // the given server. Returns the response recorder so callers can assert
-// status + error body. Handler tests only — 400 paths return before the
+// status + error body. Handler tests only - 400 paths return before the
 // encoder calls, so `&Server{config: cfg}` is safe; 204 paths need an
 // encoder helper which is intentionally out of scope (see Niveau 2).
 func postSettingsBody(t *testing.T, s *Server, body string) *httptest.ResponseRecorder {
@@ -777,11 +777,11 @@ func TestHandleAPISettingsWhatsAppImplicitDisableNowFails(t *testing.T) {
 	s := seededServer(t, seededWhatsAppCompleteSettings())
 	upd := validBaselineSettings(s.config)
 	upd.WhatsAppPhoneNumberID = ""
-	upd.WhatsAppAccessToken = "" // explicit empty — not omitted; senior review note
+	upd.WhatsAppAccessToken = "" // explicit empty - not omitted; senior review note
 	upd.WhatsAppRecipients = ""
 	upd.WhatsAppTemplateName = ""
 	upd.WhatsAppTemplateLanguage = ""
-	// No ClearWhatsAppAccessToken — this is the deprecated implicit-disable path.
+	// No ClearWhatsAppAccessToken - this is the deprecated implicit-disable path.
 
 	body, err := json.Marshal(upd)
 	if err != nil {

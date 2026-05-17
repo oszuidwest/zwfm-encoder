@@ -600,7 +600,10 @@
                                 </div>
                             </div>
                         </div>
-                        <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('whatsapp')" :disabled="testStates.whatsapp.pending" x-text="testStates.whatsapp.text">Test</button>
+                        <div class="test-action">
+                            <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('whatsapp')" :disabled="testStates.whatsapp.pending || settingsForm.whatsapp.clearToken" x-text="testStates.whatsapp.text">Test</button>
+                            <span class="input-hint" x-show="settingsForm.whatsapp.clearToken">Save changes first to test after disabling WhatsApp.</span>
+                        </div>
                     </div>
                     <div class="section">
                         <div class="section-header">
