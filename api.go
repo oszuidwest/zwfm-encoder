@@ -626,7 +626,7 @@ func deref[T any](p *T, fallback T) T {
 // must never silently overwrite a submitted new value).
 //
 // Symmetric with preserveWhatsAppAccessToken; both follow the same three-phase
-// pipeline: preserve (never blank) → Validate (sees raw submitted values) →
+// pipeline: preserve (never blank) -> Validate (sees raw submitted values) ->
 // ApplySettings (blanks per ClearGraphClientSecret/ClearWhatsAppAccessToken flag).
 func preserveGraphClientSecret(req *config.SettingsUpdate, cfg *config.Snapshot) {
 	if req.ClearGraphClientSecret {

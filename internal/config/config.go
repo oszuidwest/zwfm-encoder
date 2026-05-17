@@ -957,10 +957,10 @@ type SettingsUpdate struct {
 	// RecordingMaxDurationMinutes is the maximum allowed duration for on-demand recordings.
 	RecordingMaxDurationMinutes int `json:"recording_max_duration_minutes"`
 	// ClearGraphClientSecret requests removal of the saved Graph client secret.
-	// Must not be combined with a non-empty GraphClientSecret value (conflict → 400).
+	// Must not be combined with a non-empty GraphClientSecret value (conflict -> 400).
 	ClearGraphClientSecret bool `json:"clear_graph_client_secret,omitempty"`
 	// ClearWhatsAppAccessToken requests removal of the saved WhatsApp access token.
-	// Must not be combined with a non-empty WhatsAppAccessToken value (conflict → 400).
+	// Must not be combined with a non-empty WhatsAppAccessToken value (conflict -> 400).
 	ClearWhatsAppAccessToken bool `json:"clear_whatsapp_access_token,omitempty"`
 }
 

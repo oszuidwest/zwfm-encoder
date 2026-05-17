@@ -561,7 +561,7 @@
                         <div class="form">
                             <div class="group">
                                 <label for="whatsapp-phone-number-id">Phone Number ID</label>
-                                <input id="whatsapp-phone-number-id" type="text" placeholder="123456789012345" x-model="settingsForm.whatsapp.phoneNumberId" @input="markSettingsDirty()" :disabled="settingsForm.whatsapp.clearToken">
+                                <input id="whatsapp-phone-number-id" type="text" :placeholder="settingsForm.whatsapp.clearToken ? '(will be cleared on save)' : '123456789012345'" x-model="settingsForm.whatsapp.phoneNumberId" @input="markSettingsDirty()" :disabled="settingsForm.whatsapp.clearToken">
                             </div>
                             <div class="group">
                                 <label for="whatsapp-access-token">Access Token</label>
@@ -570,17 +570,17 @@
                             </div>
                             <div class="group">
                                 <label for="whatsapp-recipients">Recipients</label>
-                                <input id="whatsapp-recipients" type="text" placeholder="+31612345678, +31687654321" x-model="settingsForm.whatsapp.recipients" @input="markSettingsDirty()" :disabled="settingsForm.whatsapp.clearToken" aria-describedby="whatsapp-recipients-hint">
+                                <input id="whatsapp-recipients" type="text" :placeholder="settingsForm.whatsapp.clearToken ? '(will be cleared on save)' : '+31612345678, +31687654321'" x-model="settingsForm.whatsapp.recipients" @input="markSettingsDirty()" :disabled="settingsForm.whatsapp.clearToken" aria-describedby="whatsapp-recipients-hint">
                                 <span id="whatsapp-recipients-hint" class="input-hint">Comma-separated phone numbers with country code.</span>
                             </div>
                             <div class="row">
                                 <div class="group">
                                     <label for="whatsapp-template-name">Template Name</label>
-                                    <input id="whatsapp-template-name" type="text" placeholder="encoder_alert" x-model="settingsForm.whatsapp.templateName" @input="markSettingsDirty()" :disabled="settingsForm.whatsapp.clearToken" aria-describedby="whatsapp-template-hint">
+                                    <input id="whatsapp-template-name" type="text" :placeholder="settingsForm.whatsapp.clearToken ? '(will be cleared on save)' : 'encoder_alert'" x-model="settingsForm.whatsapp.templateName" @input="markSettingsDirty()" :disabled="settingsForm.whatsapp.clearToken" aria-describedby="whatsapp-template-hint">
                                 </div>
                                 <div class="group">
                                     <label for="whatsapp-template-language">Template Language</label>
-                                    <input id="whatsapp-template-language" type="text" placeholder="en_US" x-model="settingsForm.whatsapp.templateLanguage" @input="markSettingsDirty()" :disabled="settingsForm.whatsapp.clearToken" aria-describedby="whatsapp-template-hint">
+                                    <input id="whatsapp-template-language" type="text" :placeholder="settingsForm.whatsapp.clearToken ? '(will be cleared on save)' : 'en_US'" x-model="settingsForm.whatsapp.templateLanguage" @input="markSettingsDirty()" :disabled="settingsForm.whatsapp.clearToken" aria-describedby="whatsapp-template-hint">
                                 </div>
                             </div>
                             <span id="whatsapp-template-hint" class="input-hint">Optional approved template with one body variable for alerts outside the 24-hour window.</span>
