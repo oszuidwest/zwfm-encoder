@@ -150,7 +150,7 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
 	audioInputChanged := req.AudioInput != cfg.AudioInput
 
-	req.GraphClientSecret = cmp.Or(req.GraphClientSecret, cfg.GraphClientSecret)
+	preserveGraphClientSecret(&req, &cfg)
 	prepareWhatsAppSettingsRequest(&req, &cfg)
 
 	if errs := req.Validate(); len(errs) > 0 {
@@ -620,24 +620,34 @@ func deref[T any](p *T, fallback T) T {
 	return fallback
 }
 
-// preserveWhatsAppAccessToken keeps the saved access token when the request omits it
-// but still references WhatsApp via another visible field. Graph uses an unconditional
-// preserve because Graph has no partial-config validator, but WhatsApp's validator
-// rejects "token set, other fields empty"; reintroducing the token on a fully-empty
-// request would block the user from disabling WhatsApp via the UI.
+// preserveGraphClientSecret keeps the saved Graph client secret when the request
+// omits or empties it. Skipped when ClearGraphClientSecret is true so Validate()
+// can still see a non-empty submitted secret and reject the conflict (clear=true
+// must never silently overwrite a submitted new value).
 //
-// Template language is intentionally NOT a visible-config signal: it is metadata
-// for template_name, not a standalone configuration. The UI pre-fills language
-// from the saved config, so a stale "en_US" can survive the user clearing every
-// other field; counting it here would silently re-introduce the token and
-// trip the all-or-nothing partial-config check.
-func preserveWhatsAppAccessToken(req *config.SettingsUpdate, cfg *config.Snapshot) {
-	hasVisibleConfig := strings.TrimSpace(req.WhatsAppPhoneNumberID) != "" ||
-		strings.TrimSpace(req.WhatsAppRecipients) != "" ||
-		strings.TrimSpace(req.WhatsAppTemplateName) != ""
-	if hasVisibleConfig {
-		req.WhatsAppAccessToken = cmp.Or(req.WhatsAppAccessToken, cfg.WhatsAppAccessToken)
+// Symmetric with preserveWhatsAppAccessToken; both follow the same three-phase
+// pipeline: preserve (never blank) → Validate (sees raw submitted values) →
+// ApplySettings (blanks per ClearGraphClientSecret/ClearWhatsAppAccessToken flag).
+func preserveGraphClientSecret(req *config.SettingsUpdate, cfg *config.Snapshot) {
+	if req.ClearGraphClientSecret {
+		return
 	}
+	req.GraphClientSecret = cmp.Or(req.GraphClientSecret, cfg.GraphClientSecret)
+}
+
+// preserveWhatsAppAccessToken keeps the saved access token when the request
+// omits or empties it. Skipped when ClearWhatsAppAccessToken is true so
+// Validate() can detect the conflict between clear=true and a non-empty
+// submitted token. Same three-phase pipeline as preserveGraphClientSecret.
+//
+// The previous "visible field heuristic" (preserve only when phone/recipients/
+// template_name remained non-empty) is removed: explicit ClearWhatsAppAccessToken
+// is now the single supported path to disable WhatsApp via UI/API.
+func preserveWhatsAppAccessToken(req *config.SettingsUpdate, cfg *config.Snapshot) {
+	if req.ClearWhatsAppAccessToken {
+		return
+	}
+	req.WhatsAppAccessToken = cmp.Or(req.WhatsAppAccessToken, cfg.WhatsAppAccessToken)
 }
 
 // prepareWhatsAppSettingsRequest applies the WhatsApp-specific request preprocessing
