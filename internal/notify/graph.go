@@ -9,13 +9,13 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
+	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 )
@@ -35,28 +35,32 @@ const (
 	httpTimeout = 30 * time.Second
 )
 
-// guidPattern matches the standard GUID format.
-var guidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
-
-// validateCredentials checks that required credential fields are present.
-// If strict is true, validates GUID format for TenantID and ClientID.
-func validateCredentials(cfg *types.GraphConfig, strict bool) error {
-	if cfg.TenantID == "" {
+// formatGraphRuntimeError converts validation issues into the legacy error
+// strings used by NewGraphClient, ValidateConfig, and TokenSourceContext.
+// Returns the first issue's message (callers historically stopped at the
+// first failing rule).
+func formatGraphRuntimeError(issues validation.Issues) error {
+	if len(issues) == 0 {
+		return nil
+	}
+	switch types.GraphValidationCode(issues[0].Code) {
+	case types.GraphTenantIDRequired:
 		return fmt.Errorf("tenant ID is required")
-	}
-	if strict && !guidPattern.MatchString(cfg.TenantID) {
+	case types.GraphTenantIDFormat:
 		return fmt.Errorf("tenant ID must be a valid GUID (e.g., 12345678-1234-1234-1234-123456789abc)")
-	}
-	if cfg.ClientID == "" {
+	case types.GraphClientIDRequired:
 		return fmt.Errorf("client ID is required")
-	}
-	if strict && !guidPattern.MatchString(cfg.ClientID) {
+	case types.GraphClientIDFormat:
 		return fmt.Errorf("client ID must be a valid GUID (e.g., 12345678-1234-1234-1234-123456789abc)")
-	}
-	if cfg.ClientSecret == "" {
+	case types.GraphClientSecretRequired:
 		return fmt.Errorf("client secret is required")
+	case types.GraphFromAddressRequired:
+		return fmt.Errorf("from address (shared mailbox) is required")
+	case types.GraphRecipientsRequired:
+		return fmt.Errorf("recipients are required")
+	default:
+		return fmt.Errorf("invalid Graph configuration")
 	}
-	return nil
 }
 
 // newCredentialsConfig creates an OAuth2 credentials configuration.
@@ -77,11 +81,8 @@ type GraphClient struct {
 
 // NewGraphClient creates a new email client.
 func NewGraphClient(cfg *types.GraphConfig) (*GraphClient, error) {
-	if err := validateCredentials(cfg, false); err != nil {
+	if err := formatGraphRuntimeError(cfg.ClientIssues()); err != nil {
 		return nil, err
-	}
-	if cfg.FromAddress == "" {
-		return nil, fmt.Errorf("from address (shared mailbox) is required")
 	}
 
 	conf := newCredentialsConfig(cfg)
@@ -297,16 +298,7 @@ func (c *GraphClient) ValidateAuth() error {
 
 // ValidateConfig validates that cfg has all required fields.
 func ValidateConfig(cfg *types.GraphConfig) error {
-	if err := validateCredentials(cfg, true); err != nil {
-		return err
-	}
-	if cfg.FromAddress == "" {
-		return fmt.Errorf("from address (shared mailbox) is required")
-	}
-	if cfg.Recipients == "" {
-		return fmt.Errorf("recipients are required")
-	}
-	return nil
+	return formatGraphRuntimeError(cfg.SendIssues())
 }
 
 // ParseRecipients splits a comma-separated recipients string into a slice.
@@ -323,7 +315,7 @@ func ParseRecipients(recipients string) []string {
 // TokenSourceContext returns an OAuth2 token source bound to the given context.
 // The context controls token acquisition timeouts.
 func TokenSourceContext(ctx context.Context, cfg *types.GraphConfig) (oauth2.TokenSource, error) {
-	if err := validateCredentials(cfg, false); err != nil {
+	if err := formatGraphRuntimeError(cfg.CredentialsIssues()); err != nil {
 		return nil, err
 	}
 	return newCredentialsConfig(cfg).TokenSource(ctx), nil

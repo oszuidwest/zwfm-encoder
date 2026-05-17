@@ -3,6 +3,8 @@ package types
 import (
 	"slices"
 	"testing"
+
+	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 )
 
 func TestWhatsAppConfigValidate(t *testing.T) {
@@ -11,26 +13,26 @@ func TestWhatsAppConfigValidate(t *testing.T) {
 	tests := []struct {
 		name      string
 		cfg       *WhatsAppConfig
-		mode      WhatsAppValidationMode
+		mode      validation.Mode
 		wantCodes []WhatsAppValidationCode
 		wantValue string
 	}{
 		{
 			name:      "nil allowed",
 			cfg:       nil,
-			mode:      WhatsAppAllowEmpty,
+			mode:      validation.AllowEmpty,
 			wantCodes: []WhatsAppValidationCode{},
 		},
 		{
 			name:      "empty allowed",
 			cfg:       &WhatsAppConfig{},
-			mode:      WhatsAppAllowEmpty,
+			mode:      validation.AllowEmpty,
 			wantCodes: []WhatsAppValidationCode{},
 		},
 		{
 			name:      "nil requires complete config",
 			cfg:       nil,
-			mode:      WhatsAppRequireComplete,
+			mode:      validation.RequireComplete,
 			wantCodes: []WhatsAppValidationCode{WhatsAppConfigRequired},
 		},
 		{
@@ -39,7 +41,7 @@ func TestWhatsAppConfigValidate(t *testing.T) {
 				PhoneNumberID: "12345",
 				Recipients:    "+31612345678",
 			},
-			mode:      WhatsAppAllowEmpty,
+			mode:      validation.AllowEmpty,
 			wantCodes: []WhatsAppValidationCode{WhatsAppAccessTokenRequired},
 		},
 		{
@@ -49,7 +51,7 @@ func TestWhatsAppConfigValidate(t *testing.T) {
 				AccessToken:   "token",
 				Recipients:    "+31612345678",
 			},
-			mode:      WhatsAppAllowEmpty,
+			mode:      validation.AllowEmpty,
 			wantCodes: []WhatsAppValidationCode{WhatsAppPhoneNumberIDDigits},
 		},
 		{
@@ -57,7 +59,7 @@ func TestWhatsAppConfigValidate(t *testing.T) {
 			cfg: &WhatsAppConfig{
 				Recipients: "bad-address",
 			},
-			mode: WhatsAppAllowEmpty,
+			mode: validation.AllowEmpty,
 			wantCodes: []WhatsAppValidationCode{
 				WhatsAppRecipientInvalid,
 				WhatsAppPhoneNumberIDRequired,
@@ -72,7 +74,7 @@ func TestWhatsAppConfigValidate(t *testing.T) {
 				AccessToken:   "token",
 				Recipients:    "+31612345678,---",
 			},
-			mode:      WhatsAppAllowEmpty,
+			mode:      validation.AllowEmpty,
 			wantCodes: []WhatsAppValidationCode{WhatsAppRecipientInvalid},
 			wantValue: "---",
 		},
@@ -83,7 +85,7 @@ func TestWhatsAppConfigValidate(t *testing.T) {
 				AccessToken:   "token",
 				Recipients:    ",,, ",
 			},
-			mode:      WhatsAppAllowEmpty,
+			mode:      validation.AllowEmpty,
 			wantCodes: []WhatsAppValidationCode{WhatsAppRecipientsRequired},
 		},
 		{
@@ -94,7 +96,7 @@ func TestWhatsAppConfigValidate(t *testing.T) {
 				Recipients:       "+31612345678",
 				TemplateLanguage: "nl NL",
 			},
-			mode: WhatsAppAllowEmpty,
+			mode: validation.AllowEmpty,
 			wantCodes: []WhatsAppValidationCode{
 				WhatsAppTemplateLanguageRequiresName,
 				WhatsAppTemplateLanguageWhitespace,
@@ -117,10 +119,10 @@ func TestWhatsAppConfigValidate(t *testing.T) {
 	}
 }
 
-func whatsAppValidationCodes(issues []WhatsAppValidationIssue) []WhatsAppValidationCode {
+func whatsAppValidationCodes(issues validation.Issues) []WhatsAppValidationCode {
 	codes := make([]WhatsAppValidationCode, 0, len(issues))
 	for _, issue := range issues {
-		codes = append(codes, issue.Code)
+		codes = append(codes, WhatsAppValidationCode(issue.Code))
 	}
 	return codes
 }

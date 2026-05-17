@@ -12,7 +12,9 @@ import (
 
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
+	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 )
 
 var webhookClient = &http.Client{Timeout: 10 * time.Second}
@@ -64,8 +66,8 @@ func sendWebhookSilenceEnd(ctx context.Context, webhookURL string, e silenceEven
 
 // SendWebhookTest sends a test webhook notification.
 func SendWebhookTest(webhookURL, stationName string) error {
-	if webhookURL == "" {
-		return fmt.Errorf("webhook URL not configured")
+	if err := formatWebhookRuntimeError(types.ValidateWebhookURL(webhookURL, validation.RequireComplete)); err != nil {
+		return err
 	}
 
 	return sendWebhook(context.Background(), webhookURL, &WebhookPayload{
@@ -73,6 +75,20 @@ func SendWebhookTest(webhookURL, stationName string) error {
 		Message:   "This is a test notification from " + stationName,
 		Timestamp: timestampUTC(),
 	})
+}
+
+func formatWebhookRuntimeError(issues validation.Issues) error {
+	if len(issues) == 0 {
+		return nil
+	}
+	switch types.WebhookValidationCode(issues[0].Code) {
+	case types.WebhookURLRequired:
+		return fmt.Errorf("webhook URL not configured")
+	case types.WebhookURLInvalid:
+		return fmt.Errorf("webhook URL is invalid")
+	default:
+		return fmt.Errorf("invalid webhook configuration")
+	}
 }
 
 // sendUploadAbandonedWebhook sends an upload_abandoned event to the webhook endpoint.

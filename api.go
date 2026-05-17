@@ -19,6 +19,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/notify"
 	"github.com/oszuidwest/zwfm-encoder/internal/recording"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
+	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 )
 
 func (s *Server) writeJSON(w http.ResponseWriter, status int, data any) {
@@ -695,7 +696,7 @@ func (s *Server) handleAPITestWebhook(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
 	webhookURL := deref(req.WebhookURL, cfg.WebhookURL)
 
-	if webhookURL == "" {
+	if issues := types.ValidateWebhookURL(webhookURL, validation.RequireComplete); len(issues) > 0 {
 		s.writeError(w, http.StatusBadRequest, "No webhook URL configured")
 		return
 	}
@@ -722,17 +723,17 @@ func (s *Server) handleAPITestEmail(w http.ResponseWriter, r *http.Request) {
 	fromAddress := deref(req.GraphFromAddress, cfg.GraphFromAddress)
 	recipients := deref(req.GraphRecipients, cfg.GraphRecipients)
 
-	if tenantID == "" || clientID == "" || clientSecret == "" {
-		s.writeError(w, http.StatusBadRequest, "Email not fully configured")
-		return
-	}
-
 	graphCfg := &notify.GraphConfig{
 		TenantID:     tenantID,
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		FromAddress:  fromAddress,
 		Recipients:   recipients,
+	}
+
+	if issues := graphCfg.CredentialsIssues(); len(issues) > 0 {
+		s.writeError(w, http.StatusBadRequest, "Email not fully configured")
+		return
 	}
 
 	if err := notify.SendTestEmail(graphCfg, cfg.StationName); err != nil {
@@ -784,7 +785,7 @@ func (s *Server) handleAPITestZabbix(w http.ResponseWriter, r *http.Request) {
 	silenceKey := deref(req.ZabbixSilenceKey, cfg.ZabbixSilenceKey)
 	uploadKey := deref(req.ZabbixUploadKey, cfg.ZabbixUploadKey)
 
-	if server == "" || host == "" || (silenceKey == "" && uploadKey == "") {
+	if issues := types.ValidateZabbixConfigured(server, host, silenceKey, uploadKey); len(issues) > 0 {
 		s.writeError(w, http.StatusBadRequest, "Zabbix not fully configured")
 		return
 	}

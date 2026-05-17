@@ -16,6 +16,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
+	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 )
 
 const (
@@ -242,17 +243,17 @@ func validateWhatsAppConfig(cfg *WhatsAppConfig) ([]string, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("%w: configuration is required", ErrWhatsAppConfig)
 	}
-	if err := formatWhatsAppRuntimeError(cfg.Validate(types.WhatsAppRequireComplete)); err != nil {
+	if err := formatWhatsAppRuntimeError(cfg.Validate(validation.RequireComplete)); err != nil {
 		return nil, err
 	}
 
 	return util.ParseWhatsAppRecipients(cfg.Recipients), nil
 }
 
-func formatWhatsAppRuntimeError(issues []types.WhatsAppValidationIssue) error {
+func formatWhatsAppRuntimeError(issues validation.Issues) error {
 	for _, code := range whatsAppRuntimePriority {
 		for _, issue := range issues {
-			if issue.Code == code {
+			if types.WhatsAppValidationCode(issue.Code) == code {
 				return formatWhatsAppRuntimeIssue(issue)
 			}
 		}
@@ -263,8 +264,8 @@ func formatWhatsAppRuntimeError(issues []types.WhatsAppValidationIssue) error {
 	return nil
 }
 
-func formatWhatsAppRuntimeIssue(issue types.WhatsAppValidationIssue) error {
-	switch issue.Code {
+func formatWhatsAppRuntimeIssue(issue validation.Issue) error {
+	switch types.WhatsAppValidationCode(issue.Code) {
 	case types.WhatsAppConfigRequired:
 		return fmt.Errorf("%w: configuration is required", ErrWhatsAppConfig)
 	case types.WhatsAppPhoneNumberIDRequired:

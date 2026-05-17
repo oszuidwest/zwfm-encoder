@@ -13,6 +13,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
+	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 )
 
 func TestSendWhatsAppTestSendsTextToRecipients(t *testing.T) {
@@ -459,8 +460,8 @@ func TestValidateWhatsAppConfig(t *testing.T) {
 func TestFormatWhatsAppRuntimeErrorUnknownCode(t *testing.T) {
 	t.Parallel()
 
-	err := formatWhatsAppRuntimeError([]types.WhatsAppValidationIssue{{
-		Code: types.WhatsAppValidationCode("future_code"),
+	err := formatWhatsAppRuntimeError(validation.Issues{{
+		Code: string(types.WhatsAppValidationCode("future_code")),
 	}})
 	if err == nil {
 		t.Fatal("formatWhatsAppRuntimeError() error = nil, want error")
