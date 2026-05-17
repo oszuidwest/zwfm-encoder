@@ -406,3 +406,151 @@ func TestHandleTestS3MissingFieldReturnsBadRequest(t *testing.T) {
 		})
 	}
 }
+
+// seededServer returns a Server with saved config loaded from the given
+// SettingsUpdate. Required range fields (silence threshold/durations/peak
+// hold) get sensible defaults so callers only need to specify domain-
+// specific values relevant to their test. Used by #243 regression tests
+// to set up saved snapshots that handlers will read from.
+func seededServer(t *testing.T, upd *config.SettingsUpdate) *Server {
+	t.Helper()
+	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
+	if err := cfg.Load(); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if upd.SilenceThreshold == 0 {
+		upd.SilenceThreshold = -40
+	}
+	if upd.SilenceDurationMs == 0 {
+		upd.SilenceDurationMs = 15000
+	}
+	if upd.SilenceRecoveryMs == 0 {
+		upd.SilenceRecoveryMs = 5000
+	}
+	if upd.PeakHoldMs == 0 {
+		upd.PeakHoldMs = 1500
+	}
+	if err := cfg.ApplySettings(upd); err != nil {
+		t.Fatalf("ApplySettings() error = %v", err)
+	}
+	return &Server{config: cfg}
+}
+
+// seededGraphSettings returns a saved Graph config with non-GUID tenant/
+// client so any path through SendTestEmail's ValidateConfig fails
+// deterministically with a strict-GUID error (before any network call).
+// Config-load only checks email format, not GUID, so this seed loads cleanly.
+func seededGraphSettings() *config.SettingsUpdate {
+	return &config.SettingsUpdate{
+		GraphTenantID:     "tenant-not-a-guid",
+		GraphClientID:     "client-not-a-guid",
+		GraphClientSecret: "saved-secret",
+		GraphFromAddress:  "from@example.com",
+		GraphRecipients:   "to@example.com",
+	}
+}
+
+// seededZabbixSettings returns a complete saved Zabbix config that loads
+// cleanly. Tests override individual fields via the request body to
+// exercise the omitted-vs-explicit-empty distinction.
+func seededZabbixSettings() *config.SettingsUpdate {
+	return &config.SettingsUpdate{
+		ZabbixServer:     "zabbix.example.com",
+		ZabbixPort:       10051,
+		ZabbixHost:       "encoder-01",
+		ZabbixSilenceKey: "silence",
+	}
+}
+
+// TestHandleAPITestEmailOmittedSecretFallsBackToSaved (#243) pins that a
+// request omitting graph_client_secret falls back to the saved secret. If
+// the deref-based merge regressed (e.g. back to cmp.Or), the preflight
+// would NOT see the saved secret and would return 400 "Email not fully
+// configured". Instead we expect SendTestEmail's strict-GUID ValidateConfig
+// to surface the saved (non-GUID) tenant as a 502.
+func TestHandleAPITestEmailOmittedSecretFallsBackToSaved(t *testing.T) {
+	t.Parallel()
+
+	s := seededServer(t, seededGraphSettings())
+
+	// All fields omitted → all fall back to saved snapshot.
+	req := httptest.NewRequest(http.MethodPost, "/api/notifications/test/email", bytes.NewBufferString(`{}`))
+	rec := httptest.NewRecorder()
+
+	s.handleAPITestEmail(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadGateway, rec.Body.String())
+	}
+	if got := decodeError(t, rec.Body.Bytes()); !strings.Contains(got, "tenant ID must be a valid GUID") {
+		t.Fatalf("error = %q, want strict-GUID validation error (proves preflight passed using saved secret)", got)
+	}
+}
+
+// TestHandleAPITestEmailExplicitEmptySecretOverridesSaved (#243) pins that
+// an explicit empty graph_client_secret overrides the saved value, causing
+// preflight CredentialsIssues to reject with 400. This is the symmetric
+// half of the omitted-fallback test and proves the deref distinguishes
+// nil from *"".
+func TestHandleAPITestEmailExplicitEmptySecretOverridesSaved(t *testing.T) {
+	t.Parallel()
+
+	s := seededServer(t, seededGraphSettings())
+
+	req := httptest.NewRequest(http.MethodPost, "/api/notifications/test/email", bytes.NewBufferString(`{"graph_client_secret":""}`))
+	rec := httptest.NewRecorder()
+
+	s.handleAPITestEmail(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if got := decodeError(t, rec.Body.Bytes()); got != "Email not fully configured" {
+		t.Fatalf("error = %q, want %q", got, "Email not fully configured")
+	}
+}
+
+// TestHandleAPITestZabbixOmittedServerFallsBackToSaved (#243) pins that a
+// request omitting zabbix_server falls back to the saved server. The
+// request overrides zabbix_port to 70000 so SendZabbixTest's
+// ValidateZabbixTarget rejects deterministically before any network call;
+// reaching that runtime path requires preflight to have seen the saved
+// server (otherwise we'd get 400 "Zabbix not fully configured").
+func TestHandleAPITestZabbixOmittedServerFallsBackToSaved(t *testing.T) {
+	t.Parallel()
+
+	s := seededServer(t, seededZabbixSettings())
+
+	req := httptest.NewRequest(http.MethodPost, "/api/notifications/test/zabbix", bytes.NewBufferString(`{"zabbix_port":70000}`))
+	rec := httptest.NewRecorder()
+
+	s.handleAPITestZabbix(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadGateway, rec.Body.String())
+	}
+	if got := decodeError(t, rec.Body.Bytes()); !strings.Contains(got, "not fully configured") {
+		t.Fatalf("error = %q, want runtime not-fully-configured (proves omitted server fell back)", got)
+	}
+}
+
+// TestHandleAPITestZabbixExplicitEmptyServerOverridesSaved (#243) pins
+// that an explicit empty zabbix_server overrides the saved value, causing
+// handler preflight ValidateZabbixConfigured to reject with 400.
+func TestHandleAPITestZabbixExplicitEmptyServerOverridesSaved(t *testing.T) {
+	t.Parallel()
+
+	s := seededServer(t, seededZabbixSettings())
+
+	req := httptest.NewRequest(http.MethodPost, "/api/notifications/test/zabbix", bytes.NewBufferString(`{"zabbix_server":""}`))
+	rec := httptest.NewRecorder()
+
+	s.handleAPITestZabbix(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if got := decodeError(t, rec.Body.Bytes()); got != "Zabbix not fully configured" {
+		t.Fatalf("error = %q, want %q", got, "Zabbix not fully configured")
+	}
+}
