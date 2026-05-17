@@ -264,3 +264,97 @@ func TestPrepareWhatsAppSettingsRequestAllowsDisableWithStaleLanguage(t *testing
 		}
 	}
 }
+
+// freshServer returns a Server with a default in-memory config for handler tests.
+func freshServer(t *testing.T) *Server {
+	t.Helper()
+	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
+	if err := cfg.Load(); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	return &Server{config: cfg}
+}
+
+func decodeError(t *testing.T, body []byte) string {
+	t.Helper()
+	var payload map[string]string
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("response JSON = %q, error = %v", string(body), err)
+	}
+	return payload["error"]
+}
+
+// TestHandleAPITestWebhookEmptyURLReturnsBadRequest pins the historical
+// preflight behavior: an empty webhook URL is rejected at the handler with
+// HTTP 400 and the user-visible message "No webhook URL configured".
+// Non-empty URLs (even malformed) fall through to the runtime layer and
+// surface as HTTP 502 — see TestHandleAPITestWebhookInvalidURLReachesRuntime.
+func TestHandleAPITestWebhookEmptyURLReturnsBadRequest(t *testing.T) {
+	t.Parallel()
+
+	s := freshServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/notifications/test/webhook", bytes.NewBufferString(`{}`))
+	rec := httptest.NewRecorder()
+
+	s.handleAPITestWebhook(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if got := decodeError(t, rec.Body.Bytes()); got != "No webhook URL configured" {
+		t.Fatalf("error = %q, want %q", got, "No webhook URL configured")
+	}
+}
+
+// TestHandleAPITestEmailMissingCredentialsReturnsBadRequest pins the
+// historical preflight: missing any of tenant_id/client_id/client_secret
+// is rejected at the handler with HTTP 400 and the generic message
+// "Email not fully configured" (per-field reporting only happens at
+// config-load and settings-save).
+func TestHandleAPITestEmailMissingCredentialsReturnsBadRequest(t *testing.T) {
+	t.Parallel()
+
+	s := freshServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/notifications/test/email", bytes.NewBufferString(`{
+		"graph_tenant_id": "tenant",
+		"graph_client_id": "client"
+	}`))
+	rec := httptest.NewRecorder()
+
+	s.handleAPITestEmail(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if got := decodeError(t, rec.Body.Bytes()); got != "Email not fully configured" {
+		t.Fatalf("error = %q, want %q", got, "Email not fully configured")
+	}
+}
+
+// TestHandleAPITestZabbixOutOfRangePortReachesRuntime pins the historical
+// status-code split: an incomplete Zabbix config is rejected by the handler
+// preflight (400), but a complete config with an out-of-range port falls
+// through to SendZabbixTest and surfaces as HTTP 502. The refactor preserves
+// this split intentionally — port-range checks at the handler would have
+// shifted port=70000 from 502 → 400 (a behavior change out of scope for #249).
+func TestHandleAPITestZabbixOutOfRangePortReachesRuntime(t *testing.T) {
+	t.Parallel()
+
+	s := freshServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/notifications/test/zabbix", bytes.NewBufferString(`{
+		"zabbix_server": "zabbix.example.com",
+		"zabbix_port": 70000,
+		"zabbix_host": "encoder-01",
+		"zabbix_silence_key": "silence"
+	}`))
+	rec := httptest.NewRecorder()
+
+	s.handleAPITestZabbix(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadGateway, rec.Body.String())
+	}
+	if got := decodeError(t, rec.Body.Bytes()); !strings.Contains(got, "not fully configured") {
+		t.Fatalf("error = %q, want substring %q", got, "not fully configured")
+	}
+}

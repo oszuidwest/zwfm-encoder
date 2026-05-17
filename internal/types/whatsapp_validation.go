@@ -4,21 +4,14 @@ import (
 	"strings"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
+	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 )
 
 const whatsAppWhitespaceChars = " \t\n\r\f\v"
 
-// WhatsAppValidationMode controls whether an empty WhatsApp configuration is allowed.
-type WhatsAppValidationMode int
-
-const (
-	// WhatsAppAllowEmpty allows a completely empty WhatsApp configuration.
-	WhatsAppAllowEmpty WhatsAppValidationMode = iota
-	// WhatsAppRequireComplete requires all fields needed to send WhatsApp messages.
-	WhatsAppRequireComplete
-)
-
 // WhatsAppValidationCode identifies a WhatsApp validation rule failure.
+// Stored in validation.Issue.Code via string conversion; adapters cast
+// back to this type when switching on rule identity.
 type WhatsAppValidationCode string
 
 const (
@@ -42,28 +35,20 @@ const (
 	WhatsAppTemplateLanguageWhitespace WhatsAppValidationCode = "template_language_whitespace"
 )
 
-// WhatsAppValidationIssue describes one WhatsApp configuration validation failure.
-type WhatsAppValidationIssue struct {
-	Field string
-	Code  WhatsAppValidationCode
-	// Value carries the offending input; only WhatsAppRecipientInvalid sets it.
-	Value string
-}
-
 // Validate reports WhatsApp configuration validation issues.
-func (c *WhatsAppConfig) Validate(mode WhatsAppValidationMode) []WhatsAppValidationIssue {
+func (c *WhatsAppConfig) Validate(mode validation.Mode) validation.Issues {
 	if c == nil {
-		if mode == WhatsAppRequireComplete {
-			return []WhatsAppValidationIssue{{Code: WhatsAppConfigRequired}}
+		if mode == validation.RequireComplete {
+			return validation.Issues{{Code: string(WhatsAppConfigRequired)}}
 		}
-		return []WhatsAppValidationIssue{}
+		return validation.Issues{}
 	}
 
-	issues := []WhatsAppValidationIssue{}
+	issues := validation.Issues{}
 	if invalidRecipient, ok := util.FirstInvalidWhatsAppRecipient(c.Recipients); ok {
-		issues = append(issues, WhatsAppValidationIssue{
+		issues = append(issues, validation.Issue{
 			Field: "recipients",
-			Code:  WhatsAppRecipientInvalid,
+			Code:  string(WhatsAppRecipientInvalid),
 			Value: invalidRecipient,
 		})
 	}
@@ -74,7 +59,7 @@ func (c *WhatsAppConfig) Validate(mode WhatsAppValidationMode) []WhatsAppValidat
 	templateName := strings.TrimSpace(c.TemplateName)
 	templateLanguage := strings.TrimSpace(c.TemplateLanguage)
 
-	if mode == WhatsAppAllowEmpty && !hasAnyWhatsAppConfig(
+	if mode == validation.AllowEmpty && !hasAnyWhatsAppConfig(
 		phoneNumberID,
 		accessToken,
 		recipients,
@@ -85,30 +70,30 @@ func (c *WhatsAppConfig) Validate(mode WhatsAppValidationMode) []WhatsAppValidat
 	}
 
 	if phoneNumberID == "" {
-		issues = append(issues, WhatsAppValidationIssue{Field: "phone_number_id", Code: WhatsAppPhoneNumberIDRequired})
+		issues = append(issues, validation.Issue{Field: "phone_number_id", Code: string(WhatsAppPhoneNumberIDRequired)})
 	} else if !util.AllDigits(phoneNumberID) {
-		issues = append(issues, WhatsAppValidationIssue{Field: "phone_number_id", Code: WhatsAppPhoneNumberIDDigits})
+		issues = append(issues, validation.Issue{Field: "phone_number_id", Code: string(WhatsAppPhoneNumberIDDigits)})
 	}
 	if accessToken == "" {
-		issues = append(issues, WhatsAppValidationIssue{Field: "access_token", Code: WhatsAppAccessTokenRequired})
+		issues = append(issues, validation.Issue{Field: "access_token", Code: string(WhatsAppAccessTokenRequired)})
 	}
 	if len(util.ParseWhatsAppRecipients(recipients)) == 0 {
-		issues = append(issues, WhatsAppValidationIssue{Field: "recipients", Code: WhatsAppRecipientsRequired})
+		issues = append(issues, validation.Issue{Field: "recipients", Code: string(WhatsAppRecipientsRequired)})
 	}
 	if templateName != "" && !util.ValidWhatsAppTemplateName(templateName) {
-		issues = append(issues, WhatsAppValidationIssue{Field: "template_name", Code: WhatsAppTemplateNameFormat})
+		issues = append(issues, validation.Issue{Field: "template_name", Code: string(WhatsAppTemplateNameFormat)})
 	}
 	if templateLanguage != "" {
 		if templateName == "" {
-			issues = append(issues, WhatsAppValidationIssue{
+			issues = append(issues, validation.Issue{
 				Field: "template_language",
-				Code:  WhatsAppTemplateLanguageRequiresName,
+				Code:  string(WhatsAppTemplateLanguageRequiresName),
 			})
 		}
 		if strings.ContainsAny(templateLanguage, whatsAppWhitespaceChars) {
-			issues = append(issues, WhatsAppValidationIssue{
+			issues = append(issues, validation.Issue{
 				Field: "template_language",
-				Code:  WhatsAppTemplateLanguageWhitespace,
+				Code:  string(WhatsAppTemplateLanguageWhitespace),
 			})
 		}
 	}

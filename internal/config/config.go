@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
+	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 )
 
 // Sentinel errors for configuration operations.
@@ -276,8 +276,8 @@ func (c *Config) validate() error {
 	if msg := validateNonNegativeDays("silence_dump.retention_days", c.SilenceDump.RetentionDays); msg != "" {
 		return fmt.Errorf("invalid %s", msg)
 	}
-	if msg := validateOptionalWebhookURL("notifications.webhook.url", c.Notifications.Webhook.URL); msg != "" {
-		return fmt.Errorf("invalid %s", msg)
+	for _, issue := range types.ValidateWebhookURL(c.Notifications.Webhook.URL, validation.AllowEmpty) {
+		return fmt.Errorf("invalid %s", formatWebhookConfigIssue("notifications.webhook.url", issue))
 	}
 	if msg := validateOptionalEmail("notifications.email.from_address", c.Notifications.Email.FromAddress); msg != "" {
 		return fmt.Errorf("invalid %s", msg)
@@ -288,8 +288,8 @@ func (c *Config) validate() error {
 	if errs := validateWhatsAppConfigFields("notifications.whatsapp.", &c.Notifications.WhatsApp); len(errs) > 0 {
 		return fmt.Errorf("invalid %s", errs[0])
 	}
-	if msg := validateZabbixPort("notifications.zabbix.port", c.Notifications.Zabbix.Port); msg != "" {
-		return fmt.Errorf("invalid %s", msg)
+	for _, issue := range c.Notifications.Zabbix.ValidationIssues() {
+		return fmt.Errorf("invalid %s", formatZabbixConfigIssue("notifications.zabbix."+issue.Field, issue))
 	}
 	return nil
 }
@@ -315,14 +315,26 @@ func validateNonNegativeDays(field string, value int) string {
 	return ""
 }
 
-func validateOptionalWebhookURL(field, rawURL string) string {
-	if rawURL == "" {
-		return ""
-	}
-	if _, err := url.ParseRequestURI(rawURL); err != nil {
+func formatWebhookConfigIssue(field string, issue validation.Issue) string {
+	switch types.WebhookValidationCode(issue.Code) {
+	case types.WebhookURLInvalid:
 		return field + ": invalid URL format"
+	case types.WebhookURLRequired:
+		return field + ": is required"
+	default:
+		return field + ": invalid"
 	}
-	return ""
+}
+
+func formatWebhookSettingsIssue(field string, issue validation.Issue) string {
+	switch types.WebhookValidationCode(issue.Code) {
+	case types.WebhookURLInvalid:
+		return field + ": invalid URL format"
+	case types.WebhookURLRequired:
+		return field + ": is required"
+	default:
+		return field + ": invalid"
+	}
 }
 
 func validateOptionalEmail(field, email string) string {
@@ -346,7 +358,7 @@ func validateRecipients(field, recipients string) string {
 
 func validateWhatsAppConfigFields(prefix string, whatsApp *types.WhatsAppConfig) []string {
 	errs := []string{}
-	for _, issue := range whatsApp.Validate(types.WhatsAppAllowEmpty) {
+	for _, issue := range whatsApp.Validate(validation.AllowEmpty) {
 		if msg := formatWhatsAppConfigIssue(prefix, issue); msg != "" {
 			errs = append(errs, msg)
 		}
@@ -355,9 +367,9 @@ func validateWhatsAppConfigFields(prefix string, whatsApp *types.WhatsAppConfig)
 	return errs
 }
 
-func formatWhatsAppConfigIssue(prefix string, issue types.WhatsAppValidationIssue) string {
+func formatWhatsAppConfigIssue(prefix string, issue validation.Issue) string {
 	field := prefix + issue.Field
-	switch issue.Code {
+	switch types.WhatsAppValidationCode(issue.Code) {
 	case types.WhatsAppPhoneNumberIDRequired:
 		return field + ": is required when WhatsApp is configured"
 	case types.WhatsAppPhoneNumberIDDigits:
@@ -379,11 +391,34 @@ func formatWhatsAppConfigIssue(prefix string, issue types.WhatsAppValidationIssu
 	}
 }
 
-func validateZabbixPort(field string, port int) string {
-	if port != 0 && (port < 1 || port > 65535) {
+func formatZabbixConfigIssue(field string, issue validation.Issue) string {
+	switch types.ZabbixValidationCode(issue.Code) {
+	case types.ZabbixPortRange:
 		return field + ": must be between 1 and 65535"
+	case types.ZabbixServerRequired:
+		return field + ": is required when Zabbix is configured"
+	case types.ZabbixHostRequired:
+		return field + ": is required when Zabbix is configured"
+	case types.ZabbixKeyRequired:
+		return field + ": at least one of silence_key or upload_key is required"
+	default:
+		return field + ": invalid Zabbix configuration"
 	}
-	return ""
+}
+
+func formatZabbixSettingsIssue(field string, issue validation.Issue) string {
+	switch types.ZabbixValidationCode(issue.Code) {
+	case types.ZabbixPortRange:
+		return field + ": must be between 1 and 65535"
+	case types.ZabbixServerRequired:
+		return field + ": is required when Zabbix is configured"
+	case types.ZabbixHostRequired:
+		return field + ": is required when Zabbix is configured"
+	case types.ZabbixKeyRequired:
+		return field + ": at least one of silence_key or upload_key is required"
+	default:
+		return field + ": invalid Zabbix configuration"
+	}
 }
 
 func validatePeakHoldMs(field string, value int64) string {
@@ -947,8 +982,8 @@ func (s *SettingsUpdate) Validate() []string {
 	}
 
 	// Webhook URL format
-	if msg := validateOptionalWebhookURL("webhook_url", s.WebhookURL); msg != "" {
-		errs = append(errs, msg)
+	for _, issue := range types.ValidateWebhookURL(s.WebhookURL, validation.AllowEmpty) {
+		errs = append(errs, formatWebhookSettingsIssue("webhook_url", issue))
 	}
 
 	// Email address validation
@@ -965,8 +1000,8 @@ func (s *SettingsUpdate) Validate() []string {
 		TemplateName:     s.WhatsAppTemplateName,
 		TemplateLanguage: s.WhatsAppTemplateLanguage,
 	})...)
-	if msg := validateZabbixPort("zabbix_port", s.ZabbixPort); msg != "" {
-		errs = append(errs, msg)
+	for _, issue := range (&types.ZabbixConfig{Port: s.ZabbixPort}).ValidationIssues() {
+		errs = append(errs, formatZabbixSettingsIssue("zabbix_"+issue.Field, issue))
 	}
 	if msg := validateMaxDurationMinutes("recording_max_duration_minutes", s.RecordingMaxDurationMinutes); msg != "" {
 		errs = append(errs, msg)

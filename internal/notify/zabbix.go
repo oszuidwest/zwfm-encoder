@@ -14,6 +14,7 @@ import (
 
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
@@ -157,7 +158,7 @@ func sendZabbixRecovery(ctx context.Context, server string, port int, host, key 
 
 // SendZabbixTest sends a test message to verify Zabbix config.
 func SendZabbixTest(server string, port int, host, key string) error {
-	if server == "" || host == "" || key == "" || port <= 0 || port > 65535 {
+	if issues := types.ValidateZabbixTarget(server, port, host, key); len(issues) > 0 {
 		return fmt.Errorf("zabbix not fully configured (server, host, key, and a valid port 1-65535 are required)")
 	}
 	return sendZabbixEvent(context.Background(), server, port, host, key, "event=TEST source=zwfm-encoder")
