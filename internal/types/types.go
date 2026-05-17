@@ -364,14 +364,8 @@ func (r *Recorder) Validate() error {
 		return fmt.Errorf("local_path: is required for local/both storage mode")
 	}
 	if needsS3 {
-		if r.S3Bucket == "" {
-			return fmt.Errorf("s3_bucket: is required for s3/both storage mode")
-		}
-		if r.S3AccessKeyID == "" {
-			return fmt.Errorf("s3_access_key_id: is required for s3/both storage mode")
-		}
-		if r.S3SecretAccessKey == "" {
-			return fmt.Errorf("s3_secret_access_key: is required for s3/both storage mode")
+		for _, issue := range ValidateS3Credentials(r.S3Bucket, r.S3AccessKeyID, r.S3SecretAccessKey) {
+			return fmt.Errorf("%s: is required for s3/both storage mode", issue.Field)
 		}
 	}
 	if r.RetentionDays < 0 {

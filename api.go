@@ -562,16 +562,8 @@ func (s *Server) handleTestS3(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Bucket == "" {
-		s.writeError(w, http.StatusBadRequest, "s3_bucket is required")
-		return
-	}
-	if req.AccessKey == "" {
-		s.writeError(w, http.StatusBadRequest, "s3_access_key_id is required")
-		return
-	}
-	if req.SecretKey == "" {
-		s.writeError(w, http.StatusBadRequest, "s3_secret_access_key is required")
+	for _, issue := range types.ValidateS3Credentials(req.Bucket, req.AccessKey, req.SecretKey) {
+		s.writeError(w, http.StatusBadRequest, issue.Field+" is required")
 		return
 	}
 

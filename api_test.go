@@ -358,3 +358,51 @@ func TestHandleAPITestZabbixOutOfRangePortReachesRuntime(t *testing.T) {
 		t.Fatalf("error = %q, want substring %q", got, "not fully configured")
 	}
 }
+
+// TestHandleTestS3MissingFieldReturnsBadRequest pins handler behavior: a
+// missing S3 credential field is rejected with HTTP 400 and the field-
+// specific message "<field> is required" (different format than
+// Recorder.Validate's "<field>: is required for s3/both storage mode").
+// First-error semantics: only the first missing field is reported.
+func TestHandleTestS3MissingFieldReturnsBadRequest(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{
+			name:    "missing bucket reported first",
+			body:    `{}`,
+			wantErr: "s3_bucket is required",
+		},
+		{
+			name:    "bucket set, access key missing",
+			body:    `{"s3_bucket": "b"}`,
+			wantErr: "s3_access_key_id is required",
+		},
+		{
+			name:    "bucket+access set, secret missing",
+			body:    `{"s3_bucket": "b", "s3_access_key_id": "k"}`,
+			wantErr: "s3_secret_access_key is required",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			s := freshServer(t)
+			req := httptest.NewRequest(http.MethodPost, "/api/recorders/test-s3", bytes.NewBufferString(tt.body))
+			rec := httptest.NewRecorder()
+
+			s.handleTestS3(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+			if got := decodeError(t, rec.Body.Bytes()); got != tt.wantErr {
+				t.Fatalf("error = %q, want %q", got, tt.wantErr)
+			}
+		})
+	}
+}
