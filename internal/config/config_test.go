@@ -682,3 +682,123 @@ func TestSilenceThresholdBoundary(t *testing.T) {
 		}
 	})
 }
+
+// minimalValidUpdate returns a SettingsUpdate with the validator's required
+// range fields filled (silence threshold, durations, and peak hold). The rest
+// stays at zero defaults for tests that exercise one specific validation rule.
+func minimalValidUpdate() *SettingsUpdate {
+	return &SettingsUpdate{
+		SilenceThreshold:  -40,
+		SilenceDurationMs: 15000,
+		SilenceRecoveryMs: 5000,
+		PeakHoldMs:        1500,
+	}
+}
+
+// TestSettingsUpdateValidate_ClearGraphSecretConflict pins #247: when both
+// ClearGraphClientSecret=true and a non-empty GraphClientSecret are submitted,
+// Validate() reports the conflict. The whitespace-only case is included to
+// pin that the check uses raw != "" rather than TrimSpace; if the contract
+// ever shifts to "semantically empty == empty" this case will fail clearly.
+func TestSettingsUpdateValidate_ClearGraphSecretConflict(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		secret string
+	}{
+		{"plain non-empty", "new-secret"},
+		{"whitespace-only (raw != \"\" still triggers conflict)", "   "},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			upd := minimalValidUpdate()
+			upd.GraphClientSecret = tc.secret
+			upd.ClearGraphClientSecret = true
+
+			errs := upd.Validate()
+			want := "clear_graph_client_secret: conflicts with non-empty graph_client_secret"
+			found := false
+			for _, e := range errs {
+				if e == want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("Validate() = %v, want to contain %q", errs, want)
+			}
+		})
+	}
+}
+
+// TestSettingsUpdateValidate_ClearGraphSecretWithBlankAllowed pins that an
+// empty submitted secret combined with ClearGraphClientSecret=true is not a
+// conflict (this is the supported "remove saved secret" path).
+func TestSettingsUpdateValidate_ClearGraphSecretWithBlankAllowed(t *testing.T) {
+	t.Parallel()
+
+	upd := minimalValidUpdate()
+	upd.GraphClientSecret = ""
+	upd.ClearGraphClientSecret = true
+
+	for _, e := range upd.Validate() {
+		if e == "clear_graph_client_secret: conflicts with non-empty graph_client_secret" {
+			t.Fatalf("Validate() unexpectedly reported conflict for empty secret + clear=true: %q", e)
+		}
+	}
+}
+
+// TestSettingsUpdateValidate_ClearWhatsAppTokenConflict mirrors the Graph
+// conflict test for the WhatsApp access token, including the whitespace-only
+// case that pins the raw != "" contract.
+func TestSettingsUpdateValidate_ClearWhatsAppTokenConflict(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		token string
+	}{
+		{"plain non-empty", "new-token"},
+		{"whitespace-only (raw != \"\" still triggers conflict)", "   "},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			upd := minimalValidUpdate()
+			upd.WhatsAppAccessToken = tc.token
+			upd.ClearWhatsAppAccessToken = true
+
+			errs := upd.Validate()
+			want := "clear_whatsapp_access_token: conflicts with non-empty whatsapp_access_token"
+			found := false
+			for _, e := range errs {
+				if e == want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("Validate() = %v, want to contain %q", errs, want)
+			}
+		})
+	}
+}
+
+// TestSettingsUpdateValidate_ClearWhatsAppTokenWithBlankAllowed pins that an
+// empty submitted token combined with ClearWhatsAppAccessToken=true is not a
+// conflict.
+func TestSettingsUpdateValidate_ClearWhatsAppTokenWithBlankAllowed(t *testing.T) {
+	t.Parallel()
+
+	upd := minimalValidUpdate()
+	upd.WhatsAppAccessToken = ""
+	upd.ClearWhatsAppAccessToken = true
+
+	for _, e := range upd.Validate() {
+		if e == "clear_whatsapp_access_token: conflicts with non-empty whatsapp_access_token" {
+			t.Fatalf("Validate() unexpectedly reported conflict for empty token + clear=true: %q", e)
+		}
+	}
+}

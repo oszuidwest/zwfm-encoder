@@ -241,9 +241,9 @@ document.addEventListener('alpine:init', () => {
             webhookEvents: { silence_start: true, silence_end: true, audio_dump: true },
             zabbix: { server: '', port: 10051, host: '', silenceKey: '', uploadKey: '' },
             zabbixEvents: { silence_start: true, silence_end: true },
-            graph: { tenantId: '', clientId: '', clientSecret: '', fromAddress: '', recipients: '' },
+            graph: { tenantId: '', clientId: '', clientSecret: '', clearSecret: false, _preClearSnapshot: null, fromAddress: '', recipients: '' },
             emailEvents: { silence_start: true, silence_end: true, audio_dump: true },
-            whatsapp: { phoneNumberId: '', accessToken: '', recipients: '', templateName: '', templateLanguage: '' },
+            whatsapp: { phoneNumberId: '', accessToken: '', clearToken: false, _preDisableSnapshot: null, recipients: '', templateName: '', templateLanguage: '' },
             whatsappEvents: { silence_start: true, silence_end: true, audio_dump: true },
             recordingApiKey: '',
             platform: ''
@@ -725,7 +725,9 @@ document.addEventListener('alpine:init', () => {
                 graph: {
                     tenantId: this.config.graph_tenant_id || '',
                     clientId: this.config.graph_client_id || '',
-                    clientSecret: '', // Never pre-fill, only send if user enters new value
+                    clientSecret: '', // Never pre-fill; empty = keep saved unless clearSecret is true.
+                    clearSecret: false,
+                    _preClearSnapshot: null,
                     fromAddress: this.config.graph_from_address || '',
                     recipients: this.config.graph_recipients || ''
                 },
@@ -736,7 +738,9 @@ document.addEventListener('alpine:init', () => {
                 },
                 whatsapp: {
                     phoneNumberId: this.config.whatsapp_phone_number_id || '',
-                    accessToken: '', // Never pre-fill, only send if user enters new value
+                    accessToken: '', // Never pre-fill; empty = keep saved unless clearToken is true.
+                    clearToken: false,
+                    _preDisableSnapshot: null,
                     recipients: this.config.whatsapp_recipients || '',
                     templateName: this.config.whatsapp_template_name || '',
                     templateLanguage: this.config.whatsapp_template_language || ''
@@ -760,6 +764,78 @@ document.addEventListener('alpine:init', () => {
          */
         markSettingsDirty() {
             this.settingsDirty = true;
+        },
+
+        /**
+         * Stages removal of the saved Graph client secret on next Save.
+         * Snapshots the current clientSecret input so undo can restore it,
+         * then clears the input and sets clearSecret=true so the payload
+         * sends clear_graph_client_secret=true with an empty value. The
+         * input is disabled in the template while clearSecret is true,
+         * preventing the user from typing a value that would conflict
+         * with the clear flag and 400 at the backend.
+         */
+        clearGraphSecret() {
+            const graph = this.settingsForm.graph;
+            if (graph.clearSecret) return; // double-click guard
+            if (!confirm('Remove the saved Microsoft Graph client secret on save?')) return;
+            graph._preClearSnapshot = { clientSecret: graph.clientSecret };
+            graph.clientSecret = '';
+            graph.clearSecret = true;
+            this.markSettingsDirty();
+        },
+
+        /**
+         * Cancels a pending Graph secret clear and restores the prior input.
+         */
+        undoClearGraphSecret() {
+            const graph = this.settingsForm.graph;
+            if (!graph._preClearSnapshot) return;
+            graph.clientSecret = graph._preClearSnapshot.clientSecret;
+            graph.clearSecret = false;
+            graph._preClearSnapshot = null;
+            this.markSettingsDirty();
+        },
+
+        /**
+         * Stages removal of the entire WhatsApp configuration on next Save.
+         * Snapshots all five WhatsApp fields, clears them, and sets
+         * clearToken=true so the payload sends clear_whatsapp_access_token
+         * with everything empty. The backend's all-or-nothing validator
+         * requires the token clear flag whenever the visible fields are
+         * cleared; doing both together avoids the 400 the deprecated
+         * implicit-disable path would now produce.
+         */
+        disableWhatsApp() {
+            const whatsapp = this.settingsForm.whatsapp;
+            if (whatsapp.clearToken) return; // double-click guard
+            if (!confirm('Disable WhatsApp notifications and clear all WhatsApp configuration (phone number, recipients, template, access token)?')) return;
+            whatsapp._preDisableSnapshot = {
+                phoneNumberId: whatsapp.phoneNumberId,
+                recipients: whatsapp.recipients,
+                templateName: whatsapp.templateName,
+                templateLanguage: whatsapp.templateLanguage,
+                accessToken: whatsapp.accessToken
+            };
+            whatsapp.phoneNumberId = '';
+            whatsapp.recipients = '';
+            whatsapp.templateName = '';
+            whatsapp.templateLanguage = '';
+            whatsapp.accessToken = '';
+            whatsapp.clearToken = true;
+            this.markSettingsDirty();
+        },
+
+        /**
+         * Cancels a pending WhatsApp disable and restores all snapshotted fields.
+         */
+        undoDisableWhatsApp() {
+            const whatsapp = this.settingsForm.whatsapp;
+            if (!whatsapp._preDisableSnapshot) return;
+            Object.assign(whatsapp, whatsapp._preDisableSnapshot);
+            whatsapp.clearToken = false;
+            whatsapp._preDisableSnapshot = null;
+            this.markSettingsDirty();
         },
 
         /**
@@ -857,12 +933,14 @@ document.addEventListener('alpine:init', () => {
                 zabbix_events: form.zabbixEvents,
                 graph_tenant_id: form.graph.tenantId,
                 graph_client_id: form.graph.clientId,
-                graph_client_secret: form.graph.clientSecret || '', // empty = keep existing
+                graph_client_secret: form.graph.clientSecret,
+                clear_graph_client_secret: form.graph.clearSecret,
                 graph_from_address: form.graph.fromAddress,
                 graph_recipients: form.graph.recipients,
                 email_events: form.emailEvents,
                 whatsapp_phone_number_id: form.whatsapp.phoneNumberId,
-                whatsapp_access_token: form.whatsapp.accessToken || '', // empty = keep existing
+                whatsapp_access_token: form.whatsapp.accessToken,
+                clear_whatsapp_access_token: form.whatsapp.clearToken,
                 whatsapp_recipients: form.whatsapp.recipients,
                 whatsapp_template_name: form.whatsapp.templateName,
                 whatsapp_template_language: form.whatsapp.templateLanguage,

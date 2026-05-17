@@ -956,6 +956,12 @@ type SettingsUpdate struct {
 	GraphRecipients string `json:"graph_recipients"`
 	// RecordingMaxDurationMinutes is the maximum allowed duration for on-demand recordings.
 	RecordingMaxDurationMinutes int `json:"recording_max_duration_minutes"`
+	// ClearGraphClientSecret requests removal of the saved Graph client secret.
+	// Must not be combined with a non-empty GraphClientSecret value (conflict -> 400).
+	ClearGraphClientSecret bool `json:"clear_graph_client_secret,omitempty"`
+	// ClearWhatsAppAccessToken requests removal of the saved WhatsApp access token.
+	// Must not be combined with a non-empty WhatsAppAccessToken value (conflict -> 400).
+	ClearWhatsAppAccessToken bool `json:"clear_whatsapp_access_token,omitempty"`
 }
 
 // Validate checks all settings fields and returns all validation errors.
@@ -1003,6 +1009,12 @@ func (s *SettingsUpdate) Validate() []string {
 	for _, issue := range (&types.ZabbixConfig{Port: s.ZabbixPort}).ValidationIssues() {
 		errs = append(errs, formatZabbixSettingsIssue("zabbix_"+issue.Field, issue))
 	}
+	if s.ClearGraphClientSecret && s.GraphClientSecret != "" {
+		errs = append(errs, "clear_graph_client_secret: conflicts with non-empty graph_client_secret")
+	}
+	if s.ClearWhatsAppAccessToken && s.WhatsAppAccessToken != "" {
+		errs = append(errs, "clear_whatsapp_access_token: conflicts with non-empty whatsapp_access_token")
+	}
 	if msg := validateMaxDurationMinutes("recording_max_duration_minutes", s.RecordingMaxDurationMinutes); msg != "" {
 		errs = append(errs, msg)
 	}
@@ -1035,7 +1047,11 @@ func (c *Config) ApplySettings(s *SettingsUpdate) error {
 	c.Notifications.Webhook.Events = s.WebhookEvents
 	c.Notifications.Email.Events = s.EmailEvents
 	c.Notifications.WhatsApp.PhoneNumberID = s.WhatsAppPhoneNumberID
-	c.Notifications.WhatsApp.AccessToken = s.WhatsAppAccessToken
+	if s.ClearWhatsAppAccessToken {
+		c.Notifications.WhatsApp.AccessToken = ""
+	} else {
+		c.Notifications.WhatsApp.AccessToken = s.WhatsAppAccessToken
+	}
 	c.Notifications.WhatsApp.Recipients = s.WhatsAppRecipients
 	c.Notifications.WhatsApp.TemplateName = s.WhatsAppTemplateName
 	c.Notifications.WhatsApp.TemplateLanguage = s.WhatsAppTemplateLanguage
@@ -1048,7 +1064,11 @@ func (c *Config) ApplySettings(s *SettingsUpdate) error {
 	c.Notifications.Zabbix.UploadKey = s.ZabbixUploadKey
 	c.Notifications.Email.TenantID = s.GraphTenantID
 	c.Notifications.Email.ClientID = s.GraphClientID
-	c.Notifications.Email.ClientSecret = s.GraphClientSecret
+	if s.ClearGraphClientSecret {
+		c.Notifications.Email.ClientSecret = ""
+	} else {
+		c.Notifications.Email.ClientSecret = s.GraphClientSecret
+	}
 	c.Notifications.Email.FromAddress = s.GraphFromAddress
 	c.Notifications.Email.Recipients = s.GraphRecipients
 

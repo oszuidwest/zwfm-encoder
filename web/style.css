@@ -427,6 +427,30 @@
         margin-top: 0.75rem;
     }
 
+    .btn[data-size="sm"] {
+        padding: 0.375rem 0.75rem;
+        font-size: 0.8125rem;
+    }
+
+    .secret-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-top: 0.5rem;
+    }
+
+    .test-action {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+        margin-top: 0.75rem;
+    }
+
+    .test-action .btn[data-size="test"] {
+        margin-top: 0;
+    }
+
     .btn:focus-visible {
         outline: none;
         box-shadow: 0 0 0 3px var(--focus-ring);
