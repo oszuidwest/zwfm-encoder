@@ -698,25 +698,39 @@ func minimalValidUpdate() *SettingsUpdate {
 
 // TestSettingsUpdateValidate_ClearGraphSecretConflict pins #247: when both
 // ClearGraphClientSecret=true and a non-empty GraphClientSecret are submitted,
-// Validate() reports the conflict. Raw != "" — TrimSpace is NOT applied here.
+// Validate() reports the conflict. The whitespace-only case is included to
+// pin that the check uses raw != "" rather than TrimSpace; if the contract
+// ever shifts to "semantically empty == empty" this case will fail loud.
 func TestSettingsUpdateValidate_ClearGraphSecretConflict(t *testing.T) {
 	t.Parallel()
 
-	upd := minimalValidUpdate()
-	upd.GraphClientSecret = "new-secret"
-	upd.ClearGraphClientSecret = true
-
-	errs := upd.Validate()
-	want := "clear_graph_client_secret: conflicts with non-empty graph_client_secret"
-	found := false
-	for _, e := range errs {
-		if e == want {
-			found = true
-			break
-		}
+	cases := []struct {
+		name   string
+		secret string
+	}{
+		{"plain non-empty", "new-secret"},
+		{"whitespace-only (raw != \"\" still triggers conflict)", "   "},
 	}
-	if !found {
-		t.Fatalf("Validate() = %v, want to contain %q", errs, want)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			upd := minimalValidUpdate()
+			upd.GraphClientSecret = tc.secret
+			upd.ClearGraphClientSecret = true
+
+			errs := upd.Validate()
+			want := "clear_graph_client_secret: conflicts with non-empty graph_client_secret"
+			found := false
+			for _, e := range errs {
+				if e == want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("Validate() = %v, want to contain %q", errs, want)
+			}
+		})
 	}
 }
 
@@ -738,25 +752,38 @@ func TestSettingsUpdateValidate_ClearGraphSecretWithBlankAllowed(t *testing.T) {
 }
 
 // TestSettingsUpdateValidate_ClearWhatsAppTokenConflict mirrors the Graph
-// conflict test for the WhatsApp access token.
+// conflict test for the WhatsApp access token, including the whitespace-only
+// case that pins the raw != "" contract.
 func TestSettingsUpdateValidate_ClearWhatsAppTokenConflict(t *testing.T) {
 	t.Parallel()
 
-	upd := minimalValidUpdate()
-	upd.WhatsAppAccessToken = "new-token"
-	upd.ClearWhatsAppAccessToken = true
-
-	errs := upd.Validate()
-	want := "clear_whatsapp_access_token: conflicts with non-empty whatsapp_access_token"
-	found := false
-	for _, e := range errs {
-		if e == want {
-			found = true
-			break
-		}
+	cases := []struct {
+		name  string
+		token string
+	}{
+		{"plain non-empty", "new-token"},
+		{"whitespace-only (raw != \"\" still triggers conflict)", "   "},
 	}
-	if !found {
-		t.Fatalf("Validate() = %v, want to contain %q", errs, want)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			upd := minimalValidUpdate()
+			upd.WhatsAppAccessToken = tc.token
+			upd.ClearWhatsAppAccessToken = true
+
+			errs := upd.Validate()
+			want := "clear_whatsapp_access_token: conflicts with non-empty whatsapp_access_token"
+			found := false
+			for _, e := range errs {
+				if e == want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("Validate() = %v, want to contain %q", errs, want)
+			}
+		})
 	}
 }
 

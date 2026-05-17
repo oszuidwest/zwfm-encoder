@@ -550,7 +550,10 @@
                                 </div>
                             </div>
                         </div>
-                        <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('email')" :disabled="testStates.email.pending || settingsForm.graph.clearSecret" :title="settingsForm.graph.clearSecret ? 'Save changes first to test with the cleared secret' : ''" x-text="testStates.email.text">Test</button>
+                        <div class="test-action">
+                            <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('email')" :disabled="testStates.email.pending || settingsForm.graph.clearSecret" x-text="testStates.email.text">Test</button>
+                            <span class="input-hint" x-show="settingsForm.graph.clearSecret">Save changes first to test with the cleared secret.</span>
+                        </div>
                     </div>
                     <div class="section">
                         <div class="section-header">
