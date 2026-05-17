@@ -622,12 +622,11 @@ func deref[T any](p *T, fallback T) T {
 
 // preserveGraphClientSecret keeps the saved Graph client secret when the request
 // omits or empties it. Skipped when ClearGraphClientSecret is true so Validate()
-// can still see a non-empty submitted secret and reject the conflict (clear=true
-// must never silently overwrite a submitted new value).
+// can still reject a non-empty submitted secret combined with clear=true.
 //
-// Symmetric with preserveWhatsAppAccessToken; both follow the same three-phase
-// pipeline: preserve (never blank) -> Validate (sees raw submitted values) ->
-// ApplySettings (blanks per ClearGraphClientSecret/ClearWhatsAppAccessToken flag).
+// Symmetric with preserveWhatsAppAccessToken: preserve omitted or empty secrets,
+// validate conflicts while clear flags still carry submitted values, then let
+// ApplySettings clear storage only when the explicit clear flag is set.
 func preserveGraphClientSecret(req *config.SettingsUpdate, cfg *config.Snapshot) {
 	if req.ClearGraphClientSecret {
 		return
@@ -640,9 +639,8 @@ func preserveGraphClientSecret(req *config.SettingsUpdate, cfg *config.Snapshot)
 // Validate() can detect the conflict between clear=true and a non-empty
 // submitted token. Same three-phase pipeline as preserveGraphClientSecret.
 //
-// The previous "visible field heuristic" (preserve only when phone/recipients/
-// template_name remained non-empty) is removed: explicit ClearWhatsAppAccessToken
-// is now the single supported path to disable WhatsApp via UI/API.
+// ClearWhatsAppAccessToken is the only supported way to remove the saved token;
+// an empty token field without the flag means "keep the saved token".
 func preserveWhatsAppAccessToken(req *config.SettingsUpdate, cfg *config.Snapshot) {
 	if req.ClearWhatsAppAccessToken {
 		return
