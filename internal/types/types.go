@@ -155,7 +155,7 @@ type codecPreset struct {
 var codecPresets = map[Codec]codecPreset{
 	CodecMP3: {[]string{"libmp3lame", "-b:a", "320k"}, "mp3"},
 	CodecOGG: {[]string{"libvorbis", "-qscale:a", "10"}, "ogg"},
-	CodecPCM: {[]string{"pcm_s16le"}, "mpegts"},
+	CodecPCM: {[]string{"s302m", "-strict", "-2"}, "mpegts"},
 }
 
 // Format returns the output format for this codec.
@@ -182,7 +182,7 @@ func BuildCodecArgs(codec Codec, bitrate int) []string {
 		}
 		return []string{"libvorbis", "-qscale:a", "10"}
 	default:
-		return []string{"pcm_s16le"}
+		return []string{"s302m", "-strict", "-2"}
 	}
 }
 
