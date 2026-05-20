@@ -11,7 +11,7 @@ Audio streaming software for [ZuidWest FM](https://www.zuidwestfm.nl/) (Linux), 
 - **Silence detection** - Alerts via webhook, email, WhatsApp, file log, or Zabbix when audio drops below threshold
 - **Web interface** - Configure outputs, select audio input, monitor levels
 - **Auto-recovery** - Automatic reconnection with configurable retry limits per output
-- **Multiple codecs** - MP3, Ogg Vorbis, or uncompressed WAV per output
+- **Multiple codecs** - MP3, Ogg Vorbis, or uncompressed PCM per output
 - **Update notifications** - Alerts when new versions are available
 - **Single binary** - Web interface embedded, minimal runtime dependencies
 
@@ -85,7 +85,7 @@ Connect the digital output of your audio processor to the HiFiBerry input.
 |-------|---------|---------|-------|
 | MP3 | libmp3lame | 320 kbit/s | - |
 | Ogg | libvorbis | ~500 kbit/s (Q10) | - |
-| WAV | pcm_s16le | Uncompressed | - |
+| PCM | pcm_s16le | Uncompressed | MPEG-TS container (SMPTE 302M) |
 
 ## Silence Detection
 

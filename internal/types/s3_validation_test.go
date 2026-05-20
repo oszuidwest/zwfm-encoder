@@ -143,7 +143,7 @@ func TestRecorderValidateS3FirstErrorOrder(t *testing.T) {
 			wantErr: "s3_secret_access_key: is required for s3/both storage mode",
 		},
 		{
-			name: "all set -> no S3 error (bitrate WAV still 0 default, no error)",
+			name: "all set -> no S3 error (bitrate PCM still 0 default, no error)",
 			r: &Recorder{
 				Name: "rec", StorageMode: StorageS3,
 				S3Bucket: "b", S3AccessKeyID: "k", S3SecretAccessKey: "s",

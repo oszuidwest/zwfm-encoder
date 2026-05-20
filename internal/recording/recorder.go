@@ -650,8 +650,8 @@ func (r *GenericRecorder) getFileExtension() string {
 		return "mp3"
 	case types.CodecOGG:
 		return "ogg"
-	case types.CodecWAV:
-		return "mkv" // WAV uses matroska container
+	case types.CodecPCM:
+		return "ts" // PCM uses MPEG-TS container (SMPTE 302M)
 	default:
 		return "mp3"
 	}
@@ -661,8 +661,8 @@ func (r *GenericRecorder) getContentType() string {
 	switch r.config.Codec {
 	case types.CodecOGG:
 		return "audio/ogg"
-	case types.CodecWAV:
-		return "audio/x-matroska"
+	case types.CodecPCM:
+		return "audio/mp2t"
 	default:
 		return "audio/mpeg"
 	}

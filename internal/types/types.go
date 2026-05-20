@@ -81,8 +81,8 @@ const (
 type Codec string
 
 const (
-	// CodecWAV is uncompressed PCM in a Matroska container.
-	CodecWAV Codec = "wav"
+	// CodecPCM is uncompressed PCM in an MPEG-TS container.
+	CodecPCM Codec = "pcm"
 	// CodecMP3 is MPEG Audio Layer III.
 	CodecMP3 Codec = "mp3"
 	// CodecOGG is Ogg Vorbis.
@@ -91,7 +91,7 @@ const (
 
 // validCodecs is the set of supported audio codecs.
 var validCodecs = map[Codec]bool{
-	CodecWAV: true, CodecMP3: true, CodecOGG: true,
+	CodecPCM: true, CodecMP3: true, CodecOGG: true,
 }
 
 // UnmarshalJSON validates the codec value during JSON parsing.
@@ -101,12 +101,12 @@ func (c *Codec) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	if s == "" {
-		*c = CodecWAV // default
+		*c = CodecPCM // default
 		return nil
 	}
 	codec := Codec(s)
 	if !validCodecs[codec] {
-		return fmt.Errorf("codec: must be wav, mp3, or ogg")
+		return fmt.Errorf("codec: must be pcm, mp3, or ogg")
 	}
 	*c = codec
 	return nil
@@ -155,7 +155,7 @@ type codecPreset struct {
 var codecPresets = map[Codec]codecPreset{
 	CodecMP3: {[]string{"libmp3lame", "-b:a", "320k"}, "mp3"},
 	CodecOGG: {[]string{"libvorbis", "-qscale:a", "10"}, "ogg"},
-	CodecWAV: {[]string{"pcm_s16le"}, "matroska"},
+	CodecPCM: {[]string{"pcm_s16le"}, "mpegts"},
 }
 
 // Format returns the output format for this codec.
@@ -163,7 +163,7 @@ func (c Codec) Format() string {
 	if preset, ok := codecPresets[c]; ok {
 		return preset.format
 	}
-	return codecPresets[CodecWAV].format
+	return codecPresets[CodecPCM].format
 }
 
 // BuildCodecArgs returns FFmpeg encoder arguments for the given codec and bitrate.
@@ -201,8 +201,8 @@ func ValidateBitrate(codec Codec, bitrate int) error {
 		if bitrate < 64 || bitrate > 500 {
 			return fmt.Errorf("bitrate: must be between 64 and 500 for OGG")
 		}
-	case CodecWAV:
-		return fmt.Errorf("bitrate: not supported for WAV (uncompressed)")
+	case CodecPCM:
+		return fmt.Errorf("bitrate: not supported for PCM (uncompressed)")
 	}
 	return nil
 }

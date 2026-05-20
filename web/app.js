@@ -86,7 +86,7 @@ const DEFAULT_STREAM = {
     port: 8080,
     stream_id: '',
     password: '',
-    codec: 'wav',
+    codec: 'pcm',
     bitrate: 0,
     max_retries: 99
 };
@@ -131,10 +131,10 @@ const DEFAULT_LEVELS = {
     hold_right_time: 0
 };
 
-/** Formats codec and bitrate for display (e.g. "MP3 128k", "WAV"). */
+/** Formats codec and bitrate for display (e.g. "MP3 128k", "PCM"). */
 window.formatCodecBitrate = (codec, bitrate) => {
     const label = codec.toUpperCase();
-    if (codec === 'wav') return label;
+    if (codec === 'pcm') return label;
     const br = bitrate || window.CODEC_DEFAULT_BITRATE[codec] || 0;
     return `${label} ${br}k`;
 };
@@ -989,7 +989,7 @@ document.addEventListener('alpine:init', () => {
                     port: stream.port,
                     stream_id: stream.stream_id || '',
                     password: '',
-                    codec: stream.codec || 'wav',
+                    codec: stream.codec || 'pcm',
                     bitrate: stream.bitrate || 0,
                     max_retries: stream.max_retries || 99,
                     enabled: stream.enabled !== false
@@ -1018,7 +1018,7 @@ document.addEventListener('alpine:init', () => {
                 port: this.streamForm.port,
                 stream_id: this.streamForm.stream_id.trim() || 'studio',
                 codec: this.streamForm.codec,
-                bitrate: this.streamForm.codec === 'wav' ? 0 : (this.streamForm.bitrate || 0),
+                bitrate: this.streamForm.codec === 'pcm' ? 0 : (this.streamForm.bitrate || 0),
                 max_retries: this.streamForm.max_retries
             };
 
@@ -1188,7 +1188,7 @@ document.addEventListener('alpine:init', () => {
                 name: name,
                 enabled: this.recorderForm.enabled,
                 codec: this.recorderForm.codec,
-                bitrate: this.recorderForm.codec === 'wav' ? 0 : (this.recorderForm.bitrate || 0),
+                bitrate: this.recorderForm.codec === 'pcm' ? 0 : (this.recorderForm.bitrate || 0),
                 recording_mode: this.recorderForm.recording_mode,
                 storage_mode: storageMode,
                 local_path: localPath,
