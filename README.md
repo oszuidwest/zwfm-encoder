@@ -85,7 +85,7 @@ Connect the digital output of your audio processor to the HiFiBerry input.
 |-------|---------|---------|-------|
 | MP3 | libmp3lame | 320 kbit/s | - |
 | Ogg | libvorbis | ~500 kbit/s (Q10) | - |
-| PCM | pcm_s16le | Uncompressed | MPEG-TS container (SMPTE 302M) |
+| PCM | s302m | ~1.92 Mbit/s (16-bit) | MPEG-TS container, SMPTE 302M |
 
 ## Silence Detection
 
