@@ -17,6 +17,8 @@ func TestSetMaxDurationMinutesPropagatesToExistingRecorders(t *testing.T) {
 		Name:          "Test",
 		Codec:         types.CodecPCM,
 		RecordingMode: types.RecordingOnDemand,
+		StorageMode:   types.StorageLocal,
+		LocalPath:     t.TempDir(),
 	}
 	if err := m.AddRecorder(cfg); err != nil {
 		t.Fatal(err)

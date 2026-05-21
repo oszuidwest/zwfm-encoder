@@ -16,7 +16,7 @@ func TestCodecUnmarshalJSON(t *testing.T) {
 		want    Codec
 		wantErr string
 	}{
-		{name: "empty defaults to pcm", input: `""`, want: CodecPCM},
+		{name: "empty rejected", input: `""`, wantErr: "codec: must be pcm, mp3, or opus"},
 		{name: "pcm", input: `"pcm"`, want: CodecPCM},
 		{name: "mp3", input: `"mp3"`, want: CodecMP3},
 		{name: "opus", input: `"opus"`, want: CodecOpus},
@@ -29,6 +29,81 @@ func TestCodecUnmarshalJSON(t *testing.T) {
 			t.Parallel()
 
 			var got Codec
+			err := json.Unmarshal([]byte(tt.input), &got)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("UnmarshalJSON() error = %v, want containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("UnmarshalJSON() error = %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("UnmarshalJSON() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRecordingModeUnmarshalJSON(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		input   string
+		want    RecordingMode
+		wantErr string
+	}{
+		{name: "empty rejected", input: `""`, wantErr: "recording_mode: must be hourly or ondemand"},
+		{name: "hourly", input: `"hourly"`, want: RecordingHourly},
+		{name: "ondemand", input: `"ondemand"`, want: RecordingOnDemand},
+		{name: "invalid rejected", input: `"manual"`, wantErr: "recording_mode: must be hourly or ondemand"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var got RecordingMode
+			err := json.Unmarshal([]byte(tt.input), &got)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("UnmarshalJSON() error = %v, want containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("UnmarshalJSON() error = %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("UnmarshalJSON() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStorageModeUnmarshalJSON(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		input   string
+		want    StorageMode
+		wantErr string
+	}{
+		{name: "empty rejected", input: `""`, wantErr: "storage_mode: must be local, s3, or both"},
+		{name: "local", input: `"local"`, want: StorageLocal},
+		{name: "s3", input: `"s3"`, want: StorageS3},
+		{name: "both", input: `"both"`, want: StorageBoth},
+		{name: "invalid rejected", input: `"remote"`, wantErr: "storage_mode: must be local, s3, or both"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var got StorageMode
 			err := json.Unmarshal([]byte(tt.input), &got)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
