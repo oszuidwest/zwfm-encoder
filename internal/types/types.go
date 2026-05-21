@@ -4,6 +4,7 @@ package types
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -85,13 +86,20 @@ const (
 	CodecPCM Codec = "pcm"
 	// CodecMP3 is MPEG Audio Layer III.
 	CodecMP3 Codec = "mp3"
-	// CodecOPUS is Opus (RFC 6716) in an MPEG-TS container.
-	CodecOPUS Codec = "opus"
+	// CodecOpus is Opus (RFC 6716) in an MPEG-TS container.
+	CodecOpus Codec = "opus"
 )
 
 // validCodecs is the set of supported audio codecs.
 var validCodecs = map[Codec]bool{
-	CodecPCM: true, CodecMP3: true, CodecOPUS: true,
+	CodecPCM: true, CodecMP3: true, CodecOpus: true,
+}
+
+func validateCodec(codec Codec) error {
+	if validCodecs[codec] {
+		return nil
+	}
+	return fmt.Errorf("codec: must be pcm, mp3, or opus")
 }
 
 // UnmarshalJSON validates the codec value during JSON parsing.
@@ -105,8 +113,8 @@ func (c *Codec) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	codec := Codec(s)
-	if !validCodecs[codec] {
-		return fmt.Errorf("codec: must be pcm, mp3, or opus")
+	if err := validateCodec(codec); err != nil {
+		return err
 	}
 	*c = codec
 	return nil
@@ -154,8 +162,9 @@ type codecPreset struct {
 // codecPresets maps codecs to their encoding parameters.
 var codecPresets = map[Codec]codecPreset{
 	CodecMP3:  {[]string{"libmp3lame", "-b:a", "320k"}, "mp3"},
-	CodecOPUS: {[]string{"libopus", "-b:a", "128k", "-frame_duration", "10"}, "mpegts"},
+	CodecOpus: {[]string{"libopus", "-b:a", "128k", "-frame_duration", "10"}, "mpegts"},
 	// SMPTE 302M is the only PCM-in-MPEG-TS encoder Liquidsoap can decode.
+	// FFmpeg marks s302m as experimental, so -strict -2 is required.
 	CodecPCM: {[]string{"s302m", "-strict", "-2"}, "mpegts"},
 }
 
@@ -164,6 +173,7 @@ func (c Codec) Format() string {
 	if preset, ok := codecPresets[c]; ok {
 		return preset.format
 	}
+	slog.Error("unknown codec format requested, falling back to PCM format", "codec", c)
 	return codecPresets[CodecPCM].format
 }
 
@@ -177,13 +187,16 @@ func BuildCodecArgs(codec Codec, bitrate int) []string {
 			br = strconv.Itoa(bitrate) + "k"
 		}
 		return []string{"libmp3lame", "-b:a", br}
-	case CodecOPUS:
+	case CodecOpus:
 		br := "128k"
 		if bitrate > 0 {
 			br = strconv.Itoa(bitrate) + "k"
 		}
 		return []string{"libopus", "-b:a", br, "-frame_duration", "10"}
+	case CodecPCM:
+		return []string{"s302m", "-strict", "-2"}
 	default:
+		slog.Error("unknown codec arguments requested, falling back to PCM encoder", "codec", codec)
 		return []string{"s302m", "-strict", "-2"}
 	}
 }
@@ -191,6 +204,9 @@ func BuildCodecArgs(codec Codec, bitrate int) []string {
 // ValidateBitrate checks whether the bitrate is valid for the given codec.
 // A bitrate of 0 is always valid (uses codec default).
 func ValidateBitrate(codec Codec, bitrate int) error {
+	if err := validateCodec(codec); err != nil {
+		return err
+	}
 	if bitrate == 0 {
 		return nil
 	}
@@ -199,7 +215,7 @@ func ValidateBitrate(codec Codec, bitrate int) error {
 		if bitrate < 64 || bitrate > 320 {
 			return fmt.Errorf("bitrate: must be between 64 and 320 for MP3")
 		}
-	case CodecOPUS:
+	case CodecOpus:
 		if bitrate < 64 || bitrate > 256 {
 			return fmt.Errorf("bitrate: must be between 64 and 256 for Opus")
 		}

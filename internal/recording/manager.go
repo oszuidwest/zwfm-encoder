@@ -88,6 +88,10 @@ func (m *Manager) SetMaxDurationMinutes(minutes int) {
 
 // AddRecorder adds a recorder to the manager.
 func (m *Manager) AddRecorder(cfg *types.Recorder) error {
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

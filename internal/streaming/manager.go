@@ -140,6 +140,10 @@ func (m *Manager) runWriter(streamID string, s *Stream) {
 // concurrent Start calls from launching duplicate FFmpeg processes while
 // keeping the lock free for WriteAudio and Statuses on other streams.
 func (m *Manager) Start(stream *types.Stream) error {
+	if err := stream.Validate(); err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 
 	existing, exists := m.streams[stream.ID]

@@ -289,7 +289,7 @@ func TestZabbixEventsRoundTrip(t *testing.T) {
 	}
 
 	// Trigger saveLocked via AddStream without touching settings.
-	stream := &types.Stream{Host: "127.0.0.1", Port: 1234}
+	stream := &types.Stream{Host: "127.0.0.1", Port: 1234, Codec: types.CodecPCM}
 	if err := cfg.AddStream(stream); err != nil {
 		t.Fatalf("AddStream() error = %v", err)
 	}

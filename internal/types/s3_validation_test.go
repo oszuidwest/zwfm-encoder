@@ -94,6 +94,7 @@ func TestRecorderValidateS3Conditional(t *testing.T) {
 			t.Parallel()
 			r := &Recorder{
 				Name:        "rec",
+				Codec:       CodecPCM,
 				StorageMode: tt.mode,
 				LocalPath:   "/tmp/rec", // satisfy local/both mode
 			}
@@ -122,14 +123,14 @@ func TestRecorderValidateS3FirstErrorOrder(t *testing.T) {
 		{
 			name: "all S3 empty -> bucket reported first",
 			r: &Recorder{
-				Name: "rec", StorageMode: StorageS3,
+				Name: "rec", Codec: CodecPCM, StorageMode: StorageS3,
 			},
 			wantErr: "s3_bucket: is required for s3/both storage mode",
 		},
 		{
 			name: "bucket set, rest empty -> access key reported",
 			r: &Recorder{
-				Name: "rec", StorageMode: StorageS3,
+				Name: "rec", Codec: CodecPCM, StorageMode: StorageS3,
 				S3Bucket: "b",
 			},
 			wantErr: "s3_access_key_id: is required for s3/both storage mode",
@@ -137,7 +138,7 @@ func TestRecorderValidateS3FirstErrorOrder(t *testing.T) {
 		{
 			name: "bucket+access set, secret empty -> secret reported",
 			r: &Recorder{
-				Name: "rec", StorageMode: StorageS3,
+				Name: "rec", Codec: CodecPCM, StorageMode: StorageS3,
 				S3Bucket: "b", S3AccessKeyID: "k",
 			},
 			wantErr: "s3_secret_access_key: is required for s3/both storage mode",
@@ -145,7 +146,7 @@ func TestRecorderValidateS3FirstErrorOrder(t *testing.T) {
 		{
 			name: "all set -> no S3 error (bitrate PCM still 0 default, no error)",
 			r: &Recorder{
-				Name: "rec", StorageMode: StorageS3,
+				Name: "rec", Codec: CodecPCM, StorageMode: StorageS3,
 				S3Bucket: "b", S3AccessKeyID: "k", S3SecretAccessKey: "s",
 			},
 			wantErr: "",
