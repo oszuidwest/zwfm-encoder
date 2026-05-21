@@ -291,7 +291,7 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
 |-------|------|-------------|
 | `recorder_name` | string | Human-readable recorder name |
 | `filename` | string | Recording filename |
-| `codec` | string | Audio codec: `mp3`, `ogg`, `pcm` |
+| `codec` | string | Audio codec: `mp3`, `opus`, `pcm` |
 | `storage_mode` | string | Storage mode: `local`, `s3`, `both` |
 | `s3_key` | string | S3 object key (for upload events) |
 | `error` | string | Error message (if applicable) |

@@ -85,13 +85,13 @@ const (
 	CodecPCM Codec = "pcm"
 	// CodecMP3 is MPEG Audio Layer III.
 	CodecMP3 Codec = "mp3"
-	// CodecOGG is Ogg Vorbis.
-	CodecOGG Codec = "ogg"
+	// CodecOPUS is Opus (RFC 6716) in an MPEG-TS container.
+	CodecOPUS Codec = "opus"
 )
 
 // validCodecs is the set of supported audio codecs.
 var validCodecs = map[Codec]bool{
-	CodecPCM: true, CodecMP3: true, CodecOGG: true,
+	CodecPCM: true, CodecMP3: true, CodecOPUS: true,
 }
 
 // UnmarshalJSON validates the codec value during JSON parsing.
@@ -106,7 +106,7 @@ func (c *Codec) UnmarshalJSON(data []byte) error {
 	}
 	codec := Codec(s)
 	if !validCodecs[codec] {
-		return fmt.Errorf("codec: must be pcm, mp3, or ogg")
+		return fmt.Errorf("codec: must be pcm, mp3, or opus")
 	}
 	*c = codec
 	return nil
@@ -153,9 +153,9 @@ type codecPreset struct {
 
 // codecPresets maps codecs to their encoding parameters.
 var codecPresets = map[Codec]codecPreset{
-	CodecMP3: {[]string{"libmp3lame", "-b:a", "320k"}, "mp3"},
-	CodecOGG: {[]string{"libvorbis", "-qscale:a", "10"}, "ogg"},
-	CodecPCM: {[]string{"s302m", "-strict", "-2"}, "mpegts"},
+	CodecMP3:  {[]string{"libmp3lame", "-b:a", "320k"}, "mp3"},
+	CodecOPUS: {[]string{"libopus", "-b:a", "128k", "-frame_duration", "10"}, "mpegts"},
+	CodecPCM:  {[]string{"s302m", "-strict", "-2"}, "mpegts"},
 }
 
 // Format returns the output format for this codec.
@@ -176,11 +176,12 @@ func BuildCodecArgs(codec Codec, bitrate int) []string {
 			br = strconv.Itoa(bitrate) + "k"
 		}
 		return []string{"libmp3lame", "-b:a", br}
-	case CodecOGG:
+	case CodecOPUS:
+		br := "128k"
 		if bitrate > 0 {
-			return []string{"libvorbis", "-b:a", strconv.Itoa(bitrate) + "k"}
+			br = strconv.Itoa(bitrate) + "k"
 		}
-		return []string{"libvorbis", "-qscale:a", "10"}
+		return []string{"libopus", "-b:a", br, "-frame_duration", "10"}
 	default:
 		return []string{"s302m", "-strict", "-2"}
 	}
@@ -197,9 +198,9 @@ func ValidateBitrate(codec Codec, bitrate int) error {
 		if bitrate < 64 || bitrate > 320 {
 			return fmt.Errorf("bitrate: must be between 64 and 320 for MP3")
 		}
-	case CodecOGG:
-		if bitrate < 64 || bitrate > 500 {
-			return fmt.Errorf("bitrate: must be between 64 and 500 for OGG")
+	case CodecOPUS:
+		if bitrate < 64 || bitrate > 256 {
+			return fmt.Errorf("bitrate: must be between 64 and 256 for Opus")
 		}
 	case CodecPCM:
 		return fmt.Errorf("bitrate: not supported for PCM (uncompressed)")

@@ -109,11 +109,11 @@ const DEFAULT_RECORDER = {
 // Bitrate options per codec (kbit/s). Exposed on window for Alpine.js template access.
 window.CODEC_BITRATES = {
     mp3:  [64, 96, 128, 192, 256, 320],
-    ogg:  [64, 96, 128, 192, 256, 320, 500],
+    opus: [64, 96, 128, 192, 256],
 };
 
 // Default bitrate per codec (used when bitrate=0).
-window.CODEC_DEFAULT_BITRATE = { mp3: 320, ogg: 500 };
+window.CODEC_DEFAULT_BITRATE = { mp3: 320, opus: 128 };
 
 const DEFAULT_LEVELS = {
     left: -60,
