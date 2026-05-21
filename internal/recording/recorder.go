@@ -648,23 +648,23 @@ func (r *GenericRecorder) getFileExtension() string {
 	switch r.config.Codec {
 	case types.CodecMP3:
 		return "mp3"
-	case types.CodecOGG:
-		return "ogg"
-	case types.CodecWAV:
-		return "mkv" // WAV uses matroska container
+	case types.CodecOpus, types.CodecPCM:
+		return "ts"
 	default:
-		return "mp3"
+		slog.Error("unknown recorder codec extension requested, falling back to MPEG-TS extension", "codec", r.config.Codec, "id", r.id)
+		return "ts"
 	}
 }
 
 func (r *GenericRecorder) getContentType() string {
 	switch r.config.Codec {
-	case types.CodecOGG:
-		return "audio/ogg"
-	case types.CodecWAV:
-		return "audio/x-matroska"
-	default:
+	case types.CodecOpus, types.CodecPCM:
+		return "audio/mp2t"
+	case types.CodecMP3:
 		return "audio/mpeg"
+	default:
+		slog.Error("unknown recorder codec content type requested, falling back to MPEG-TS content type", "codec", r.config.Codec, "id", r.id)
+		return "audio/mp2t"
 	}
 }
 
