@@ -155,7 +155,8 @@ type codecPreset struct {
 var codecPresets = map[Codec]codecPreset{
 	CodecMP3:  {[]string{"libmp3lame", "-b:a", "320k"}, "mp3"},
 	CodecOPUS: {[]string{"libopus", "-b:a", "128k", "-frame_duration", "10"}, "mpegts"},
-	CodecPCM:  {[]string{"s302m", "-strict", "-2"}, "mpegts"},
+	// SMPTE 302M is the only PCM-in-MPEG-TS encoder Liquidsoap can decode.
+	CodecPCM: {[]string{"s302m", "-strict", "-2"}, "mpegts"},
 }
 
 // Format returns the output format for this codec.

@@ -648,10 +648,8 @@ func (r *GenericRecorder) getFileExtension() string {
 	switch r.config.Codec {
 	case types.CodecMP3:
 		return "mp3"
-	case types.CodecOPUS:
-		return "ts" // Opus in MPEG-TS container
-	case types.CodecPCM:
-		return "ts" // PCM uses MPEG-TS container (SMPTE 302M)
+	case types.CodecOPUS, types.CodecPCM:
+		return "ts"
 	default:
 		return "mp3"
 	}
@@ -659,9 +657,7 @@ func (r *GenericRecorder) getFileExtension() string {
 
 func (r *GenericRecorder) getContentType() string {
 	switch r.config.Codec {
-	case types.CodecOPUS:
-		return "audio/mp2t"
-	case types.CodecPCM:
+	case types.CodecOPUS, types.CodecPCM:
 		return "audio/mp2t"
 	default:
 		return "audio/mpeg"
