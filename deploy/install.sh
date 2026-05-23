@@ -194,6 +194,10 @@ if [ "$DO_UPDATES" == "y" ]; then
   apt_update --silent
 fi
 
+if declare -F set_system_hardening_baseline > /dev/null; then
+  set_system_hardening_baseline --silent
+fi
+
 # Install dependencies (including jq for config generation)
 echo -e "${BLUE}►► Installing FFmpeg, alsa-utils, and jq...${NC}"
 apt_install --silent ffmpeg alsa-utils jq
