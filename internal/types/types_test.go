@@ -137,23 +137,21 @@ func TestValidateBitrate(t *testing.T) {
 		{name: "opus above max", codec: CodecOpus, bitrate: 257, wantErr: "bitrate: must be between 64 and 256 for Opus"},
 		{name: "pcm default", codec: CodecPCM, bitrate: 0},
 		{name: "pcm rejects non-zero", codec: CodecPCM, bitrate: 128, wantErr: "bitrate: not supported for PCM"},
-		{name: "unknown rejects zero bitrate", codec: Codec(""), bitrate: 0, wantErr: "codec: must be pcm, mp3, or opus"},
-		{name: "unknown rejects non-zero bitrate", codec: Codec("aac"), bitrate: 128, wantErr: "codec: must be pcm, mp3, or opus"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := ValidateBitrate(tt.codec, tt.bitrate)
+			err := validateBitrate(tt.codec, tt.bitrate)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("ValidateBitrate(%q, %d) error = %v, want containing %q", tt.codec, tt.bitrate, err, tt.wantErr)
+					t.Fatalf("validateBitrate(%q, %d) error = %v, want containing %q", tt.codec, tt.bitrate, err, tt.wantErr)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("ValidateBitrate(%q, %d) error = %v", tt.codec, tt.bitrate, err)
+				t.Fatalf("validateBitrate(%q, %d) error = %v", tt.codec, tt.bitrate, err)
 			}
 		})
 	}

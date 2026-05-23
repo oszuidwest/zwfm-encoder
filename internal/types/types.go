@@ -198,15 +198,9 @@ func BuildCodecArgs(codec Codec, bitrate int) []string {
 	}
 }
 
-// ValidateBitrate checks whether the bitrate is valid for the given codec.
-// A bitrate of 0 is always valid (uses codec default).
-func ValidateBitrate(codec Codec, bitrate int) error {
-	if err := validateCodec(codec); err != nil {
-		return err
-	}
-	return validateBitrate(codec, bitrate)
-}
-
+// validateBitrate checks whether the bitrate is valid for the given codec.
+// A bitrate of 0 is always valid (uses codec default). The codec itself is
+// validated separately via validateCodec by each entity's Validate method.
 func validateBitrate(codec Codec, bitrate int) error {
 	if bitrate == 0 {
 		return nil
