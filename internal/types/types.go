@@ -79,6 +79,7 @@ const (
 )
 
 // Codec identifies an audio encoding format.
+// The zero value is invalid; persisted and API config must specify a codec.
 type Codec string
 
 const (
@@ -107,10 +108,6 @@ func (c *Codec) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
 		return err
-	}
-	if s == "" {
-		*c = CodecPCM // default
-		return nil
 	}
 	codec := Codec(s)
 	if err := validateCodec(codec); err != nil {
@@ -201,12 +198,10 @@ func BuildCodecArgs(codec Codec, bitrate int) []string {
 	}
 }
 
-// ValidateBitrate checks whether the bitrate is valid for the given codec.
-// A bitrate of 0 is always valid (uses codec default).
-func ValidateBitrate(codec Codec, bitrate int) error {
-	if err := validateCodec(codec); err != nil {
-		return err
-	}
+// validateBitrate checks whether the bitrate is valid for the given codec.
+// A bitrate of 0 is always valid (uses codec default). The codec itself is
+// validated separately via validateCodec by each entity's Validate method.
+func validateBitrate(codec Codec, bitrate int) error {
 	if bitrate == 0 {
 		return nil
 	}
@@ -240,19 +235,23 @@ func (s *Stream) Validate() error {
 	if strings.TrimSpace(s.Host) == "" {
 		return fmt.Errorf("host: is required")
 	}
+	if err := validateCodec(s.Codec); err != nil {
+		return err
+	}
 	if s.Port <= 0 || s.Port > 65535 {
 		return fmt.Errorf("port: must be between 1 and 65535")
 	}
 	if s.MaxRetries < 0 {
 		return fmt.Errorf("max_retries: cannot be negative")
 	}
-	if err := ValidateBitrate(s.Codec, s.Bitrate); err != nil {
+	if err := validateBitrate(s.Codec, s.Bitrate); err != nil {
 		return err
 	}
 	return nil
 }
 
 // RecordingMode defines how recordings are managed.
+// The zero value is invalid; persisted and API config must specify a mode.
 type RecordingMode string
 
 const (
@@ -268,25 +267,29 @@ var validRecordingModes = map[RecordingMode]bool{
 	RecordingOnDemand: true,
 }
 
+func validateRecordingMode(mode RecordingMode) error {
+	if validRecordingModes[mode] {
+		return nil
+	}
+	return fmt.Errorf("recording_mode: must be hourly or ondemand")
+}
+
 // UnmarshalJSON validates the recording mode during JSON parsing.
 func (m *RecordingMode) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
 		return err
 	}
-	if s == "" {
-		*m = RecordingHourly // default
-		return nil
-	}
 	mode := RecordingMode(s)
-	if !validRecordingModes[mode] {
-		return fmt.Errorf("recording_mode: must be hourly or ondemand")
+	if err := validateRecordingMode(mode); err != nil {
+		return err
 	}
 	*m = mode
 	return nil
 }
 
 // StorageMode defines where recordings are stored.
+// The zero value is invalid; persisted and API config must specify a mode.
 type StorageMode string
 
 const (
@@ -303,19 +306,22 @@ var validStorageModes = map[StorageMode]bool{
 	StorageLocal: true, StorageS3: true, StorageBoth: true,
 }
 
+func validateStorageMode(mode StorageMode) error {
+	if validStorageModes[mode] {
+		return nil
+	}
+	return fmt.Errorf("storage_mode: must be local, s3, or both")
+}
+
 // UnmarshalJSON validates the storage mode during JSON parsing.
 func (m *StorageMode) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
 		return err
 	}
-	if s == "" {
-		*m = StorageLocal // default
-		return nil
-	}
 	mode := StorageMode(s)
-	if !validStorageModes[mode] {
-		return fmt.Errorf("storage_mode: must be local, s3, or both")
+	if err := validateStorageMode(mode); err != nil {
+		return err
 	}
 	*m = mode
 	return nil
@@ -373,6 +379,15 @@ func (r *Recorder) Validate() error {
 	if strings.TrimSpace(r.Name) == "" {
 		return fmt.Errorf("name: is required")
 	}
+	if err := validateCodec(r.Codec); err != nil {
+		return err
+	}
+	if err := validateRecordingMode(r.RecordingMode); err != nil {
+		return err
+	}
+	if err := validateStorageMode(r.StorageMode); err != nil {
+		return err
+	}
 
 	// Conditional validation based on storage mode
 	needsLocal := r.StorageMode == StorageLocal || r.StorageMode == StorageBoth
@@ -389,7 +404,7 @@ func (r *Recorder) Validate() error {
 	if r.RetentionDays < 0 {
 		return fmt.Errorf("retention_days: cannot be negative")
 	}
-	if err := ValidateBitrate(r.Codec, r.Bitrate); err != nil {
+	if err := validateBitrate(r.Codec, r.Bitrate); err != nil {
 		return err
 	}
 	return nil

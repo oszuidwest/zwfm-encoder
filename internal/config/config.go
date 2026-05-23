@@ -148,8 +148,8 @@ type RecordingConfig struct {
 	Recorders []types.Recorder `json:"recorders"`
 }
 
-// Config holds all application configuration and is safe for concurrent use.
-type Config struct {
+// ConfigData holds the JSON-backed application configuration fields.
+type ConfigData struct {
 	// System contains system-level configuration.
 	System SystemConfig `json:"system"`
 	// Web contains web UI branding settings.
@@ -166,86 +166,91 @@ type Config struct {
 	Streaming StreamingConfig `json:"streaming"`
 	// Recording contains recording settings.
 	Recording RecordingConfig `json:"recording"`
+}
+
+// Config holds all application configuration and is safe for concurrent use.
+type Config struct {
+	// Keep JSON-backed fields in ConfigData so Load can copy persisted state in
+	// one assignment without copying the mutex.
+	ConfigData
 
 	mu       sync.RWMutex
 	filePath string
 }
 
-// New returns a Config with default values.
+// New returns an empty Config bound to filePath.
 func New(filePath string) *Config {
+	return &Config{filePath: filePath}
+}
+
+func defaultConfig(filePath string) *Config {
 	return &Config{
-		System: SystemConfig{
-			Port:     DefaultWebPort,
-			Username: DefaultWebUsername,
-			Password: DefaultWebPassword,
-		},
-		Web: WebConfig{
-			StationName: DefaultStationName,
-			ColorLight:  DefaultStationColorLight,
-			ColorDark:   DefaultStationColorDark,
-		},
-		SilenceDetection: SilenceDetectionConfig{
-			ThresholdDB: DefaultSilenceThreshold,
-			DurationMs:  DefaultSilenceDurationMs,
-			RecoveryMs:  DefaultSilenceRecoveryMs,
-			PeakHoldMs:  DefaultPeakHoldMs,
-		},
-		SilenceDump: types.SilenceDumpConfig{
-			Enabled:       true, // Enabled by default when FFmpeg is available
-			RetentionDays: types.DefaultSilenceDumpRetentionDays,
-		},
-		Notifications: NotificationsConfig{
-			Webhook: WebhookConfig{
-				Events: types.EventSubscriptions{SilenceStart: true, SilenceEnd: true, AudioDump: true},
+		ConfigData: ConfigData{
+			System: SystemConfig{
+				Port:     DefaultWebPort,
+				Username: DefaultWebUsername,
+				Password: DefaultWebPassword,
 			},
-			Email: EmailConfig{
-				Events: types.EventSubscriptions{SilenceStart: true, SilenceEnd: true, AudioDump: true},
+			Web: WebConfig{
+				StationName: DefaultStationName,
+				ColorLight:  DefaultStationColorLight,
+				ColorDark:   DefaultStationColorDark,
 			},
-			WhatsApp: types.WhatsAppConfig{
-				Events: types.EventSubscriptions{SilenceStart: true, SilenceEnd: true, AudioDump: true},
+			SilenceDetection: SilenceDetectionConfig{
+				ThresholdDB: DefaultSilenceThreshold,
+				DurationMs:  DefaultSilenceDurationMs,
+				RecoveryMs:  DefaultSilenceRecoveryMs,
+				PeakHoldMs:  DefaultPeakHoldMs,
 			},
-			Zabbix: types.ZabbixConfig{
-				Port:   DefaultZabbixPort,
-				Events: types.ZabbixEventSubscriptions{SilenceStart: true, SilenceEnd: true},
-			},
-		},
-		Streaming: StreamingConfig{Streams: []types.Stream{}},
-		Recording: RecordingConfig{
-			MaxDurationMinutes: DefaultRecordingMaxDurationMinutes,
-			Recorders:          []types.Recorder{},
+			Streaming: StreamingConfig{Streams: []types.Stream{}},
+			Recording: RecordingConfig{Recorders: []types.Recorder{}},
 		},
 		filePath: filePath,
 	}
 }
 
-// Load reads configuration from file or creates defaults.
+// Load reads and validates an existing config file. If the file does not exist,
+// Load writes a minimal validated default config. Invalid existing files return
+// an error; defaults are not applied as a fallback.
 func (c *Config) Load() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	data, err := os.ReadFile(c.filePath)
 	if os.IsNotExist(err) {
-		if err := c.validate(); err != nil {
+		cfg := defaultConfig(c.filePath)
+		if err := cfg.validate(); err != nil {
 			return err
 		}
+		c.copyFrom(cfg)
 		return c.saveLocked()
 	}
 	if err != nil {
 		return fmt.Errorf("failed to read config: %w", err)
 	}
 
-	if err := json.Unmarshal(data, c); err != nil {
+	cfg := New(c.filePath)
+	if err := json.Unmarshal(data, cfg); err != nil {
 		return util.WrapError("parse config", err)
 	}
 
-	if err := c.validate(); err != nil {
+	if err := cfg.validate(); err != nil {
 		return err
 	}
+	c.copyFrom(cfg)
 
 	return nil
 }
 
+func (c *Config) copyFrom(src *Config) {
+	c.ConfigData = src.ConfigData
+	c.filePath = src.filePath
+}
+
 func (c *Config) validate() error {
+	if err := c.validateSystem(); err != nil {
+		return err
+	}
 	// Validate station name
 	name := c.Web.StationName
 	if name == "" || len(name) > 30 || !util.StationNamePattern.MatchString(name) {
@@ -276,6 +281,19 @@ func (c *Config) validate() error {
 	if msg := validateNonNegativeDays("silence_dump.retention_days", c.SilenceDump.RetentionDays); msg != "" {
 		return fmt.Errorf("invalid %s", msg)
 	}
+	if err := c.validateNotifications(); err != nil {
+		return err
+	}
+	if err := c.validateStreams(); err != nil {
+		return err
+	}
+	if err := c.validateRecorders(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *Config) validateNotifications() error {
 	for _, issue := range types.ValidateWebhookURL(c.Notifications.Webhook.URL, validation.AllowEmpty) {
 		return fmt.Errorf("invalid %s", formatWebhookConfigIssue("notifications.webhook.url", issue))
 	}
@@ -290,6 +308,55 @@ func (c *Config) validate() error {
 	}
 	for _, issue := range c.Notifications.Zabbix.ValidationIssues() {
 		return fmt.Errorf("invalid %s", formatZabbixConfigIssue("notifications.zabbix."+issue.Field, issue))
+	}
+	return nil
+}
+
+func (c *Config) validateSystem() error {
+	if c.System.Port <= 0 || c.System.Port > 65535 {
+		return fmt.Errorf("invalid system.port: must be between 1 and 65535")
+	}
+	if strings.TrimSpace(c.System.Username) == "" {
+		return fmt.Errorf("invalid system.username: is required")
+	}
+	if c.System.Password == "" {
+		return fmt.Errorf("invalid system.password: is required")
+	}
+	return nil
+}
+
+func (c *Config) validateStreams() error {
+	seen := make(map[string]int, len(c.Streaming.Streams))
+	for i := range c.Streaming.Streams {
+		stream := &c.Streaming.Streams[i]
+		if strings.TrimSpace(stream.ID) == "" {
+			return fmt.Errorf("invalid streaming.streams[%d].id: is required", i)
+		}
+		if first, ok := seen[stream.ID]; ok {
+			return fmt.Errorf("invalid streaming.streams[%d].id: duplicate %q also used by streaming.streams[%d]", i, stream.ID, first)
+		}
+		seen[stream.ID] = i
+		if err := stream.Validate(); err != nil {
+			return fmt.Errorf("invalid streaming.streams[%d]: %w", i, err)
+		}
+	}
+	return nil
+}
+
+func (c *Config) validateRecorders() error {
+	seen := make(map[string]int, len(c.Recording.Recorders))
+	for i := range c.Recording.Recorders {
+		recorder := &c.Recording.Recorders[i]
+		if strings.TrimSpace(recorder.ID) == "" {
+			return fmt.Errorf("invalid recording.recorders[%d].id: is required", i)
+		}
+		if first, ok := seen[recorder.ID]; ok {
+			return fmt.Errorf("invalid recording.recorders[%d].id: duplicate %q also used by recording.recorders[%d]", i, recorder.ID, first)
+		}
+		seen[recorder.ID] = i
+		if err := recorder.Validate(); err != nil {
+			return fmt.Errorf("invalid recording.recorders[%d]: %w", i, err)
+		}
 	}
 	return nil
 }

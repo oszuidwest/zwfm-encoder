@@ -27,7 +27,145 @@ func TestLoadCreatesDefaultConfig(t *testing.T) {
 
 	snap := cfg.Snapshot()
 	assertDefaultScalarSettings(t, &snap)
-	assertDefaultEventSettings(t, &snap)
+
+	reloaded := New(configPath)
+	if err := reloaded.Load(); err != nil {
+		t.Fatalf("second Load() error = %v", err)
+	}
+
+	reloadedSnap := reloaded.Snapshot()
+	assertDefaultScalarSettings(t, &reloadedSnap)
+}
+
+func TestLoadPreservesConfigDataAndSnapshotEntities(t *testing.T) {
+	t.Parallel()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	want := fullyPopulatedConfigData(t)
+	data, err := json.MarshalIndent(want, "", "  ")
+	if err != nil {
+		t.Fatalf("MarshalIndent() error = %v", err)
+	}
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg := New(configPath)
+	if err := cfg.Load(); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if !reflect.DeepEqual(cfg.ConfigData, want) {
+		t.Fatalf("ConfigData after Load() mismatch:\n got  %+v\n want %+v", cfg.ConfigData, want)
+	}
+
+	snap := cfg.Snapshot()
+	if !reflect.DeepEqual(snap.Streams, want.Streaming.Streams) {
+		t.Fatalf("Snapshot().Streams = %+v, want %+v", snap.Streams, want.Streaming.Streams)
+	}
+	if !reflect.DeepEqual(snap.Recorders, want.Recording.Recorders) {
+		t.Fatalf("Snapshot().Recorders = %+v, want %+v", snap.Recorders, want.Recording.Recorders)
+	}
+	if snap.AudioInput != want.Audio.Input {
+		t.Fatalf("Snapshot().AudioInput = %q, want %q", snap.AudioInput, want.Audio.Input)
+	}
+	if snap.RecordingAPIKey != want.Recording.APIKey {
+		t.Fatalf("Snapshot().RecordingAPIKey = %q, want %q", snap.RecordingAPIKey, want.Recording.APIKey)
+	}
+	if snap.WebhookEvents != want.Notifications.Webhook.Events {
+		t.Fatalf("Snapshot().WebhookEvents = %+v, want %+v", snap.WebhookEvents, want.Notifications.Webhook.Events)
+	}
+}
+
+func TestLoadRejectsInvalidConfiguredEntities(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		data    string
+		wantErr string
+	}{
+		{
+			name:    "stream missing id",
+			data:    validConfigJSON(`"streaming":{"streams":[{"host":"127.0.0.1","port":9000,"codec":"pcm"}]}`),
+			wantErr: "invalid streaming.streams[0].id: is required",
+		},
+		{
+			name:    "stream whitespace id",
+			data:    validConfigJSON(`"streaming":{"streams":[{"id":"  ","host":"127.0.0.1","port":9000,"codec":"pcm"}]}`),
+			wantErr: "invalid streaming.streams[0].id: is required",
+		},
+		{
+			name:    "stream missing codec",
+			data:    validConfigJSON(`"streaming":{"streams":[{"id":"stream-1","host":"127.0.0.1","port":9000}]}`),
+			wantErr: "invalid streaming.streams[0]: codec: must be pcm, mp3, or opus",
+		},
+		{
+			name:    "duplicate stream id",
+			data:    validConfigJSON(`"streaming":{"streams":[{"id":"stream-1","host":"127.0.0.1","port":9000,"codec":"pcm"},{"id":"stream-1","host":"127.0.0.1","port":9001,"codec":"pcm"}]}`),
+			wantErr: `invalid streaming.streams[1].id: duplicate "stream-1" also used by streaming.streams[0]`,
+		},
+		{
+			name:    "duplicate stream id points to first occurrence",
+			data:    validConfigJSON(`"streaming":{"streams":[{"id":"stream-1","host":"127.0.0.1","port":9000,"codec":"pcm"},{"id":"stream-2","host":"127.0.0.1","port":9001,"codec":"pcm"},{"id":"stream-1","host":"127.0.0.1","port":9002,"codec":"pcm"}]}`),
+			wantErr: `invalid streaming.streams[2].id: duplicate "stream-1" also used by streaming.streams[0]`,
+		},
+		{
+			name:    "recorder missing id",
+			data:    validConfigJSON(`"recording":{"recorders":[{"name":"Archive","codec":"pcm","recording_mode":"hourly","storage_mode":"local","local_path":"/tmp"}]}`),
+			wantErr: "invalid recording.recorders[0].id: is required",
+		},
+		{
+			name:    "recorder whitespace id",
+			data:    validConfigJSON(`"recording":{"recorders":[{"id":"  ","name":"Archive","codec":"pcm","recording_mode":"hourly","storage_mode":"local","local_path":"/tmp"}]}`),
+			wantErr: "invalid recording.recorders[0].id: is required",
+		},
+		{
+			name:    "recorder missing codec",
+			data:    validConfigJSON(`"recording":{"recorders":[{"id":"recorder-1","name":"Archive","recording_mode":"hourly","storage_mode":"local","local_path":"/tmp"}]}`),
+			wantErr: "invalid recording.recorders[0]: codec: must be pcm, mp3, or opus",
+		},
+		{
+			name:    "recorder missing recording mode",
+			data:    validConfigJSON(`"recording":{"recorders":[{"id":"recorder-1","name":"Archive","codec":"pcm","storage_mode":"local","local_path":"/tmp"}]}`),
+			wantErr: "invalid recording.recorders[0]: recording_mode: must be hourly or ondemand",
+		},
+		{
+			name:    "recorder missing storage mode",
+			data:    validConfigJSON(`"recording":{"recorders":[{"id":"recorder-1","name":"Archive","codec":"pcm","recording_mode":"hourly","local_path":"/tmp"}]}`),
+			wantErr: "invalid recording.recorders[0]: storage_mode: must be local, s3, or both",
+		},
+		{
+			name:    "duplicate recorder id",
+			data:    validConfigJSON(`"recording":{"recorders":[{"id":"recorder-1","name":"Archive","codec":"pcm","recording_mode":"hourly","storage_mode":"local","local_path":"/tmp"},{"id":"recorder-1","name":"Backup","codec":"pcm","recording_mode":"hourly","storage_mode":"local","local_path":"/tmp"}]}`),
+			wantErr: `invalid recording.recorders[1].id: duplicate "recorder-1" also used by recording.recorders[0]`,
+		},
+		{
+			name:    "duplicate recorder id points to first occurrence",
+			data:    validConfigJSON(`"recording":{"recorders":[{"id":"recorder-1","name":"Archive","codec":"pcm","recording_mode":"hourly","storage_mode":"local","local_path":"/tmp"},{"id":"recorder-2","name":"Backup","codec":"pcm","recording_mode":"hourly","storage_mode":"local","local_path":"/tmp"},{"id":"recorder-1","name":"Aux","codec":"pcm","recording_mode":"hourly","storage_mode":"local","local_path":"/tmp"}]}`),
+			wantErr: `invalid recording.recorders[2].id: duplicate "recorder-1" also used by recording.recorders[0]`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			configPath := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(configPath, []byte(tt.data), 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+
+			cfg := New(configPath)
+			err := cfg.Load()
+			if err == nil {
+				t.Fatal("Load() error = nil, want validation error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Load() error = %q, want substring %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
 }
 
 func assertDefaultScalarSettings(t *testing.T, snap *Snapshot) {
@@ -38,20 +176,125 @@ func assertDefaultScalarSettings(t *testing.T, snap *Snapshot) {
 	assertEqual(t, "SilenceDurationMs", snap.SilenceDurationMs, DefaultSilenceDurationMs)
 	assertEqual(t, "SilenceRecoveryMs", snap.SilenceRecoveryMs, DefaultSilenceRecoveryMs)
 	assertEqual(t, "PeakHoldMs", snap.PeakHoldMs, DefaultPeakHoldMs)
-	assertTrue(t, "SilenceDumpEnabled", snap.SilenceDumpEnabled)
-	assertEqual(t, "SilenceDumpRetentionDays", snap.SilenceDumpRetentionDays, types.DefaultSilenceDumpRetentionDays)
-	assertEqual(t, "ZabbixPort", snap.ZabbixPort, DefaultZabbixPort)
-	assertEqual(t, "RecordingMaxDurationMinutes", snap.RecordingMaxDurationMinutes, DefaultRecordingMaxDurationMinutes)
+	assertEqual(t, "SilenceDumpEnabled", snap.SilenceDumpEnabled, false)
+	assertEqual(t, "SilenceDumpRetentionDays", snap.SilenceDumpRetentionDays, 0)
+	assertEqual(t, "ZabbixPort", snap.ZabbixPort, 0)
+	assertEqual(t, "RecordingMaxDurationMinutes", snap.RecordingMaxDurationMinutes, 0)
+	assertEqual(t, "WebhookEvents", snap.WebhookEvents, types.EventSubscriptions{})
+	assertEqual(t, "EmailEvents", snap.EmailEvents, types.EventSubscriptions{})
+	assertEqual(t, "WhatsAppEvents", snap.WhatsAppEvents, types.EventSubscriptions{})
+	assertEqual(t, "ZabbixEvents", snap.ZabbixEvents, types.EventSubscriptions{})
 }
 
-func assertDefaultEventSettings(t *testing.T, snap *Snapshot) {
+func fullyPopulatedConfigData(t *testing.T) ConfigData {
 	t.Helper()
 
-	defaultEvents := types.EventSubscriptions{SilenceStart: true, SilenceEnd: true, AudioDump: true}
-	assertEqual(t, "WebhookEvents", snap.WebhookEvents, defaultEvents)
-	assertEqual(t, "EmailEvents", snap.EmailEvents, defaultEvents)
-	assertEqual(t, "WhatsAppEvents", snap.WhatsAppEvents, defaultEvents)
-	assertEqual(t, "ZabbixEvents", snap.ZabbixEvents, types.EventSubscriptions{SilenceStart: true, SilenceEnd: true})
+	return ConfigData{
+		System: SystemConfig{
+			FFmpegPath: "/usr/bin/ffmpeg",
+			Port:       8090,
+			Username:   "operator",
+			Password:   "secret",
+		},
+		Web: WebConfig{
+			StationName: "ZuidWest Test",
+			ColorLight:  "#123456",
+			ColorDark:   "#654321",
+		},
+		Audio: AudioConfig{
+			Input: "hw:1,0",
+		},
+		SilenceDetection: SilenceDetectionConfig{
+			ThresholdDB: -35.5,
+			DurationMs:  12000,
+			RecoveryMs:  4000,
+			PeakHoldMs:  2500,
+		},
+		SilenceDump: types.SilenceDumpConfig{
+			Enabled:       true,
+			RetentionDays: 3,
+		},
+		Notifications: NotificationsConfig{
+			Webhook: WebhookConfig{
+				URL: "https://example.com/hook",
+				Events: types.EventSubscriptions{
+					SilenceStart: true,
+					AudioDump:    true,
+				},
+			},
+			Email: EmailConfig{
+				TenantID:     "tenant",
+				ClientID:     "client",
+				ClientSecret: "email-secret",
+				FromAddress:  "studio@example.com",
+				Recipients:   "ops@example.com, engineer@example.com",
+				Events: types.EventSubscriptions{
+					SilenceEnd: true,
+					AudioDump:  true,
+				},
+			},
+			WhatsApp: types.WhatsAppConfig{
+				PhoneNumberID:    "123456789",
+				AccessToken:      "wa-token",
+				Recipients:       "+31612345678,+31687654321",
+				TemplateName:     "encoder_alert",
+				TemplateLanguage: "nl",
+				Events: types.EventSubscriptions{
+					SilenceStart: true,
+					SilenceEnd:   true,
+				},
+			},
+			Zabbix: types.ZabbixConfig{
+				Server:     "zabbix.example.com",
+				Port:       10051,
+				Host:       "encoder-1",
+				SilenceKey: "encoder.silence",
+				UploadKey:  "encoder.upload",
+				Events: types.ZabbixEventSubscriptions{
+					SilenceStart: true,
+					SilenceEnd:   true,
+				},
+			},
+		},
+		Streaming: StreamingConfig{
+			Streams: []types.Stream{
+				{
+					ID:         "stream-1",
+					Enabled:    true,
+					Host:       "srt.example.com",
+					Port:       9000,
+					Password:   "stream-secret",
+					StreamID:   "station/main",
+					Codec:      types.CodecMP3,
+					Bitrate:    192,
+					MaxRetries: 5,
+					CreatedAt:  1700000000000,
+				},
+			},
+		},
+		Recording: RecordingConfig{
+			APIKey:             "recording-key",
+			MaxDurationMinutes: 90,
+			Recorders: []types.Recorder{
+				{
+					ID:                "recorder-1",
+					Name:              "Archive",
+					Enabled:           true,
+					Codec:             types.CodecOpus,
+					Bitrate:           128,
+					RecordingMode:     types.RecordingOnDemand,
+					StorageMode:       types.StorageBoth,
+					LocalPath:         "/var/archive",
+					S3Endpoint:        "https://s3.example.com",
+					S3Bucket:          "archive",
+					S3AccessKeyID:     "access-key",
+					S3SecretAccessKey: "secret-key",
+					RetentionDays:     14,
+					CreatedAt:         1700000001000,
+				},
+			},
+		},
+	}
 }
 
 func assertEqual[T comparable](t *testing.T, name string, got, want T) {
@@ -62,12 +305,15 @@ func assertEqual[T comparable](t *testing.T, name string, got, want T) {
 	}
 }
 
-func assertTrue(t *testing.T, name string, got bool) {
-	t.Helper()
-
-	if !got {
-		t.Fatalf("%s = false, want true", name)
+func validConfigJSON(extra string) string {
+	if extra != "" {
+		extra = "," + extra
 	}
+	return `{
+		"system": {"port": 8080, "username": "admin", "password": "encoder"},
+		"web": {"station_name": "ZuidWest FM", "color_light": "#E6007E", "color_dark": "#E6007E"},
+		"silence_detection": {"threshold_db": -40, "duration_ms": 15000, "recovery_ms": 5000, "peak_hold_ms": 3000}
+	` + extra + `}`
 }
 
 func TestSnapshotHasWhatsApp(t *testing.T) {
@@ -122,10 +368,10 @@ func TestLoadPreservesExplicitZeroAndFalseValues(t *testing.T) {
 	t.Parallel()
 
 	configPath := filepath.Join(t.TempDir(), "config.json")
-	data := []byte(`{
-  "silence_detection": {
-    "threshold_db": -1,
-    "duration_ms": 1234,
+	data := []byte(validConfigJSON(`
+	  "silence_detection": {
+	    "threshold_db": -1,
+	    "duration_ms": 1234,
     "recovery_ms": 4321,
     "peak_hold_ms": 999
   },
@@ -158,9 +404,9 @@ func TestLoadPreservesExplicitZeroAndFalseValues(t *testing.T) {
     "zabbix": {
       "port": 0,
       "events": {"silence_start": false, "silence_end": false}
-    }
-  }
-}`)
+	    }
+	  }
+	`))
 	if err := os.WriteFile(configPath, data, 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
@@ -205,17 +451,16 @@ func TestLoadPreservesExplicitZeroAndFalseValues(t *testing.T) {
 		t.Fatalf("ZabbixPort = %d, want 0", snap.ZabbixPort)
 	}
 	if snap.WebPort != DefaultWebPort {
-		t.Fatalf("WebPort = %d, want default %d for missing field", snap.WebPort, DefaultWebPort)
+		t.Fatalf("WebPort = %d, want explicit %d", snap.WebPort, DefaultWebPort)
 	}
-	if snap.RecordingMaxDurationMinutes != DefaultRecordingMaxDurationMinutes {
-		t.Fatalf("RecordingMaxDurationMinutes = %d, want default %d for missing field", snap.RecordingMaxDurationMinutes, DefaultRecordingMaxDurationMinutes)
+	if snap.RecordingMaxDurationMinutes != 0 {
+		t.Fatalf("RecordingMaxDurationMinutes = %d, want zero value", snap.RecordingMaxDurationMinutes)
 	}
 }
 
 func TestZabbixEventsJSONSemantics(t *testing.T) {
 	t.Parallel()
 
-	defaults := types.EventSubscriptions{SilenceStart: true, SilenceEnd: true}
 	allFalse := types.EventSubscriptions{}
 
 	tests := []struct {
@@ -224,28 +469,28 @@ func TestZabbixEventsJSONSemantics(t *testing.T) {
 		want types.EventSubscriptions
 	}{
 		{
-			name: "missing events field preserves defaults",
-			json: `{"notifications":{"zabbix":{}}}`,
-			want: defaults,
+			name: "missing events field stays empty",
+			json: validConfigJSON(`"notifications":{"zabbix":{}}`),
+			want: allFalse,
 		},
 		{
-			name: "events null is a no-op, preserves defaults",
-			json: `{"notifications":{"zabbix":{"events":null}}}`,
-			want: defaults,
+			name: "events null stays empty",
+			json: validConfigJSON(`"notifications":{"zabbix":{"events":null}}`),
+			want: allFalse,
 		},
 		{
-			name: "events empty object is a no-op, preserves defaults",
-			json: `{"notifications":{"zabbix":{"events":{}}}}`,
-			want: defaults,
+			name: "events empty object stays empty",
+			json: validConfigJSON(`"notifications":{"zabbix":{"events":{}}}`),
+			want: allFalse,
 		},
 		{
 			name: "partial object only overrides present fields",
-			json: `{"notifications":{"zabbix":{"events":{"silence_start":false}}}}`,
-			want: types.EventSubscriptions{SilenceStart: false, SilenceEnd: true},
+			json: validConfigJSON(`"notifications":{"zabbix":{"events":{"silence_start":true}}}`),
+			want: types.EventSubscriptions{SilenceStart: true},
 		},
 		{
 			name: "explicit false values disable events",
-			json: `{"notifications":{"zabbix":{"events":{"silence_start":false,"silence_end":false}}}}`,
+			json: validConfigJSON(`"notifications":{"zabbix":{"events":{"silence_start":false,"silence_end":false}}}`),
 			want: allFalse,
 		},
 	}
@@ -275,11 +520,11 @@ func TestZabbixEventsJSONSemantics(t *testing.T) {
 func TestZabbixEventsRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	// Load a config with events: null (no-op, defaults should apply).
-	// Then trigger an unrelated save via AddStream (which calls saveLocked directly,
-	// bypassing ApplySettings) and verify defaults survive reload.
+	// Load a config with explicit Zabbix events. Then trigger an unrelated
+	// save via AddStream (which calls saveLocked directly, bypassing
+	// ApplySettings) and verify event settings survive reload.
 	configPath := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(configPath, []byte(`{"notifications":{"zabbix":{"events":null}}}`), 0o600); err != nil {
+	if err := os.WriteFile(configPath, []byte(validConfigJSON(`"notifications":{"zabbix":{"events":{"silence_start":true,"silence_end":true}}}`)), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
@@ -342,98 +587,113 @@ func TestLoadRejectsInvalidFileSettings(t *testing.T) {
 		wantErr string
 	}{
 		{
+			name:    "missing system port",
+			data:    `{"system":{"username":"admin","password":"encoder"},"web":{"station_name":"ZuidWest FM","color_light":"#E6007E","color_dark":"#E6007E"},"silence_detection":{"threshold_db":-40,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}}`,
+			wantErr: "system.port: must be between 1 and 65535",
+		},
+		{
+			name:    "missing system username",
+			data:    `{"system":{"port":8080,"password":"encoder"},"web":{"station_name":"ZuidWest FM","color_light":"#E6007E","color_dark":"#E6007E"},"silence_detection":{"threshold_db":-40,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}}`,
+			wantErr: "system.username: is required",
+		},
+		{
+			name:    "missing system password",
+			data:    `{"system":{"port":8080,"username":"admin"},"web":{"station_name":"ZuidWest FM","color_light":"#E6007E","color_dark":"#E6007E"},"silence_detection":{"threshold_db":-40,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}}`,
+			wantErr: "system.password: is required",
+		},
+		{
 			name:    "positive silence threshold",
-			data:    `{"silence_detection":{"threshold_db":1}}`,
+			data:    validConfigJSON(`"silence_detection":{"threshold_db":1,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}`),
 			wantErr: "silence_detection.threshold_db: must be between -60 and -1 dB",
 		},
 		{
 			name:    "zero silence threshold",
-			data:    `{"silence_detection":{"threshold_db":0}}`,
+			data:    validConfigJSON(`"silence_detection":{"threshold_db":0,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}`),
 			wantErr: "silence_detection.threshold_db: must be between -60 and -1 dB",
 		},
 		{
 			name:    "fractional silence threshold above -1",
-			data:    `{"silence_detection":{"threshold_db":-0.5}}`,
+			data:    validConfigJSON(`"silence_detection":{"threshold_db":-0.5,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}`),
 			wantErr: "silence_detection.threshold_db: must be between -60 and -1 dB",
 		},
 		{
 			name:    "silence threshold below -60",
-			data:    `{"silence_detection":{"threshold_db":-61}}`,
+			data:    validConfigJSON(`"silence_detection":{"threshold_db":-61,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}`),
 			wantErr: "silence_detection.threshold_db: must be between -60 and -1 dB",
 		},
 		{
 			name:    "zero silence duration",
-			data:    `{"silence_detection":{"duration_ms":0}}`,
+			data:    validConfigJSON(`"silence_detection":{"threshold_db":-40,"duration_ms":0,"recovery_ms":5000,"peak_hold_ms":3000}`),
 			wantErr: "silence_detection.duration_ms: must be greater than 0",
 		},
 		{
 			name:    "zero silence recovery",
-			data:    `{"silence_detection":{"recovery_ms":0}}`,
+			data:    validConfigJSON(`"silence_detection":{"threshold_db":-40,"duration_ms":15000,"recovery_ms":0,"peak_hold_ms":3000}`),
 			wantErr: "silence_detection.recovery_ms: must be greater than 0",
 		},
 		{
 			name:    "zero peak hold",
-			data:    `{"silence_detection":{"peak_hold_ms":0}}`,
+			data:    validConfigJSON(`"silence_detection":{"threshold_db":-40,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":0}`),
 			wantErr: "silence_detection.peak_hold_ms: must be between 500 and 10000 ms",
 		},
 		{
 			name:    "negative silence dump retention",
-			data:    `{"silence_dump":{"retention_days":-1}}`,
+			data:    validConfigJSON(`"silence_dump":{"retention_days":-1}`),
 			wantErr: "silence_dump.retention_days: cannot be negative",
 		},
 		{
 			name:    "invalid webhook url",
-			data:    `{"notifications":{"webhook":{"url":"://broken"}}}`,
+			data:    validConfigJSON(`"notifications":{"webhook":{"url":"://broken"}}`),
 			wantErr: "notifications.webhook.url: invalid URL format",
 		},
 		{
 			name:    "invalid graph from address",
-			data:    `{"notifications":{"email":{"from_address":"not-an-email"}}}`,
+			data:    validConfigJSON(`"notifications":{"email":{"from_address":"not-an-email"}}`),
 			wantErr: "notifications.email.from_address: invalid email format",
 		},
 		{
 			name:    "invalid graph recipient",
-			data:    `{"notifications":{"email":{"recipients":"good@example.com, bad-address"}}}`,
+			data:    validConfigJSON(`"notifications":{"email":{"recipients":"good@example.com, bad-address"}}`),
 			wantErr: "notifications.email.recipients: contains invalid email address",
 		},
 		{
 			name:    "invalid whatsapp recipient",
-			data:    `{"notifications":{"whatsapp":{"recipients":"+31612345678, bad-address"}}}`,
+			data:    validConfigJSON(`"notifications":{"whatsapp":{"recipients":"+31612345678, bad-address"}}`),
 			wantErr: "notifications.whatsapp.recipients: contains invalid phone number",
 		},
 		{
 			name:    "whatsapp phone number id required",
-			data:    `{"notifications":{"whatsapp":{"access_token":"token","recipients":"+31612345678"}}}`,
+			data:    validConfigJSON(`"notifications":{"whatsapp":{"access_token":"token","recipients":"+31612345678"}}`),
 			wantErr: "notifications.whatsapp.phone_number_id: is required when WhatsApp is configured",
 		},
 		{
 			name:    "whatsapp phone number id digits only",
-			data:    `{"notifications":{"whatsapp":{"phone_number_id":"abc","access_token":"token","recipients":"+31612345678"}}}`,
+			data:    validConfigJSON(`"notifications":{"whatsapp":{"phone_number_id":"abc","access_token":"token","recipients":"+31612345678"}}`),
 			wantErr: "notifications.whatsapp.phone_number_id: must contain digits only",
 		},
 		{
 			name:    "whatsapp access token required",
-			data:    `{"notifications":{"whatsapp":{"phone_number_id":"12345","recipients":"+31612345678"}}}`,
+			data:    validConfigJSON(`"notifications":{"whatsapp":{"phone_number_id":"12345","recipients":"+31612345678"}}`),
 			wantErr: "notifications.whatsapp.access_token: is required when WhatsApp is configured",
 		},
 		{
 			name:    "whatsapp split recipients required",
-			data:    `{"notifications":{"whatsapp":{"phone_number_id":"12345","access_token":"token","recipients":",,, "}}}`,
+			data:    validConfigJSON(`"notifications":{"whatsapp":{"phone_number_id":"12345","access_token":"token","recipients":",,, "}}`),
 			wantErr: "notifications.whatsapp.recipients: is required when WhatsApp is configured",
 		},
 		{
 			name:    "whatsapp template language requires template name",
-			data:    `{"notifications":{"whatsapp":{"phone_number_id":"12345","access_token":"token","recipients":"+31612345678","template_language":"nl"}}}`,
+			data:    validConfigJSON(`"notifications":{"whatsapp":{"phone_number_id":"12345","access_token":"token","recipients":"+31612345678","template_language":"nl"}}`),
 			wantErr: "notifications.whatsapp.template_language: requires notifications.whatsapp.template_name",
 		},
 		{
 			name:    "whatsapp template name format",
-			data:    `{"notifications":{"whatsapp":{"phone_number_id":"12345","access_token":"token","recipients":"+31612345678","template_name":"Encoder Alert"}}}`,
+			data:    validConfigJSON(`"notifications":{"whatsapp":{"phone_number_id":"12345","access_token":"token","recipients":"+31612345678","template_name":"Encoder Alert"}}`),
 			wantErr: "notifications.whatsapp.template_name: must contain only lowercase letters, digits, and underscores",
 		},
 		{
 			name:    "invalid zabbix port",
-			data:    `{"notifications":{"zabbix":{"port":70000}}}`,
+			data:    validConfigJSON(`"notifications":{"zabbix":{"port":70000}}`),
 			wantErr: "notifications.zabbix.port: must be between 1 and 65535",
 		},
 	}
@@ -634,7 +894,7 @@ func TestSilenceThresholdBoundary(t *testing.T) {
 		t.Parallel()
 
 		configPath := filepath.Join(t.TempDir(), "config.json")
-		if err := os.WriteFile(configPath, []byte(`{"silence_detection":{"threshold_db":-1}}`), 0o600); err != nil {
+		if err := os.WriteFile(configPath, []byte(validConfigJSON(`"silence_detection":{"threshold_db":-1,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}`)), 0o600); err != nil {
 			t.Fatalf("WriteFile() error = %v", err)
 		}
 
@@ -648,7 +908,7 @@ func TestSilenceThresholdBoundary(t *testing.T) {
 		t.Parallel()
 
 		configPath := filepath.Join(t.TempDir(), "config.json")
-		if err := os.WriteFile(configPath, []byte(`{"silence_detection":{"threshold_db":-60}}`), 0o600); err != nil {
+		if err := os.WriteFile(configPath, []byte(validConfigJSON(`"silence_detection":{"threshold_db":-60,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}`)), 0o600); err != nil {
 			t.Fatalf("WriteFile() error = %v", err)
 		}
 
