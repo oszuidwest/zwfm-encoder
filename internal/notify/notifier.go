@@ -268,21 +268,19 @@ func (o *AlertOrchestrator) logAudioDumpReady(
 	t time.Time, cfg *config.Snapshot, durationMS int64,
 	levelL, levelR float64, dump *silencedump.EncodeResult,
 ) {
-	dumpPath, dumpFilename, dumpSize, dumpError := extractDumpInfo(dump)
+	var dumpPath, dumpFilename, dumpError string
+	var dumpSize int64
+	switch {
+	case dump == nil:
+	case dump.Error != nil:
+		dumpError = dump.Error.Error()
+	default:
+		dumpPath, dumpFilename, dumpSize = dump.FilePath, dump.Filename, dump.FileSize
+	}
 	if err := o.eventLogger.LogAudioDumpReady(
 		t, durationMS, levelL, levelR, cfg.SilenceThreshold,
 		dumpPath, dumpFilename, dumpSize, dumpError,
 	); err != nil {
 		slog.Warn("failed to log audio dump ready", "error", err)
 	}
-}
-
-func extractDumpInfo(dump *silencedump.EncodeResult) (path, filename string, size int64, errStr string) {
-	if dump == nil {
-		return "", "", 0, ""
-	}
-	if dump.Error != nil {
-		return "", "", 0, dump.Error.Error()
-	}
-	return dump.FilePath, dump.Filename, dump.FileSize, ""
 }

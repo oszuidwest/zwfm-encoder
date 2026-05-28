@@ -11,8 +11,8 @@ import (
 
 // BuildFFmpegArgs returns FFmpeg arguments for streaming.
 func BuildFFmpegArgs(stream *types.Stream) []string {
-	codecArgs := stream.CodecArgs()
-	format := stream.Format()
+	codecArgs := types.BuildCodecArgs(stream.Codec, stream.Bitrate)
+	format := stream.Codec.Format()
 	srtURL := BuildSRTURL(stream)
 
 	// Start with base input args, add stream-specific flags

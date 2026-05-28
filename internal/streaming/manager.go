@@ -537,7 +537,7 @@ func (m *Manager) shouldContinueRetry(streamID string, ctx StreamContext) (shoul
 	if stream == nil {
 		return false, "stream removed"
 	}
-	if !stream.IsEnabled() {
+	if !stream.Enabled {
 		return false, "stream disabled"
 	}
 	retryCount := m.RetryCount(streamID)

@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"time"
 )
@@ -22,11 +21,6 @@ var (
 	// EmailPattern validates email address format.
 	EmailPattern = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
 )
-
-// IsConfigured reports whether all provided values are non-empty.
-func IsConfigured(values ...string) bool {
-	return !slices.Contains(values, "")
-}
 
 // ValidatePath validates a file path for security.
 func ValidatePath(field, path string) error {

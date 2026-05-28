@@ -474,8 +474,7 @@
                      Three notification methods (can use multiple):
                      - Webhook: HTTP POST to URL on silence start/end
                      - File Log: Append JSON lines to local file
-                     - Email: Microsoft Graph notifications
-                     - WhatsApp: Cloud API text notifications -->
+                     - Email: Microsoft Graph notifications -->
                 <div class="panel" role="tabpanel" id="panel-notifications" aria-labelledby="tab-notifications" x-show="settingsTab === 'notifications'">
                     <div class="section">
                         <div class="section-header">
@@ -553,56 +552,6 @@
                         <div class="test-action">
                             <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('email')" :disabled="testStates.email.pending || settingsForm.graph.clearSecret" x-text="testStates.email.text">Test</button>
                             <span class="input-hint" x-show="settingsForm.graph.clearSecret">Save changes first to test with the cleared secret.</span>
-                        </div>
-                    </div>
-                    <div class="section">
-                        <div class="section-header">
-                            <span class="icon-container" x-html="icons.chat"></span>
-                            <h3>WhatsApp</h3>
-                        </div>
-                        <p class="section-desc">WhatsApp Business Cloud API alerts for silence events.</p>
-                        <div class="form">
-                            <div class="group">
-                                <label for="whatsapp-phone-number-id">Phone Number ID</label>
-                                <input id="whatsapp-phone-number-id" type="text" :placeholder="settingsForm.whatsapp.clearToken ? '(will be cleared on save)' : '123456789012345'" x-model="settingsForm.whatsapp.phoneNumberId" @input="markSettingsDirty()" :disabled="settingsForm.whatsapp.clearToken">
-                            </div>
-                            <div class="group">
-                                <label for="whatsapp-access-token">Access Token</label>
-                                <input id="whatsapp-access-token" type="password" :placeholder="settingsForm.whatsapp.clearToken ? '(will be cleared on save)' : (config.whatsapp_has_token ? '••••••••' : 'Meta access token')" x-model="settingsForm.whatsapp.accessToken" @input="markSettingsDirty()" :disabled="settingsForm.whatsapp.clearToken" aria-describedby="whatsapp-token-hint">
-                                <span id="whatsapp-token-hint" class="input-hint">Leave empty to keep, type new value to replace, or click Disable WhatsApp to remove the channel.</span>
-                            </div>
-                            <div class="group">
-                                <label for="whatsapp-recipients">Recipients</label>
-                                <input id="whatsapp-recipients" type="text" :placeholder="settingsForm.whatsapp.clearToken ? '(will be cleared on save)' : '+31612345678, +31687654321'" x-model="settingsForm.whatsapp.recipients" @input="markSettingsDirty()" :disabled="settingsForm.whatsapp.clearToken" aria-describedby="whatsapp-recipients-hint">
-                                <span id="whatsapp-recipients-hint" class="input-hint">Comma-separated phone numbers with country code.</span>
-                            </div>
-                            <div class="row">
-                                <div class="group">
-                                    <label for="whatsapp-template-name">Template Name</label>
-                                    <input id="whatsapp-template-name" type="text" :placeholder="settingsForm.whatsapp.clearToken ? '(will be cleared on save)' : 'encoder_alert'" x-model="settingsForm.whatsapp.templateName" @input="markSettingsDirty()" :disabled="settingsForm.whatsapp.clearToken" aria-describedby="whatsapp-template-hint">
-                                </div>
-                                <div class="group">
-                                    <label for="whatsapp-template-language">Template Language</label>
-                                    <input id="whatsapp-template-language" type="text" :placeholder="settingsForm.whatsapp.clearToken ? '(will be cleared on save)' : 'en_US'" x-model="settingsForm.whatsapp.templateLanguage" @input="markSettingsDirty()" :disabled="settingsForm.whatsapp.clearToken" aria-describedby="whatsapp-template-hint">
-                                </div>
-                            </div>
-                            <span id="whatsapp-template-hint" class="input-hint">Optional approved template with one body variable for alerts outside the 24-hour window.</span>
-                            <div class="secret-actions">
-                                <button class="btn" data-variant="danger" data-size="sm" type="button" tabindex="0" x-show="(config.whatsapp_has_token || settingsForm.whatsapp.phoneNumberId || settingsForm.whatsapp.recipients || settingsForm.whatsapp.templateName) && !settingsForm.whatsapp.clearToken" @click="disableWhatsApp()">Disable WhatsApp</button>
-                                <button class="btn" data-variant="secondary" data-size="sm" type="button" tabindex="0" x-show="settingsForm.whatsapp.clearToken" @click="undoDisableWhatsApp()">Undo disable</button>
-                            </div>
-                            <div class="group">
-                                <label>Events</label>
-                                <div class="checkbox-group">
-                                    <label class="checkbox-label" for="whatsapp-evt-start"><input id="whatsapp-evt-start" type="checkbox" x-model="settingsForm.whatsappEvents.silence_start" @change="markSettingsDirty()"> Silence start</label>
-                                    <label class="checkbox-label" for="whatsapp-evt-end"><input id="whatsapp-evt-end" type="checkbox" x-model="settingsForm.whatsappEvents.silence_end" @change="markSettingsDirty()"> Silence end</label>
-                                    <label class="checkbox-label" for="whatsapp-evt-dump"><input id="whatsapp-evt-dump" type="checkbox" x-model="settingsForm.whatsappEvents.audio_dump" @change="markSettingsDirty()"> Audio dump</label>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="test-action">
-                            <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('whatsapp')" :disabled="testStates.whatsapp.pending || settingsForm.whatsapp.clearToken" x-text="testStates.whatsapp.text">Test</button>
-                            <span class="input-hint" x-show="settingsForm.whatsapp.clearToken">Save changes first to test after disabling WhatsApp.</span>
                         </div>
                     </div>
                     <div class="section">

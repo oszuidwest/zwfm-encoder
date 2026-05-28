@@ -216,12 +216,6 @@ document.addEventListener('alpine:init', () => {
             graph_from_address: '',
             graph_recipients: '',
             graph_has_secret: false,
-            whatsapp_phone_number_id: '',
-            whatsapp_recipients: '',
-            whatsapp_template_name: '',
-            whatsapp_template_language: '',
-            whatsapp_has_token: false,
-            whatsapp_events: { silence_start: true, silence_end: true, audio_dump: true },
             recording_api_key: '',
             streams: [],
             recorders: []
@@ -243,8 +237,6 @@ document.addEventListener('alpine:init', () => {
             zabbixEvents: { silence_start: true, silence_end: true },
             graph: { tenantId: '', clientId: '', clientSecret: '', clearSecret: false, _preClearSnapshot: null, fromAddress: '', recipients: '' },
             emailEvents: { silence_start: true, silence_end: true, audio_dump: true },
-            whatsapp: { phoneNumberId: '', accessToken: '', clearToken: false, _preDisableSnapshot: null, recipients: '', templateName: '', templateLanguage: '' },
-            whatsappEvents: { silence_start: true, silence_end: true, audio_dump: true },
             recordingApiKey: '',
             platform: ''
         },
@@ -262,7 +254,6 @@ document.addEventListener('alpine:init', () => {
         testStates: {
             webhook: { pending: false, text: 'Test' },
             email: { pending: false, text: 'Test' },
-            whatsapp: { pending: false, text: 'Test' },
             zabbix: { pending: false, text: 'Test' },
             recorderS3: { pending: false, text: 'Test Connection' }
         },
@@ -736,20 +727,6 @@ document.addEventListener('alpine:init', () => {
                     silence_end: this.config.email_events?.silence_end ?? true,
                     audio_dump: this.config.email_events?.audio_dump ?? true
                 },
-                whatsapp: {
-                    phoneNumberId: this.config.whatsapp_phone_number_id || '',
-                    accessToken: '', // Never pre-fill; empty = keep saved unless clearToken is true.
-                    clearToken: false,
-                    _preDisableSnapshot: null,
-                    recipients: this.config.whatsapp_recipients || '',
-                    templateName: this.config.whatsapp_template_name || '',
-                    templateLanguage: this.config.whatsapp_template_language || ''
-                },
-                whatsappEvents: {
-                    silence_start: this.config.whatsapp_events?.silence_start ?? true,
-                    silence_end: this.config.whatsapp_events?.silence_end ?? true,
-                    audio_dump: this.config.whatsapp_events?.audio_dump ?? true
-                },
                 recordingApiKey: this.config.recording_api_key || '',
                 recordingMaxDurationMinutes: this.config.recording_max_duration_minutes ?? 240,
                 platform: this.config.platform || ''
@@ -798,47 +775,6 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
-         * Stages removal of the entire WhatsApp configuration on next Save.
-         * Snapshots all five WhatsApp fields, clears them, and sets
-         * clearToken=true so the payload sends clear_whatsapp_access_token
-         * with everything empty. The backend's all-or-nothing validator
-         * requires the token clear flag whenever the visible fields are
-         * cleared; doing both together avoids the 400 the deprecated
-         * implicit-disable path would now produce.
-         */
-        disableWhatsApp() {
-            const whatsapp = this.settingsForm.whatsapp;
-            if (whatsapp.clearToken) return; // double-click guard
-            if (!confirm('Disable WhatsApp notifications and clear all WhatsApp configuration (phone number, recipients, template, access token)?')) return;
-            whatsapp._preDisableSnapshot = {
-                phoneNumberId: whatsapp.phoneNumberId,
-                recipients: whatsapp.recipients,
-                templateName: whatsapp.templateName,
-                templateLanguage: whatsapp.templateLanguage,
-                accessToken: whatsapp.accessToken
-            };
-            whatsapp.phoneNumberId = '';
-            whatsapp.recipients = '';
-            whatsapp.templateName = '';
-            whatsapp.templateLanguage = '';
-            whatsapp.accessToken = '';
-            whatsapp.clearToken = true;
-            this.markSettingsDirty();
-        },
-
-        /**
-         * Cancels a pending WhatsApp disable and restores all snapshotted fields.
-         */
-        undoDisableWhatsApp() {
-            const whatsapp = this.settingsForm.whatsapp;
-            if (!whatsapp._preDisableSnapshot) return;
-            Object.assign(whatsapp, whatsapp._preDisableSnapshot);
-            whatsapp.clearToken = false;
-            whatsapp._preDisableSnapshot = null;
-            this.markSettingsDirty();
-        },
-
-        /**
          * Discards form changes and returns to dashboard.
          */
         cancelSettings() {
@@ -877,12 +813,6 @@ document.addEventListener('alpine:init', () => {
                         graph_from_address: this.config.graph_from_address,
                         graph_recipients: this.config.graph_recipients,
                         email_events: this.config.email_events,
-                        whatsapp_phone_number_id: this.config.whatsapp_phone_number_id,
-                        whatsapp_access_token: '',
-                        whatsapp_recipients: this.config.whatsapp_recipients,
-                        whatsapp_template_name: this.config.whatsapp_template_name,
-                        whatsapp_template_language: this.config.whatsapp_template_language,
-                        whatsapp_events: this.config.whatsapp_events,
                         recording_max_duration_minutes: this.config.recording_max_duration_minutes
                     })
                 });
@@ -938,13 +868,6 @@ document.addEventListener('alpine:init', () => {
                 graph_from_address: form.graph.fromAddress,
                 graph_recipients: form.graph.recipients,
                 email_events: form.emailEvents,
-                whatsapp_phone_number_id: form.whatsapp.phoneNumberId,
-                whatsapp_access_token: form.whatsapp.accessToken,
-                clear_whatsapp_access_token: form.whatsapp.clearToken,
-                whatsapp_recipients: form.whatsapp.recipients,
-                whatsapp_template_name: form.whatsapp.templateName,
-                whatsapp_template_language: form.whatsapp.templateLanguage,
-                whatsapp_events: form.whatsappEvents,
                 recording_max_duration_minutes: form.recordingMaxDurationMinutes
             };
 
@@ -1744,7 +1667,7 @@ document.addEventListener('alpine:init', () => {
          * Triggers a notification test via REST API.
          * Uses form values (unsaved) for testing.
          *
-         * @param {string} type - Test type: 'webhook', 'email', 'whatsapp', or 'zabbix'
+         * @param {string} type - Test type: 'webhook', 'email', or 'zabbix'
          */
         async sendTest(type) {
             if (!this.testStates[type]) return;
@@ -1763,14 +1686,6 @@ document.addEventListener('alpine:init', () => {
                     payload.graph_recipients = this.settingsForm.graph.recipients;
                     if (this.settingsForm.graph.clientSecret) {
                         payload.graph_client_secret = this.settingsForm.graph.clientSecret;
-                    }
-                } else if (type === 'whatsapp') {
-                    payload.whatsapp_phone_number_id = this.settingsForm.whatsapp.phoneNumberId;
-                    payload.whatsapp_recipients = this.settingsForm.whatsapp.recipients;
-                    payload.whatsapp_template_name = this.settingsForm.whatsapp.templateName;
-                    payload.whatsapp_template_language = this.settingsForm.whatsapp.templateLanguage;
-                    if (this.settingsForm.whatsapp.accessToken) {
-                        payload.whatsapp_access_token = this.settingsForm.whatsapp.accessToken;
                     }
                 } else if (type === 'zabbix') {
                     payload.zabbix_server = this.settingsForm.zabbix.server;

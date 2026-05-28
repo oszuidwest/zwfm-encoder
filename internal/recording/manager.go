@@ -114,7 +114,7 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 	m.recorders[cfg.ID] = recorder
 
 	// Auto-start hourly recorders if encoder is running (ondemand never auto-starts)
-	if m.running && cfg.RecordingMode == types.RecordingHourly && cfg.IsEnabled() {
+	if m.running && cfg.RecordingMode == types.RecordingHourly && cfg.Enabled {
 		if err := recorder.Start(); err != nil {
 			slog.Warn("failed to auto-start recorder", "id", cfg.ID, "error", err)
 		}
@@ -213,7 +213,7 @@ func (m *Manager) Start() error {
 	// Start hourly recorders (ondemand never auto-starts)
 	for id, recorder := range m.recorders {
 		cfg := recorder.Config()
-		if cfg.RecordingMode == types.RecordingHourly && cfg.IsEnabled() {
+		if cfg.RecordingMode == types.RecordingHourly && cfg.Enabled {
 			if err := recorder.Start(); err != nil {
 				slog.Warn("failed to auto-start recorder", "id", id, "error", err)
 			}
@@ -308,7 +308,7 @@ func (m *Manager) retryFailedHourlyRecorders() {
 
 	for _, recorder := range m.recorders {
 		cfg := recorder.Config()
-		if cfg.RecordingMode == types.RecordingHourly && cfg.IsEnabled() {
+		if cfg.RecordingMode == types.RecordingHourly && cfg.Enabled {
 			status := recorder.Status()
 			if status.State == types.ProcessError {
 				slog.Info("retrying failed hourly recorder at hour boundary", "id", cfg.ID, "name", cfg.Name)

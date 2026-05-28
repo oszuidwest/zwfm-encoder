@@ -131,11 +131,6 @@ type Stream struct {
 	CreatedAt  int64  `json:"created_at"`  // Unix ms
 }
 
-// IsEnabled reports whether the stream is enabled.
-func (s *Stream) IsEnabled() bool {
-	return s.Enabled
-}
-
 // DefaultMaxRetries is the default number of retry attempts for streams.
 const DefaultMaxRetries = 99
 
@@ -151,18 +146,21 @@ func (s *Stream) MaxRetriesOrDefault() int {
 }
 
 // codecPreset defines encoding parameters for a codec.
+// If defaultBitrate is empty, no -b:a flag is emitted (used for PCM).
 type codecPreset struct {
-	args   []string
-	format string
+	encoder        string
+	format         string
+	defaultBitrate string
+	extraArgs      []string
 }
 
-// codecPresets maps codecs to their encoding parameters.
+// codecPresets is the single source of truth for codec encoding parameters.
 var codecPresets = map[Codec]codecPreset{
-	CodecMP3:  {[]string{"libmp3lame", "-b:a", "320k"}, "mp3"},
-	CodecOpus: {[]string{"libopus", "-b:a", "128k", "-frame_duration", "10"}, "mpegts"},
+	CodecMP3:  {encoder: "libmp3lame", format: "mp3", defaultBitrate: "320k"},
+	CodecOpus: {encoder: "libopus", format: "mpegts", defaultBitrate: "128k", extraArgs: []string{"-frame_duration", "10"}},
 	// SMPTE 302M is the only PCM-in-MPEG-TS encoder Liquidsoap can decode.
 	// FFmpeg marks s302m as experimental, so -strict -2 is required.
-	CodecPCM: {[]string{"s302m", "-strict", "-2"}, "mpegts"},
+	CodecPCM: {encoder: "s302m", format: "mpegts", extraArgs: []string{"-strict", "-2"}},
 }
 
 // Format returns the output format for this codec.
@@ -177,25 +175,21 @@ func (c Codec) Format() string {
 // BuildCodecArgs returns FFmpeg encoder arguments for the given codec and bitrate.
 // A bitrate of 0 uses the codec's default settings.
 func BuildCodecArgs(codec Codec, bitrate int) []string {
-	switch codec {
-	case CodecMP3:
-		br := "320k"
-		if bitrate > 0 {
-			br = strconv.Itoa(bitrate) + "k"
-		}
-		return []string{"libmp3lame", "-b:a", br}
-	case CodecOpus:
-		br := "128k"
-		if bitrate > 0 {
-			br = strconv.Itoa(bitrate) + "k"
-		}
-		return []string{"libopus", "-b:a", br, "-frame_duration", "10"}
-	case CodecPCM:
-		return []string{"s302m", "-strict", "-2"}
-	default:
+	preset, ok := codecPresets[codec]
+	if !ok {
 		slog.Error("unknown codec arguments requested, falling back to PCM encoder", "codec", codec)
-		return []string{"s302m", "-strict", "-2"}
+		preset = codecPresets[CodecPCM]
 	}
+	args := []string{preset.encoder}
+	if preset.defaultBitrate != "" {
+		br := preset.defaultBitrate
+		if bitrate > 0 {
+			br = strconv.Itoa(bitrate) + "k"
+		}
+		args = append(args, "-b:a", br)
+	}
+	args = append(args, preset.extraArgs...)
+	return args
 }
 
 // validateBitrate checks whether the bitrate is valid for the given codec.
@@ -218,16 +212,6 @@ func validateBitrate(codec Codec, bitrate int) error {
 		return fmt.Errorf("bitrate: not supported for PCM (uncompressed)")
 	}
 	return nil
-}
-
-// CodecArgs returns the encoder arguments for this stream's codec and bitrate.
-func (s *Stream) CodecArgs() []string {
-	return BuildCodecArgs(s.Codec, s.Bitrate)
-}
-
-// Format returns the output format for this stream's codec.
-func (s *Stream) Format() string {
-	return s.Codec.Format()
 }
 
 // Validate reports an error if the stream configuration is invalid.
@@ -359,21 +343,6 @@ type Recorder struct {
 	CreatedAt     int64 `json:"created_at"`     // Unix ms
 }
 
-// IsEnabled reports whether the recorder is enabled.
-func (r *Recorder) IsEnabled() bool {
-	return r.Enabled
-}
-
-// CodecArgs returns the encoder arguments for this recorder's codec and bitrate.
-func (r *Recorder) CodecArgs() []string {
-	return BuildCodecArgs(r.Codec, r.Bitrate)
-}
-
-// Format returns the output format for this recorder's codec.
-func (r *Recorder) Format() string {
-	return r.Codec.Format()
-}
-
 // Validate reports an error if the recorder configuration is invalid.
 func (r *Recorder) Validate() error {
 	if strings.TrimSpace(r.Name) == "" {
@@ -462,13 +431,6 @@ type APIConfigResponse struct {
 	GraphHasSecret   bool               `json:"graph_has_secret"`
 	EmailEvents      EventSubscriptions `json:"email_events"`
 
-	WhatsAppPhoneNumberID    string             `json:"whatsapp_phone_number_id"`
-	WhatsAppRecipients       string             `json:"whatsapp_recipients"` // Comma-separated phone numbers
-	WhatsAppTemplateName     string             `json:"whatsapp_template_name"`
-	WhatsAppTemplateLanguage string             `json:"whatsapp_template_language"`
-	WhatsAppHasToken         bool               `json:"whatsapp_has_token"`
-	WhatsAppEvents           EventSubscriptions `json:"whatsapp_events"`
-
 	RecordingAPIKey             string `json:"recording_api_key"`
 	RecordingMaxDurationMinutes int    `json:"recording_max_duration_minutes"`
 
@@ -489,17 +451,6 @@ type GraphConfig struct {
 	ClientSecret string `json:"client_secret,omitempty"` //nolint:gosec // G117: intentional config field for Azure auth
 	FromAddress  string `json:"from_address,omitempty"`
 	Recipients   string `json:"recipients,omitempty"` // Comma-separated
-}
-
-// WhatsAppConfig holds credentials for WhatsApp Business Cloud API notifications.
-type WhatsAppConfig struct {
-	PhoneNumberID    string `json:"phone_number_id,omitempty"`
-	AccessToken      string `json:"access_token,omitempty"` //nolint:gosec // G117: intentional config field for Meta auth
-	Recipients       string `json:"recipients,omitempty"`   // Comma-separated phone numbers
-	TemplateName     string `json:"template_name,omitempty"`
-	TemplateLanguage string `json:"template_language,omitempty"`
-	// Events controls which silence events trigger WhatsApp notifications.
-	Events EventSubscriptions `json:"events"`
 }
 
 // EventSubscriptions controls which silence events a notification channel receives.

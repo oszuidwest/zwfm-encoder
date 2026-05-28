@@ -140,7 +140,7 @@ func sendWebhook(ctx context.Context, webhookURL string, payload *WebhookPayload
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if !util.IsConfigured(webhookURL) {
+	if webhookURL == "" {
 		return nil // Silently skip if not configured
 	}
 
