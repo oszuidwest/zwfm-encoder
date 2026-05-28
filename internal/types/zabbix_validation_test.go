@@ -13,7 +13,7 @@ func TestZabbixConfigValidationIssues(t *testing.T) {
 	tests := []struct {
 		name      string
 		cfg       ZabbixConfig
-		wantCodes []ZabbixValidationCode
+		wantCodes []string
 	}{
 		{
 			name:      "port=0 accepted (means use default at send time)",
@@ -28,12 +28,12 @@ func TestZabbixConfigValidationIssues(t *testing.T) {
 		{
 			name:      "port=70000 out of range",
 			cfg:       ZabbixConfig{Port: 70000},
-			wantCodes: []ZabbixValidationCode{ZabbixPortRange},
+			wantCodes: []string{ZabbixPortRange},
 		},
 		{
 			name:      "negative port out of range",
 			cfg:       ZabbixConfig{Port: -1},
-			wantCodes: []ZabbixValidationCode{ZabbixPortRange},
+			wantCodes: []string{ZabbixPortRange},
 		},
 		{
 			name:      "half-configured Zabbix accepted at storage level",
@@ -58,16 +58,16 @@ func TestValidateZabbixConfigured(t *testing.T) {
 	tests := []struct {
 		name                                string
 		server, host, silenceKey, uploadKey string
-		wantCodes                           []ZabbixValidationCode
+		wantCodes                           []string
 	}{
 		{
 			name:      "all empty",
-			wantCodes: []ZabbixValidationCode{ZabbixServerRequired, ZabbixHostRequired, ZabbixKeyRequired},
+			wantCodes: []string{ZabbixServerRequired, ZabbixHostRequired, ZabbixKeyRequired},
 		},
 		{
 			name:      "only server set",
 			server:    "zabbix.example.com",
-			wantCodes: []ZabbixValidationCode{ZabbixHostRequired, ZabbixKeyRequired},
+			wantCodes: []string{ZabbixHostRequired, ZabbixKeyRequired},
 		},
 		{
 			name:       "server+host+silence_key OK",
@@ -85,7 +85,7 @@ func TestValidateZabbixConfigured(t *testing.T) {
 			name:      "neither key set",
 			server:    "zabbix.example.com",
 			host:      "encoder-01",
-			wantCodes: []ZabbixValidationCode{ZabbixKeyRequired},
+			wantCodes: []string{ZabbixKeyRequired},
 		},
 		{
 			name:      "port-range not validated here",
@@ -114,7 +114,7 @@ func TestValidateZabbixTarget(t *testing.T) {
 		server    string
 		port      int
 		host, key string
-		wantCodes []ZabbixValidationCode
+		wantCodes []string
 	}{
 		{
 			name:   "all valid",
@@ -123,21 +123,21 @@ func TestValidateZabbixTarget(t *testing.T) {
 		{
 			name:   "port=0 rejected at target level",
 			server: "zabbix.example.com", port: 0, host: "encoder-01", key: "silence",
-			wantCodes: []ZabbixValidationCode{ZabbixPortRange},
+			wantCodes: []string{ZabbixPortRange},
 		},
 		{
 			name:   "port=70000 rejected",
 			server: "zabbix.example.com", port: 70000, host: "encoder-01", key: "silence",
-			wantCodes: []ZabbixValidationCode{ZabbixPortRange},
+			wantCodes: []string{ZabbixPortRange},
 		},
 		{
 			name:   "empty key rejected",
 			server: "zabbix.example.com", port: 10051, host: "encoder-01",
-			wantCodes: []ZabbixValidationCode{ZabbixKeyRequired},
+			wantCodes: []string{ZabbixKeyRequired},
 		},
 		{
 			name:      "everything missing",
-			wantCodes: []ZabbixValidationCode{ZabbixServerRequired, ZabbixHostRequired, ZabbixKeyRequired, ZabbixPortRange},
+			wantCodes: []string{ZabbixServerRequired, ZabbixHostRequired, ZabbixKeyRequired, ZabbixPortRange},
 		},
 	}
 	for _, tt := range tests {
@@ -151,13 +151,13 @@ func TestValidateZabbixTarget(t *testing.T) {
 	}
 }
 
-func zabbixCodes(issues validation.Issues) []ZabbixValidationCode {
+func zabbixCodes(issues validation.Issues) []string {
 	if len(issues) == 0 {
 		return nil
 	}
-	codes := make([]ZabbixValidationCode, 0, len(issues))
+	codes := make([]string, 0, len(issues))
 	for _, issue := range issues {
-		codes = append(codes, ZabbixValidationCode(issue.Code))
+		codes = append(codes, issue.Code)
 	}
 	return codes
 }
