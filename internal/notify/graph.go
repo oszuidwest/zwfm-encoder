@@ -92,10 +92,21 @@ func NewGraphClient(cfg *types.GraphConfig) (*GraphClient, error) {
 	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, baseClient)
 	httpClient := conf.Client(ctx)
 
+	return newGraphClientWithHTTPClient(cfg, httpClient)
+}
+
+func newGraphClientWithHTTPClient(cfg *types.GraphConfig, httpClient *http.Client) (*GraphClient, error) {
+	if httpClient == nil {
+		return nil, fmt.Errorf("http client is required")
+	}
+	return graphClientWithHTTPClient(cfg, httpClient), nil
+}
+
+func graphClientWithHTTPClient(cfg *types.GraphConfig, httpClient *http.Client) *GraphClient {
 	return &GraphClient{
 		fromAddress: cfg.FromAddress,
 		httpClient:  httpClient,
-	}, nil
+	}
 }
 
 // graphMailRequest represents a send email request.
