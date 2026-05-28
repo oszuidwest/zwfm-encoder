@@ -293,7 +293,7 @@ func (c *Config) validate() error {
 
 func (c *Config) validateNotifications() error {
 	for _, issue := range types.ValidateWebhookURL(c.Notifications.Webhook.URL, validation.AllowEmpty) {
-		return fmt.Errorf("invalid %s", formatWebhookConfigIssue("notifications.webhook.url", issue))
+		return fmt.Errorf("invalid %s", formatWebhookIssue("notifications.webhook.url", issue))
 	}
 	if msg := validateOptionalEmail("notifications.email.from_address", c.Notifications.Email.FromAddress); msg != "" {
 		return fmt.Errorf("invalid %s", msg)
@@ -302,7 +302,7 @@ func (c *Config) validateNotifications() error {
 		return fmt.Errorf("invalid %s", msg)
 	}
 	for _, issue := range c.Notifications.Zabbix.ValidationIssues() {
-		return fmt.Errorf("invalid %s", formatZabbixConfigIssue("notifications.zabbix."+issue.Field, issue))
+		return fmt.Errorf("invalid %s", formatZabbixIssue("notifications.zabbix."+issue.Field, issue))
 	}
 	return nil
 }
@@ -377,18 +377,7 @@ func validateNonNegativeDays(field string, value int) string {
 	return ""
 }
 
-func formatWebhookConfigIssue(field string, issue validation.Issue) string {
-	switch types.WebhookValidationCode(issue.Code) {
-	case types.WebhookURLInvalid:
-		return field + ": invalid URL format"
-	case types.WebhookURLRequired:
-		return field + ": is required"
-	default:
-		return field + ": invalid"
-	}
-}
-
-func formatWebhookSettingsIssue(field string, issue validation.Issue) string {
+func formatWebhookIssue(field string, issue validation.Issue) string {
 	switch types.WebhookValidationCode(issue.Code) {
 	case types.WebhookURLInvalid:
 		return field + ": invalid URL format"
@@ -418,22 +407,7 @@ func validateRecipients(field, recipients string) string {
 	return ""
 }
 
-func formatZabbixConfigIssue(field string, issue validation.Issue) string {
-	switch types.ZabbixValidationCode(issue.Code) {
-	case types.ZabbixPortRange:
-		return field + ": must be between 1 and 65535"
-	case types.ZabbixServerRequired:
-		return field + ": is required when Zabbix is configured"
-	case types.ZabbixHostRequired:
-		return field + ": is required when Zabbix is configured"
-	case types.ZabbixKeyRequired:
-		return field + ": at least one of silence_key or upload_key is required"
-	default:
-		return field + ": invalid Zabbix configuration"
-	}
-}
-
-func formatZabbixSettingsIssue(field string, issue validation.Issue) string {
+func formatZabbixIssue(field string, issue validation.Issue) string {
 	switch types.ZabbixValidationCode(issue.Code) {
 	case types.ZabbixPortRange:
 		return field + ": must be between 1 and 65535"
@@ -973,7 +947,7 @@ func (s *SettingsUpdate) Validate() []string {
 
 	// Webhook URL format
 	for _, issue := range types.ValidateWebhookURL(s.WebhookURL, validation.AllowEmpty) {
-		errs = append(errs, formatWebhookSettingsIssue("webhook_url", issue))
+		errs = append(errs, formatWebhookIssue("webhook_url", issue))
 	}
 
 	// Email address validation
@@ -984,7 +958,7 @@ func (s *SettingsUpdate) Validate() []string {
 		errs = append(errs, msg)
 	}
 	for _, issue := range (&types.ZabbixConfig{Port: s.ZabbixPort}).ValidationIssues() {
-		errs = append(errs, formatZabbixSettingsIssue("zabbix_"+issue.Field, issue))
+		errs = append(errs, formatZabbixIssue("zabbix_"+issue.Field, issue))
 	}
 	if s.ClearGraphClientSecret && s.GraphClientSecret != "" {
 		errs = append(errs, "clear_graph_client_secret: conflicts with non-empty graph_client_secret")
