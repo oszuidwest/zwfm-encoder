@@ -6,16 +6,14 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 )
 
-// WebhookValidationCode identifies a webhook validation rule failure.
-// Stored in validation.Issue.Code via string conversion; adapters cast
-// back when switching on rule identity.
-type WebhookValidationCode string
-
+// Webhook validation rule identifiers. Stored in validation.Issue.Code as
+// stable rule identifiers; adapters in config/ and notify/ switch on these
+// to map rules to context-specific messages.
 const (
 	// WebhookURLRequired means the webhook URL is empty.
-	WebhookURLRequired WebhookValidationCode = "url_required"
+	WebhookURLRequired = "url_required"
 	// WebhookURLInvalid means the webhook URL is not a parseable request URI.
-	WebhookURLInvalid WebhookValidationCode = "url_invalid"
+	WebhookURLInvalid = "url_invalid"
 )
 
 // ValidateWebhookURL reports webhook URL validation issues.
@@ -28,13 +26,13 @@ const (
 func ValidateWebhookURL(rawURL string, mode validation.Mode) validation.Issues {
 	if rawURL == "" {
 		if mode == validation.RequireComplete {
-			return validation.Issues{{Field: "url", Code: string(WebhookURLRequired)}}
+			return validation.Issues{{Field: "url", Code: WebhookURLRequired}}
 		}
 		return nil
 	}
 	if mode == validation.AllowEmpty {
 		if _, err := url.ParseRequestURI(rawURL); err != nil {
-			return validation.Issues{{Field: "url", Code: string(WebhookURLInvalid)}}
+			return validation.Issues{{Field: "url", Code: WebhookURLInvalid}}
 		}
 	}
 	return nil

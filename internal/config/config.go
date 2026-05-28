@@ -378,7 +378,7 @@ func validateNonNegativeDays(field string, value int) string {
 }
 
 func formatWebhookIssue(field string, issue validation.Issue) string {
-	switch types.WebhookValidationCode(issue.Code) {
+	switch issue.Code {
 	case types.WebhookURLInvalid:
 		return field + ": invalid URL format"
 	case types.WebhookURLRequired:
