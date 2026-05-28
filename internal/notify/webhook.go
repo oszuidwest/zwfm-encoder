@@ -81,7 +81,7 @@ func formatWebhookRuntimeError(issues validation.Issues) error {
 	if len(issues) == 0 {
 		return nil
 	}
-	switch types.WebhookValidationCode(issues[0].Code) {
+	switch issues[0].Code {
 	case types.WebhookURLRequired:
 		return fmt.Errorf("webhook URL not configured")
 	case types.WebhookURLInvalid:

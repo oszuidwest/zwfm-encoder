@@ -4,23 +4,21 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 )
 
-// ZabbixValidationCode identifies a Zabbix validation rule failure.
-// Stored in validation.Issue.Code via string conversion; adapters cast
-// back when switching on rule identity.
-type ZabbixValidationCode string
-
+// Zabbix validation rule identifiers. Stored in validation.Issue.Code as
+// stable rule identifiers; adapters in config/ switch on these to map
+// rules to context-specific messages.
 const (
 	// ZabbixServerRequired means the trapper server address is empty.
-	ZabbixServerRequired ZabbixValidationCode = "server_required"
+	ZabbixServerRequired = "server_required"
 	// ZabbixHostRequired means the monitored host name is empty.
-	ZabbixHostRequired ZabbixValidationCode = "host_required"
+	ZabbixHostRequired = "host_required"
 	// ZabbixKeyRequired means neither silence_key nor upload_key is set
 	// (for ValidateZabbixConfigured) or the per-target key is empty
 	// (for ValidateZabbixTarget).
-	ZabbixKeyRequired ZabbixValidationCode = "key_required"
+	ZabbixKeyRequired = "key_required"
 	// ZabbixPortRange means the port is non-zero but outside 1..65535
 	// (for stored config) or not in 1..65535 (for a concrete target).
-	ZabbixPortRange ZabbixValidationCode = "port_range"
+	ZabbixPortRange = "port_range"
 )
 
 // ValidationIssues reports stored-Zabbix-config validation issues.
@@ -34,7 +32,7 @@ const (
 func (c *ZabbixConfig) ValidationIssues() validation.Issues {
 	var issues validation.Issues
 	if c.Port != 0 && (c.Port < 1 || c.Port > 65535) {
-		issues = append(issues, validation.Issue{Field: "port", Code: string(ZabbixPortRange)})
+		issues = append(issues, validation.Issue{Field: "port", Code: ZabbixPortRange})
 	}
 	return issues
 }
@@ -47,13 +45,13 @@ func (c *ZabbixConfig) ValidationIssues() validation.Issues {
 func ValidateZabbixConfigured(server, host, silenceKey, uploadKey string) validation.Issues {
 	var issues validation.Issues
 	if server == "" {
-		issues = append(issues, validation.Issue{Field: "server", Code: string(ZabbixServerRequired)})
+		issues = append(issues, validation.Issue{Field: "server", Code: ZabbixServerRequired})
 	}
 	if host == "" {
-		issues = append(issues, validation.Issue{Field: "host", Code: string(ZabbixHostRequired)})
+		issues = append(issues, validation.Issue{Field: "host", Code: ZabbixHostRequired})
 	}
 	if silenceKey == "" && uploadKey == "" {
-		issues = append(issues, validation.Issue{Field: "silence_key", Code: string(ZabbixKeyRequired)})
+		issues = append(issues, validation.Issue{Field: "silence_key", Code: ZabbixKeyRequired})
 	}
 	return issues
 }
@@ -64,16 +62,16 @@ func ValidateZabbixConfigured(server, host, silenceKey, uploadKey string) valida
 func ValidateZabbixTarget(server string, port int, host, key string) validation.Issues {
 	var issues validation.Issues
 	if server == "" {
-		issues = append(issues, validation.Issue{Field: "server", Code: string(ZabbixServerRequired)})
+		issues = append(issues, validation.Issue{Field: "server", Code: ZabbixServerRequired})
 	}
 	if host == "" {
-		issues = append(issues, validation.Issue{Field: "host", Code: string(ZabbixHostRequired)})
+		issues = append(issues, validation.Issue{Field: "host", Code: ZabbixHostRequired})
 	}
 	if key == "" {
-		issues = append(issues, validation.Issue{Field: "key", Code: string(ZabbixKeyRequired)})
+		issues = append(issues, validation.Issue{Field: "key", Code: ZabbixKeyRequired})
 	}
 	if port < 1 || port > 65535 {
-		issues = append(issues, validation.Issue{Field: "port", Code: string(ZabbixPortRange)})
+		issues = append(issues, validation.Issue{Field: "port", Code: ZabbixPortRange})
 	}
 	return issues
 }

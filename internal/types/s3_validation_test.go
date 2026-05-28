@@ -13,7 +13,7 @@ func TestValidateS3Credentials(t *testing.T) {
 	tests := []struct {
 		name                              string
 		bucket, accessKeyID, secretAccess string
-		wantCodes                         []S3ValidationCode
+		wantCodes                         []string
 	}{
 		{
 			name:   "all fields set: no issues",
@@ -22,22 +22,22 @@ func TestValidateS3Credentials(t *testing.T) {
 		},
 		{
 			name:      "all empty: three issues in field order",
-			wantCodes: []S3ValidationCode{S3BucketRequired, S3AccessKeyIDRequired, S3SecretAccessKeyRequired},
+			wantCodes: []string{S3BucketRequired, S3AccessKeyIDRequired, S3SecretAccessKeyRequired},
 		},
 		{
 			name:        "missing bucket only",
 			accessKeyID: "AKIA", secretAccess: "shh",
-			wantCodes: []S3ValidationCode{S3BucketRequired},
+			wantCodes: []string{S3BucketRequired},
 		},
 		{
 			name:   "missing access key only",
 			bucket: "my-bucket", secretAccess: "shh",
-			wantCodes: []S3ValidationCode{S3AccessKeyIDRequired},
+			wantCodes: []string{S3AccessKeyIDRequired},
 		},
 		{
 			name:   "missing secret only",
 			bucket: "my-bucket", accessKeyID: "AKIA",
-			wantCodes: []S3ValidationCode{S3SecretAccessKeyRequired},
+			wantCodes: []string{S3SecretAccessKeyRequired},
 		},
 	}
 	for _, tt := range tests {
@@ -51,13 +51,13 @@ func TestValidateS3Credentials(t *testing.T) {
 	}
 }
 
-func s3Codes(issues validation.Issues) []S3ValidationCode {
+func s3Codes(issues validation.Issues) []string {
 	if len(issues) == 0 {
 		return nil
 	}
-	codes := make([]S3ValidationCode, 0, len(issues))
+	codes := make([]string, 0, len(issues))
 	for _, issue := range issues {
-		codes = append(codes, S3ValidationCode(issue.Code))
+		codes = append(codes, issue.Code)
 	}
 	return codes
 }

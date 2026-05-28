@@ -43,7 +43,7 @@ func formatGraphRuntimeError(issues validation.Issues) error {
 	if len(issues) == 0 {
 		return nil
 	}
-	switch types.GraphValidationCode(issues[0].Code) {
+	switch issues[0].Code {
 	case types.GraphTenantIDRequired:
 		return fmt.Errorf("tenant ID is required")
 	case types.GraphTenantIDFormat:

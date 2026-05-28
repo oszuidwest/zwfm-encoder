@@ -14,7 +14,7 @@ func TestValidateWebhookURL(t *testing.T) {
 		name      string
 		url       string
 		mode      validation.Mode
-		wantCodes []WebhookValidationCode
+		wantCodes []string
 	}{
 		{
 			name:      "AllowEmpty accepts empty URL",
@@ -32,13 +32,13 @@ func TestValidateWebhookURL(t *testing.T) {
 			name:      "AllowEmpty rejects unparseable URL",
 			url:       "not a url",
 			mode:      validation.AllowEmpty,
-			wantCodes: []WebhookValidationCode{WebhookURLInvalid},
+			wantCodes: []string{WebhookURLInvalid},
 		},
 		{
 			name:      "RequireComplete rejects empty URL",
 			url:       "",
 			mode:      validation.RequireComplete,
-			wantCodes: []WebhookValidationCode{WebhookURLRequired},
+			wantCodes: []string{WebhookURLRequired},
 		},
 		{
 			name:      "RequireComplete accepts any non-empty URL without format check",
@@ -66,13 +66,13 @@ func TestValidateWebhookURL(t *testing.T) {
 	}
 }
 
-func webhookCodes(issues validation.Issues) []WebhookValidationCode {
+func webhookCodes(issues validation.Issues) []string {
 	if len(issues) == 0 {
 		return nil
 	}
-	codes := make([]WebhookValidationCode, 0, len(issues))
+	codes := make([]string, 0, len(issues))
 	for _, issue := range issues {
-		codes = append(codes, WebhookValidationCode(issue.Code))
+		codes = append(codes, issue.Code)
 	}
 	return codes
 }

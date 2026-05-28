@@ -378,7 +378,7 @@ func validateNonNegativeDays(field string, value int) string {
 }
 
 func formatWebhookIssue(field string, issue validation.Issue) string {
-	switch types.WebhookValidationCode(issue.Code) {
+	switch issue.Code {
 	case types.WebhookURLInvalid:
 		return field + ": invalid URL format"
 	case types.WebhookURLRequired:
@@ -408,7 +408,7 @@ func validateRecipients(field, recipients string) string {
 }
 
 func formatZabbixIssue(field string, issue validation.Issue) string {
-	switch types.ZabbixValidationCode(issue.Code) {
+	switch issue.Code {
 	case types.ZabbixPortRange:
 		return field + ": must be between 1 and 65535"
 	case types.ZabbixServerRequired:

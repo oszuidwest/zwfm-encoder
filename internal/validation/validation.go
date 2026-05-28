@@ -1,6 +1,6 @@
 // Package validation provides neutral primitives for domain-local validation.
 //
-// Each domain (notifications, etc.) defines its own typed Code constants and
+// Each domain (notifications, etc.) defines its own Code constants and
 // validation functions that return []Issue. Adapters at each call site map
 // those issues to the error shape required by the caller (config-path message,
 // API field name, runtime sentinel-wrapped error, etc.).
@@ -8,10 +8,10 @@ package validation
 
 // Issue describes one validation failure.
 //
-// Codes are owned by the calling domain. Domains define typed string constants
-// and place them into Code via explicit string conversion. The Field name is
-// domain-local (for example "url"); adapters prefix it when formatting
-// messages for a specific context.
+// Codes are owned by the calling domain. Domains define stable string
+// constants for each rule (for example "url_required") and place them
+// directly into Code. The Field name is domain-local (for example "url");
+// adapters prefix it when formatting messages for a specific context.
 type Issue struct {
 	Field string
 	Code  string
