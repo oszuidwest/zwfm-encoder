@@ -220,6 +220,7 @@ func (o *AlertOrchestrator) DrainLogs() {
 }
 
 // Close drains all pending log jobs and stops the log worker.
+// It also cancels in-flight notification contexts via the orchestrator's notify cancel.
 // Safe to call multiple times; only the first call has effect.
 // Valid for both graceful process shutdown and test cleanup.
 func (o *AlertOrchestrator) Close() {

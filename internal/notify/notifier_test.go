@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -73,6 +74,63 @@ func (c *snapshotObservingChannel) SendAudioDump(
 }
 func (c *snapshotObservingChannel) SendUploadAbandoned(_ context.Context, _ *config.Snapshot, _ UploadAbandonedData) error {
 	return nil
+}
+
+type contextCapturingChannel struct {
+	ctx         chan context.Context
+	canceled    chan struct{}
+	done        chan struct{}
+	release     chan struct{}
+	releaseOnce sync.Once
+}
+
+func newContextCapturingChannel() *contextCapturingChannel {
+	return &contextCapturingChannel{
+		ctx:      make(chan context.Context, 1),
+		canceled: make(chan struct{}),
+		done:     make(chan struct{}),
+		release:  make(chan struct{}),
+	}
+}
+
+func (c *contextCapturingChannel) Name() string { return "context-capturing" }
+func (c *contextCapturingChannel) IsConfiguredForSilence(_ *config.Snapshot) bool {
+	return true
+}
+func (c *contextCapturingChannel) IsConfiguredForUpload(_ *config.Snapshot) bool {
+	return false
+}
+func (c *contextCapturingChannel) SubscribesSilenceStart(_ *config.Snapshot) bool {
+	return true
+}
+func (c *contextCapturingChannel) SubscribesSilenceEnd(_ *config.Snapshot) bool { return false }
+func (c *contextCapturingChannel) SubscribesAudioDump(_ *config.Snapshot) bool  { return false }
+func (c *contextCapturingChannel) SendSilenceStart(ctx context.Context, _ *config.Snapshot, _, _ float64) error {
+	defer close(c.done)
+
+	c.ctx <- ctx
+	select {
+	case <-ctx.Done():
+		close(c.canceled)
+	case <-c.release:
+	}
+	return nil
+}
+func (c *contextCapturingChannel) SendSilenceEnd(
+	_ context.Context, _ *config.Snapshot, _ int64, _, _ float64,
+) error {
+	return nil
+}
+func (c *contextCapturingChannel) SendAudioDump(
+	_ context.Context, _ *config.Snapshot, _ int64, _, _ float64, _ *silencedump.EncodeResult,
+) error {
+	return nil
+}
+func (c *contextCapturingChannel) SendUploadAbandoned(_ context.Context, _ *config.Snapshot, _ UploadAbandonedData) error {
+	return nil
+}
+func (c *contextCapturingChannel) releaseSend() {
+	c.releaseOnce.Do(func() { close(c.release) })
 }
 
 type captureHandler struct {
@@ -199,6 +257,26 @@ func assertNoCall(t *testing.T, ch <-chan *config.Snapshot, label string) {
 	}
 }
 
+func awaitContext(t *testing.T, ch <-chan context.Context, label string) context.Context {
+	t.Helper()
+	select {
+	case ctx := <-ch:
+		return ctx
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for %s", label)
+		return nil
+	}
+}
+
+func awaitSignal(t *testing.T, ch <-chan struct{}, label string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for %s", label)
+	}
+}
+
 // newTestOrchestrator creates an AlertOrchestrator backed by ch and registers t.Cleanup
 // to drain and stop the log worker when the test ends, preventing goroutine leaks.
 func newTestOrchestrator(t *testing.T, ch AlertChannel) *AlertOrchestrator {
@@ -300,6 +378,43 @@ func TestDrainLogsConcurrentWithCloseDoesNotPanic(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Close blocked when racing with DrainLogs")
 	}
+}
+
+func TestResetDoesNotCancelInFlightNotification(t *testing.T) {
+	t.Parallel()
+
+	ch := newContextCapturingChannel()
+	o := newTestOrchestrator(t, ch)
+
+	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
+	ctx := awaitContext(t, ch.ctx, "in-flight notification context")
+
+	o.Reset()
+
+	if err := ctx.Err(); err != nil {
+		t.Fatalf("ctx.Err() after Reset() = %v, want nil", err)
+	}
+
+	ch.releaseSend()
+	awaitSignal(t, ch.done, "blocked notification send to finish")
+}
+
+func TestCloseCancelsInFlightNotification(t *testing.T) {
+	t.Parallel()
+
+	ch := newContextCapturingChannel()
+	o := newTestOrchestrator(t, ch)
+
+	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
+	ctx := awaitContext(t, ch.ctx, "in-flight notification context")
+
+	o.Close()
+
+	awaitSignal(t, ch.canceled, "in-flight notification context cancellation")
+	if err := ctx.Err(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ctx.Err() after Close() = %v, want %v", err, context.Canceled)
+	}
+	awaitSignal(t, ch.done, "blocked notification send to finish")
 }
 
 // TestOnDumpReadyNilPending verifies that OnDumpReady is a no-op when there is no
