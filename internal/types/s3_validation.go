@@ -4,8 +4,8 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 )
 
-// S3 validation rule identifiers. Stored in validation.Issue.Code; callers
-// switch on these to map rules to context-specific messages.
+// S3 validation rule identifiers. Stored in validation.Issue.Code as stable
+// rule identifiers.
 const (
 	// S3BucketRequired means the bucket name is empty.
 	S3BucketRequired = "bucket_required"
