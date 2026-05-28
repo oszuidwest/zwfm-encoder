@@ -6,26 +6,24 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 )
 
-// GraphValidationCode identifies a Microsoft Graph validation rule failure.
-// Stored in validation.Issue.Code via string conversion; adapters cast back
-// when switching on rule identity.
-type GraphValidationCode string
-
+// Microsoft Graph validation rule identifiers. Stored in validation.Issue.Code
+// as stable rule identifiers; adapters in notify/ switch on these to map
+// rules to context-specific messages.
 const (
 	// GraphTenantIDRequired means tenant_id is empty.
-	GraphTenantIDRequired GraphValidationCode = "tenant_id_required"
+	GraphTenantIDRequired = "tenant_id_required"
 	// GraphTenantIDFormat means tenant_id is not a valid GUID.
-	GraphTenantIDFormat GraphValidationCode = "tenant_id_format"
+	GraphTenantIDFormat = "tenant_id_format"
 	// GraphClientIDRequired means client_id is empty.
-	GraphClientIDRequired GraphValidationCode = "client_id_required"
+	GraphClientIDRequired = "client_id_required"
 	// GraphClientIDFormat means client_id is not a valid GUID.
-	GraphClientIDFormat GraphValidationCode = "client_id_format"
+	GraphClientIDFormat = "client_id_format"
 	// GraphClientSecretRequired means client_secret is empty.
-	GraphClientSecretRequired GraphValidationCode = "client_secret_required"
+	GraphClientSecretRequired = "client_secret_required"
 	// GraphFromAddressRequired means from_address is empty.
-	GraphFromAddressRequired GraphValidationCode = "from_address_required"
+	GraphFromAddressRequired = "from_address_required"
 	// GraphRecipientsRequired means recipients is empty.
-	GraphRecipientsRequired GraphValidationCode = "recipients_required"
+	GraphRecipientsRequired = "recipients_required"
 )
 
 // graphGUIDPattern matches the standard GUID format used by Azure AD
@@ -42,13 +40,13 @@ var graphGUIDPattern = regexp.MustCompile(
 func (c *GraphConfig) CredentialsIssues() validation.Issues {
 	var issues validation.Issues
 	if c.TenantID == "" {
-		issues = append(issues, validation.Issue{Field: "tenant_id", Code: string(GraphTenantIDRequired)})
+		issues = append(issues, validation.Issue{Field: "tenant_id", Code: GraphTenantIDRequired})
 	}
 	if c.ClientID == "" {
-		issues = append(issues, validation.Issue{Field: "client_id", Code: string(GraphClientIDRequired)})
+		issues = append(issues, validation.Issue{Field: "client_id", Code: GraphClientIDRequired})
 	}
 	if c.ClientSecret == "" {
-		issues = append(issues, validation.Issue{Field: "client_secret", Code: string(GraphClientSecretRequired)})
+		issues = append(issues, validation.Issue{Field: "client_secret", Code: GraphClientSecretRequired})
 	}
 	return issues
 }
@@ -59,7 +57,7 @@ func (c *GraphConfig) CredentialsIssues() validation.Issues {
 func (c *GraphConfig) ClientIssues() validation.Issues {
 	issues := c.CredentialsIssues()
 	if c.FromAddress == "" {
-		issues = append(issues, validation.Issue{Field: "from_address", Code: string(GraphFromAddressRequired)})
+		issues = append(issues, validation.Issue{Field: "from_address", Code: GraphFromAddressRequired})
 	}
 	return issues
 }
@@ -70,23 +68,23 @@ func (c *GraphConfig) ClientIssues() validation.Issues {
 func (c *GraphConfig) SendIssues() validation.Issues {
 	var issues validation.Issues
 	if c.TenantID == "" {
-		issues = append(issues, validation.Issue{Field: "tenant_id", Code: string(GraphTenantIDRequired)})
+		issues = append(issues, validation.Issue{Field: "tenant_id", Code: GraphTenantIDRequired})
 	} else if !graphGUIDPattern.MatchString(c.TenantID) {
-		issues = append(issues, validation.Issue{Field: "tenant_id", Code: string(GraphTenantIDFormat)})
+		issues = append(issues, validation.Issue{Field: "tenant_id", Code: GraphTenantIDFormat})
 	}
 	if c.ClientID == "" {
-		issues = append(issues, validation.Issue{Field: "client_id", Code: string(GraphClientIDRequired)})
+		issues = append(issues, validation.Issue{Field: "client_id", Code: GraphClientIDRequired})
 	} else if !graphGUIDPattern.MatchString(c.ClientID) {
-		issues = append(issues, validation.Issue{Field: "client_id", Code: string(GraphClientIDFormat)})
+		issues = append(issues, validation.Issue{Field: "client_id", Code: GraphClientIDFormat})
 	}
 	if c.ClientSecret == "" {
-		issues = append(issues, validation.Issue{Field: "client_secret", Code: string(GraphClientSecretRequired)})
+		issues = append(issues, validation.Issue{Field: "client_secret", Code: GraphClientSecretRequired})
 	}
 	if c.FromAddress == "" {
-		issues = append(issues, validation.Issue{Field: "from_address", Code: string(GraphFromAddressRequired)})
+		issues = append(issues, validation.Issue{Field: "from_address", Code: GraphFromAddressRequired})
 	}
 	if c.Recipients == "" {
-		issues = append(issues, validation.Issue{Field: "recipients", Code: string(GraphRecipientsRequired)})
+		issues = append(issues, validation.Issue{Field: "recipients", Code: GraphRecipientsRequired})
 	}
 	return issues
 }

@@ -18,12 +18,12 @@ func TestGraphCredentialsIssues(t *testing.T) {
 	tests := []struct {
 		name      string
 		cfg       GraphConfig
-		wantCodes []GraphValidationCode
+		wantCodes []string
 	}{
 		{
 			name:      "empty triggers all three required",
 			cfg:       GraphConfig{},
-			wantCodes: []GraphValidationCode{GraphTenantIDRequired, GraphClientIDRequired, GraphClientSecretRequired},
+			wantCodes: []string{GraphTenantIDRequired, GraphClientIDRequired, GraphClientSecretRequired},
 		},
 		{
 			name:      "non-GUID tenant accepted (non-strict)",
@@ -38,7 +38,7 @@ func TestGraphCredentialsIssues(t *testing.T) {
 		{
 			name:      "only tenant set",
 			cfg:       GraphConfig{TenantID: "tenant"},
-			wantCodes: []GraphValidationCode{GraphClientIDRequired, GraphClientSecretRequired},
+			wantCodes: []string{GraphClientIDRequired, GraphClientSecretRequired},
 		},
 	}
 	for _, tt := range tests {
@@ -58,17 +58,17 @@ func TestGraphClientIssues(t *testing.T) {
 	tests := []struct {
 		name      string
 		cfg       GraphConfig
-		wantCodes []GraphValidationCode
+		wantCodes []string
 	}{
 		{
 			name:      "empty triggers credentials and from",
 			cfg:       GraphConfig{},
-			wantCodes: []GraphValidationCode{GraphTenantIDRequired, GraphClientIDRequired, GraphClientSecretRequired, GraphFromAddressRequired},
+			wantCodes: []string{GraphTenantIDRequired, GraphClientIDRequired, GraphClientSecretRequired, GraphFromAddressRequired},
 		},
 		{
 			name:      "credentials set but from missing",
 			cfg:       GraphConfig{TenantID: graphValidGUIDA, ClientID: graphValidGUIDB, ClientSecret: "s"},
-			wantCodes: []GraphValidationCode{GraphFromAddressRequired},
+			wantCodes: []string{GraphFromAddressRequired},
 		},
 		{
 			name:      "non-GUID tenant + from set: no issues (non-strict)",
@@ -93,22 +93,22 @@ func TestGraphSendIssues(t *testing.T) {
 	tests := []struct {
 		name      string
 		cfg       GraphConfig
-		wantCodes []GraphValidationCode
+		wantCodes []string
 	}{
 		{
 			name:      "empty triggers all five required (no format checks on empty)",
 			cfg:       GraphConfig{},
-			wantCodes: []GraphValidationCode{GraphTenantIDRequired, GraphClientIDRequired, GraphClientSecretRequired, GraphFromAddressRequired, GraphRecipientsRequired},
+			wantCodes: []string{GraphTenantIDRequired, GraphClientIDRequired, GraphClientSecretRequired, GraphFromAddressRequired, GraphRecipientsRequired},
 		},
 		{
 			name:      "non-GUID tenant rejected (strict)",
 			cfg:       GraphConfig{TenantID: "mycompany.onmicrosoft.com", ClientID: graphValidGUIDB, ClientSecret: "s", FromAddress: "from@example.com", Recipients: "to@example.com"},
-			wantCodes: []GraphValidationCode{GraphTenantIDFormat},
+			wantCodes: []string{GraphTenantIDFormat},
 		},
 		{
 			name:      "non-GUID client rejected (strict)",
 			cfg:       GraphConfig{TenantID: graphValidGUIDA, ClientID: "not-a-guid", ClientSecret: "s", FromAddress: "from@example.com", Recipients: "to@example.com"},
-			wantCodes: []GraphValidationCode{GraphClientIDFormat},
+			wantCodes: []string{GraphClientIDFormat},
 		},
 		{
 			name:      "all valid GUIDs and fields: no issues",
@@ -118,7 +118,7 @@ func TestGraphSendIssues(t *testing.T) {
 		{
 			name:      "empty from and recipients with valid credentials",
 			cfg:       GraphConfig{TenantID: graphValidGUIDA, ClientID: graphValidGUIDB, ClientSecret: "s"},
-			wantCodes: []GraphValidationCode{GraphFromAddressRequired, GraphRecipientsRequired},
+			wantCodes: []string{GraphFromAddressRequired, GraphRecipientsRequired},
 		},
 	}
 	for _, tt := range tests {
@@ -132,13 +132,13 @@ func TestGraphSendIssues(t *testing.T) {
 	}
 }
 
-func graphCodes(issues validation.Issues) []GraphValidationCode {
+func graphCodes(issues validation.Issues) []string {
 	if len(issues) == 0 {
 		return nil
 	}
-	codes := make([]GraphValidationCode, 0, len(issues))
+	codes := make([]string, 0, len(issues))
 	for _, issue := range issues {
-		codes = append(codes, GraphValidationCode(issue.Code))
+		codes = append(codes, issue.Code)
 	}
 	return codes
 }
