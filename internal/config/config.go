@@ -126,8 +126,6 @@ type NotificationsConfig struct {
 	Webhook WebhookConfig `json:"webhook"`
 	// Email contains Microsoft Graph email settings.
 	Email EmailConfig `json:"email"`
-	// WhatsApp contains WhatsApp Business Cloud API notification settings.
-	WhatsApp types.WhatsAppConfig `json:"whatsapp"`
 	// Zabbix contains Zabbix notification settings.
 	Zabbix types.ZabbixConfig `json:"zabbix"`
 }
@@ -303,9 +301,6 @@ func (c *Config) validateNotifications() error {
 	if msg := validateRecipients("notifications.email.recipients", c.Notifications.Email.Recipients); msg != "" {
 		return fmt.Errorf("invalid %s", msg)
 	}
-	if errs := validateWhatsAppConfigFields("notifications.whatsapp.", &c.Notifications.WhatsApp); len(errs) > 0 {
-		return fmt.Errorf("invalid %s", errs[0])
-	}
 	for _, issue := range c.Notifications.Zabbix.ValidationIssues() {
 		return fmt.Errorf("invalid %s", formatZabbixConfigIssue("notifications.zabbix."+issue.Field, issue))
 	}
@@ -421,41 +416,6 @@ func validateRecipients(field, recipients string) string {
 		}
 	}
 	return ""
-}
-
-func validateWhatsAppConfigFields(prefix string, whatsApp *types.WhatsAppConfig) []string {
-	errs := []string{}
-	for _, issue := range whatsApp.Validate(validation.AllowEmpty) {
-		if msg := formatWhatsAppConfigIssue(prefix, issue); msg != "" {
-			errs = append(errs, msg)
-		}
-	}
-
-	return errs
-}
-
-func formatWhatsAppConfigIssue(prefix string, issue validation.Issue) string {
-	field := prefix + issue.Field
-	switch types.WhatsAppValidationCode(issue.Code) {
-	case types.WhatsAppPhoneNumberIDRequired:
-		return field + ": is required when WhatsApp is configured"
-	case types.WhatsAppPhoneNumberIDDigits:
-		return field + ": must contain digits only"
-	case types.WhatsAppAccessTokenRequired:
-		return field + ": is required when WhatsApp is configured"
-	case types.WhatsAppRecipientsRequired:
-		return field + ": is required when WhatsApp is configured"
-	case types.WhatsAppRecipientInvalid:
-		return field + ": contains invalid phone number"
-	case types.WhatsAppTemplateNameFormat:
-		return field + ": must contain only lowercase letters, digits, and underscores"
-	case types.WhatsAppTemplateLanguageRequiresName:
-		return field + ": requires " + prefix + "template_name"
-	case types.WhatsAppTemplateLanguageWhitespace:
-		return field + ": cannot contain whitespace"
-	default:
-		return field + ": invalid WhatsApp configuration"
-	}
 }
 
 func formatZabbixConfigIssue(field string, issue validation.Issue) string {
@@ -817,8 +777,6 @@ type Snapshot struct {
 	WebhookEvents types.EventSubscriptions
 	// EmailEvents controls which silence events trigger email notifications.
 	EmailEvents types.EventSubscriptions
-	// WhatsAppEvents controls which silence events trigger WhatsApp notifications.
-	WhatsAppEvents types.EventSubscriptions
 	// ZabbixEvents controls which silence events trigger Zabbix notifications.
 	// Internally this uses the unified event shape; AudioDump remains false for Zabbix.
 	ZabbixEvents types.EventSubscriptions
@@ -844,17 +802,6 @@ type Snapshot struct {
 	GraphFromAddress string
 	// GraphRecipients is a comma-separated list of email addresses to notify.
 	GraphRecipients string
-
-	// WhatsAppPhoneNumberID is the Meta WhatsApp Business phone number ID.
-	WhatsAppPhoneNumberID string
-	// WhatsAppAccessToken is the WhatsApp Cloud API access token.
-	WhatsAppAccessToken string
-	// WhatsAppRecipients is a comma-separated list of phone numbers to notify.
-	WhatsAppRecipients string
-	// WhatsAppTemplateName is an optional approved template for business-initiated alerts.
-	WhatsAppTemplateName string
-	// WhatsAppTemplateLanguage is the template language code.
-	WhatsAppTemplateLanguage string
 
 	// RecordingAPIKey is the secret key for external recording control via REST API.
 	RecordingAPIKey string
@@ -897,11 +844,10 @@ func (c *Config) Snapshot() Snapshot {
 		SilenceDumpRetentionDays: c.SilenceDump.RetentionDays,
 
 		// Notifications
-		WebhookURL:     c.Notifications.Webhook.URL,
-		WebhookEvents:  c.Notifications.Webhook.Events,
-		EmailEvents:    c.Notifications.Email.Events,
-		WhatsAppEvents: c.Notifications.WhatsApp.Events,
-		ZabbixEvents:   c.Notifications.Zabbix.Events.ToEventSubscriptions(),
+		WebhookURL:    c.Notifications.Webhook.URL,
+		WebhookEvents: c.Notifications.Webhook.Events,
+		EmailEvents:   c.Notifications.Email.Events,
+		ZabbixEvents:  c.Notifications.Zabbix.Events.ToEventSubscriptions(),
 
 		// Zabbix
 		ZabbixServer:     c.Notifications.Zabbix.Server,
@@ -916,13 +862,6 @@ func (c *Config) Snapshot() Snapshot {
 		GraphClientSecret: c.Notifications.Email.ClientSecret,
 		GraphFromAddress:  c.Notifications.Email.FromAddress,
 		GraphRecipients:   c.Notifications.Email.Recipients,
-
-		// WhatsApp
-		WhatsAppPhoneNumberID:    c.Notifications.WhatsApp.PhoneNumberID,
-		WhatsAppAccessToken:      c.Notifications.WhatsApp.AccessToken,
-		WhatsAppRecipients:       c.Notifications.WhatsApp.Recipients,
-		WhatsAppTemplateName:     c.Notifications.WhatsApp.TemplateName,
-		WhatsAppTemplateLanguage: c.Notifications.WhatsApp.TemplateLanguage,
 
 		// Recording
 		RecordingAPIKey:             c.Recording.APIKey,
@@ -943,13 +882,6 @@ func (s *Snapshot) HasWebhook() bool {
 func (s *Snapshot) HasGraph() bool {
 	return s.GraphTenantID != "" && s.GraphClientID != "" && s.GraphClientSecret != "" &&
 		s.GraphFromAddress != "" && s.GraphRecipients != ""
-}
-
-// HasWhatsApp reports whether WhatsApp Cloud API notifications are configured.
-func (s *Snapshot) HasWhatsApp() bool {
-	return strings.TrimSpace(s.WhatsAppPhoneNumberID) != "" &&
-		strings.TrimSpace(s.WhatsAppAccessToken) != "" &&
-		len(util.ParseWhatsAppRecipients(s.WhatsAppRecipients)) > 0
 }
 
 // HasZabbixSilence reports whether Zabbix silence alerting is configured.
@@ -986,18 +918,6 @@ type SettingsUpdate struct {
 	WebhookEvents types.EventSubscriptions `json:"webhook_events"`
 	// EmailEvents controls which silence events trigger email notifications.
 	EmailEvents types.EventSubscriptions `json:"email_events"`
-	// WhatsAppPhoneNumberID is the Meta WhatsApp Business phone number ID.
-	WhatsAppPhoneNumberID string `json:"whatsapp_phone_number_id"`
-	// WhatsAppAccessToken is the WhatsApp Cloud API access token.
-	WhatsAppAccessToken string `json:"whatsapp_access_token"`
-	// WhatsAppRecipients is a comma-separated list of phone numbers to notify.
-	WhatsAppRecipients string `json:"whatsapp_recipients"`
-	// WhatsAppTemplateName is an optional approved template for business-initiated alerts.
-	WhatsAppTemplateName string `json:"whatsapp_template_name"`
-	// WhatsAppTemplateLanguage is the template language code.
-	WhatsAppTemplateLanguage string `json:"whatsapp_template_language"`
-	// WhatsAppEvents controls which silence events trigger WhatsApp notifications.
-	WhatsAppEvents types.EventSubscriptions `json:"whatsapp_events"`
 	// ZabbixEvents controls which silence events trigger Zabbix notifications.
 	// This stays on the public Zabbix-specific shape to avoid exposing audio_dump.
 	ZabbixEvents types.ZabbixEventSubscriptions `json:"zabbix_events"`
@@ -1026,9 +946,6 @@ type SettingsUpdate struct {
 	// ClearGraphClientSecret requests removal of the saved Graph client secret.
 	// Must not be combined with a non-empty GraphClientSecret value (conflict -> 400).
 	ClearGraphClientSecret bool `json:"clear_graph_client_secret,omitempty"`
-	// ClearWhatsAppAccessToken requests removal of the saved WhatsApp access token.
-	// Must not be combined with a non-empty WhatsAppAccessToken value (conflict -> 400).
-	ClearWhatsAppAccessToken bool `json:"clear_whatsapp_access_token,omitempty"`
 }
 
 // Validate checks all settings fields and returns all validation errors.
@@ -1066,21 +983,11 @@ func (s *SettingsUpdate) Validate() []string {
 	if msg := validateRecipients("graph_recipients", s.GraphRecipients); msg != "" {
 		errs = append(errs, msg)
 	}
-	errs = append(errs, validateWhatsAppConfigFields("whatsapp_", &types.WhatsAppConfig{
-		PhoneNumberID:    s.WhatsAppPhoneNumberID,
-		AccessToken:      s.WhatsAppAccessToken,
-		Recipients:       s.WhatsAppRecipients,
-		TemplateName:     s.WhatsAppTemplateName,
-		TemplateLanguage: s.WhatsAppTemplateLanguage,
-	})...)
 	for _, issue := range (&types.ZabbixConfig{Port: s.ZabbixPort}).ValidationIssues() {
 		errs = append(errs, formatZabbixSettingsIssue("zabbix_"+issue.Field, issue))
 	}
 	if s.ClearGraphClientSecret && s.GraphClientSecret != "" {
 		errs = append(errs, "clear_graph_client_secret: conflicts with non-empty graph_client_secret")
-	}
-	if s.ClearWhatsAppAccessToken && s.WhatsAppAccessToken != "" {
-		errs = append(errs, "clear_whatsapp_access_token: conflicts with non-empty whatsapp_access_token")
 	}
 	if msg := validateMaxDurationMinutes("recording_max_duration_minutes", s.RecordingMaxDurationMinutes); msg != "" {
 		errs = append(errs, msg)
@@ -1113,16 +1020,6 @@ func (c *Config) ApplySettings(s *SettingsUpdate) error {
 	c.Notifications.Webhook.URL = s.WebhookURL
 	c.Notifications.Webhook.Events = s.WebhookEvents
 	c.Notifications.Email.Events = s.EmailEvents
-	c.Notifications.WhatsApp.PhoneNumberID = s.WhatsAppPhoneNumberID
-	if s.ClearWhatsAppAccessToken {
-		c.Notifications.WhatsApp.AccessToken = ""
-	} else {
-		c.Notifications.WhatsApp.AccessToken = s.WhatsAppAccessToken
-	}
-	c.Notifications.WhatsApp.Recipients = s.WhatsAppRecipients
-	c.Notifications.WhatsApp.TemplateName = s.WhatsAppTemplateName
-	c.Notifications.WhatsApp.TemplateLanguage = s.WhatsAppTemplateLanguage
-	c.Notifications.WhatsApp.Events = s.WhatsAppEvents
 	c.Notifications.Zabbix.Events = s.ZabbixEvents
 	c.Notifications.Zabbix.Server = s.ZabbixServer
 	c.Notifications.Zabbix.Port = s.ZabbixPort

@@ -481,8 +481,8 @@ func (r *GenericRecorder) startEncoderLocked() error {
 	r.currentFile = filepath.Join(outputDir, filename)
 
 	// Get codec configuration
-	codecArgs := r.config.CodecArgs()
-	format := r.config.Format()
+	codecArgs := types.BuildCodecArgs(r.config.Codec, r.config.Bitrate)
+	format := r.config.Codec.Format()
 	ext := r.getFileExtension()
 
 	// Update filename with correct extension

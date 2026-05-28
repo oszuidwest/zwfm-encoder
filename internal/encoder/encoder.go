@@ -81,9 +81,8 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 
 	webhookCh := &notify.WebhookChannel{}
 	emailCh := &notify.EmailChannel{}
-	whatsAppCh := &notify.WhatsAppChannel{}
 	zabbixCh := &notify.ZabbixChannel{}
-	dispatcher := notify.NewDispatcher(webhookCh, emailCh, whatsAppCh, zabbixCh)
+	dispatcher := notify.NewDispatcher(webhookCh, emailCh, zabbixCh)
 	orchestrator := notify.NewAlertOrchestrator(cfg, dispatcher)
 
 	// Create dump manager with callback to alert orchestrator
@@ -275,11 +274,11 @@ func (e *Encoder) StreamStatuses(streams []types.Stream) map[string]types.Proces
 		if status, exists := processStatuses[stream.ID]; exists {
 			// Stream has active process - use its status
 			// Also reflect disabled state if stream was disabled while running
-			if !stream.IsEnabled() {
+			if !stream.Enabled {
 				status.State = types.ProcessDisabled
 			}
 			result[stream.ID] = status
-		} else if !stream.IsEnabled() {
+		} else if !stream.Enabled {
 			// Stream is disabled - mark explicitly
 			result[stream.ID] = types.ProcessStatus{
 				State:      types.ProcessDisabled,
@@ -445,7 +444,7 @@ func (e *Encoder) StartStream(streamID string) error {
 	if stream == nil {
 		return ErrStreamNotFound
 	}
-	if !stream.IsEnabled() {
+	if !stream.Enabled {
 		return ErrStreamDisabled
 	}
 
@@ -671,7 +670,7 @@ func (e *Encoder) startEnabledStreams() {
 	go e.runDistributor()
 
 	for _, stream := range e.config.ConfiguredStreams() {
-		if !stream.IsEnabled() {
+		if !stream.Enabled {
 			slog.Info("skipping disabled stream", "stream_id", stream.ID)
 			continue
 		}

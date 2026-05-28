@@ -29,123 +29,6 @@ func TestDerefReturnsValueWhenPresentFallbackWhenNil(t *testing.T) {
 	}
 }
 
-func TestHandleAPITestWhatsAppValidationErrorReturnsBadRequest(t *testing.T) {
-	t.Parallel()
-
-	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
-	if err := cfg.Load(); err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-
-	s := &Server{config: cfg}
-	body := bytes.NewBufferString(`{
-		"whatsapp_phone_number_id": "12345",
-		"whatsapp_access_token": "token",
-		"whatsapp_recipients": "bad-address"
-	}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/notifications/test/whatsapp", body)
-	rec := httptest.NewRecorder()
-
-	s.handleAPITestWhatsApp(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
-	}
-
-	var payload map[string]string
-	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("response JSON = %q, error = %v", rec.Body.String(), err)
-	}
-	if !strings.Contains(payload["error"], "recipient") {
-		t.Fatalf("error = %q, want recipient validation message", payload["error"])
-	}
-}
-
-// parseWhatsAppTestRequest unmarshals a WhatsApp test request JSON body, mirroring
-// what handleAPITestWhatsApp does before calling mergeWhatsAppTestConfig.
-func parseWhatsAppTestRequest(t *testing.T, body string) NotificationTestRequest {
-	t.Helper()
-	var req NotificationTestRequest
-	if err := json.Unmarshal([]byte(body), &req); err != nil {
-		t.Fatalf("unmarshal request body: %v", err)
-	}
-	return req
-}
-
-// savedWhatsAppSnapshot mirrors a saved config that has a WhatsApp template configured.
-// The merge tests verify whether request fields fall back to or override these values.
-var savedWhatsAppSnapshot = config.Snapshot{
-	WhatsAppPhoneNumberID:    "12345",
-	WhatsAppAccessToken:      "saved-token",
-	WhatsAppRecipients:       "+31612345678",
-	WhatsAppTemplateName:     "saved_template",
-	WhatsAppTemplateLanguage: "en_US",
-}
-
-// TestMergeWhatsAppTestConfigOmittedTemplateFallsBackToSaved verifies that a request
-// without a `whatsapp_template_name` field inherits the saved template (#243 regression).
-// This is the path that drove pointer fields + deref over cmp.Or: omitted JSON keys
-// must keep using the saved value.
-func TestMergeWhatsAppTestConfigOmittedTemplateFallsBackToSaved(t *testing.T) {
-	t.Parallel()
-
-	req := parseWhatsAppTestRequest(t, `{}`)
-	got := mergeWhatsAppTestConfig(&req, &savedWhatsAppSnapshot)
-
-	if got.TemplateName != "saved_template" {
-		t.Fatalf("TemplateName = %q, want %q (omitted field must fall back to saved value)",
-			got.TemplateName, "saved_template")
-	}
-	if got.TemplateLanguage != "en_US" {
-		t.Fatalf("TemplateLanguage = %q, want %q (omitted field must fall back to saved value)",
-			got.TemplateLanguage, "en_US")
-	}
-}
-
-// TestMergeWhatsAppTestConfigExplicitEmptyTemplateClearsSaved verifies that an
-// explicit `"whatsapp_template_name": ""` overrides the saved value rather than
-// falling back to it (#243 regression: the exact bug delta that would fail under
-// the previous cmp.Or-based merge). Sending an empty template name is how the UI
-// signals "send as free text on this one test", which must not be silently rewritten
-// to the saved template.
-func TestMergeWhatsAppTestConfigExplicitEmptyTemplateClearsSaved(t *testing.T) {
-	t.Parallel()
-
-	req := parseWhatsAppTestRequest(t, `{"whatsapp_template_name": "", "whatsapp_template_language": ""}`)
-	got := mergeWhatsAppTestConfig(&req, &savedWhatsAppSnapshot)
-
-	if got.TemplateName != "" {
-		t.Fatalf("TemplateName = %q, want \"\" (explicit empty must override saved value)", got.TemplateName)
-	}
-	if got.TemplateLanguage != "" {
-		t.Fatalf("TemplateLanguage = %q, want \"\" (explicit empty must override saved value)", got.TemplateLanguage)
-	}
-	// Sanity: untouched fields still fall back, so the merge is partial-override, not all-or-nothing.
-	if got.PhoneNumberID != "12345" || got.AccessToken != "saved-token" || got.Recipients != "+31612345678" {
-		t.Fatalf("unrelated fields lost saved values: %+v", got)
-	}
-}
-
-// TestMergeWhatsAppTestConfigClearedTemplateNameDropsSavedLanguage verifies that
-// clearing only the template name (while leaving template language at the saved
-// value) does not produce a "language without name" config; that combination
-// would fail downstream validation and surface as a confusing 400. The merge must
-// drop the language so free-text mode is reachable by clearing just the name.
-func TestMergeWhatsAppTestConfigClearedTemplateNameDropsSavedLanguage(t *testing.T) {
-	t.Parallel()
-
-	req := parseWhatsAppTestRequest(t, `{"whatsapp_template_name": ""}`)
-	got := mergeWhatsAppTestConfig(&req, &savedWhatsAppSnapshot)
-
-	if got.TemplateName != "" {
-		t.Fatalf("TemplateName = %q, want \"\"", got.TemplateName)
-	}
-	if got.TemplateLanguage != "" {
-		t.Fatalf("TemplateLanguage = %q, want \"\" (cleared name must also drop saved language)",
-			got.TemplateLanguage)
-	}
-}
-
 // freshServer returns a Server with a default in-memory config for handler tests.
 func freshServer(t *testing.T) *Server {
 	t.Helper()
@@ -436,21 +319,6 @@ func TestHandleAPITestZabbixExplicitEmptyServerOverridesSaved(t *testing.T) {
 	}
 }
 
-// seededWhatsAppCompleteSettings returns a complete saved WhatsApp config
-// that loads cleanly and exercises all four visible fields plus a template
-// language. Used by #247 keep/replace/clear pipeline tests where token
-// preservation only makes sense with surrounding valid config (otherwise
-// the all-or-nothing validator masks the behavior under test).
-func seededWhatsAppCompleteSettings() *config.SettingsUpdate {
-	return &config.SettingsUpdate{
-		WhatsAppPhoneNumberID:    "12345",
-		WhatsAppAccessToken:      "saved-token",
-		WhatsAppRecipients:       "+31612345678",
-		WhatsAppTemplateName:     "saved_template",
-		WhatsAppTemplateLanguage: "en_US",
-	}
-}
-
 // validBaselineSettings returns a SettingsUpdate built from cfg.Snapshot()
 // with all required fields filled to current valid values. Callers override
 // only the fields under test (e.g. GraphClientSecret + ClearGraphClientSecret).
@@ -474,12 +342,6 @@ func validBaselineSettings(cfg *config.Config) *config.SettingsUpdate {
 		GraphClientSecret:           snap.GraphClientSecret,
 		GraphFromAddress:            snap.GraphFromAddress,
 		GraphRecipients:             snap.GraphRecipients,
-		WhatsAppPhoneNumberID:       snap.WhatsAppPhoneNumberID,
-		WhatsAppAccessToken:         snap.WhatsAppAccessToken,
-		WhatsAppRecipients:          snap.WhatsAppRecipients,
-		WhatsAppTemplateName:        snap.WhatsAppTemplateName,
-		WhatsAppTemplateLanguage:    snap.WhatsAppTemplateLanguage,
-		WhatsAppEvents:              snap.WhatsAppEvents,
 		ZabbixEvents:                snap.ZabbixEvents.ToZabbixEventSubscriptions(),
 		ZabbixServer:                snap.ZabbixServer,
 		ZabbixPort:                  snap.ZabbixPort,
@@ -491,20 +353,12 @@ func validBaselineSettings(cfg *config.Config) *config.SettingsUpdate {
 }
 
 // applyWithPreserve mirrors handleAPISettings preprocessing: preserve the
-// Graph secret, run the full WhatsApp prepare pipeline (normalize template
-// language + preserve access token), validate, apply. Used by #247
-// keep/replace/clear pipeline tests so we exercise the same logic the
-// handler runs without needing a real encoder for 204 paths.
-//
-// Calling preserveWhatsAppAccessToken directly here would skip the
-// template-language normalization and leave a coverage gap for the
-// "clear name + stale language" path that prepareWhatsAppSettingsRequest
-// exists to handle.
+// Graph secret, validate, and apply. Handler success paths need a real encoder,
+// so these tests exercise the same settings pipeline directly.
 func applyWithPreserve(t *testing.T, cfg *config.Config, upd *config.SettingsUpdate) (config.Snapshot, error) {
 	t.Helper()
 	snap := cfg.Snapshot()
 	preserveGraphClientSecret(upd, &snap)
-	prepareWhatsAppSettingsRequest(upd, &snap)
 	if errs := upd.Validate(); len(errs) > 0 {
 		return config.Snapshot{}, fmt.Errorf("validate: %s", strings.Join(errs, "; "))
 	}
@@ -575,119 +429,6 @@ func TestApplyWithPreserve_GraphSecret_ClearWhenFlagSet(t *testing.T) {
 	}
 }
 
-// #247 - WhatsApp access token keep/replace/clear pipeline tests.
-
-// TestApplyWithPreserve_WhatsAppToken_KeepWhenEmpty pins that an empty
-// submitted token with visible WhatsApp fields still set falls back to the
-// saved token via preserve. Replaces the deprecated implicit-disable path's
-// "keep when visible config remains" test.
-func TestApplyWithPreserve_WhatsAppToken_KeepWhenEmpty(t *testing.T) {
-	t.Parallel()
-
-	s := seededServer(t, seededWhatsAppCompleteSettings())
-	upd := validBaselineSettings(s.config)
-	upd.WhatsAppAccessToken = ""
-	upd.ClearWhatsAppAccessToken = false
-
-	snap, err := applyWithPreserve(t, s.config, upd)
-	if err != nil {
-		t.Fatalf("applyWithPreserve() error = %v", err)
-	}
-	if snap.WhatsAppAccessToken != "saved-token" {
-		t.Fatalf("WhatsAppAccessToken = %q, want %q (keep path)", snap.WhatsAppAccessToken, "saved-token")
-	}
-	if snap.WhatsAppPhoneNumberID != "12345" {
-		t.Fatalf("WhatsAppPhoneNumberID = %q, want %q (visible fields unchanged)", snap.WhatsAppPhoneNumberID, "12345")
-	}
-}
-
-// TestApplyWithPreserve_WhatsAppToken_ReplaceWhenSet pins that a non-empty
-// submitted token replaces the saved token.
-func TestApplyWithPreserve_WhatsAppToken_ReplaceWhenSet(t *testing.T) {
-	t.Parallel()
-
-	s := seededServer(t, seededWhatsAppCompleteSettings())
-	upd := validBaselineSettings(s.config)
-	upd.WhatsAppAccessToken = "new-token"
-	upd.ClearWhatsAppAccessToken = false
-
-	snap, err := applyWithPreserve(t, s.config, upd)
-	if err != nil {
-		t.Fatalf("applyWithPreserve() error = %v", err)
-	}
-	if snap.WhatsAppAccessToken != "new-token" {
-		t.Fatalf("WhatsAppAccessToken = %q, want %q (replace path)", snap.WhatsAppAccessToken, "new-token")
-	}
-}
-
-// TestApplyWithPreserve_WhatsAppToken_ClearWhenFlagSetAndAllVisibleCleared
-// pins the explicit-disable path that replaces the deprecated implicit
-// disable: ClearWhatsAppAccessToken=true plus all visible WhatsApp fields
-// cleared yields a fully disabled channel. Matches the UI's Disable WhatsApp
-// button, which clears all five fields together.
-func TestApplyWithPreserve_WhatsAppToken_ClearWhenFlagSetAndAllVisibleCleared(t *testing.T) {
-	t.Parallel()
-
-	s := seededServer(t, seededWhatsAppCompleteSettings())
-	upd := validBaselineSettings(s.config)
-	upd.WhatsAppPhoneNumberID = ""
-	upd.WhatsAppAccessToken = ""
-	upd.WhatsAppRecipients = ""
-	upd.WhatsAppTemplateName = ""
-	upd.WhatsAppTemplateLanguage = ""
-	upd.ClearWhatsAppAccessToken = true
-
-	snap, err := applyWithPreserve(t, s.config, upd)
-	if err != nil {
-		t.Fatalf("applyWithPreserve() error = %v", err)
-	}
-	if snap.WhatsAppAccessToken != "" {
-		t.Fatalf("WhatsAppAccessToken = %q, want \"\"", snap.WhatsAppAccessToken)
-	}
-	if snap.WhatsAppPhoneNumberID != "" || snap.WhatsAppRecipients != "" ||
-		snap.WhatsAppTemplateName != "" || snap.WhatsAppTemplateLanguage != "" {
-		t.Fatalf("WhatsApp visible fields not all empty: phone=%q recipients=%q template=%q language=%q",
-			snap.WhatsAppPhoneNumberID, snap.WhatsAppRecipients,
-			snap.WhatsAppTemplateName, snap.WhatsAppTemplateLanguage)
-	}
-}
-
-// TestApplyWithPreserve_WhatsAppClearedTemplateNameDropsStaleLanguage covers
-// the stale-template-language scenario that prepareWhatsAppSettingsRequest
-// handles. UI can leave template language populated from saved config after a
-// user clears only template_name in the form. The normalize step in
-// prepareWhatsAppSettingsRequest must drop language so the all-or-nothing
-// validator does not reject "language without name".
-func TestApplyWithPreserve_WhatsAppClearedTemplateNameDropsStaleLanguage(t *testing.T) {
-	t.Parallel()
-
-	s := seededServer(t, seededWhatsAppCompleteSettings())
-	upd := validBaselineSettings(s.config)
-	// Stale form state: user cleared template_name but language pre-fill remains.
-	upd.WhatsAppTemplateName = ""
-	upd.WhatsAppTemplateLanguage = "en_US"
-	// Token left empty in form - preserve must restore saved token.
-	upd.WhatsAppAccessToken = ""
-	upd.ClearWhatsAppAccessToken = false
-
-	snap, err := applyWithPreserve(t, s.config, upd)
-	if err != nil {
-		t.Fatalf("applyWithPreserve() error = %v", err)
-	}
-	if snap.WhatsAppTemplateName != "" {
-		t.Fatalf("WhatsAppTemplateName = %q, want \"\"", snap.WhatsAppTemplateName)
-	}
-	if snap.WhatsAppTemplateLanguage != "" {
-		t.Fatalf("WhatsAppTemplateLanguage = %q, want \"\" (normalize must drop stale language)", snap.WhatsAppTemplateLanguage)
-	}
-	if snap.WhatsAppAccessToken != "saved-token" {
-		t.Fatalf("WhatsAppAccessToken = %q, want %q (saved token must be preserved)", snap.WhatsAppAccessToken, "saved-token")
-	}
-	if snap.WhatsAppPhoneNumberID != "12345" {
-		t.Fatalf("WhatsAppPhoneNumberID = %q, want %q (other visible fields unchanged)", snap.WhatsAppPhoneNumberID, "12345")
-	}
-}
-
 // #247 - Handler validation paths.
 
 // postSettingsBody sends body to handleAPISettings and returns the response
@@ -726,63 +467,5 @@ func TestHandleAPISettingsClearGraphSecretConflictsWithNewValue(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "clear_graph_client_secret: conflicts with non-empty graph_client_secret") {
 		t.Fatalf("body = %s, want to contain conflict error", rec.Body.String())
-	}
-}
-
-// TestHandleAPISettingsClearWhatsAppTokenConflictsWithNewValue mirrors the
-// Graph conflict test for WhatsApp.
-func TestHandleAPISettingsClearWhatsAppTokenConflictsWithNewValue(t *testing.T) {
-	t.Parallel()
-
-	s := seededServer(t, seededWhatsAppCompleteSettings())
-	upd := validBaselineSettings(s.config)
-	upd.WhatsAppAccessToken = "new-token"
-	upd.ClearWhatsAppAccessToken = true
-
-	body, err := json.Marshal(upd)
-	if err != nil {
-		t.Fatalf("marshal SettingsUpdate: %v", err)
-	}
-	rec := postSettingsBody(t, s, string(body))
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "clear_whatsapp_access_token: conflicts with non-empty whatsapp_access_token") {
-		t.Fatalf("body = %s, want to contain conflict error", rec.Body.String())
-	}
-}
-
-// TestHandleAPISettingsWhatsAppImplicitDisableNowFails pins the #247
-// deprecation: emptying all visible WhatsApp fields without explicit
-// clear_whatsapp_access_token=true used to disable the channel, now returns
-// 400 from the all-or-nothing validator. The body sends
-// whatsapp_access_token="" explicitly so the test exercises the deprecated
-// implicit-disable path (token empty in request, saved token gets preserved
-// back in via preserveWhatsAppAccessToken, validator rejects visible-empty
-// with token preserved).
-func TestHandleAPISettingsWhatsAppImplicitDisableNowFails(t *testing.T) {
-	t.Parallel()
-
-	s := seededServer(t, seededWhatsAppCompleteSettings())
-	upd := validBaselineSettings(s.config)
-	upd.WhatsAppPhoneNumberID = ""
-	upd.WhatsAppAccessToken = "" // explicit empty, not omitted
-	upd.WhatsAppRecipients = ""
-	upd.WhatsAppTemplateName = ""
-	upd.WhatsAppTemplateLanguage = ""
-	// No ClearWhatsAppAccessToken - this is the deprecated implicit-disable path.
-
-	body, err := json.Marshal(upd)
-	if err != nil {
-		t.Fatalf("marshal SettingsUpdate: %v", err)
-	}
-	rec := postSettingsBody(t, s, string(body))
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "whatsapp_phone_number_id: is required when WhatsApp is configured") {
-		t.Fatalf("body = %s, want to contain all-or-nothing validator error", rec.Body.String())
 	}
 }

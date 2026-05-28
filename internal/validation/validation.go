@@ -10,8 +10,8 @@ package validation
 //
 // Codes are owned by the calling domain. Domains define typed string constants
 // and place them into Code via explicit string conversion. The Field name is
-// domain-local (for example "phone_number_id"); adapters prefix it when
-// formatting messages for a specific context.
+// domain-local (for example "url"); adapters prefix it when formatting
+// messages for a specific context.
 type Issue struct {
 	Field string
 	Code  string

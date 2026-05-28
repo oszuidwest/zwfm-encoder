@@ -182,7 +182,6 @@ func assertDefaultScalarSettings(t *testing.T, snap *Snapshot) {
 	assertEqual(t, "RecordingMaxDurationMinutes", snap.RecordingMaxDurationMinutes, 0)
 	assertEqual(t, "WebhookEvents", snap.WebhookEvents, types.EventSubscriptions{})
 	assertEqual(t, "EmailEvents", snap.EmailEvents, types.EventSubscriptions{})
-	assertEqual(t, "WhatsAppEvents", snap.WhatsAppEvents, types.EventSubscriptions{})
 	assertEqual(t, "ZabbixEvents", snap.ZabbixEvents, types.EventSubscriptions{})
 }
 
@@ -231,17 +230,6 @@ func fullyPopulatedConfigData(t *testing.T) ConfigData {
 				Events: types.EventSubscriptions{
 					SilenceEnd: true,
 					AudioDump:  true,
-				},
-			},
-			WhatsApp: types.WhatsAppConfig{
-				PhoneNumberID:    "123456789",
-				AccessToken:      "wa-token",
-				Recipients:       "+31612345678,+31687654321",
-				TemplateName:     "encoder_alert",
-				TemplateLanguage: "nl",
-				Events: types.EventSubscriptions{
-					SilenceStart: true,
-					SilenceEnd:   true,
 				},
 			},
 			Zabbix: types.ZabbixConfig{
@@ -316,54 +304,6 @@ func validConfigJSON(extra string) string {
 	` + extra + `}`
 }
 
-func TestSnapshotHasWhatsApp(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		snap Snapshot
-		want bool
-	}{
-		{
-			name: "fully configured",
-			snap: Snapshot{
-				WhatsAppPhoneNumberID: "12345",
-				WhatsAppAccessToken:   "token",
-				WhatsAppRecipients:    "+31612345678",
-			},
-			want: true,
-		},
-		{
-			name: "empty split recipients",
-			snap: Snapshot{
-				WhatsAppPhoneNumberID: "12345",
-				WhatsAppAccessToken:   "token",
-				WhatsAppRecipients:    ",,, ",
-			},
-			want: false,
-		},
-		{
-			name: "whitespace token",
-			snap: Snapshot{
-				WhatsAppPhoneNumberID: "12345",
-				WhatsAppAccessToken:   " ",
-				WhatsAppRecipients:    "+31612345678",
-			},
-			want: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			if got := tt.snap.HasWhatsApp(); got != tt.want {
-				t.Fatalf("HasWhatsApp() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestLoadPreservesExplicitZeroAndFalseValues(t *testing.T) {
 	t.Parallel()
 
@@ -388,13 +328,6 @@ func TestLoadPreservesExplicitZeroAndFalseValues(t *testing.T) {
       }
     },
     "email": {
-      "events": {
-        "silence_start": false,
-        "silence_end": false,
-        "audio_dump": false
-      }
-    },
-    "whatsapp": {
       "events": {
         "silence_start": false,
         "silence_end": false,
@@ -440,9 +373,6 @@ func TestLoadPreservesExplicitZeroAndFalseValues(t *testing.T) {
 	}
 	if snap.EmailEvents != (types.EventSubscriptions{}) {
 		t.Fatalf("EmailEvents = %+v, want all false", snap.EmailEvents)
-	}
-	if snap.WhatsAppEvents != (types.EventSubscriptions{}) {
-		t.Fatalf("WhatsAppEvents = %+v, want all false", snap.WhatsAppEvents)
 	}
 	if snap.ZabbixEvents != (types.EventSubscriptions{}) {
 		t.Fatalf("ZabbixEvents = %+v, want both false", snap.ZabbixEvents)
@@ -657,41 +587,6 @@ func TestLoadRejectsInvalidFileSettings(t *testing.T) {
 			wantErr: "notifications.email.recipients: contains invalid email address",
 		},
 		{
-			name:    "invalid whatsapp recipient",
-			data:    validConfigJSON(`"notifications":{"whatsapp":{"recipients":"+31612345678, bad-address"}}`),
-			wantErr: "notifications.whatsapp.recipients: contains invalid phone number",
-		},
-		{
-			name:    "whatsapp phone number id required",
-			data:    validConfigJSON(`"notifications":{"whatsapp":{"access_token":"token","recipients":"+31612345678"}}`),
-			wantErr: "notifications.whatsapp.phone_number_id: is required when WhatsApp is configured",
-		},
-		{
-			name:    "whatsapp phone number id digits only",
-			data:    validConfigJSON(`"notifications":{"whatsapp":{"phone_number_id":"abc","access_token":"token","recipients":"+31612345678"}}`),
-			wantErr: "notifications.whatsapp.phone_number_id: must contain digits only",
-		},
-		{
-			name:    "whatsapp access token required",
-			data:    validConfigJSON(`"notifications":{"whatsapp":{"phone_number_id":"12345","recipients":"+31612345678"}}`),
-			wantErr: "notifications.whatsapp.access_token: is required when WhatsApp is configured",
-		},
-		{
-			name:    "whatsapp split recipients required",
-			data:    validConfigJSON(`"notifications":{"whatsapp":{"phone_number_id":"12345","access_token":"token","recipients":",,, "}}`),
-			wantErr: "notifications.whatsapp.recipients: is required when WhatsApp is configured",
-		},
-		{
-			name:    "whatsapp template language requires template name",
-			data:    validConfigJSON(`"notifications":{"whatsapp":{"phone_number_id":"12345","access_token":"token","recipients":"+31612345678","template_language":"nl"}}`),
-			wantErr: "notifications.whatsapp.template_language: requires notifications.whatsapp.template_name",
-		},
-		{
-			name:    "whatsapp template name format",
-			data:    validConfigJSON(`"notifications":{"whatsapp":{"phone_number_id":"12345","access_token":"token","recipients":"+31612345678","template_name":"Encoder Alert"}}`),
-			wantErr: "notifications.whatsapp.template_name: must contain only lowercase letters, digits, and underscores",
-		},
-		{
 			name:    "invalid zabbix port",
 			data:    validConfigJSON(`"notifications":{"zabbix":{"port":70000}}`),
 			wantErr: "notifications.zabbix.port: must be between 1 and 65535",
@@ -761,40 +656,6 @@ func TestSettingsUpdateValidateAPIFieldNames(t *testing.T) {
 			name:    "invalid graph recipients uses API name",
 			update:  SettingsUpdate{SilenceThreshold: -40, SilenceDurationMs: 1, SilenceRecoveryMs: 1, GraphRecipients: "bad-address"},
 			wantErr: "graph_recipients:",
-		},
-		{
-			name: "invalid whatsapp recipients uses API name",
-			update: SettingsUpdate{
-				SilenceThreshold:   -40,
-				SilenceDurationMs:  1,
-				SilenceRecoveryMs:  1,
-				WhatsAppRecipients: "bad-address",
-			},
-			wantErr: "whatsapp_recipients:",
-		},
-		{
-			name: "missing whatsapp token uses API name",
-			update: SettingsUpdate{
-				SilenceThreshold:      -40,
-				SilenceDurationMs:     1,
-				SilenceRecoveryMs:     1,
-				WhatsAppPhoneNumberID: "12345",
-				WhatsAppRecipients:    "+31612345678",
-			},
-			wantErr: "whatsapp_access_token:",
-		},
-		{
-			name: "invalid whatsapp template name uses API name",
-			update: SettingsUpdate{
-				SilenceThreshold:      -40,
-				SilenceDurationMs:     1,
-				SilenceRecoveryMs:     1,
-				WhatsAppPhoneNumberID: "12345",
-				WhatsAppAccessToken:   "token",
-				WhatsAppRecipients:    "+31612345678",
-				WhatsAppTemplateName:  "Encoder Alert",
-			},
-			wantErr: "whatsapp_template_name:",
 		},
 		{
 			name:    "invalid zabbix port uses API name",
@@ -1006,59 +867,6 @@ func TestSettingsUpdateValidate_ClearGraphSecretWithBlankAllowed(t *testing.T) {
 	for _, e := range upd.Validate() {
 		if e == "clear_graph_client_secret: conflicts with non-empty graph_client_secret" {
 			t.Fatalf("Validate() unexpectedly reported conflict for empty secret + clear=true: %q", e)
-		}
-	}
-}
-
-// TestSettingsUpdateValidate_ClearWhatsAppTokenConflict mirrors the Graph
-// conflict test for the WhatsApp access token, including the whitespace-only
-// case that pins the raw != "" contract.
-func TestSettingsUpdateValidate_ClearWhatsAppTokenConflict(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name  string
-		token string
-	}{
-		{"plain non-empty", "new-token"},
-		{"whitespace-only (raw != \"\" still triggers conflict)", "   "},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			upd := minimalValidUpdate()
-			upd.WhatsAppAccessToken = tc.token
-			upd.ClearWhatsAppAccessToken = true
-
-			errs := upd.Validate()
-			want := "clear_whatsapp_access_token: conflicts with non-empty whatsapp_access_token"
-			found := false
-			for _, e := range errs {
-				if e == want {
-					found = true
-					break
-				}
-			}
-			if !found {
-				t.Fatalf("Validate() = %v, want to contain %q", errs, want)
-			}
-		})
-	}
-}
-
-// TestSettingsUpdateValidate_ClearWhatsAppTokenWithBlankAllowed pins that an
-// empty submitted token combined with ClearWhatsAppAccessToken=true is not a
-// conflict.
-func TestSettingsUpdateValidate_ClearWhatsAppTokenWithBlankAllowed(t *testing.T) {
-	t.Parallel()
-
-	upd := minimalValidUpdate()
-	upd.WhatsAppAccessToken = ""
-	upd.ClearWhatsAppAccessToken = true
-
-	for _, e := range upd.Validate() {
-		if e == "clear_whatsapp_access_token: conflicts with non-empty whatsapp_access_token" {
-			t.Fatalf("Validate() unexpectedly reported conflict for empty token + clear=true: %q", e)
 		}
 	}
 }
