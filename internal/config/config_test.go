@@ -658,6 +658,21 @@ func TestLoadRejectsInvalidFileSettings(t *testing.T) {
 			wantErr: `invalid station_name "": must be 1-30 printable characters`,
 		},
 		{
+			name:    "explicit null station color light",
+			data:    `{"system":{"port":8080,"username":"admin","password":"encoder"},"web":{"station_name":"ZuidWest FM","color_light":null,"color_dark":"#E6007E"},"silence_detection":{"threshold_db":-40,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}}`,
+			wantErr: `color_light "": must be hex format (#RRGGBB)`,
+		},
+		{
+			name:    "explicit null silence duration",
+			data:    `{"system":{"port":8080,"username":"admin","password":"encoder"},"web":{"station_name":"ZuidWest FM","color_light":"#E6007E","color_dark":"#E6007E"},"silence_detection":{"threshold_db":-40,"duration_ms":null,"recovery_ms":5000,"peak_hold_ms":3000}}`,
+			wantErr: "silence_detection.duration_ms: must be greater than 0",
+		},
+		{
+			name:    "explicit null web block",
+			data:    `{"system":{"port":8080,"username":"admin","password":"encoder"},"web":null,"silence_detection":{"threshold_db":-40,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}}`,
+			wantErr: `invalid station_name "": must be 1-30 printable characters`,
+		},
+		{
 			name:    "empty station color light",
 			data:    validConfigJSON(`"web":{"station_name":"ZuidWest FM","color_light":"","color_dark":"#E6007E"}`),
 			wantErr: `color_light "": must be hex format (#RRGGBB)`,
