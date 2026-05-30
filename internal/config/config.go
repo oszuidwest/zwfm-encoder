@@ -207,9 +207,29 @@ func defaultConfig(filePath string) *Config {
 	}
 }
 
+func configDefaultsForLoad(filePath string) *Config {
+	return &Config{
+		ConfigData: ConfigData{
+			Web: WebConfig{
+				StationName: DefaultStationName,
+				ColorLight:  DefaultStationColorLight,
+				ColorDark:   DefaultStationColorDark,
+			},
+			SilenceDetection: SilenceDetectionConfig{
+				ThresholdDB: DefaultSilenceThreshold,
+				DurationMs:  DefaultSilenceDurationMs,
+				RecoveryMs:  DefaultSilenceRecoveryMs,
+				PeakHoldMs:  DefaultPeakHoldMs,
+			},
+		},
+		filePath: filePath,
+	}
+}
+
 // Load reads and validates an existing config file. If the file does not exist,
-// Load writes a minimal validated default config. Invalid existing files return
-// an error; defaults are not applied as a fallback.
+// Load writes a minimal validated default config. Existing files are decoded
+// over optional defaults so documented minimal configs stay valid; required
+// system settings must still be present and valid.
 func (c *Config) Load() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -227,7 +247,7 @@ func (c *Config) Load() error {
 		return fmt.Errorf("failed to read config: %w", err)
 	}
 
-	cfg := New(c.filePath)
+	cfg := configDefaultsForLoad(c.filePath)
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return util.WrapError("parse config", err)
 	}
