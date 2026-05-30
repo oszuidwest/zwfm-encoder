@@ -102,7 +102,7 @@ func TestLoadDefaultsDoNotOverrideConfiguredValues(t *testing.T) {
 	assertEqual(t, "SilenceThreshold", snap.SilenceThreshold, -35.0)
 	assertEqual(t, "SilenceDurationMs", snap.SilenceDurationMs, int64(20000))
 	// Literal assertions guard against accidentally swapping default constants
-	// in configDefaultsForLoad (e.g. RecoveryMs <-> PeakHoldMs).
+	// in applyOptionalDefaults (e.g. RecoveryMs <-> PeakHoldMs).
 	assertEqual(t, "SilenceRecoveryMs", snap.SilenceRecoveryMs, int64(5000))
 	assertEqual(t, "PeakHoldMs", snap.PeakHoldMs, int64(3000))
 }
