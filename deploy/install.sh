@@ -222,21 +222,33 @@ else
   fi
 fi
 
+github_api_get() {
+  local url="$1"
+  local description="$2"
+
+  if ! curl -fsSL -H "Accept: application/vnd.github+json" "$url"; then
+    echo -e "${RED}Failed to fetch ${description}${NC}" >&2
+    return 1
+  fi
+}
+
 # Get release version from GitHub API
 echo -e "${BLUE}►► Fetching release information...${NC}"
 if [ "$INSTALL_BETA" == "y" ]; then
   # Fetch the most recent prerelease
-  LATEST_RELEASE=$(curl -s "https://api.github.com/repos/${GITHUB_REPO}/releases" | grep -E '"tag_name":|"prerelease":' | paste - - | grep 'true' | head -1 | sed -E 's/.*"tag_name": "([^"]+)".*/\1/')
-  if [ -z "$LATEST_RELEASE" ]; then
+  RELEASES_JSON=$(github_api_get "https://api.github.com/repos/${GITHUB_REPO}/releases" "release list") || exit 1
+  RELEASE_JSON=$(printf '%s' "$RELEASES_JSON" | jq -c 'map(select(.prerelease == true)) | .[0] // empty')
+  if [ -z "$RELEASE_JSON" ]; then
     echo -e "${YELLOW}No beta/prerelease found, falling back to latest stable...${NC}"
-    LATEST_RELEASE=$(curl -s "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    RELEASE_JSON=$(github_api_get "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" "latest stable release") || exit 1
   else
     echo -e "${YELLOW}Installing prerelease version${NC}"
   fi
 else
   # Fetch the latest stable release
-  LATEST_RELEASE=$(curl -s "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+  RELEASE_JSON=$(github_api_get "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" "latest stable release") || exit 1
 fi
+LATEST_RELEASE=$(printf '%s' "$RELEASE_JSON" | jq -r '.tag_name // empty')
 if [ -z "$LATEST_RELEASE" ]; then
   echo -e "${RED}Failed to fetch release version${NC}"
   exit 1
@@ -244,7 +256,28 @@ fi
 echo -e "${GREEN}✓ Version: ${LATEST_RELEASE}${NC}"
 
 # Download encoder binary
-ENCODER_BINARY_URL="https://github.com/${GITHUB_REPO}/releases/download/${LATEST_RELEASE}/encoder-linux-arm64"
+ENCODER_ASSET_INFO=$(printf '%s' "$RELEASE_JSON" | jq -r \
+  --arg versioned "encoder-${LATEST_RELEASE}-linux-arm64" \
+  --arg legacy "encoder-linux-arm64" '
+    def asset_rank:
+      if .name == $versioned then 0
+      elif .name == $legacy then 1
+      elif (.name | test("^encoder-.+-linux-arm64$")) then 2
+      else 99
+      end;
+
+    (.assets // [] | map(select(asset_rank < 99)) | sort_by(asset_rank) | .[0] // empty) as $asset
+    | if $asset == "" then empty else [$asset.name, $asset.browser_download_url] | @tsv end
+  ')
+if [ -z "$ENCODER_ASSET_INFO" ]; then
+  AVAILABLE_ASSETS=$(printf '%s' "$RELEASE_JSON" | jq -r '(.assets // []) | map(.name) | join(", ")')
+  echo -e "${RED}Error: release ${LATEST_RELEASE} does not include a Linux ARM64 encoder asset.${NC}" >&2
+  echo -e "Expected one of: ${BOLD}encoder-${LATEST_RELEASE}-linux-arm64${NC} or ${BOLD}encoder-linux-arm64${NC}" >&2
+  echo -e "Available assets: ${BOLD}${AVAILABLE_ASSETS:-none}${NC}" >&2
+  exit 1
+fi
+IFS=$'\t' read -r ENCODER_ASSET_NAME ENCODER_BINARY_URL <<< "$ENCODER_ASSET_INFO"
+echo -e "${GREEN}✓ Asset: ${ENCODER_ASSET_NAME}${NC}"
 file_download "$ENCODER_BINARY_URL" "${INSTALL_DIR}/encoder" "encoder binary"
 chmod +x "${INSTALL_DIR}/encoder"
 
