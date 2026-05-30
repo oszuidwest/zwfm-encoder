@@ -207,6 +207,9 @@ func defaultConfig(filePath string) *Config {
 	}
 }
 
+// configDefaultsForLoad returns only the optional fields safe to pre-populate
+// before unmarshalling user JSON; System/Streaming/Recording are intentionally
+// omitted so validate() still rejects missing required settings.
 func configDefaultsForLoad(filePath string) *Config {
 	return &Config{
 		ConfigData: ConfigData{
