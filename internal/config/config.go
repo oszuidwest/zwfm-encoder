@@ -2,6 +2,7 @@
 package config
 
 import (
+	"bytes"
 	"cmp"
 	"crypto/rand"
 	"encoding/json"
@@ -229,6 +230,10 @@ func (c *Config) Load() error {
 		return fmt.Errorf("failed to read config: %w", err)
 	}
 
+	if err := ensureNoDuplicateKeys(data); err != nil {
+		return util.WrapError("parse config", err)
+	}
+
 	cfg := New(c.filePath)
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return util.WrapError("parse config", err)
@@ -292,6 +297,60 @@ func applyOptionalDefaults(data []byte, cfg *Config) error {
 	}
 
 	return nil
+}
+
+// ensureNoDuplicateKeys rejects configs that repeat the same key inside any
+// JSON object. Duplicates would let an explicit null override a valid earlier
+// value in the raw-key map while being a no-op against the struct unmarshal,
+// silently bypassing the default/null distinction.
+func ensureNoDuplicateKeys(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	return walkForDuplicateKeys(dec, tok)
+}
+
+func walkForDuplicateKeys(dec *json.Decoder, tok json.Token) error {
+	delim, ok := tok.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delim {
+	case '{':
+		seen := map[string]struct{}{}
+		for dec.More() {
+			keyTok, err := dec.Token()
+			if err != nil {
+				return err
+			}
+			key := keyTok.(string)
+			if _, dup := seen[key]; dup {
+				return fmt.Errorf("duplicate key %q", key)
+			}
+			seen[key] = struct{}{}
+			valTok, err := dec.Token()
+			if err != nil {
+				return err
+			}
+			if err := walkForDuplicateKeys(dec, valTok); err != nil {
+				return err
+			}
+		}
+	case '[':
+		for dec.More() {
+			valTok, err := dec.Token()
+			if err != nil {
+				return err
+			}
+			if err := walkForDuplicateKeys(dec, valTok); err != nil {
+				return err
+			}
+		}
+	}
+	_, err := dec.Token()
+	return err
 }
 
 // presentObjectFields returns the JSON object at the given top-level key as a

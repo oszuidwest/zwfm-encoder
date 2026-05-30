@@ -418,11 +418,22 @@ func validConfigJSON(extra string) string {
 	if extra != "" {
 		extra = "," + extra
 	}
-	return `{
+	raw := `{
 		"system": {"port": 8080, "username": "admin", "password": "encoder"},
 		"web": {"station_name": "ZuidWest FM", "color_light": "#E6007E", "color_dark": "#E6007E"},
 		"silence_detection": {"threshold_db": -40, "duration_ms": 15000, "recovery_ms": 5000, "peak_hold_ms": 3000}
 	` + extra + `}`
+	// Roundtrip through a map so any section in `extra` overrides the base
+	// instead of producing a duplicate top-level key (rejected by Load).
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		panic("validConfigJSON: invalid JSON fragment: " + err.Error())
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		panic("validConfigJSON: re-marshal failed: " + err.Error())
+	}
+	return string(out)
 }
 
 func TestLoadPreservesExplicitZeroAndFalseValues(t *testing.T) {
@@ -671,6 +682,16 @@ func TestLoadRejectsInvalidFileSettings(t *testing.T) {
 			name:    "explicit null web block",
 			data:    `{"system":{"port":8080,"username":"admin","password":"encoder"},"web":null,"silence_detection":{"threshold_db":-40,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}}`,
 			wantErr: `invalid station_name "": must be 1-30 printable characters`,
+		},
+		{
+			name:    "duplicate top-level web key with null override",
+			data:    `{"system":{"port":8080,"username":"admin","password":"encoder"},"web":{"station_name":"ZuidWest FM","color_light":"#E6007E","color_dark":"#E6007E"},"silence_detection":{"threshold_db":-40,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000},"web":null}`,
+			wantErr: `duplicate key "web"`,
+		},
+		{
+			name:    "duplicate nested color_light key with null override",
+			data:    `{"system":{"port":8080,"username":"admin","password":"encoder"},"web":{"station_name":"ZuidWest FM","color_light":"#E6007E","color_dark":"#E6007E","color_light":null},"silence_detection":{"threshold_db":-40,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}}`,
+			wantErr: `duplicate key "color_light"`,
 		},
 		{
 			name:    "empty station color light",
