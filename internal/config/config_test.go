@@ -37,6 +37,124 @@ func TestLoadCreatesDefaultConfig(t *testing.T) {
 	assertDefaultScalarSettings(t, &reloadedSnap)
 }
 
+func TestLoadAcceptsDocumentedMinimalConfig(t *testing.T) {
+	t.Parallel()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data := []byte(`{
+  "system": {
+    "port": 8080,
+    "username": "admin",
+    "password": "encoder"
+  },
+  "web": {
+    "station_name": "ZuidWest FM"
+  }
+}`)
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg := New(configPath)
+	if err := cfg.Load(); err != nil {
+		t.Fatalf("Load() error = %v, want nil for documented minimal config", err)
+	}
+
+	snap := cfg.Snapshot()
+	assertDefaultScalarSettings(t, &snap)
+}
+
+func TestLoadDefaultsDoNotOverrideConfiguredValues(t *testing.T) {
+	t.Parallel()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data := []byte(`{
+  "system": {
+    "port": 9090,
+    "username": "operator",
+    "password": "secret"
+  },
+  "web": {
+    "station_name": "Custom Station",
+    "color_light": "#123456"
+  },
+  "silence_detection": {
+    "threshold_db": -35,
+    "duration_ms": 20000
+  }
+}`)
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg := New(configPath)
+	if err := cfg.Load(); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	snap := cfg.Snapshot()
+	assertEqual(t, "WebPort", snap.WebPort, 9090)
+	assertEqual(t, "WebUser", snap.WebUser, "operator")
+	assertEqual(t, "WebPassword", snap.WebPassword, "secret")
+	assertEqual(t, "StationName", snap.StationName, "Custom Station")
+	assertEqual(t, "StationColorLight", snap.StationColorLight, "#123456")
+	assertEqual(t, "StationColorDark", snap.StationColorDark, DefaultStationColorDark)
+	assertEqual(t, "SilenceThreshold", snap.SilenceThreshold, -35.0)
+	assertEqual(t, "SilenceDurationMs", snap.SilenceDurationMs, int64(20000))
+	// Literal assertions guard against accidentally swapping default constants
+	// in applyOptionalDefaults (e.g. RecoveryMs <-> PeakHoldMs).
+	assertEqual(t, "SilenceRecoveryMs", snap.SilenceRecoveryMs, int64(5000))
+	assertEqual(t, "PeakHoldMs", snap.PeakHoldMs, int64(3000))
+}
+
+func TestLoadKeepsSilenceDefaultsForPartialBlock(t *testing.T) {
+	t.Parallel()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data := []byte(`{
+  "system": {"port": 8080, "username": "admin", "password": "encoder"},
+  "web": {"station_name": "ZuidWest FM"},
+  "silence_detection": {"threshold_db": -35}
+}`)
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg := New(configPath)
+	if err := cfg.Load(); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	snap := cfg.Snapshot()
+	assertEqual(t, "SilenceThreshold", snap.SilenceThreshold, -35.0)
+	assertEqual(t, "SilenceDurationMs", snap.SilenceDurationMs, DefaultSilenceDurationMs)
+	assertEqual(t, "SilenceRecoveryMs", snap.SilenceRecoveryMs, DefaultSilenceRecoveryMs)
+	assertEqual(t, "PeakHoldMs", snap.PeakHoldMs, DefaultPeakHoldMs)
+}
+
+func TestLoadAcceptsEmptyWebBlock(t *testing.T) {
+	t.Parallel()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data := []byte(`{
+  "system": {"port": 8080, "username": "admin", "password": "encoder"},
+  "web": {}
+}`)
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg := New(configPath)
+	if err := cfg.Load(); err != nil {
+		t.Fatalf("Load() error = %v, want nil for empty web block", err)
+	}
+
+	snap := cfg.Snapshot()
+	assertEqual(t, "StationName", snap.StationName, DefaultStationName)
+	assertEqual(t, "StationColorLight", snap.StationColorLight, DefaultStationColorLight)
+	assertEqual(t, "StationColorDark", snap.StationColorDark, DefaultStationColorDark)
+}
+
 func TestLoadPreservesConfigDataAndSnapshotEntities(t *testing.T) {
 	t.Parallel()
 
@@ -172,6 +290,9 @@ func assertDefaultScalarSettings(t *testing.T, snap *Snapshot) {
 	t.Helper()
 
 	assertEqual(t, "WebPort", snap.WebPort, DefaultWebPort)
+	assertEqual(t, "StationName", snap.StationName, DefaultStationName)
+	assertEqual(t, "StationColorLight", snap.StationColorLight, DefaultStationColorLight)
+	assertEqual(t, "StationColorDark", snap.StationColorDark, DefaultStationColorDark)
 	assertEqual(t, "SilenceThreshold", snap.SilenceThreshold, DefaultSilenceThreshold)
 	assertEqual(t, "SilenceDurationMs", snap.SilenceDurationMs, DefaultSilenceDurationMs)
 	assertEqual(t, "SilenceRecoveryMs", snap.SilenceRecoveryMs, DefaultSilenceRecoveryMs)
@@ -297,11 +418,22 @@ func validConfigJSON(extra string) string {
 	if extra != "" {
 		extra = "," + extra
 	}
-	return `{
+	raw := `{
 		"system": {"port": 8080, "username": "admin", "password": "encoder"},
 		"web": {"station_name": "ZuidWest FM", "color_light": "#E6007E", "color_dark": "#E6007E"},
 		"silence_detection": {"threshold_db": -40, "duration_ms": 15000, "recovery_ms": 5000, "peak_hold_ms": 3000}
 	` + extra + `}`
+	// Roundtrip through a map so any section in `extra` overrides the base
+	// instead of producing a duplicate top-level key (rejected by Load).
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		panic("validConfigJSON: invalid JSON fragment: " + err.Error())
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		panic("validConfigJSON: re-marshal failed: " + err.Error())
+	}
+	return string(out)
 }
 
 func TestLoadPreservesExplicitZeroAndFalseValues(t *testing.T) {
@@ -530,6 +662,46 @@ func TestLoadRejectsInvalidFileSettings(t *testing.T) {
 			name:    "missing system password",
 			data:    `{"system":{"port":8080,"username":"admin"},"web":{"station_name":"ZuidWest FM","color_light":"#E6007E","color_dark":"#E6007E"},"silence_detection":{"threshold_db":-40,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}}`,
 			wantErr: "system.password: is required",
+		},
+		{
+			name:    "empty station name",
+			data:    validConfigJSON(`"web":{"station_name":"","color_light":"#E6007E","color_dark":"#E6007E"}`),
+			wantErr: `invalid station_name "": must be 1-30 printable characters`,
+		},
+		{
+			name:    "explicit null station color light",
+			data:    `{"system":{"port":8080,"username":"admin","password":"encoder"},"web":{"station_name":"ZuidWest FM","color_light":null,"color_dark":"#E6007E"},"silence_detection":{"threshold_db":-40,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}}`,
+			wantErr: `color_light "": must be hex format (#RRGGBB)`,
+		},
+		{
+			name:    "explicit null silence duration",
+			data:    `{"system":{"port":8080,"username":"admin","password":"encoder"},"web":{"station_name":"ZuidWest FM","color_light":"#E6007E","color_dark":"#E6007E"},"silence_detection":{"threshold_db":-40,"duration_ms":null,"recovery_ms":5000,"peak_hold_ms":3000}}`,
+			wantErr: "silence_detection.duration_ms: must be greater than 0",
+		},
+		{
+			name:    "explicit null web block",
+			data:    `{"system":{"port":8080,"username":"admin","password":"encoder"},"web":null,"silence_detection":{"threshold_db":-40,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}}`,
+			wantErr: `invalid station_name "": must be 1-30 printable characters`,
+		},
+		{
+			name:    "duplicate top-level web key with null override",
+			data:    `{"system":{"port":8080,"username":"admin","password":"encoder"},"web":{"station_name":"ZuidWest FM","color_light":"#E6007E","color_dark":"#E6007E"},"silence_detection":{"threshold_db":-40,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000},"web":null}`,
+			wantErr: `duplicate key "web"`,
+		},
+		{
+			name:    "duplicate nested color_light key with null override",
+			data:    `{"system":{"port":8080,"username":"admin","password":"encoder"},"web":{"station_name":"ZuidWest FM","color_light":"#E6007E","color_dark":"#E6007E","color_light":null},"silence_detection":{"threshold_db":-40,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}}`,
+			wantErr: `duplicate key "color_light"`,
+		},
+		{
+			name:    "empty station color light",
+			data:    validConfigJSON(`"web":{"station_name":"ZuidWest FM","color_light":"","color_dark":"#E6007E"}`),
+			wantErr: `color_light "": must be hex format (#RRGGBB)`,
+		},
+		{
+			name:    "empty station color dark",
+			data:    validConfigJSON(`"web":{"station_name":"ZuidWest FM","color_light":"#E6007E","color_dark":""}`),
+			wantErr: `color_dark "": must be hex format (#RRGGBB)`,
 		},
 		{
 			name:    "positive silence threshold",

@@ -2,6 +2,7 @@
 package config
 
 import (
+	"bytes"
 	"cmp"
 	"crypto/rand"
 	"encoding/json"
@@ -208,8 +209,10 @@ func defaultConfig(filePath string) *Config {
 }
 
 // Load reads and validates an existing config file. If the file does not exist,
-// Load writes a minimal validated default config. Invalid existing files return
-// an error; defaults are not applied as a fallback.
+// Load writes a minimal validated default config. Existing files are decoded
+// as-is; optional Web and SilenceDetection fields that are omitted (not
+// explicitly null) inherit defaults so documented minimal configs stay valid.
+// Required system settings must still be present and valid.
 func (c *Config) Load() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -227,8 +230,15 @@ func (c *Config) Load() error {
 		return fmt.Errorf("failed to read config: %w", err)
 	}
 
+	if err := ensureNoDuplicateKeys(data); err != nil {
+		return util.WrapError("parse config", err)
+	}
+
 	cfg := New(c.filePath)
 	if err := json.Unmarshal(data, cfg); err != nil {
+		return util.WrapError("parse config", err)
+	}
+	if err := applyOptionalDefaults(data, cfg); err != nil {
 		return util.WrapError("parse config", err)
 	}
 
@@ -238,6 +248,128 @@ func (c *Config) Load() error {
 	c.copyFrom(cfg)
 
 	return nil
+}
+
+// applyOptionalDefaults fills defaults for optional Web and SilenceDetection
+// fields that were omitted from the raw JSON. Fields that are present (even
+// when explicitly null) are left at their unmarshalled value so validate()
+// can reject malformed input — distinguishing "missing" from "null" preserves
+// the strict semantics that existed before defaults were introduced.
+func applyOptionalDefaults(data []byte, cfg *Config) error {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(data, &root); err != nil {
+		return err
+	}
+
+	web, err := presentObjectFields(root, "web")
+	if err != nil {
+		return err
+	}
+	if web != nil {
+		if _, ok := web["station_name"]; !ok {
+			cfg.Web.StationName = DefaultStationName
+		}
+		if _, ok := web["color_light"]; !ok {
+			cfg.Web.ColorLight = DefaultStationColorLight
+		}
+		if _, ok := web["color_dark"]; !ok {
+			cfg.Web.ColorDark = DefaultStationColorDark
+		}
+	}
+
+	silence, err := presentObjectFields(root, "silence_detection")
+	if err != nil {
+		return err
+	}
+	if silence != nil {
+		if _, ok := silence["threshold_db"]; !ok {
+			cfg.SilenceDetection.ThresholdDB = DefaultSilenceThreshold
+		}
+		if _, ok := silence["duration_ms"]; !ok {
+			cfg.SilenceDetection.DurationMs = DefaultSilenceDurationMs
+		}
+		if _, ok := silence["recovery_ms"]; !ok {
+			cfg.SilenceDetection.RecoveryMs = DefaultSilenceRecoveryMs
+		}
+		if _, ok := silence["peak_hold_ms"]; !ok {
+			cfg.SilenceDetection.PeakHoldMs = DefaultPeakHoldMs
+		}
+	}
+
+	return nil
+}
+
+// ensureNoDuplicateKeys rejects configs that repeat the same key inside any
+// JSON object. Duplicates would let an explicit null override a valid earlier
+// value in the raw-key map while being a no-op against the struct unmarshal,
+// silently bypassing the default/null distinction.
+func ensureNoDuplicateKeys(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	return walkForDuplicateKeys(dec, tok)
+}
+
+func walkForDuplicateKeys(dec *json.Decoder, tok json.Token) error {
+	delim, ok := tok.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delim {
+	case '{':
+		seen := map[string]struct{}{}
+		for dec.More() {
+			keyTok, err := dec.Token()
+			if err != nil {
+				return err
+			}
+			key := keyTok.(string)
+			if _, dup := seen[key]; dup {
+				return fmt.Errorf("duplicate key %q", key)
+			}
+			seen[key] = struct{}{}
+			valTok, err := dec.Token()
+			if err != nil {
+				return err
+			}
+			if err := walkForDuplicateKeys(dec, valTok); err != nil {
+				return err
+			}
+		}
+	case '[':
+		for dec.More() {
+			valTok, err := dec.Token()
+			if err != nil {
+				return err
+			}
+			if err := walkForDuplicateKeys(dec, valTok); err != nil {
+				return err
+			}
+		}
+	}
+	_, err := dec.Token()
+	return err
+}
+
+// presentObjectFields returns the JSON object at the given top-level key as a
+// field map. It returns an empty map when the key is absent (so all nested
+// defaults apply), and nil when the key is present but explicitly null (so
+// unmarshalled zero values stay and validation rejects them).
+func presentObjectFields(root map[string]json.RawMessage, key string) (map[string]json.RawMessage, error) {
+	raw, ok := root[key]
+	if !ok {
+		return map[string]json.RawMessage{}, nil
+	}
+	if strings.TrimSpace(string(raw)) == "null" {
+		return nil, nil
+	}
+	fields := map[string]json.RawMessage{}
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	return fields, nil
 }
 
 func (c *Config) copyFrom(src *Config) {
