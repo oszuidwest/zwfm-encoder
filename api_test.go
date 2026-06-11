@@ -192,6 +192,87 @@ func TestHandleTestS3MissingFieldReturnsBadRequest(t *testing.T) {
 	}
 }
 
+func TestResolveS3TestSecret(t *testing.T) {
+	t.Parallel()
+
+	fixture := seededSensitiveServer(t)
+
+	tests := []struct {
+		name      string
+		req       S3TestRequest
+		want      string
+		wantFound bool
+	}{
+		{
+			name: "request secret wins",
+			req: S3TestRequest{
+				RecorderID: fixture.recorderID,
+				SecretKey:  "typed-secret",
+			},
+			want:      "typed-secret",
+			wantFound: true,
+		},
+		{
+			name: "empty secret falls back to saved recorder secret",
+			req: S3TestRequest{
+				RecorderID: fixture.recorderID,
+			},
+			want:      fixture.s3Secret,
+			wantFound: true,
+		},
+		{
+			name:      "empty secret without recorder remains empty",
+			req:       S3TestRequest{},
+			want:      "",
+			wantFound: true,
+		},
+		{
+			name: "missing fallback recorder reports not found",
+			req: S3TestRequest{
+				RecorderID: "recorder-missing",
+			},
+			want:      "",
+			wantFound: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, found := fixture.server.resolveS3TestSecret(&tt.req)
+			if found != tt.wantFound {
+				t.Fatalf("found = %v, want %v", found, tt.wantFound)
+			}
+			if got != tt.want {
+				t.Fatalf("secret = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHandleTestS3MissingFallbackRecorderReturnsNotFound(t *testing.T) {
+	t.Parallel()
+
+	s := freshServer(t)
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/recorders/test-s3",
+		bytes.NewBufferString(`{
+			"recorder_id": "recorder-missing",
+			"s3_bucket": "b",
+			"s3_access_key_id": "k"
+		}`),
+	)
+	rec := httptest.NewRecorder()
+
+	s.handleTestS3(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+	if got := decodeError(t, rec.Body.Bytes()); got != "Recorder not found" {
+		t.Fatalf("error = %q, want %q", got, "Recorder not found")
+	}
+}
+
 // seededServer returns a Server with saved config loaded from the given
 // SettingsUpdate. Required range fields (silence threshold/durations/peak
 // hold) get sensible defaults so callers only need to specify domain-
@@ -345,14 +426,8 @@ func TestHandleAPIConfigRedactsStoredSecrets(t *testing.T) {
 	if err := json.Unmarshal(body, &resp); err != nil {
 		t.Fatalf("response JSON = %q, error = %v", string(body), err)
 	}
-	if resp.WebhookURL != "" {
-		t.Fatalf("WebhookURL = %q, want redacted empty string", resp.WebhookURL)
-	}
 	if !resp.WebhookHasURL {
 		t.Fatalf("WebhookHasURL = false, want true")
-	}
-	if resp.RecordingAPIKey != "" {
-		t.Fatalf("RecordingAPIKey = %q, want redacted empty string", resp.RecordingAPIKey)
 	}
 	if !resp.RecordingHasAPIKey {
 		t.Fatalf("RecordingHasAPIKey = false, want true")
@@ -595,8 +670,7 @@ func validBaselineSettings(cfg *config.Config) *config.SettingsUpdate {
 func applyWithPreserve(t *testing.T, cfg *config.Config, upd *config.SettingsUpdate) (config.Snapshot, error) {
 	t.Helper()
 	snap := cfg.Snapshot()
-	preserveWebhookURL(upd, &snap)
-	preserveGraphClientSecret(upd, &snap)
+	preserveHiddenSettings(upd, &snap)
 	if errs := upd.Validate(); len(errs) > 0 {
 		return config.Snapshot{}, fmt.Errorf("validate: %s", strings.Join(errs, "; "))
 	}

@@ -414,7 +414,6 @@ type APIConfigResponse struct {
 	PeakHoldMs        int64             `json:"peak_hold_ms"`
 	SilenceDump       SilenceDumpConfig `json:"silence_dump"`
 
-	WebhookURL    string             `json:"webhook_url"`
 	WebhookHasURL bool               `json:"webhook_has_url"`
 	WebhookEvents EventSubscriptions `json:"webhook_events"`
 
@@ -432,9 +431,8 @@ type APIConfigResponse struct {
 	GraphHasSecret   bool               `json:"graph_has_secret"`
 	EmailEvents      EventSubscriptions `json:"email_events"`
 
-	RecordingAPIKey             string `json:"recording_api_key"`
-	RecordingHasAPIKey          bool   `json:"recording_has_api_key"`
-	RecordingMaxDurationMinutes int    `json:"recording_max_duration_minutes"`
+	RecordingHasAPIKey          bool `json:"recording_has_api_key"`
+	RecordingMaxDurationMinutes int  `json:"recording_max_duration_minutes"`
 
 	Streams   []StreamResponse   `json:"streams"`
 	Recorders []RecorderResponse `json:"recorders"`

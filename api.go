@@ -72,10 +72,12 @@ func parseJSON[T any](s *Server, w http.ResponseWriter, r *http.Request) (T, boo
 	return v, true
 }
 
-func redactStreams(streams []types.Stream) []types.StreamResponse {
-	resp := make([]types.StreamResponse, len(streams))
-	for i := range streams {
-		resp[i] = redactStream(&streams[i])
+// redactSlice maps each element through redact, taking the address so large
+// structs are not copied by value.
+func redactSlice[T, R any](items []T, redact func(*T) R) []R {
+	resp := make([]R, len(items))
+	for i := range items {
+		resp[i] = redact(&items[i])
 	}
 	return resp
 }
@@ -93,14 +95,6 @@ func redactStream(stream *types.Stream) types.StreamResponse {
 		MaxRetries:  stream.MaxRetries,
 		CreatedAt:   stream.CreatedAt,
 	}
-}
-
-func redactRecorders(recorders []types.Recorder) []types.RecorderResponse {
-	resp := make([]types.RecorderResponse, len(recorders))
-	for i := range recorders {
-		resp[i] = redactRecorder(&recorders[i])
-	}
-	return resp
 }
 
 func redactRecorder(recorder *types.Recorder) types.RecorderResponse {
@@ -167,8 +161,8 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 		RecordingMaxDurationMinutes: cfg.RecordingMaxDurationMinutes,
 
 		// Entities
-		Streams:   redactStreams(cfg.Streams),
-		Recorders: redactRecorders(cfg.Recorders),
+		Streams:   redactSlice(cfg.Streams, redactStream),
+		Recorders: redactSlice(cfg.Recorders, redactRecorder),
 	}
 
 	s.writeJSON(w, http.StatusOK, resp)
@@ -191,8 +185,7 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
 	audioInputChanged := req.AudioInput != cfg.AudioInput
 
-	preserveWebhookURL(&req, &cfg)
-	preserveGraphClientSecret(&req, &cfg)
+	preserveHiddenSettings(&req, &cfg)
 
 	if errs := req.Validate(); len(errs) > 0 {
 		s.writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -242,7 +235,7 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 // handleListStreams returns all configured streams.
 func (s *Server) handleListStreams(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
-	s.writeJSON(w, http.StatusOK, redactStreams(cfg.Streams))
+	s.writeJSON(w, http.StatusOK, redactSlice(cfg.Streams, redactStream))
 }
 
 // handleGetStream returns a single stream by ID.
@@ -403,7 +396,7 @@ func (s *Server) handleDeleteStream(w http.ResponseWriter, r *http.Request) {
 // handleListRecorders returns all configured recorders.
 func (s *Server) handleListRecorders(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
-	s.writeJSON(w, http.StatusOK, redactRecorders(cfg.Recorders))
+	s.writeJSON(w, http.StatusOK, redactSlice(cfg.Recorders, redactRecorder))
 }
 
 // handleGetRecorder returns a single recorder by ID.
@@ -586,6 +579,8 @@ func (s *Server) handleRecorderAction(w http.ResponseWriter, r *http.Request) {
 
 // S3TestRequest contains fields for testing S3 connectivity.
 type S3TestRequest struct {
+	// RecorderID optionally identifies an existing recorder for hidden-secret fallback.
+	RecorderID string `json:"recorder_id,omitempty"`
 	// Endpoint is the S3-compatible endpoint URL.
 	Endpoint string `json:"s3_endpoint"`
 	// Bucket is the target S3 bucket name.
@@ -596,6 +591,18 @@ type S3TestRequest struct {
 	SecretKey string `json:"s3_secret_access_key"`
 }
 
+func (s *Server) resolveS3TestSecret(req *S3TestRequest) (string, bool) {
+	if req.SecretKey != "" || req.RecorderID == "" {
+		return req.SecretKey, true
+	}
+
+	recorder := s.config.Recorder(req.RecorderID)
+	if recorder == nil {
+		return "", false
+	}
+	return recorder.S3SecretAccessKey, true
+}
+
 // handleTestS3 tests S3 connectivity.
 func (s *Server) handleTestS3(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[S3TestRequest](s, w, r)
@@ -603,7 +610,13 @@ func (s *Server) handleTestS3(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, issue := range types.ValidateS3Credentials(req.Bucket, req.AccessKey, req.SecretKey) {
+	secretKey, ok := s.resolveS3TestSecret(&req)
+	if !ok {
+		s.writeError(w, http.StatusNotFound, "Recorder not found")
+		return
+	}
+
+	for _, issue := range types.ValidateS3Credentials(req.Bucket, req.AccessKey, secretKey) {
 		s.writeError(w, http.StatusBadRequest, issue.Field+" is required")
 		return
 	}
@@ -612,7 +625,7 @@ func (s *Server) handleTestS3(w http.ResponseWriter, r *http.Request) {
 		S3Endpoint:        req.Endpoint,
 		S3Bucket:          req.Bucket,
 		S3AccessKeyID:     req.AccessKey,
-		S3SecretAccessKey: req.SecretKey,
+		S3SecretAccessKey: secretKey,
 	}
 
 	if err := recording.TestRecorderS3Connection(cfg); err != nil {
@@ -653,24 +666,20 @@ func deref[T any](p *T, fallback T) T {
 	return fallback
 }
 
-// preserveWebhookURL keeps the saved webhook URL when the request omits or
-// empties it. Skipped when ClearWebhookURL is true so Validate() can still
-// reject a non-empty submitted URL combined with clear=true.
-func preserveWebhookURL(req *config.SettingsUpdate, cfg *config.Snapshot) {
-	if req.ClearWebhookURL {
-		return
-	}
-	req.WebhookURL = cmp.Or(req.WebhookURL, cfg.WebhookURL)
+func preserveHiddenString(value *string, saved string) {
+	*value = cmp.Or(*value, saved)
 }
 
-// preserveGraphClientSecret keeps the saved Graph client secret when the request
-// omits or empties it. Skipped when ClearGraphClientSecret is true so Validate()
-// can still reject a non-empty submitted secret combined with clear=true.
-func preserveGraphClientSecret(req *config.SettingsUpdate, cfg *config.Snapshot) {
-	if req.ClearGraphClientSecret {
-		return
+// preserveHiddenSettings keeps saved hidden values when settings forms submit
+// empty placeholders. Clear flags bypass preservation so Validate can report
+// conflicts with newly submitted values.
+func preserveHiddenSettings(req *config.SettingsUpdate, cfg *config.Snapshot) {
+	if !req.ClearWebhookURL {
+		preserveHiddenString(&req.WebhookURL, cfg.WebhookURL)
 	}
-	req.GraphClientSecret = cmp.Or(req.GraphClientSecret, cfg.GraphClientSecret)
+	if !req.ClearGraphClientSecret {
+		preserveHiddenString(&req.GraphClientSecret, cfg.GraphClientSecret)
+	}
 }
 
 // handleAPITestWebhook tests webhook notification connectivity.

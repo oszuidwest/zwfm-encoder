@@ -103,8 +103,13 @@ const DEFAULT_RECORDER = {
     s3_bucket: '',
     s3_access_key_id: '',
     s3_secret_access_key: '',
+    has_s3_secret: false,
     retention_days: 90
 };
+
+const storageNeedsLocal = (mode) => mode === 'local' || mode === 'both';
+const storageNeedsS3 = (mode) => mode === 's3' || mode === 'both';
+const recorderHasS3Secret = (form) => Boolean(form.s3_secret_access_key || form.has_s3_secret);
 
 // Bitrate options per codec (kbit/s). Exposed on window for Alpine.js template access.
 window.CODEC_BITRATES = {
@@ -205,7 +210,6 @@ document.addEventListener('alpine:init', () => {
             peak_hold_ms: 3000,
             silence_dump: { enabled: true, retention_days: 7 },
             recording_max_duration_minutes: 240,
-            webhook_url: '',
             webhook_has_url: false,
             zabbix_server: '',
             zabbix_port: 10051,
@@ -217,7 +221,6 @@ document.addEventListener('alpine:init', () => {
             graph_from_address: '',
             graph_recipients: '',
             graph_has_secret: false,
-            recording_api_key: '',
             recording_has_api_key: false,
             streams: [],
             recorders: []
@@ -308,17 +311,24 @@ document.addEventListener('alpine:init', () => {
             if (!this.recorderForm.name?.trim()) return false;
             if (this.isRecorderEditMode && !this.recorderFormDirty) return false;
 
-            const needsLocal = ['local', 'both'].includes(this.recorderForm.storage_mode);
-            const needsS3 = ['s3', 'both'].includes(this.recorderForm.storage_mode);
+            const needsLocal = storageNeedsLocal(this.recorderForm.storage_mode);
+            const needsS3 = storageNeedsS3(this.recorderForm.storage_mode);
 
             if (needsLocal && !this.recorderForm.local_path?.trim()) return false;
             if (needsS3) {
                 if (!this.recorderForm.s3_bucket?.trim()) return false;
                 if (!this.recorderForm.s3_access_key_id?.trim()) return false;
-                // Secret only required for new recorders; edit mode keeps existing secret
-                if (!this.isRecorderEditMode && !this.recorderForm.s3_secret_access_key) return false;
+                if (!recorderHasS3Secret(this.recorderForm)) return false;
             }
             return true;
+        },
+
+        get canTestRecorderS3() {
+            return Boolean(
+                this.recorderForm.s3_bucket?.trim() &&
+                this.recorderForm.s3_access_key_id?.trim() &&
+                recorderHasS3Secret(this.recorderForm)
+            );
         },
 
         async init() {
@@ -830,7 +840,7 @@ document.addEventListener('alpine:init', () => {
                         peak_hold_ms: this.config.peak_hold_ms,
                         silence_dump_enabled: this.config.silence_dump.enabled,
                         silence_dump_retention_days: this.config.silence_dump.retention_days,
-                        webhook_url: this.config.webhook_url,
+                        webhook_url: '', // Empty = keep saved URL server-side.
                         clear_webhook_url: false,
                         webhook_events: this.config.webhook_events,
                         zabbix_server: this.config.zabbix_server,
@@ -999,8 +1009,9 @@ document.addEventListener('alpine:init', () => {
                     });
                 }
 
+                const result = await response.json();
+
                 if (!response.ok) {
-                    const result = await response.json();
                     throw new Error(result.error || `HTTP ${response.status}`);
                 }
 
@@ -1013,7 +1024,7 @@ document.addEventListener('alpine:init', () => {
                     // Update stream data in local array
                     const index = this.streams.findIndex(s => s.id === this.streamForm.id);
                     if (index !== -1) {
-                        Object.assign(this.streams[index], data);
+                        Object.assign(this.streams[index], result);
                     }
                 }
 
@@ -1087,6 +1098,7 @@ document.addEventListener('alpine:init', () => {
                     s3_bucket: recorder.s3_bucket || '',
                     s3_access_key_id: recorder.s3_access_key_id || '',
                     s3_secret_access_key: '',
+                    has_s3_secret: recorder.has_s3_secret || false,
                     retention_days: recorder.retention_days || 90
                 };
             } else {
@@ -1118,8 +1130,8 @@ document.addEventListener('alpine:init', () => {
             }
 
             // Validate based on storage mode
-            const needsLocal = storageMode === 'local' || storageMode === 'both';
-            const needsS3 = storageMode === 's3' || storageMode === 'both';
+            const needsLocal = storageNeedsLocal(storageMode);
+            const needsS3 = storageNeedsS3(storageMode);
 
             if (needsLocal && !localPath) {
                 this.showToast('Local Path is required', 'error');
@@ -1134,7 +1146,7 @@ document.addEventListener('alpine:init', () => {
                     this.showToast('S3 Access Key ID is required', 'error');
                     return;
                 }
-                if (!this.isRecorderEditMode && !secretKey) {
+                if (!recorderHasS3Secret(this.recorderForm)) {
                     this.showToast('S3 Secret Access Key is required', 'error');
                     return;
                 }
@@ -1174,8 +1186,9 @@ document.addEventListener('alpine:init', () => {
                     });
                 }
 
+                const result = await response.json();
+
                 if (!response.ok) {
-                    const result = await response.json();
                     throw new Error(result.error || `HTTP ${response.status}`);
                 }
 
@@ -1188,7 +1201,7 @@ document.addEventListener('alpine:init', () => {
                     // Update recorder data in local array
                     const index = this.recorders.findIndex(r => r.id === this.recorderForm.id);
                     if (index !== -1) {
-                        Object.assign(this.recorders[index], data);
+                        Object.assign(this.recorders[index], result);
                     }
                 }
 
@@ -1261,15 +1274,20 @@ document.addEventListener('alpine:init', () => {
             this.testStates.recorderS3 = { pending: true, text: 'Testing...' };
 
             try {
+                const payload = {
+                    s3_endpoint: this.recorderForm.s3_endpoint,
+                    s3_bucket: this.recorderForm.s3_bucket,
+                    s3_access_key_id: this.recorderForm.s3_access_key_id,
+                    s3_secret_access_key: this.recorderForm.s3_secret_access_key
+                };
+                if (this.isRecorderEditMode) {
+                    payload.recorder_id = this.recorderForm.id;
+                }
+
                 const response = await fetch(API.RECORDERS_TEST_S3, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        s3_endpoint: this.recorderForm.s3_endpoint,
-                        s3_bucket: this.recorderForm.s3_bucket,
-                        s3_access_key_id: this.recorderForm.s3_access_key_id,
-                        s3_secret_access_key: this.recorderForm.s3_secret_access_key
-                    })
+                    body: JSON.stringify(payload)
                 });
 
                 const result = await response.json();
@@ -1780,7 +1798,6 @@ document.addEventListener('alpine:init', () => {
                     if (this.settingsForm) {
                         this.settingsForm.recordingApiKey = result.api_key;
                     }
-                    this.config.recording_api_key = '';
                     this.config.recording_has_api_key = true;
                     this.showToast('API key regenerated', 'success');
                 }

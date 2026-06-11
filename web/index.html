@@ -983,7 +983,7 @@
                         </div>
                         <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0"
                                 @click="testRecorderS3()"
-                                :disabled="testStates.recorderS3.pending || !recorderForm.s3_bucket"
+                                :disabled="testStates.recorderS3.pending || !canTestRecorderS3"
                                 x-text="testStates.recorderS3.text">Test Connection</button>
                     </div>
 
