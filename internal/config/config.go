@@ -1049,6 +1049,9 @@ type SettingsUpdate struct {
 	GraphRecipients string `json:"graph_recipients"`
 	// RecordingMaxDurationMinutes is the maximum allowed duration for on-demand recordings.
 	RecordingMaxDurationMinutes int `json:"recording_max_duration_minutes"`
+	// ClearWebhookURL requests removal of the saved webhook URL.
+	// Must not be combined with a non-empty WebhookURL value (conflict -> 400).
+	ClearWebhookURL bool `json:"clear_webhook_url,omitempty"`
 	// ClearGraphClientSecret requests removal of the saved Graph client secret.
 	// Must not be combined with a non-empty GraphClientSecret value (conflict -> 400).
 	ClearGraphClientSecret bool `json:"clear_graph_client_secret,omitempty"`
@@ -1098,6 +1101,9 @@ func (s *SettingsUpdate) Validate() []string {
 	if msg := validateMaxDurationMinutes("recording_max_duration_minutes", s.RecordingMaxDurationMinutes); msg != "" {
 		errs = append(errs, msg)
 	}
+	if s.ClearWebhookURL && s.WebhookURL != "" {
+		errs = append(errs, "clear_webhook_url: conflicts with non-empty webhook_url")
+	}
 
 	return errs
 }
@@ -1123,7 +1129,11 @@ func (c *Config) ApplySettings(s *SettingsUpdate) error {
 	c.SilenceDump.RetentionDays = s.SilenceDumpRetentionDays
 
 	// Notifications
-	c.Notifications.Webhook.URL = s.WebhookURL
+	if s.ClearWebhookURL {
+		c.Notifications.Webhook.URL = ""
+	} else {
+		c.Notifications.Webhook.URL = s.WebhookURL
+	}
 	c.Notifications.Webhook.Events = s.WebhookEvents
 	c.Notifications.Email.Events = s.EmailEvents
 	c.Notifications.Zabbix.Events = s.ZabbixEvents

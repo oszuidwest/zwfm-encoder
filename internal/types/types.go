@@ -414,7 +414,7 @@ type APIConfigResponse struct {
 	PeakHoldMs        int64             `json:"peak_hold_ms"`
 	SilenceDump       SilenceDumpConfig `json:"silence_dump"`
 
-	WebhookURL    string             `json:"webhook_url"`
+	WebhookHasURL bool               `json:"webhook_has_url"`
 	WebhookEvents EventSubscriptions `json:"webhook_events"`
 
 	ZabbixServer     string                   `json:"zabbix_server"`
@@ -431,11 +431,45 @@ type APIConfigResponse struct {
 	GraphHasSecret   bool               `json:"graph_has_secret"`
 	EmailEvents      EventSubscriptions `json:"email_events"`
 
-	RecordingAPIKey             string `json:"recording_api_key"`
-	RecordingMaxDurationMinutes int    `json:"recording_max_duration_minutes"`
+	RecordingHasAPIKey          bool `json:"recording_has_api_key"`
+	RecordingMaxDurationMinutes int  `json:"recording_max_duration_minutes"`
 
-	Streams   []Stream   `json:"streams"`
-	Recorders []Recorder `json:"recorders"`
+	Streams   []StreamResponse   `json:"streams"`
+	Recorders []RecorderResponse `json:"recorders"`
+}
+
+// StreamResponse is the browser-safe representation of a stream.
+type StreamResponse struct {
+	ID          string `json:"id"`
+	Enabled     bool   `json:"enabled"`
+	Host        string `json:"host"`
+	Port        int    `json:"port"`
+	HasPassword bool   `json:"has_password"`
+	StreamID    string `json:"stream_id"`
+	Codec       Codec  `json:"codec"`
+	Bitrate     int    `json:"bitrate"`     // kbit/s, 0 = codec default
+	MaxRetries  int    `json:"max_retries"` // 0 = no retries
+	CreatedAt   int64  `json:"created_at"`  // Unix ms
+}
+
+// RecorderResponse is the browser-safe representation of a recorder.
+type RecorderResponse struct {
+	ID            string        `json:"id"`
+	Name          string        `json:"name"`
+	Enabled       bool          `json:"enabled"`
+	Codec         Codec         `json:"codec"`
+	Bitrate       int           `json:"bitrate"` // kbit/s, 0 = codec default
+	RecordingMode RecordingMode `json:"recording_mode"`
+	StorageMode   StorageMode   `json:"storage_mode"`
+	LocalPath     string        `json:"local_path"`
+
+	S3Endpoint    string `json:"s3_endpoint"`
+	S3Bucket      string `json:"s3_bucket"`
+	S3AccessKeyID string `json:"s3_access_key_id"`
+	HasS3Secret   bool   `json:"has_s3_secret"`
+
+	RetentionDays int   `json:"retention_days"` // 0 = forever
+	CreatedAt     int64 `json:"created_at"`     // Unix ms
 }
 
 // WSLevelsResponse contains audio level data sent to clients.

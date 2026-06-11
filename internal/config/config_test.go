@@ -1042,3 +1042,50 @@ func TestSettingsUpdateValidate_ClearGraphSecretWithBlankAllowed(t *testing.T) {
 		}
 	}
 }
+
+func TestSettingsUpdateValidate_ClearWebhookURLConflict(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		url  string
+	}{
+		{"plain non-empty", "https://hooks.example.com/new-token"},
+		{"whitespace-only (raw != \"\" still triggers conflict)", "   "},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			upd := minimalValidUpdate()
+			upd.WebhookURL = tc.url
+			upd.ClearWebhookURL = true
+
+			errs := upd.Validate()
+			want := "clear_webhook_url: conflicts with non-empty webhook_url"
+			found := false
+			for _, e := range errs {
+				if e == want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("Validate() = %v, want to contain %q", errs, want)
+			}
+		})
+	}
+}
+
+func TestSettingsUpdateValidate_ClearWebhookURLWithBlankAllowed(t *testing.T) {
+	t.Parallel()
+
+	upd := minimalValidUpdate()
+	upd.WebhookURL = ""
+	upd.ClearWebhookURL = true
+
+	for _, e := range upd.Validate() {
+		if e == "clear_webhook_url: conflicts with non-empty webhook_url" {
+			t.Fatalf("Validate() unexpectedly reported conflict for empty URL + clear=true: %q", e)
+		}
+	}
+}
