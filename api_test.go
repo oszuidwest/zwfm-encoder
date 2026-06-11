@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
 func TestDerefReturnsValueWhenPresentFallbackWhenNil(t *testing.T) {
@@ -46,6 +47,26 @@ func decodeError(t *testing.T, body []byte) string {
 		t.Fatalf("response JSON = %q, error = %v", string(body), err)
 	}
 	return payload["error"]
+}
+
+func assertNotContains(t *testing.T, body []byte, forbidden ...string) {
+	t.Helper()
+	text := string(body)
+	for _, s := range forbidden {
+		if strings.Contains(text, s) {
+			t.Fatalf("response body leaks %q: %s", s, text)
+		}
+	}
+}
+
+func assertContains(t *testing.T, body []byte, want ...string) {
+	t.Helper()
+	text := string(body)
+	for _, s := range want {
+		if !strings.Contains(text, s) {
+			t.Fatalf("response body = %s, want to contain %q", text, s)
+		}
+	}
 }
 
 // TestHandleAPITestWebhookEmptyURLReturnsBadRequest pins the historical
@@ -226,6 +247,222 @@ func seededZabbixSettings() *config.SettingsUpdate {
 	}
 }
 
+type sensitiveFixture struct {
+	server          *Server
+	streamID        string
+	recorderID      string
+	streamPassword  string
+	s3Secret        string
+	webhookURL      string
+	recordingAPIKey string
+}
+
+func seededSensitiveServer(t *testing.T) sensitiveFixture {
+	t.Helper()
+
+	s := freshServer(t)
+	fixture := sensitiveFixture{ //nolint:gosec // G101: intentional secret-shaped test fixture values verify redaction.
+		server:          s,
+		streamPassword:  "srt-secret-269",
+		s3Secret:        "s3-secret-269",
+		webhookURL:      "https://hooks.example.com/services/token-269",
+		recordingAPIKey: "recording-key-269",
+	}
+
+	upd := validBaselineSettings(s.config)
+	upd.WebhookURL = fixture.webhookURL
+	if err := s.config.ApplySettings(upd); err != nil {
+		t.Fatalf("ApplySettings() error = %v", err)
+	}
+	if err := s.config.SetRecordingAPIKey(fixture.recordingAPIKey); err != nil {
+		t.Fatalf("SetRecordingAPIKey() error = %v", err)
+	}
+
+	stream := &types.Stream{
+		Host:       "stream.example.com",
+		Port:       9000,
+		Password:   fixture.streamPassword,
+		StreamID:   "studio",
+		Codec:      types.CodecMP3,
+		Bitrate:    128,
+		MaxRetries: 3,
+	}
+	if err := s.config.AddStream(stream); err != nil {
+		t.Fatalf("AddStream() error = %v", err)
+	}
+	fixture.streamID = stream.ID
+
+	recorder := &types.Recorder{
+		Name:              "S3 Recorder",
+		Codec:             types.CodecMP3,
+		Bitrate:           128,
+		RecordingMode:     types.RecordingHourly,
+		StorageMode:       types.StorageS3,
+		S3Bucket:          "recordings",
+		S3AccessKeyID:     "access-key-269",
+		S3SecretAccessKey: fixture.s3Secret,
+	}
+	if err := s.config.AddRecorder(recorder); err != nil {
+		t.Fatalf("AddRecorder() error = %v", err)
+	}
+	fixture.recorderID = recorder.ID
+
+	return fixture
+}
+
+// TestHandleAPIConfigRedactsStoredSecrets pins #269 for the full frontend
+// config snapshot. Sensitive stored values must never be serialized back to
+// the browser; only presence booleans are exposed.
+func TestHandleAPIConfigRedactsStoredSecrets(t *testing.T) {
+	t.Parallel()
+
+	fixture := seededSensitiveServer(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
+
+	fixture.server.handleAPIConfig(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.Bytes()
+	assertNotContains(t, body,
+		fixture.streamPassword,
+		fixture.s3Secret,
+		fixture.webhookURL,
+		fixture.recordingAPIKey,
+		`"password":"`,
+		`"s3_secret_access_key":"`,
+	)
+	assertContains(t, body,
+		`"webhook_has_url":true`,
+		`"recording_has_api_key":true`,
+		`"has_password":true`,
+		`"has_s3_secret":true`,
+	)
+
+	var resp types.APIConfigResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("response JSON = %q, error = %v", string(body), err)
+	}
+	if resp.WebhookURL != "" {
+		t.Fatalf("WebhookURL = %q, want redacted empty string", resp.WebhookURL)
+	}
+	if !resp.WebhookHasURL {
+		t.Fatalf("WebhookHasURL = false, want true")
+	}
+	if resp.RecordingAPIKey != "" {
+		t.Fatalf("RecordingAPIKey = %q, want redacted empty string", resp.RecordingAPIKey)
+	}
+	if !resp.RecordingHasAPIKey {
+		t.Fatalf("RecordingHasAPIKey = false, want true")
+	}
+	if len(resp.Streams) != 1 || !resp.Streams[0].HasPassword {
+		t.Fatalf("Streams = %+v, want one redacted stream with HasPassword=true", resp.Streams)
+	}
+	if len(resp.Recorders) != 1 || !resp.Recorders[0].HasS3Secret {
+		t.Fatalf("Recorders = %+v, want one redacted recorder with HasS3Secret=true", resp.Recorders)
+	}
+}
+
+func TestHandleStreamEndpointsRedactPassword(t *testing.T) {
+	t.Parallel()
+
+	fixture := seededSensitiveServer(t)
+
+	for _, tt := range []struct {
+		name string
+		run  func(http.ResponseWriter, *http.Request)
+		req  *http.Request
+	}{
+		{
+			name: "list",
+			run:  fixture.server.handleListStreams,
+			req:  httptest.NewRequest(http.MethodGet, "/api/streams", http.NoBody),
+		},
+		{
+			name: "get",
+			run:  fixture.server.handleGetStream,
+			req: func() *http.Request {
+				req := httptest.NewRequest(http.MethodGet, "/api/streams/"+fixture.streamID, http.NoBody)
+				req.SetPathValue("id", fixture.streamID)
+				return req
+			}(),
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			tt.run(rec, tt.req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+			assertNotContains(t, rec.Body.Bytes(), fixture.streamPassword, `"password":"`)
+			assertContains(t, rec.Body.Bytes(), `"has_password":true`)
+		})
+	}
+}
+
+func TestHandleRecorderEndpointsRedactS3Secret(t *testing.T) {
+	t.Parallel()
+
+	fixture := seededSensitiveServer(t)
+
+	for _, tt := range []struct {
+		name string
+		run  func(http.ResponseWriter, *http.Request)
+		req  *http.Request
+	}{
+		{
+			name: "list",
+			run:  fixture.server.handleListRecorders,
+			req:  httptest.NewRequest(http.MethodGet, "/api/recorders", http.NoBody),
+		},
+		{
+			name: "get",
+			run:  fixture.server.handleGetRecorder,
+			req: func() *http.Request {
+				req := httptest.NewRequest(http.MethodGet, "/api/recorders/"+fixture.recorderID, http.NoBody)
+				req.SetPathValue("id", fixture.recorderID)
+				return req
+			}(),
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			tt.run(rec, tt.req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+			assertNotContains(t, rec.Body.Bytes(), fixture.s3Secret, `"s3_secret_access_key":"`)
+			assertContains(t, rec.Body.Bytes(), `"has_s3_secret":true`)
+		})
+	}
+}
+
+func TestRedactionHelpersOmitSecretFields(t *testing.T) {
+	t.Parallel()
+
+	streamBody, err := json.Marshal(redactStream(&types.Stream{
+		Password: "helper-stream-secret",
+	}))
+	if err != nil {
+		t.Fatalf("marshal redacted stream: %v", err)
+	}
+	assertNotContains(t, streamBody, "helper-stream-secret", `"password":"`)
+	assertContains(t, streamBody, `"has_password":true`)
+
+	recorderBody, err := json.Marshal(redactRecorder(&types.Recorder{
+		S3SecretAccessKey: "helper-recorder-secret",
+	}))
+	if err != nil {
+		t.Fatalf("marshal redacted recorder: %v", err)
+	}
+	assertNotContains(t, recorderBody, "helper-recorder-secret", `"s3_secret_access_key":"`)
+	assertContains(t, recorderBody, `"has_s3_secret":true`)
+}
+
 // TestHandleAPITestEmailOmittedSecretFallsBackToSaved (#243) pins that a
 // request omitting graph_client_secret falls back to the saved secret. If
 // the deref-based merge regressed (e.g. back to cmp.Or), the preflight
@@ -352,12 +589,13 @@ func validBaselineSettings(cfg *config.Config) *config.SettingsUpdate {
 	}
 }
 
-// applyWithPreserve mirrors handleAPISettings preprocessing: preserve the
-// Graph secret, validate, and apply. Handler success paths need a real encoder,
-// so these tests exercise the same settings pipeline directly.
+// applyWithPreserve mirrors handleAPISettings preprocessing: preserve hidden
+// values, validate, and apply. Handler success paths need a real encoder, so
+// these tests exercise the same settings pipeline directly.
 func applyWithPreserve(t *testing.T, cfg *config.Config, upd *config.SettingsUpdate) (config.Snapshot, error) {
 	t.Helper()
 	snap := cfg.Snapshot()
+	preserveWebhookURL(upd, &snap)
 	preserveGraphClientSecret(upd, &snap)
 	if errs := upd.Validate(); len(errs) > 0 {
 		return config.Snapshot{}, fmt.Errorf("validate: %s", strings.Join(errs, "; "))
@@ -366,6 +604,59 @@ func applyWithPreserve(t *testing.T, cfg *config.Config, upd *config.SettingsUpd
 		return config.Snapshot{}, err
 	}
 	return cfg.Snapshot(), nil
+}
+
+// #269 - Webhook URL keep/replace/clear pipeline tests.
+
+func TestApplyWithPreserve_WebhookURL_KeepWhenEmpty(t *testing.T) {
+	t.Parallel()
+
+	s := seededServer(t, &config.SettingsUpdate{WebhookURL: "https://hooks.example.com/saved-token"})
+	upd := validBaselineSettings(s.config)
+	upd.WebhookURL = ""
+	upd.ClearWebhookURL = false
+
+	snap, err := applyWithPreserve(t, s.config, upd)
+	if err != nil {
+		t.Fatalf("applyWithPreserve() error = %v", err)
+	}
+	if snap.WebhookURL != "https://hooks.example.com/saved-token" {
+		t.Fatalf("WebhookURL = %q, want saved URL (keep path)", snap.WebhookURL)
+	}
+}
+
+func TestApplyWithPreserve_WebhookURL_ReplaceWhenSet(t *testing.T) {
+	t.Parallel()
+
+	s := seededServer(t, &config.SettingsUpdate{WebhookURL: "https://hooks.example.com/saved-token"})
+	upd := validBaselineSettings(s.config)
+	upd.WebhookURL = "https://hooks.example.com/new-token"
+	upd.ClearWebhookURL = false
+
+	snap, err := applyWithPreserve(t, s.config, upd)
+	if err != nil {
+		t.Fatalf("applyWithPreserve() error = %v", err)
+	}
+	if snap.WebhookURL != "https://hooks.example.com/new-token" {
+		t.Fatalf("WebhookURL = %q, want new URL (replace path)", snap.WebhookURL)
+	}
+}
+
+func TestApplyWithPreserve_WebhookURL_ClearWhenFlagSet(t *testing.T) {
+	t.Parallel()
+
+	s := seededServer(t, &config.SettingsUpdate{WebhookURL: "https://hooks.example.com/saved-token"})
+	upd := validBaselineSettings(s.config)
+	upd.WebhookURL = ""
+	upd.ClearWebhookURL = true
+
+	snap, err := applyWithPreserve(t, s.config, upd)
+	if err != nil {
+		t.Fatalf("applyWithPreserve() error = %v", err)
+	}
+	if snap.WebhookURL != "" {
+		t.Fatalf("WebhookURL = %q, want \"\" (clear path)", snap.WebhookURL)
+	}
 }
 
 // #247 - Graph secret keep/replace/clear pipeline tests.
@@ -466,6 +757,28 @@ func TestHandleAPISettingsClearGraphSecretConflictsWithNewValue(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), "clear_graph_client_secret: conflicts with non-empty graph_client_secret") {
+		t.Fatalf("body = %s, want to contain conflict error", rec.Body.String())
+	}
+}
+
+func TestHandleAPISettingsClearWebhookURLConflictsWithNewValue(t *testing.T) {
+	t.Parallel()
+
+	s := seededServer(t, &config.SettingsUpdate{WebhookURL: "https://hooks.example.com/saved-token"})
+	upd := validBaselineSettings(s.config)
+	upd.WebhookURL = "https://hooks.example.com/new-token"
+	upd.ClearWebhookURL = true
+
+	body, err := json.Marshal(upd)
+	if err != nil {
+		t.Fatalf("marshal SettingsUpdate: %v", err)
+	}
+	rec := postSettingsBody(t, s, string(body))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "clear_webhook_url: conflicts with non-empty webhook_url") {
 		t.Fatalf("body = %s, want to contain conflict error", rec.Body.String())
 	}
 }

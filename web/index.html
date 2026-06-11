@@ -454,9 +454,10 @@
                             <div class="group">
                                 <label for="api-key">API Key</label>
                                 <input id="api-key" type="text" readonly
-                                       :value="settingsForm?.recordingApiKey ? settingsForm.recordingApiKey : 'Not configured'"
+                                       :value="settingsForm?.recordingApiKey ? settingsForm.recordingApiKey : (config.recording_has_api_key ? 'Configured (hidden)' : 'Not configured')"
                                        :class="{ 'font-mono': settingsForm?.recordingApiKey }">
-                                <span class="input-hint" x-show="!settingsForm?.recordingApiKey">No API key configured. Click Regenerate to create one.</span>
+                                <span class="input-hint" x-show="!settingsForm?.recordingApiKey && config.recording_has_api_key">Regenerate to view and copy a new key.</span>
+                                <span class="input-hint" x-show="!settingsForm?.recordingApiKey && !config.recording_has_api_key">No API key configured. Click Regenerate to create one.</span>
                             </div>
                         </div>
                         <div class="btn-group">
@@ -485,7 +486,12 @@
                         <div class="form">
                             <div class="group">
                                 <label for="silence-webhook">Webhook URL</label>
-                                <input id="silence-webhook" type="url" placeholder="https://hooks.example.com/..." x-model="settingsForm.silenceWebhook" @input="markSettingsDirty()">
+                                <input id="silence-webhook" type="url" :placeholder="settingsForm.clearWebhook ? '(will be cleared on save)' : (config.webhook_has_url ? '••••••••' : 'https://hooks.example.com/...')" x-model="settingsForm.silenceWebhook" @input="markSettingsDirty()" :disabled="settingsForm.clearWebhook" aria-describedby="webhook-url-hint">
+                                <span id="webhook-url-hint" class="input-hint">Leave empty to keep, type new value to replace, or click Clear to remove on save.</span>
+                                <div class="secret-actions">
+                                    <button class="btn" data-variant="danger" data-size="sm" type="button" tabindex="0" x-show="config.webhook_has_url && !settingsForm.clearWebhook" @click="clearWebhookURL()">Clear saved URL</button>
+                                    <button class="btn" data-variant="secondary" data-size="sm" type="button" tabindex="0" x-show="settingsForm.clearWebhook" @click="undoClearWebhookURL()">Undo clear</button>
+                                </div>
                             </div>
                             <div class="group">
                                 <label>Events</label>
@@ -496,7 +502,10 @@
                                 </div>
                             </div>
                         </div>
-                        <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('webhook')" :disabled="testStates.webhook.pending" x-text="testStates.webhook.text">Test</button>
+                        <div class="test-action">
+                            <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('webhook')" :disabled="testStates.webhook.pending || settingsForm.clearWebhook" x-text="testStates.webhook.text">Test</button>
+                            <span class="input-hint" x-show="settingsForm.clearWebhook">Save changes first to test with the cleared URL.</span>
+                        </div>
                     </div>
                     <div class="section">
                         <div class="section-header">

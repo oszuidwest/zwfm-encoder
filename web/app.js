@@ -206,6 +206,7 @@ document.addEventListener('alpine:init', () => {
             silence_dump: { enabled: true, retention_days: 7 },
             recording_max_duration_minutes: 240,
             webhook_url: '',
+            webhook_has_url: false,
             zabbix_server: '',
             zabbix_port: 10051,
             zabbix_host: '',
@@ -217,6 +218,7 @@ document.addEventListener('alpine:init', () => {
             graph_recipients: '',
             graph_has_secret: false,
             recording_api_key: '',
+            recording_has_api_key: false,
             streams: [],
             recorders: []
         },
@@ -232,6 +234,8 @@ document.addEventListener('alpine:init', () => {
             silenceDump: { enabled: true, retentionDays: 7 },
             recordingMaxDurationMinutes: 240,
             silenceWebhook: '',
+            clearWebhook: false,
+            _preClearWebhookSnapshot: null,
             webhookEvents: { silence_start: true, silence_end: true, audio_dump: true },
             zabbix: { server: '', port: 10051, host: '', silenceKey: '', uploadKey: '' },
             zabbixEvents: { silence_start: true, silence_end: true },
@@ -696,7 +700,9 @@ document.addEventListener('alpine:init', () => {
                     enabled: this.config.silence_dump?.enabled ?? true,
                     retentionDays: this.config.silence_dump?.retention_days ?? 7
                 },
-                silenceWebhook: this.config.webhook_url || '',
+                silenceWebhook: '', // Never pre-fill; empty = keep saved unless clearWebhook is true.
+                clearWebhook: false,
+                _preClearWebhookSnapshot: null,
                 webhookEvents: {
                     silence_start: this.config.webhook_events?.silence_start ?? true,
                     silence_end: this.config.webhook_events?.silence_end ?? true,
@@ -727,7 +733,7 @@ document.addEventListener('alpine:init', () => {
                     silence_end: this.config.email_events?.silence_end ?? true,
                     audio_dump: this.config.email_events?.audio_dump ?? true
                 },
-                recordingApiKey: this.config.recording_api_key || '',
+                recordingApiKey: '', // Only populated after regenerate so hidden keys are not copyable.
                 recordingMaxDurationMinutes: this.config.recording_max_duration_minutes ?? 240,
                 platform: this.config.platform || ''
             };
@@ -741,6 +747,31 @@ document.addEventListener('alpine:init', () => {
          */
         markSettingsDirty() {
             this.settingsDirty = true;
+        },
+
+        /**
+         * Stages removal of the saved webhook URL on next Save.
+         */
+        clearWebhookURL() {
+            const form = this.settingsForm;
+            if (form.clearWebhook) return;
+            if (!confirm('Remove the saved webhook URL on save?')) return;
+            form._preClearWebhookSnapshot = { silenceWebhook: form.silenceWebhook };
+            form.silenceWebhook = '';
+            form.clearWebhook = true;
+            this.markSettingsDirty();
+        },
+
+        /**
+         * Cancels a pending webhook URL clear and restores the prior input.
+         */
+        undoClearWebhookURL() {
+            const form = this.settingsForm;
+            if (!form._preClearWebhookSnapshot) return;
+            form.silenceWebhook = form._preClearWebhookSnapshot.silenceWebhook;
+            form.clearWebhook = false;
+            form._preClearWebhookSnapshot = null;
+            this.markSettingsDirty();
         },
 
         /**
@@ -800,6 +831,7 @@ document.addEventListener('alpine:init', () => {
                         silence_dump_enabled: this.config.silence_dump.enabled,
                         silence_dump_retention_days: this.config.silence_dump.retention_days,
                         webhook_url: this.config.webhook_url,
+                        clear_webhook_url: false,
                         webhook_events: this.config.webhook_events,
                         zabbix_server: this.config.zabbix_server,
                         zabbix_port: this.config.zabbix_port,
@@ -854,6 +886,7 @@ document.addEventListener('alpine:init', () => {
                 silence_dump_enabled: form.silenceDump.enabled,
                 silence_dump_retention_days: form.silenceDump.retentionDays,
                 webhook_url: form.silenceWebhook,
+                clear_webhook_url: form.clearWebhook,
                 webhook_events: form.webhookEvents,
                 zabbix_server: form.zabbix.server,
                 zabbix_port: form.zabbix.port,
@@ -1678,7 +1711,9 @@ document.addEventListener('alpine:init', () => {
             const payload = {};
             if (this.settingsForm) {
                 if (type === 'webhook') {
-                    payload.webhook_url = this.settingsForm.silenceWebhook;
+                    if (this.settingsForm.silenceWebhook) {
+                        payload.webhook_url = this.settingsForm.silenceWebhook;
+                    }
                 } else if (type === 'email') {
                     payload.graph_tenant_id = this.settingsForm.graph.tenantId;
                     payload.graph_client_id = this.settingsForm.graph.clientId;
@@ -1745,6 +1780,8 @@ document.addEventListener('alpine:init', () => {
                     if (this.settingsForm) {
                         this.settingsForm.recordingApiKey = result.api_key;
                     }
+                    this.config.recording_api_key = '';
+                    this.config.recording_has_api_key = true;
                     this.showToast('API key regenerated', 'success');
                 }
             } catch (err) {
@@ -1756,7 +1793,8 @@ document.addEventListener('alpine:init', () => {
          * Copies the API key to clipboard.
          */
         async copyApiKey() {
-            const key = this.settingsForm?.recordingApiKey || this.config.recording_api_key;
+            const key = this.settingsForm?.recordingApiKey;
+            if (!key) return;
             try {
                 await navigator.clipboard.writeText(key);
                 this.apiKeyCopied = true;

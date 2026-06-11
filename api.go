@@ -72,6 +72,56 @@ func parseJSON[T any](s *Server, w http.ResponseWriter, r *http.Request) (T, boo
 	return v, true
 }
 
+func redactStreams(streams []types.Stream) []types.StreamResponse {
+	resp := make([]types.StreamResponse, len(streams))
+	for i := range streams {
+		resp[i] = redactStream(&streams[i])
+	}
+	return resp
+}
+
+func redactStream(stream *types.Stream) types.StreamResponse {
+	return types.StreamResponse{
+		ID:          stream.ID,
+		Enabled:     stream.Enabled,
+		Host:        stream.Host,
+		Port:        stream.Port,
+		HasPassword: stream.Password != "",
+		StreamID:    stream.StreamID,
+		Codec:       stream.Codec,
+		Bitrate:     stream.Bitrate,
+		MaxRetries:  stream.MaxRetries,
+		CreatedAt:   stream.CreatedAt,
+	}
+}
+
+func redactRecorders(recorders []types.Recorder) []types.RecorderResponse {
+	resp := make([]types.RecorderResponse, len(recorders))
+	for i := range recorders {
+		resp[i] = redactRecorder(&recorders[i])
+	}
+	return resp
+}
+
+func redactRecorder(recorder *types.Recorder) types.RecorderResponse {
+	return types.RecorderResponse{
+		ID:            recorder.ID,
+		Name:          recorder.Name,
+		Enabled:       recorder.Enabled,
+		Codec:         recorder.Codec,
+		Bitrate:       recorder.Bitrate,
+		RecordingMode: recorder.RecordingMode,
+		StorageMode:   recorder.StorageMode,
+		LocalPath:     recorder.LocalPath,
+		S3Endpoint:    recorder.S3Endpoint,
+		S3Bucket:      recorder.S3Bucket,
+		S3AccessKeyID: recorder.S3AccessKeyID,
+		HasS3Secret:   recorder.S3SecretAccessKey != "",
+		RetentionDays: recorder.RetentionDays,
+		CreatedAt:     recorder.CreatedAt,
+	}
+}
+
 // handleAPIConfig returns the full configuration for the frontend.
 func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
@@ -93,7 +143,7 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 		},
 
 		// Notifications - Webhook
-		WebhookURL:    cfg.WebhookURL,
+		WebhookHasURL: cfg.WebhookURL != "",
 		WebhookEvents: cfg.WebhookEvents,
 
 		// Notifications - Zabbix
@@ -113,12 +163,12 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 		EmailEvents:      cfg.EmailEvents,
 
 		// Recording
-		RecordingAPIKey:             cfg.RecordingAPIKey,
+		RecordingHasAPIKey:          cfg.RecordingAPIKey != "",
 		RecordingMaxDurationMinutes: cfg.RecordingMaxDurationMinutes,
 
 		// Entities
-		Streams:   cfg.Streams,
-		Recorders: cfg.Recorders,
+		Streams:   redactStreams(cfg.Streams),
+		Recorders: redactRecorders(cfg.Recorders),
 	}
 
 	s.writeJSON(w, http.StatusOK, resp)
@@ -141,6 +191,7 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
 	audioInputChanged := req.AudioInput != cfg.AudioInput
 
+	preserveWebhookURL(&req, &cfg)
 	preserveGraphClientSecret(&req, &cfg)
 
 	if errs := req.Validate(); len(errs) > 0 {
@@ -191,7 +242,7 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 // handleListStreams returns all configured streams.
 func (s *Server) handleListStreams(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
-	s.writeJSON(w, http.StatusOK, cfg.Streams)
+	s.writeJSON(w, http.StatusOK, redactStreams(cfg.Streams))
 }
 
 // handleGetStream returns a single stream by ID.
@@ -202,7 +253,7 @@ func (s *Server) handleGetStream(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusNotFound, "Stream not found")
 		return
 	}
-	s.writeJSON(w, http.StatusOK, stream)
+	s.writeJSON(w, http.StatusOK, redactStream(stream))
 }
 
 // StreamRequest contains fields for creating or updating streams.
@@ -262,7 +313,7 @@ func (s *Server) handleCreateStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.broadcastConfigChanged()
-	s.writeJSON(w, http.StatusCreated, stream)
+	s.writeJSON(w, http.StatusCreated, redactStream(stream))
 }
 
 // handleUpdateStream replaces a stream by ID.
@@ -324,7 +375,7 @@ func (s *Server) handleUpdateStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.broadcastConfigChanged()
-	s.writeJSON(w, http.StatusOK, updated)
+	s.writeJSON(w, http.StatusOK, redactStream(updated))
 }
 
 // handleDeleteStream deletes a stream by ID.
@@ -352,7 +403,7 @@ func (s *Server) handleDeleteStream(w http.ResponseWriter, r *http.Request) {
 // handleListRecorders returns all configured recorders.
 func (s *Server) handleListRecorders(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
-	s.writeJSON(w, http.StatusOK, cfg.Recorders)
+	s.writeJSON(w, http.StatusOK, redactRecorders(cfg.Recorders))
 }
 
 // handleGetRecorder returns a single recorder by ID.
@@ -363,7 +414,7 @@ func (s *Server) handleGetRecorder(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusNotFound, "Recorder not found")
 		return
 	}
-	s.writeJSON(w, http.StatusOK, recorder)
+	s.writeJSON(w, http.StatusOK, redactRecorder(recorder))
 }
 
 // RecorderRequest contains fields for creating or updating recorders.
@@ -429,7 +480,7 @@ func (s *Server) handleCreateRecorder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.broadcastConfigChanged()
-	s.writeJSON(w, http.StatusCreated, recorder)
+	s.writeJSON(w, http.StatusCreated, redactRecorder(recorder))
 }
 
 // handleUpdateRecorder replaces a recorder by ID.
@@ -478,7 +529,7 @@ func (s *Server) handleUpdateRecorder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.broadcastConfigChanged()
-	s.writeJSON(w, http.StatusOK, updated)
+	s.writeJSON(w, http.StatusOK, redactRecorder(updated))
 }
 
 // handleDeleteRecorder deletes a recorder by ID.
@@ -600,6 +651,16 @@ func deref[T any](p *T, fallback T) T {
 		return *p
 	}
 	return fallback
+}
+
+// preserveWebhookURL keeps the saved webhook URL when the request omits or
+// empties it. Skipped when ClearWebhookURL is true so Validate() can still
+// reject a non-empty submitted URL combined with clear=true.
+func preserveWebhookURL(req *config.SettingsUpdate, cfg *config.Snapshot) {
+	if req.ClearWebhookURL {
+		return
+	}
+	req.WebhookURL = cmp.Or(req.WebhookURL, cfg.WebhookURL)
 }
 
 // preserveGraphClientSecret keeps the saved Graph client secret when the request
