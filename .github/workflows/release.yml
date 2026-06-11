@@ -16,7 +16,21 @@ permissions:
   contents: read
 
 jobs:
+  checks:
+    name: Checks
+    uses: oszuidwest/.github-templates/.github/workflows/go-ci.yml@v2
+    with:
+      golangci-lint-version: v2.12.1
+      enable-frontend: true
+
+  shell-quality:
+    name: Shell Quality
+    uses: ./.github/workflows/shell-quality.yml
+
   release:
+    needs:
+      - checks
+      - shell-quality
     uses: oszuidwest/.github-templates/.github/workflows/go-release.yml@v2
     with:
       project-name: encoder
