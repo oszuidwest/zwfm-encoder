@@ -4,9 +4,10 @@
 package eventlog
 
 import (
-	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -120,11 +121,19 @@ type RecorderEventParams struct {
 
 // Logger records events to a JSON lines file.
 type Logger struct {
-	mu       sync.Mutex
-	filePath string
-	file     *os.File
-	encoder  *json.Encoder
+	mu           sync.Mutex
+	filePath     string
+	file         *os.File
+	encoder      *json.Encoder
+	maxSizeBytes int64
 }
+
+const (
+	// DefaultMaxLogSizeBytes is the active JSONL log size that triggers rotation.
+	DefaultMaxLogSizeBytes int64 = 50 * 1024 * 1024
+	rotatedLogSuffix             = ".1"
+	tailReadChunkSize      int64 = 64 * 1024
+)
 
 // DefaultLogPath returns the platform-specific log file path.
 func DefaultLogPath(port int) string {
@@ -145,6 +154,10 @@ func DefaultLogPath(port int) string {
 
 // NewLogger creates a new event logger at the specified path.
 func NewLogger(filePath string) (*Logger, error) {
+	return newLogger(filePath, DefaultMaxLogSizeBytes)
+}
+
+func newLogger(filePath string, maxSizeBytes int64) (*Logger, error) {
 	// Ensure directory exists
 	dir := filepath.Dir(filePath)
 	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // Log directory needs to be readable
@@ -159,9 +172,10 @@ func NewLogger(filePath string) (*Logger, error) {
 	}
 
 	return &Logger{
-		filePath: filePath,
-		file:     file,
-		encoder:  json.NewEncoder(file),
+		filePath:     filePath,
+		file:         file,
+		encoder:      json.NewEncoder(file),
+		maxSizeBytes: maxSizeBytes,
 	}, nil
 }
 
@@ -174,7 +188,63 @@ func (l *Logger) Log(event *Event) error {
 		event.Timestamp = time.Now()
 	}
 
-	return l.encoder.Encode(event)
+	if err := l.encoder.Encode(event); err != nil {
+		return err
+	}
+
+	return l.rotateIfNeededLocked()
+}
+
+func (l *Logger) rotateIfNeededLocked() error {
+	if l.maxSizeBytes <= 0 || l.file == nil {
+		return nil
+	}
+
+	info, err := l.file.Stat()
+	if err != nil {
+		return fmt.Errorf("stat log file: %w", err)
+	}
+	if info.Size() == 0 || info.Size() < l.maxSizeBytes {
+		return nil
+	}
+
+	return l.rotateLocked()
+}
+
+func (l *Logger) rotateLocked() error {
+	if err := l.file.Close(); err != nil {
+		return fmt.Errorf("close log before rotation: %w", err)
+	}
+	l.file = nil
+	l.encoder = nil
+
+	rotatedPath := rotatedLogPath(l.filePath)
+	if err := os.Remove(rotatedPath); err != nil && !os.IsNotExist(err) {
+		if reopenErr := l.openLocked(); reopenErr != nil {
+			return fmt.Errorf("remove rotated log: %w; reopen log: %w", err, reopenErr)
+		}
+		return fmt.Errorf("remove rotated log: %w", err)
+	}
+
+	if err := os.Rename(l.filePath, rotatedPath); err != nil {
+		if reopenErr := l.openLocked(); reopenErr != nil {
+			return fmt.Errorf("rotate log: %w; reopen log: %w", err, reopenErr)
+		}
+		return fmt.Errorf("rotate log: %w", err)
+	}
+
+	return l.openLocked()
+}
+
+func (l *Logger) openLocked() error {
+	//nolint:gosec // Log file needs to be readable
+	file, err := os.OpenFile(l.filePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("open log file: %w", err)
+	}
+	l.file = file
+	l.encoder = json.NewEncoder(file)
+	return nil
 }
 
 // LogStream records a stream event with error and retry details.
@@ -311,47 +381,53 @@ func ReadLast(filePath string, n, offset int, filter TypeFilter) ([]Event, bool,
 	if n <= 0 {
 		return []Event{}, false, nil
 	}
-
-	file, err := os.Open(filePath) //nolint:gosec // filePath is from DefaultLogPath, not user input
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []Event{}, false, nil
-		}
-		return nil, false, err
-	}
-	defer file.Close() //nolint:errcheck // Read-only operation, close error not critical
-
-	// Read all lines
-	var lines []string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, false, err
+	if offset < 0 {
+		offset = 0
 	}
 
-	// Parse events in reverse order (newest first), applying filter
 	// Collect n+1 events to determine hasMore without a second loop
 	events := make([]Event, 0, n+1)
 	skipped := 0
-	for i := len(lines) - 1; i >= 0 && len(events) <= n; i-- {
-		var event Event
-		if err := json.Unmarshal([]byte(lines[i]), &event); err != nil {
-			continue // Skip malformed lines
-		}
 
-		if !matchesFilter(event.Type, filter) {
-			continue
-		}
+	for _, path := range []string{filePath, rotatedLogPath(filePath)} {
+		err := readLinesReverse(path, func(line []byte) (bool, error) {
+			if len(events) > n {
+				return false, nil
+			}
 
-		// Skip events until we reach the offset
-		if skipped < offset {
-			skipped++
-			continue
-		}
+			if len(line) == 0 {
+				return true, nil
+			}
 
-		events = append(events, event)
+			// Parse events in reverse order (newest first), applying filter.
+			// Malformed lines can be left behind by crashes or manual edits.
+			event, ok := parseEventLine(line)
+			if !ok {
+				return true, nil
+			}
+
+			if !matchesFilter(event.Type, filter) {
+				return true, nil
+			}
+
+			// Skip events until we reach the offset.
+			if skipped < offset {
+				skipped++
+				return true, nil
+			}
+
+			events = append(events, event)
+			return len(events) <= n, nil
+		})
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, false, err
+		}
+		if len(events) > n {
+			break
+		}
 	}
 
 	// If we collected more than n, there are more events available
@@ -361,6 +437,65 @@ func ReadLast(filePath string, n, offset int, filter TypeFilter) ([]Event, bool,
 	}
 
 	return events, hasMore, nil
+}
+
+func readLinesReverse(filePath string, handle func([]byte) (bool, error)) error {
+	file, err := os.Open(filePath) //nolint:gosec // filePath is from DefaultLogPath, not user input
+	if err != nil {
+		return err
+	}
+	defer file.Close() //nolint:errcheck // Read-only operation, close error not critical
+
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+
+	offset := info.Size()
+	var tail []byte
+	for offset > 0 {
+		size := min(tailReadChunkSize, offset)
+		offset -= size
+
+		chunk := make([]byte, size)
+		if _, err := file.ReadAt(chunk, offset); err != nil && err != io.EOF {
+			return err
+		}
+
+		data := make([]byte, len(chunk), len(chunk)+len(tail))
+		copy(data, chunk)
+		data = append(data, tail...)
+		parts := bytes.Split(data, []byte{'\n'})
+		for i := len(parts) - 1; i >= 1; i-- {
+			cont, err := handle(parts[i])
+			if err != nil {
+				return err
+			}
+			if !cont {
+				return nil
+			}
+		}
+		tail = append([]byte(nil), parts[0]...)
+	}
+
+	if len(tail) == 0 {
+		return nil
+	}
+
+	_, err = handle(tail)
+	return err
+}
+
+func rotatedLogPath(filePath string) string {
+	return filePath + rotatedLogSuffix
+}
+
+func parseEventLine(line []byte) (Event, bool) {
+	var event Event
+	if err := json.Unmarshal(line, &event); err != nil {
+		return Event{}, false
+	}
+	return event, true
 }
 
 // matchesFilter reports whether t matches the given filter.

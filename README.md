@@ -159,6 +159,7 @@ The installer creates a minimal config file. All other settings are configured t
 ## Event Log
 
 The encoder logs all stream, silence, and recording events to a JSON Lines file for monitoring and debugging. Events are accessible via the web interface and REST API.
+The active log rotates at 50 MiB and keeps one previous file. The web interface and REST API read recent events from both files without loading the full log into memory.
 
 See [docs/events.md](docs/events.md) for the complete event reference.
 

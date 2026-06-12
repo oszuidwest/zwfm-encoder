@@ -9,6 +9,10 @@ This document describes all events emitted by the encoder to the event log (`enc
 | Linux/macOS | `/var/log/encoder/{port}/encoder.jsonl` |
 | Windows | `%PROGRAMDATA%\encoder\logs\{port}\encoder.jsonl` |
 
+The active log rotates at 50 MiB and keeps one previous file at the same path
+with a `.1` suffix. Recent event reads include both the active file and that
+previous file.
+
 ## Common Event Structure
 
 All events share this base structure:
