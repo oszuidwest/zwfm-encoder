@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
@@ -58,6 +59,162 @@ func TestValidateRecorderLocalPathRejectsTraversal(t *testing.T) {
 
 	if err := validateRecorderLocalPath(recorder); err == nil {
 		t.Fatal("validateRecorderLocalPath() error = nil, want error")
+	}
+}
+
+func TestBuildReadyResponseReady(t *testing.T) {
+	t.Parallel()
+
+	input := readyFixture()
+	resp, status := buildReadyResponse(&input)
+
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d", status, http.StatusOK)
+	}
+	if resp.Status != "ready" {
+		t.Fatalf("ready status = %q, want ready", resp.Status)
+	}
+	for name, component := range resp.Components {
+		if !component.OK {
+			t.Fatalf("component %q not ready: %+v", name, component)
+		}
+	}
+}
+
+func TestBuildReadyResponseFailures(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		component string
+		mutate    func(*readyInputs)
+	}{
+		{
+			name:      "ffmpeg missing",
+			component: "process",
+			mutate: func(in *readyInputs) {
+				in.ffmpegAvailable = false
+			},
+		},
+		{
+			name:      "encoder stopped",
+			component: "process",
+			mutate: func(in *readyInputs) {
+				in.encoderStatus.State = types.StateStopped
+			},
+		},
+		{
+			name:      "stream not stable",
+			component: "streams",
+			mutate: func(in *readyInputs) {
+				status := in.streamStatuses["stream-1"]
+				status.Stable = false
+				in.streamStatuses["stream-1"] = status
+			},
+		},
+		{
+			name:      "active silence",
+			component: "silence",
+			mutate: func(in *readyInputs) {
+				in.audioLevels.SilenceLevel = audio.SilenceLevelActive
+			},
+		},
+		{
+			name:      "hourly recorder stopped",
+			component: "recorders",
+			mutate: func(in *readyInputs) {
+				status := in.recorderStatuses["recorder-1"]
+				status.State = types.ProcessStopped
+				in.recorderStatuses["recorder-1"] = status
+			},
+		},
+		{
+			name:      "pending uploads",
+			component: "uploads",
+			mutate: func(in *readyInputs) {
+				in.pendingUploads = 1
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			input := readyFixture()
+			tt.mutate(&input)
+
+			resp, status := buildReadyResponse(&input)
+			if status != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want %d", status, http.StatusServiceUnavailable)
+			}
+			if resp.Status != "not_ready" {
+				t.Fatalf("ready status = %q, want not_ready", resp.Status)
+			}
+			if resp.Components[tt.component].OK {
+				t.Fatalf("component %q OK = true, want false; response = %+v", tt.component, resp)
+			}
+		})
+	}
+}
+
+func TestBuildReadyResponseAllowsStoppedOnDemandRecorder(t *testing.T) {
+	t.Parallel()
+
+	input := readyFixture()
+	input.recorders = []types.Recorder{
+		{
+			ID:            "recorder-ondemand",
+			Enabled:       true,
+			RecordingMode: types.RecordingOnDemand,
+		},
+	}
+	input.recorderStatuses = map[string]types.ProcessStatus{
+		"recorder-ondemand": {State: types.ProcessStopped},
+	}
+
+	resp, status := buildReadyResponse(&input)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d; response = %+v", status, http.StatusOK, resp)
+	}
+	if !resp.Components["recorders"].OK {
+		t.Fatalf("recorders component = %+v, want OK", resp.Components["recorders"])
+	}
+}
+
+func readyFixture() readyInputs {
+	return readyInputs{
+		ffmpegAvailable:    true,
+		recordingAvailable: true,
+		encoderStatus: types.EncoderStatus{
+			State: types.StateRunning,
+		},
+		streams: []types.Stream{
+			{
+				ID:      "stream-1",
+				Enabled: true,
+			},
+		},
+		streamStatuses: map[string]types.ProcessStatus{
+			"stream-1": {
+				State:  types.ProcessRunning,
+				Stable: true,
+			},
+		},
+		recorders: []types.Recorder{
+			{
+				ID:            "recorder-1",
+				Enabled:       true,
+				RecordingMode: types.RecordingHourly,
+			},
+		},
+		recorderStatuses: map[string]types.ProcessStatus{
+			"recorder-1": {
+				State: types.ProcessRunning,
+			},
+		},
+		audioLevels:    audio.AudioLevels{},
+		pendingUploads: 0,
 	}
 }
 

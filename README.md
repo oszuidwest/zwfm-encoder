@@ -196,6 +196,27 @@ Response example:
 
 No authentication required.
 
+## Readiness Endpoint
+
+`GET /ready` is a public production-readiness endpoint. It returns 200 only when the process is usable for broadcast monitoring: FFmpeg is available, the encoder is running, enabled streams are stable, no silence alarm is active, enabled hourly recorders are running, no recorder is in error, and no recording uploads are pending retry.
+
+The readiness rollup is intentionally strict: one pending recording upload makes the overall endpoint return `503` because the archive path is degraded. Monitoring that should only page for live broadcast impact should alert on the relevant components in the JSON body, such as `process`, `streams`, and `silence`, instead of the aggregate `status`. Planned off-air periods or other intentional silence also make the `silence` component not ready while the silence alarm is active.
+
+When any component is not ready, the endpoint returns 503 with component details:
+
+```json
+{
+  "status": "not_ready",
+  "components": {
+    "uploads": {
+      "ok": false,
+      "message": "recording uploads are pending retry",
+      "details": { "pending": 1, "max": 0 }
+    }
+  }
+}
+```
+
 ## Architecture
 
 ```mermaid

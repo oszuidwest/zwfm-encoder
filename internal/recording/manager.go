@@ -291,6 +291,18 @@ func (m *Manager) Statuses() map[string]types.ProcessStatus {
 	return statuses
 }
 
+// PendingUploadCount returns the total number of uploads waiting for retry.
+func (m *Manager) PendingUploadCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	count := 0
+	for _, recorder := range m.recorders {
+		count += recorder.PendingUploadCount()
+	}
+	return count
+}
+
 // startHourlyRetryScheduler retries failed hourly recorders and pending uploads at each hour boundary.
 func (m *Manager) startHourlyRetryScheduler() {
 	go func() {
