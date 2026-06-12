@@ -792,7 +792,7 @@ func streamUpdateBody(t *testing.T, password string, clearPassword bool) string 
 		Bitrate:       128,
 		MaxRetries:    3,
 	}
-	body, err := json.Marshal(req)
+	body, err := json.Marshal(req) //nolint:gosec // G117: test marshals the SRT password field.
 	if err != nil {
 		t.Fatalf("marshal StreamRequest: %v", err)
 	}
@@ -818,12 +818,12 @@ func TestHandleUpdateStreamPasswordKeepReplaceClear(t *testing.T) {
 		wantSecret  string
 		wantHasFlag string
 	}{
-		{
+		{ //nolint:gosec // G101: test fixture, not a real credential.
 			name:        "keep when empty",
 			wantSecret:  "srt-secret-269",
 			wantHasFlag: `"has_password":true`,
 		},
-		{
+		{ //nolint:gosec // G101: test fixture, not a real credential.
 			name:        "replace when set",
 			password:    "new-srt-secret",
 			wantSecret:  "new-srt-secret",

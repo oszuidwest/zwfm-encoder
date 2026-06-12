@@ -725,15 +725,14 @@ func deref[T any](p *T, fallback T) T {
 	return fallback
 }
 
-func preserveHiddenString(value *string, saved string) {
-	*value = cmp.Or(*value, saved)
-}
-
-func preserveSecret(value, saved string, clear bool, clearField, valueField string) (string, error) {
-	if clear && value != "" {
+// preserveSecret resolves a submitted secret against the stored one: empty
+// keeps the saved value, non-empty replaces it, and the clear flag blanks it.
+// A clear flag combined with a new value is rejected as ambiguous.
+func preserveSecret(value, saved string, clearRequested bool, clearField, valueField string) (string, error) {
+	if clearRequested && value != "" {
 		return "", fmt.Errorf("%s: conflicts with non-empty %s", clearField, valueField)
 	}
-	if clear {
+	if clearRequested {
 		return "", nil
 	}
 	return cmp.Or(value, saved), nil
@@ -744,10 +743,10 @@ func preserveSecret(value, saved string, clear bool, clearField, valueField stri
 // conflicts with newly submitted values.
 func preserveHiddenSettings(req *config.SettingsUpdate, cfg *config.Snapshot) {
 	if !req.ClearWebhookURL {
-		preserveHiddenString(&req.WebhookURL, cfg.WebhookURL)
+		req.WebhookURL = cmp.Or(req.WebhookURL, cfg.WebhookURL)
 	}
 	if !req.ClearGraphClientSecret {
-		preserveHiddenString(&req.GraphClientSecret, cfg.GraphClientSecret)
+		req.GraphClientSecret = cmp.Or(req.GraphClientSecret, cfg.GraphClientSecret)
 	}
 }
 

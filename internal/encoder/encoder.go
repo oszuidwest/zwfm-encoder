@@ -27,8 +27,9 @@ import (
 
 const (
 	// LevelUpdateSamples is the sample count between level updates.
-	LevelUpdateSamples    = 12000
-	distributorBufferSize = audio.SampleRate * audio.Channels * 2 / 10
+	LevelUpdateSamples = 12000
+	// distributorBufferSize holds ~100ms of PCM audio per read.
+	distributorBufferSize = audio.BytesPerSecond / 10
 )
 
 // ErrNoAudioInput is returned when no audio input device is configured.

@@ -88,7 +88,6 @@ const DEFAULT_STREAM = {
     password: '',
     has_password: false,
     clear_password: false,
-    _preClearPasswordSnapshot: null,
     codec: 'pcm',
     bitrate: 0,
     max_retries: 99
@@ -110,7 +109,6 @@ const DEFAULT_RECORDER = {
     s3_secret_access_key: '',
     has_s3_secret: false,
     clear_s3_secret: false,
-    _preClearS3SecretSnapshot: null,
     retention_days: 90
 };
 
@@ -119,6 +117,30 @@ const storageNeedsS3 = (mode) => mode === 's3' || mode === 'both';
 const recorderHasS3Secret = (form) => Boolean(
     form.s3_secret_access_key || (form.has_s3_secret && !form.clear_s3_secret)
 );
+
+/**
+ * Stages removal of a saved secret: snapshots the current input so undo can
+ * restore it, blanks the field, and sets the clear flag. The template
+ * disables the input while the flag is set so a typed value cannot conflict
+ * with the flag and 400 at the backend. Returns false when already cleared
+ * or the user cancels the confirm dialog.
+ */
+const clearSecretField = (form, field, flag, message) => {
+    if (form[flag] || !confirm(message)) return false;
+    form[`_preClear_${field}`] = form[field];
+    form[field] = '';
+    form[flag] = true;
+    return true;
+};
+
+/** Cancels a pending secret clear and restores the prior input. */
+const undoClearSecretField = (form, field, flag) => {
+    if (!form[flag]) return false;
+    form[field] = form[`_preClear_${field}`] ?? '';
+    form[flag] = false;
+    form[`_preClear_${field}`] = null;
+    return true;
+};
 
 // Bitrate options per codec (kbit/s). Exposed on window for Alpine.js template access.
 window.CODEC_BITRATES = {
@@ -247,11 +269,10 @@ document.addEventListener('alpine:init', () => {
             recordingMaxDurationMinutes: 240,
             silenceWebhook: '',
             clearWebhook: false,
-            _preClearWebhookSnapshot: null,
             webhookEvents: { silence_start: true, silence_end: true, audio_dump: true },
             zabbix: { server: '', port: 10051, host: '', silenceKey: '', uploadKey: '' },
             zabbixEvents: { silence_start: true, silence_end: true },
-            graph: { tenantId: '', clientId: '', clientSecret: '', clearSecret: false, _preClearSnapshot: null, fromAddress: '', recipients: '' },
+            graph: { tenantId: '', clientId: '', clientSecret: '', clearSecret: false, fromAddress: '', recipients: '' },
             emailEvents: { silence_start: true, silence_end: true, audio_dump: true },
             recordingApiKey: '',
             platform: ''
@@ -721,7 +742,6 @@ document.addEventListener('alpine:init', () => {
                 },
                 silenceWebhook: '', // Never pre-fill; empty = keep saved unless clearWebhook is true.
                 clearWebhook: false,
-                _preClearWebhookSnapshot: null,
                 webhookEvents: {
                     silence_start: this.config.webhook_events?.silence_start ?? true,
                     silence_end: this.config.webhook_events?.silence_end ?? true,
@@ -743,7 +763,6 @@ document.addEventListener('alpine:init', () => {
                     clientId: this.config.graph_client_id || '',
                     clientSecret: '', // Never pre-fill; empty = keep saved unless clearSecret is true.
                     clearSecret: false,
-                    _preClearSnapshot: null,
                     fromAddress: this.config.graph_from_address || '',
                     recipients: this.config.graph_recipients || ''
                 },
@@ -768,60 +787,22 @@ document.addEventListener('alpine:init', () => {
             this.settingsDirty = true;
         },
 
-        /**
-         * Stages removal of the saved webhook URL on next Save.
-         */
         clearWebhookURL() {
-            const form = this.settingsForm;
-            if (form.clearWebhook) return;
-            if (!confirm('Remove the saved webhook URL on save?')) return;
-            form._preClearWebhookSnapshot = { silenceWebhook: form.silenceWebhook };
-            form.silenceWebhook = '';
-            form.clearWebhook = true;
-            this.markSettingsDirty();
+            if (clearSecretField(this.settingsForm, 'silenceWebhook', 'clearWebhook',
+                'Remove the saved webhook URL on save?')) this.markSettingsDirty();
         },
 
-        /**
-         * Cancels a pending webhook URL clear and restores the prior input.
-         */
         undoClearWebhookURL() {
-            const form = this.settingsForm;
-            if (!form._preClearWebhookSnapshot) return;
-            form.silenceWebhook = form._preClearWebhookSnapshot.silenceWebhook;
-            form.clearWebhook = false;
-            form._preClearWebhookSnapshot = null;
-            this.markSettingsDirty();
+            if (undoClearSecretField(this.settingsForm, 'silenceWebhook', 'clearWebhook')) this.markSettingsDirty();
         },
 
-        /**
-         * Stages removal of the saved Graph client secret on next Save.
-         * Snapshots the current clientSecret input so undo can restore it,
-         * then clears the input and sets clearSecret=true so the payload
-         * sends clear_graph_client_secret=true with an empty value. The
-         * input is disabled in the template while clearSecret is true,
-         * preventing the user from typing a value that would conflict
-         * with the clear flag and 400 at the backend.
-         */
         clearGraphSecret() {
-            const graph = this.settingsForm.graph;
-            if (graph.clearSecret) return; // double-click guard
-            if (!confirm('Remove the saved Microsoft Graph client secret on save?')) return;
-            graph._preClearSnapshot = { clientSecret: graph.clientSecret };
-            graph.clientSecret = '';
-            graph.clearSecret = true;
-            this.markSettingsDirty();
+            if (clearSecretField(this.settingsForm.graph, 'clientSecret', 'clearSecret',
+                'Remove the saved Microsoft Graph client secret on save?')) this.markSettingsDirty();
         },
 
-        /**
-         * Cancels a pending Graph secret clear and restores the prior input.
-         */
         undoClearGraphSecret() {
-            const graph = this.settingsForm.graph;
-            if (!graph._preClearSnapshot) return;
-            graph.clientSecret = graph._preClearSnapshot.clientSecret;
-            graph.clearSecret = false;
-            graph._preClearSnapshot = null;
-            this.markSettingsDirty();
+            if (undoClearSecretField(this.settingsForm.graph, 'clientSecret', 'clearSecret')) this.markSettingsDirty();
         },
 
         /**
@@ -966,7 +947,6 @@ document.addEventListener('alpine:init', () => {
                     password: '',
                     has_password: stream.has_password || false,
                     clear_password: false,
-                    _preClearPasswordSnapshot: null,
                     codec: stream.codec || 'pcm',
                     bitrate: stream.bitrate || 0,
                     max_retries: stream.max_retries || 99,
@@ -980,22 +960,12 @@ document.addEventListener('alpine:init', () => {
         },
 
         clearStreamPassword() {
-            const form = this.streamForm;
-            if (form.clear_password) return;
-            if (!confirm('Remove the saved stream password on save?')) return;
-            form._preClearPasswordSnapshot = { password: form.password };
-            form.password = '';
-            form.clear_password = true;
-            this.markStreamFormDirty();
+            if (clearSecretField(this.streamForm, 'password', 'clear_password',
+                'Remove the saved stream password on save?')) this.markStreamFormDirty();
         },
 
         undoClearStreamPassword() {
-            const form = this.streamForm;
-            if (!form._preClearPasswordSnapshot) return;
-            form.password = form._preClearPasswordSnapshot.password;
-            form.clear_password = false;
-            form._preClearPasswordSnapshot = null;
-            this.markStreamFormDirty();
+            if (undoClearSecretField(this.streamForm, 'password', 'clear_password')) this.markStreamFormDirty();
         },
 
         showTab(tabId) {
@@ -1132,7 +1102,6 @@ document.addEventListener('alpine:init', () => {
                     s3_secret_access_key: '',
                     has_s3_secret: recorder.has_s3_secret || false,
                     clear_s3_secret: false,
-                    _preClearS3SecretSnapshot: null,
                     retention_days: recorder.retention_days || 90
                 };
             } else {
@@ -1150,22 +1119,12 @@ document.addEventListener('alpine:init', () => {
         },
 
         clearRecorderS3Secret() {
-            const form = this.recorderForm;
-            if (form.clear_s3_secret) return;
-            if (!confirm('Remove the saved S3 secret access key on save?')) return;
-            form._preClearS3SecretSnapshot = { s3_secret_access_key: form.s3_secret_access_key };
-            form.s3_secret_access_key = '';
-            form.clear_s3_secret = true;
-            this.markRecorderFormDirty();
+            if (clearSecretField(this.recorderForm, 's3_secret_access_key', 'clear_s3_secret',
+                'Remove the saved S3 secret access key on save?')) this.markRecorderFormDirty();
         },
 
         undoClearRecorderS3Secret() {
-            const form = this.recorderForm;
-            if (!form._preClearS3SecretSnapshot) return;
-            form.s3_secret_access_key = form._preClearS3SecretSnapshot.s3_secret_access_key;
-            form.clear_s3_secret = false;
-            form._preClearS3SecretSnapshot = null;
-            this.markRecorderFormDirty();
+            if (undoClearSecretField(this.recorderForm, 's3_secret_access_key', 'clear_s3_secret')) this.markRecorderFormDirty();
         },
 
         /**
