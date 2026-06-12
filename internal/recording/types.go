@@ -3,6 +3,7 @@ package recording
 
 import (
 	"errors"
+	"runtime"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
@@ -32,8 +33,20 @@ func (c *S3Config) IsConfigured() bool {
 	return c.Bucket != "" && c.AccessKeyID != "" && c.SecretAccessKey != ""
 }
 
-// DefaultTempDir is the default temporary directory for recordings.
-const DefaultTempDir = "/tmp/encoder-recordings"
+const (
+	// DefaultTempDir is the fallback temporary directory for non-systemd platforms.
+	DefaultTempDir = "/tmp/encoder-recordings"
+	// LinuxStateRecordingDir is the systemd StateDirectory-backed recording spool path.
+	LinuxStateRecordingDir = "/var/lib/encoder/recordings"
+)
+
+// DefaultSpoolDir returns the platform default directory for recording spool state.
+func DefaultSpoolDir() string {
+	if runtime.GOOS == "linux" {
+		return LinuxStateRecordingDir
+	}
+	return DefaultTempDir
+}
 
 // RecorderToS3Config extracts S3 configuration from a Recorder.
 func RecorderToS3Config(r *types.Recorder) *S3Config {

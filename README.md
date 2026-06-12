@@ -143,6 +143,8 @@ curl -X POST "http://<host>:8080/api/recordings/stop?recorder_id=1" \
 
 Configure the API key and maximum recording duration under Settings → Audio → Recording API. The `max_duration_minutes` limit automatically stops a recording after the configured time (0 = no limit).
 
+For local recording storage under the packaged systemd service, use `/var/lib/encoder/recordings`. The service owns this state directory even with `ProtectSystem=strict`. Custom archive paths need a systemd override that adds the path to `ReadWritePaths=`.
+
 ## Configuration
 
 Configuration is stored in `/etc/encoder/config.json` on production systems. For development, use the `-config` flag to specify a custom path, or place `config.json` next to the binary.

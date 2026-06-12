@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -27,6 +28,36 @@ func TestDerefReturnsValueWhenPresentFallbackWhenNil(t *testing.T) {
 	}
 	if got := deref(&value, "saved"); got != "explicit" {
 		t.Fatalf("deref(&explicit, saved) = %q, want %q", got, "explicit")
+	}
+}
+
+func TestValidateRecorderLocalPathCreatesWritableDirectory(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "archive")
+	recorder := &types.Recorder{
+		StorageMode: types.StorageLocal,
+		LocalPath:   path,
+	}
+
+	if err := validateRecorderLocalPath(recorder); err != nil {
+		t.Fatalf("validateRecorderLocalPath() error = %v", err)
+	}
+	if info, err := os.Stat(path); err != nil || !info.IsDir() {
+		t.Fatalf("local path stat = (%v, %v), want directory", info, err)
+	}
+}
+
+func TestValidateRecorderLocalPathRejectsTraversal(t *testing.T) {
+	t.Parallel()
+
+	recorder := &types.Recorder{
+		StorageMode: types.StorageBoth,
+		LocalPath:   t.TempDir() + "/../archive",
+	}
+
+	if err := validateRecorderLocalPath(recorder); err == nil {
+		t.Fatal("validateRecorderLocalPath() error = nil, want error")
 	}
 }
 
