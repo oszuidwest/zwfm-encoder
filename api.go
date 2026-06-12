@@ -835,6 +835,21 @@ type HealthResponse struct {
 	SilenceDetected bool `json:"silence_detected"`
 }
 
+// ReadyResponse is the response body for the readiness endpoint.
+type ReadyResponse struct {
+	Status     string                    `json:"status"`
+	Components map[string]ReadyComponent `json:"components"`
+}
+
+// ReadyComponent reports readiness for one subsystem.
+type ReadyComponent struct {
+	OK      bool           `json:"ok"`
+	Message string         `json:"message,omitempty"`
+	Details map[string]any `json:"details,omitempty"`
+}
+
+const readinessMaxPendingUploads = 0
+
 // handleHealth returns the health status of the encoder.
 // It returns 200 OK if healthy, 503 Service Unavailable if unhealthy.
 // Health is defined as: encoder running AND FFmpeg available.
@@ -866,6 +881,162 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		UptimeSeconds:    encoderStatus.UptimeSeconds,
 		SilenceDetected:  s.encoder.AudioLevels().SilenceLevel == audio.SilenceLevelActive,
 	})
+}
+
+// handleReady returns broadcast-readiness status for production monitoring.
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	cfg := s.config.Snapshot()
+	encoderStatus := s.encoder.Status()
+	resp, httpStatus := buildReadyResponse(&readyInputs{
+		ffmpegAvailable:    s.ffmpegAvailable,
+		recordingAvailable: s.encoder.RecordingAvailable(),
+		encoderStatus:      encoderStatus,
+		streams:            cfg.Streams,
+		streamStatuses:     s.encoder.StreamStatuses(cfg.Streams),
+		recorders:          cfg.Recorders,
+		recorderStatuses:   s.encoder.RecorderStatuses(),
+		audioLevels:        s.encoder.AudioLevels(),
+		pendingUploads:     s.encoder.PendingUploadCount(),
+	})
+	s.writeJSON(w, httpStatus, resp)
+}
+
+type readyInputs struct {
+	ffmpegAvailable    bool
+	recordingAvailable bool
+	encoderStatus      types.EncoderStatus
+	streams            []types.Stream
+	streamStatuses     map[string]types.ProcessStatus
+	recorders          []types.Recorder
+	recorderStatuses   map[string]types.ProcessStatus
+	audioLevels        audio.AudioLevels
+	pendingUploads     int
+}
+
+func buildReadyResponse(in *readyInputs) (resp ReadyResponse, httpStatus int) {
+	components := map[string]ReadyComponent{
+		"process":   readyProcess(in.ffmpegAvailable, &in.encoderStatus),
+		"streams":   readyStreams(in.streams, in.streamStatuses),
+		"silence":   readySilence(&in.audioLevels),
+		"recorders": readyRecorders(in.recordingAvailable, in.recorders, in.recorderStatuses),
+		"uploads":   readyUploads(in.pendingUploads),
+	}
+
+	status := "ready"
+	httpStatus = http.StatusOK
+	for _, component := range components {
+		if !component.OK {
+			status = "not_ready"
+			httpStatus = http.StatusServiceUnavailable
+			break
+		}
+	}
+
+	return ReadyResponse{
+		Status:     status,
+		Components: components,
+	}, httpStatus
+}
+
+func readyProcess(ffmpegAvailable bool, status *types.EncoderStatus) ReadyComponent {
+	details := map[string]any{
+		"ffmpeg_available": ffmpegAvailable,
+		"encoder_state":    status.State,
+	}
+	if !ffmpegAvailable {
+		return ReadyComponent{OK: false, Message: "ffmpeg is not available", Details: details}
+	}
+	if status.State != types.StateRunning {
+		return ReadyComponent{OK: false, Message: "encoder is not running", Details: details}
+	}
+	return ReadyComponent{OK: true, Details: details}
+}
+
+func readyStreams(streams []types.Stream, statuses map[string]types.ProcessStatus) ReadyComponent {
+	enabled := 0
+	notReady := []string{}
+	for _, stream := range streams {
+		if !stream.Enabled {
+			continue
+		}
+		enabled++
+		status := statuses[stream.ID]
+		if status.State == types.ProcessRunning && status.Stable && !status.Exhausted {
+			continue
+		}
+		notReady = append(notReady, stream.ID)
+	}
+
+	details := map[string]any{
+		"enabled":   enabled,
+		"not_ready": notReady,
+	}
+	if len(notReady) > 0 {
+		return ReadyComponent{OK: false, Message: "one or more enabled streams are not stable", Details: details}
+	}
+	return ReadyComponent{OK: true, Details: details}
+}
+
+func readySilence(levels *audio.AudioLevels) ReadyComponent {
+	details := map[string]any{
+		"silence_level": levels.SilenceLevel,
+		"left_db":       levels.Left,
+		"right_db":      levels.Right,
+	}
+	if levels.SilenceLevel == audio.SilenceLevelActive {
+		return ReadyComponent{OK: false, Message: "silence is active", Details: details}
+	}
+	return ReadyComponent{OK: true, Details: details}
+}
+
+func readyRecorders(
+	recordingAvailable bool,
+	recorders []types.Recorder,
+	statuses map[string]types.ProcessStatus,
+) ReadyComponent {
+	enabled := 0
+	notReady := []string{}
+	for i := range recorders {
+		recorder := &recorders[i]
+		if !recorder.Enabled {
+			continue
+		}
+		enabled++
+		status := statuses[recorder.ID]
+		if status.State == types.ProcessError {
+			notReady = append(notReady, recorder.ID)
+			continue
+		}
+		if recorder.RecordingMode == types.RecordingHourly &&
+			status.State != types.ProcessRunning &&
+			status.State != types.ProcessRotating {
+			notReady = append(notReady, recorder.ID)
+		}
+	}
+
+	details := map[string]any{
+		"enabled":             enabled,
+		"recording_available": recordingAvailable,
+		"not_ready":           notReady,
+	}
+	if enabled > 0 && !recordingAvailable {
+		return ReadyComponent{OK: false, Message: "recording manager is not available", Details: details}
+	}
+	if len(notReady) > 0 {
+		return ReadyComponent{OK: false, Message: "one or more enabled recorders are not ready", Details: details}
+	}
+	return ReadyComponent{OK: true, Details: details}
+}
+
+func readyUploads(pending int) ReadyComponent {
+	details := map[string]any{
+		"pending": pending,
+		"max":     readinessMaxPendingUploads,
+	}
+	if pending > readinessMaxPendingUploads {
+		return ReadyComponent{OK: false, Message: "recording uploads are pending retry", Details: details}
+	}
+	return ReadyComponent{OK: true, Details: details}
 }
 
 func countStableStreams(statuses map[string]types.ProcessStatus) int {

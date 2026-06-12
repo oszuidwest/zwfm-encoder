@@ -208,6 +208,14 @@ func (e *Encoder) RecorderStatuses() map[string]types.ProcessStatus {
 	return e.recordingManager.Statuses()
 }
 
+// PendingUploadCount returns the number of recording uploads waiting for retry.
+func (e *Encoder) PendingUploadCount() int {
+	if e.recordingManager == nil {
+		return 0
+	}
+	return e.recordingManager.PendingUploadCount()
+}
+
 // State returns the current encoder state.
 func (e *Encoder) State() types.EncoderState {
 	e.mu.RLock()

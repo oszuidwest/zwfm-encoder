@@ -425,6 +425,13 @@ func (r *GenericRecorder) Status() types.ProcessStatus {
 	}
 }
 
+// PendingUploadCount returns the number of uploads waiting for retry.
+func (r *GenericRecorder) PendingUploadCount() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.retryQueue)
+}
+
 // IsRecording reports whether recording is currently in progress.
 func (r *GenericRecorder) IsRecording() bool {
 	r.mu.RLock()

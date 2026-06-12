@@ -196,6 +196,25 @@ Response example:
 
 No authentication required.
 
+## Readiness Endpoint
+
+`GET /ready` is a public production-readiness endpoint. It returns 200 only when the process is usable for broadcast monitoring: FFmpeg is available, the encoder is running, enabled streams are stable, no silence alarm is active, enabled hourly recorders are running, no recorder is in error, and no recording uploads are pending retry.
+
+When any component is not ready, the endpoint returns 503 with component details:
+
+```json
+{
+  "status": "not_ready",
+  "components": {
+    "uploads": {
+      "ok": false,
+      "message": "recording uploads are pending retry",
+      "details": { "pending": 1, "max": 0 }
+    }
+  }
+}
+```
+
 ## Architecture
 
 ```mermaid
