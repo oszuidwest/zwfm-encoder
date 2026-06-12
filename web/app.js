@@ -63,6 +63,28 @@ const API = {
     RECORDING_REGENERATE_KEY: '/api/recording/regenerate-key',
 };
 
+/**
+ * Performs an API request with an optional JSON body. Returns the parsed
+ * response body, or null when there is none (e.g. 204 No Content). Throws
+ * an Error with the server-supplied message on HTTP errors; validation
+ * error lists are exposed on err.errors.
+ */
+const requestJSON = async (url, { method = 'GET', body } = {}) => {
+    const options = { method };
+    if (body !== undefined) {
+        options.headers = { 'Content-Type': 'application/json' };
+        options.body = JSON.stringify(body);
+    }
+    const response = await fetch(url, options);
+    const result = await response.json().catch(() => null);
+    if (!response.ok) {
+        const error = new Error(result?.error || `HTTP ${response.status}`);
+        error.errors = result?.errors;
+        throw error;
+    }
+    return result;
+};
+
 /** Formats milliseconds to human-readable smart units (ms/s/m). */
 const formatSmartDuration = (ms) => {
     if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -373,11 +395,7 @@ document.addEventListener('alpine:init', () => {
          */
         async loadConfig() {
             try {
-                const response = await fetch(API.CONFIG);
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
-                const data = await response.json();
+                const data = await requestJSON(API.CONFIG);
                 this.config = data;
                 this.configLoaded = true;
 
@@ -397,11 +415,8 @@ document.addEventListener('alpine:init', () => {
          */
         async refreshDevices() {
             try {
-                const response = await fetch(API.DEVICES);
-                if (response.ok) {
-                    const data = await response.json();
-                    this.devices = data.devices || [];
-                }
+                const data = await requestJSON(API.DEVICES);
+                this.devices = data.devices || [];
             } catch {
                 // Silently fail - devices will show stale data
             }
@@ -819,10 +834,9 @@ document.addEventListener('alpine:init', () => {
         async updateAudioInput() {
             const prev = this.config.audio_input;
             try {
-                const response = await fetch(API.SETTINGS, {
+                await requestJSON(API.SETTINGS, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
+                    body: {
                         audio_input: this.config.audio_input,
                         silence_threshold: this.config.silence_threshold,
                         silence_duration_ms: this.config.silence_duration_ms,
@@ -846,23 +860,18 @@ document.addEventListener('alpine:init', () => {
                         graph_recipients: this.config.graph_recipients,
                         email_events: this.config.email_events,
                         recording_max_duration_minutes: this.config.recording_max_duration_minutes
-                    })
-                });
-                if (!response.ok) {
-                    const data = await response.json();
-                    // Handle multiple errors array - show each as separate toast
-                    if (data.errors && data.errors.length > 0) {
-                        this.config.audio_input = prev;
-                        for (const err of data.errors) {
-                            this.showToast(err, 'error');
-                        }
-                        return;
                     }
-                    throw new Error(data.error || `HTTP ${response.status}`);
-                }
+                });
                 this.showToast('Audio input updated', 'success');
             } catch (err) {
                 this.config.audio_input = prev;
+                // Show each validation error as a separate toast
+                if (err.errors?.length) {
+                    for (const msg of err.errors) {
+                        this.showToast(msg, 'error');
+                    }
+                    return;
+                }
                 this.showToast(`Failed to update audio input: ${err.message}`, 'error');
             }
         },
@@ -905,29 +914,20 @@ document.addEventListener('alpine:init', () => {
             };
 
             try {
-                const response = await fetch(API.SETTINGS, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                if (!response.ok) {
-                    const data = await response.json();
-                    // Handle multiple errors array - show each as separate toast
-                    if (data.errors && data.errors.length > 0) {
-                        for (const err of data.errors) {
-                            this.showToast(err, 'error');
-                        }
-                        return;
-                    }
-                    throw new Error(data.error || `HTTP ${response.status}`);
-                }
+                await requestJSON(API.SETTINGS, { method: 'POST', body: payload });
 
                 // Reload config in background to sync state
                 this.loadConfig();
                 this.showDashboard();
                 this.showToast('Settings saved', 'success');
             } catch (err) {
+                // Show each validation error as a separate toast
+                if (err.errors?.length) {
+                    for (const msg of err.errors) {
+                        this.showToast(msg, 'error');
+                    }
+                    return;
+                }
                 this.showToast(`Failed to save settings: ${err.message}`, 'error');
             } finally {
                 this.saving = false;
@@ -994,27 +994,13 @@ document.addEventListener('alpine:init', () => {
             }
 
             try {
-                let response;
+                let result;
                 if (this.isEditMode) {
                     data.enabled = this.streamForm.enabled;
                     data.clear_password = this.streamForm.clear_password || false;
-                    response = await fetch(`${API.STREAMS}/${this.streamForm.id}`, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(data)
-                    });
+                    result = await requestJSON(`${API.STREAMS}/${this.streamForm.id}`, { method: 'PUT', body: data });
                 } else {
-                    response = await fetch(API.STREAMS, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(data)
-                    });
-                }
-
-                const result = await response.json();
-
-                if (!response.ok) {
-                    throw new Error(result.error || `HTTP ${response.status}`);
+                    result = await requestJSON(API.STREAMS, { method: 'POST', body: data });
                 }
 
                 // Optimistic UI update for immediate feedback
@@ -1054,14 +1040,7 @@ document.addEventListener('alpine:init', () => {
             this.deletingStreams[id] = stream.created_at;
 
             try {
-                const response = await fetch(`${API.STREAMS}/${id}`, {
-                    method: 'DELETE'
-                });
-
-                if (!response.ok) {
-                    const result = await response.json();
-                    throw new Error(result.error || `HTTP ${response.status}`);
-                }
+                await requestJSON(`${API.STREAMS}/${id}`, { method: 'DELETE' });
 
                 // Success - config_changed will trigger loadConfig()
                 if (returnToDashboard) this.showDashboard();
@@ -1186,26 +1165,12 @@ document.addEventListener('alpine:init', () => {
             }
 
             try {
-                let response;
+                let result;
                 if (this.isRecorderEditMode) {
                     data.clear_s3_secret = this.recorderForm.clear_s3_secret || false;
-                    response = await fetch(`${API.RECORDERS}/${this.recorderForm.id}`, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(data)
-                    });
+                    result = await requestJSON(`${API.RECORDERS}/${this.recorderForm.id}`, { method: 'PUT', body: data });
                 } else {
-                    response = await fetch(API.RECORDERS, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(data)
-                    });
-                }
-
-                const result = await response.json();
-
-                if (!response.ok) {
-                    throw new Error(result.error || `HTTP ${response.status}`);
+                    result = await requestJSON(API.RECORDERS, { method: 'POST', body: data });
                 }
 
                 // Optimistic UI update for immediate feedback
@@ -1245,14 +1210,7 @@ document.addEventListener('alpine:init', () => {
             this.deletingRecorders[id] = recorder.created_at;
 
             try {
-                const response = await fetch(`${API.RECORDERS}/${id}`, {
-                    method: 'DELETE'
-                });
-
-                if (!response.ok) {
-                    const result = await response.json();
-                    throw new Error(result.error || `HTTP ${response.status}`);
-                }
+                await requestJSON(`${API.RECORDERS}/${id}`, { method: 'DELETE' });
 
                 // Success - config_changed will trigger loadConfig()
                 if (returnToDashboard) this.showDashboard();
@@ -1270,14 +1228,7 @@ document.addEventListener('alpine:init', () => {
          */
         async recorderAction(id, action) {
             try {
-                const response = await fetch(`${API.RECORDERS}/${id}/${action}`, {
-                    method: 'POST'
-                });
-
-                if (!response.ok) {
-                    const result = await response.json();
-                    throw new Error(result.error || `HTTP ${response.status}`);
-                }
+                await requestJSON(`${API.RECORDERS}/${id}/${action}`, { method: 'POST' });
             } catch (err) {
                 this.showToast(`Failed to ${action} recorder: ${err.message}`, 'error');
             }
@@ -1300,28 +1251,14 @@ document.addEventListener('alpine:init', () => {
                     payload.recorder_id = this.recorderForm.id;
                 }
 
-                const response = await fetch(API.RECORDERS_TEST_S3, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                const result = await response.json();
-
+                await requestJSON(API.RECORDERS_TEST_S3, { method: 'POST', body: payload });
                 this.testStates.recorderS3.pending = false;
-                this.testStates.recorderS3.text = response.ok ? 'Connected!' : 'Failed';
-
-                if (!response.ok) {
-                    this.showToast(`S3 test failed: ${result.error || 'Unknown error'}`, 'error');
-                }
-
-                setTimeout(() => {
-                    this.testStates.recorderS3.text = 'Test Connection';
-                }, TEST_FEEDBACK_MS);
+                this.testStates.recorderS3.text = 'Connected!';
             } catch (err) {
                 this.testStates.recorderS3.pending = false;
                 this.testStates.recorderS3.text = 'Failed';
                 this.showToast(`S3 test failed: ${err.message}`, 'error');
+            } finally {
                 setTimeout(() => {
                     this.testStates.recorderS3.text = 'Test Connection';
                 }, TEST_FEEDBACK_MS);
@@ -1476,17 +1413,14 @@ document.addEventListener('alpine:init', () => {
                 if (this.eventFilter) {
                     params.set('type', this.eventFilter);
                 }
-                const response = await fetch(`/api/events?${params}`);
-                if (response.ok) {
-                    const data = await response.json();
-                    const newEvents = (data.events || []).map(e => ({ ...e, expanded: false }));
-                    if (reset) {
-                        this.events = newEvents;
-                    } else {
-                        this.events = [...this.events, ...newEvents];
-                    }
-                    this.eventsHasMore = data.has_more || false;
+                const data = await requestJSON(`/api/events?${params}`);
+                const newEvents = (data.events || []).map(e => ({ ...e, expanded: false }));
+                if (reset) {
+                    this.events = newEvents;
+                } else {
+                    this.events = [...this.events, ...newEvents];
                 }
+                this.eventsHasMore = data.has_more || false;
             } catch (error) {
                 console.error('Failed to load events:', error);
             } finally {
@@ -1766,27 +1700,15 @@ document.addEventListener('alpine:init', () => {
             }
 
             try {
-                const response = await fetch(`${API.NOTIFICATIONS_TEST}/${type}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                const result = await response.json();
-
+                await requestJSON(`${API.NOTIFICATIONS_TEST}/${type}`, { method: 'POST', body: payload });
                 this.testStates[type].pending = false;
-                this.testStates[type].text = response.ok ? 'Sent!' : 'Failed';
-
-                if (!response.ok) {
-                    const typeName = type.charAt(0).toUpperCase() + type.slice(1);
-                    this.showToast(`${typeName} test failed: ${result.error || 'Unknown error'}`, 'error');
-                }
-
-                setTimeout(() => { this.testStates[type].text = 'Test'; }, TEST_FEEDBACK_MS);
+                this.testStates[type].text = 'Sent!';
             } catch (err) {
                 this.testStates[type].pending = false;
                 this.testStates[type].text = 'Failed';
-                this.showToast(`Test failed: ${err.message}`, 'error');
+                const typeName = type.charAt(0).toUpperCase() + type.slice(1);
+                this.showToast(`${typeName} test failed: ${err.message}`, 'error');
+            } finally {
                 setTimeout(() => { this.testStates[type].text = 'Test'; }, TEST_FEEDBACK_MS);
             }
         },
@@ -1799,17 +1721,9 @@ document.addEventListener('alpine:init', () => {
             if (!confirm('Regenerate API key? Existing integrations will stop working.')) return;
 
             try {
-                const response = await fetch(API.RECORDING_REGENERATE_KEY, {
-                    method: 'POST'
-                });
+                const result = await requestJSON(API.RECORDING_REGENERATE_KEY, { method: 'POST' });
 
-                const result = await response.json();
-
-                if (!response.ok) {
-                    throw new Error(result.error || `HTTP ${response.status}`);
-                }
-
-                if (result.api_key) {
+                if (result?.api_key) {
                     // Update form if open - field update is the feedback
                     if (this.settingsForm) {
                         this.settingsForm.recordingApiKey = result.api_key;
