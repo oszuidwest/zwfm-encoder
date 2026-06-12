@@ -86,6 +86,9 @@ const DEFAULT_STREAM = {
     port: 8080,
     stream_id: '',
     password: '',
+    has_password: false,
+    clear_password: false,
+    _preClearPasswordSnapshot: null,
     codec: 'pcm',
     bitrate: 0,
     max_retries: 99
@@ -106,12 +109,16 @@ const DEFAULT_RECORDER = {
     s3_access_key_id: '',
     s3_secret_access_key: '',
     has_s3_secret: false,
+    clear_s3_secret: false,
+    _preClearS3SecretSnapshot: null,
     retention_days: 90
 };
 
 const storageNeedsLocal = (mode) => mode === 'local' || mode === 'both';
 const storageNeedsS3 = (mode) => mode === 's3' || mode === 'both';
-const recorderHasS3Secret = (form) => Boolean(form.s3_secret_access_key || form.has_s3_secret);
+const recorderHasS3Secret = (form) => Boolean(
+    form.s3_secret_access_key || (form.has_s3_secret && !form.clear_s3_secret)
+);
 
 // Bitrate options per codec (kbit/s). Exposed on window for Alpine.js template access.
 window.CODEC_BITRATES = {
@@ -957,6 +964,9 @@ document.addEventListener('alpine:init', () => {
                     port: stream.port,
                     stream_id: stream.stream_id || '',
                     password: '',
+                    has_password: stream.has_password || false,
+                    clear_password: false,
+                    _preClearPasswordSnapshot: null,
                     codec: stream.codec || 'pcm',
                     bitrate: stream.bitrate || 0,
                     max_retries: stream.max_retries || 99,
@@ -967,6 +977,25 @@ document.addEventListener('alpine:init', () => {
             }
             this.streamFormDirty = false;
             this.view = 'stream-form';
+        },
+
+        clearStreamPassword() {
+            const form = this.streamForm;
+            if (form.clear_password) return;
+            if (!confirm('Remove the saved stream password on save?')) return;
+            form._preClearPasswordSnapshot = { password: form.password };
+            form.password = '';
+            form.clear_password = true;
+            this.markStreamFormDirty();
+        },
+
+        undoClearStreamPassword() {
+            const form = this.streamForm;
+            if (!form._preClearPasswordSnapshot) return;
+            form.password = form._preClearPasswordSnapshot.password;
+            form.clear_password = false;
+            form._preClearPasswordSnapshot = null;
+            this.markStreamFormDirty();
         },
 
         showTab(tabId) {
@@ -998,6 +1027,7 @@ document.addEventListener('alpine:init', () => {
                 let response;
                 if (this.isEditMode) {
                     data.enabled = this.streamForm.enabled;
+                    data.clear_password = this.streamForm.clear_password || false;
                     response = await fetch(`${API.STREAMS}/${this.streamForm.id}`, {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
@@ -1101,6 +1131,8 @@ document.addEventListener('alpine:init', () => {
                     s3_access_key_id: recorder.s3_access_key_id || '',
                     s3_secret_access_key: '',
                     has_s3_secret: recorder.has_s3_secret || false,
+                    clear_s3_secret: false,
+                    _preClearS3SecretSnapshot: null,
                     retention_days: recorder.retention_days || 90
                 };
             } else {
@@ -1115,6 +1147,25 @@ document.addEventListener('alpine:init', () => {
 
         markRecorderFormDirty() {
             this.recorderFormDirty = true;
+        },
+
+        clearRecorderS3Secret() {
+            const form = this.recorderForm;
+            if (form.clear_s3_secret) return;
+            if (!confirm('Remove the saved S3 secret access key on save?')) return;
+            form._preClearS3SecretSnapshot = { s3_secret_access_key: form.s3_secret_access_key };
+            form.s3_secret_access_key = '';
+            form.clear_s3_secret = true;
+            this.markRecorderFormDirty();
+        },
+
+        undoClearRecorderS3Secret() {
+            const form = this.recorderForm;
+            if (!form._preClearS3SecretSnapshot) return;
+            form.s3_secret_access_key = form._preClearS3SecretSnapshot.s3_secret_access_key;
+            form.clear_s3_secret = false;
+            form._preClearS3SecretSnapshot = null;
+            this.markRecorderFormDirty();
         },
 
         /**
@@ -1178,6 +1229,7 @@ document.addEventListener('alpine:init', () => {
             try {
                 let response;
                 if (this.isRecorderEditMode) {
+                    data.clear_s3_secret = this.recorderForm.clear_s3_secret || false;
                     response = await fetch(`${API.RECORDERS}/${this.recorderForm.id}`, {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },

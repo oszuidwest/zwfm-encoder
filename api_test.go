@@ -13,6 +13,7 @@ import (
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
+	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
@@ -724,6 +725,216 @@ func TestRedactionHelpersOmitSecretFields(t *testing.T) {
 	}
 	assertNotContains(t, recorderBody, "helper-recorder-secret", `"s3_secret_access_key":"`)
 	assertContains(t, recorderBody, `"has_s3_secret":true`)
+}
+
+func TestPreserveSecretKeepReplaceClearConflict(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		value     string
+		clear     bool
+		want      string
+		wantError string
+	}{
+		{
+			name: "keep when empty",
+			want: "saved-secret",
+		},
+		{
+			name:  "replace when set",
+			value: "new-secret",
+			want:  "new-secret",
+		},
+		{
+			name:  "clear when flagged",
+			clear: true,
+		},
+		{
+			name:      "conflict when clear and set",
+			value:     "new-secret",
+			clear:     true,
+			wantError: "clear_secret: conflicts with non-empty secret",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := preserveSecret(tt.value, "saved-secret", tt.clear, "clear_secret", "secret")
+			if tt.wantError != "" {
+				if err == nil || err.Error() != tt.wantError {
+					t.Fatalf("preserveSecret() error = %v, want %q", err, tt.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("preserveSecret() error = %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("preserveSecret() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func streamUpdateBody(t *testing.T, password string, clearPassword bool) string {
+	t.Helper()
+	req := StreamRequest{
+		Enabled:       true,
+		Host:          "stream.example.com",
+		Port:          9000,
+		Password:      password,
+		ClearPassword: clearPassword,
+		StreamID:      "studio",
+		Codec:         types.CodecMP3,
+		Bitrate:       128,
+		MaxRetries:    3,
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal StreamRequest: %v", err)
+	}
+	return string(body)
+}
+
+func putStream(t *testing.T, s *Server, id, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPut, "/api/streams/"+id, bytes.NewBufferString(body))
+	req.SetPathValue("id", id)
+	rec := httptest.NewRecorder()
+	s.handleUpdateStream(rec, req)
+	return rec
+}
+
+func TestHandleUpdateStreamPasswordKeepReplaceClear(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		password    string
+		clear       bool
+		wantSecret  string
+		wantHasFlag string
+	}{
+		{
+			name:        "keep when empty",
+			wantSecret:  "srt-secret-269",
+			wantHasFlag: `"has_password":true`,
+		},
+		{
+			name:        "replace when set",
+			password:    "new-srt-secret",
+			wantSecret:  "new-srt-secret",
+			wantHasFlag: `"has_password":true`,
+		},
+		{
+			name:        "clear when flagged",
+			clear:       true,
+			wantHasFlag: `"has_password":false`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			fixture := seededSensitiveServer(t)
+			fixture.server.encoder = &encoder.Encoder{}
+
+			rec := putStream(t, fixture.server, fixture.streamID, streamUpdateBody(t, tt.password, tt.clear))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+			stream := fixture.server.config.Stream(fixture.streamID)
+			if stream == nil {
+				t.Fatal("updated stream not found")
+			}
+			if stream.Password != tt.wantSecret {
+				t.Fatalf("stream password = %q, want %q", stream.Password, tt.wantSecret)
+			}
+			forbidden := []string{fixture.streamPassword, `"password":"`}
+			if tt.password != "" {
+				forbidden = append(forbidden, tt.password)
+			}
+			assertNotContains(t, rec.Body.Bytes(), forbidden...)
+			assertContains(t, rec.Body.Bytes(), tt.wantHasFlag)
+		})
+	}
+}
+
+func TestHandleUpdateStreamClearPasswordConflictsWithNewValue(t *testing.T) {
+	t.Parallel()
+
+	fixture := seededSensitiveServer(t)
+	fixture.server.encoder = &encoder.Encoder{}
+
+	rec := putStream(t, fixture.server, fixture.streamID, streamUpdateBody(t, "new-srt-secret", true))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if got := decodeError(t, rec.Body.Bytes()); got != "clear_password: conflicts with non-empty password" {
+		t.Fatalf("error = %q, want conflict error", got)
+	}
+	stream := fixture.server.config.Stream(fixture.streamID)
+	if stream == nil {
+		t.Fatal("stream not found")
+	}
+	if stream.Password != fixture.streamPassword {
+		t.Fatalf("stream password = %q, want unchanged %q", stream.Password, fixture.streamPassword)
+	}
+}
+
+func recorderUpdateBody(t *testing.T, secret string, clearS3Secret bool) string {
+	t.Helper()
+	req := RecorderRequest{
+		Name:              "S3 Recorder",
+		Enabled:           true,
+		Codec:             types.CodecMP3,
+		Bitrate:           128,
+		RecordingMode:     types.RecordingHourly,
+		StorageMode:       types.StorageS3,
+		S3Bucket:          "recordings",
+		S3AccessKeyID:     "access-key-269",
+		S3SecretAccessKey: secret,
+		ClearS3Secret:     clearS3Secret,
+		RetentionDays:     90,
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal RecorderRequest: %v", err)
+	}
+	return string(body)
+}
+
+func TestHandleUpdateRecorderClearS3SecretConflictsWithNewValue(t *testing.T) {
+	t.Parallel()
+
+	fixture := seededSensitiveServer(t)
+	req := httptest.NewRequest(
+		http.MethodPut,
+		"/api/recorders/"+fixture.recorderID,
+		bytes.NewBufferString(recorderUpdateBody(t, "new-s3-secret", true)),
+	)
+	req.SetPathValue("id", fixture.recorderID)
+	rec := httptest.NewRecorder()
+
+	fixture.server.handleUpdateRecorder(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if got := decodeError(t, rec.Body.Bytes()); got != "clear_s3_secret: conflicts with non-empty s3_secret_access_key" {
+		t.Fatalf("error = %q, want conflict error", got)
+	}
+	recorder := fixture.server.config.Recorder(fixture.recorderID)
+	if recorder == nil {
+		t.Fatal("recorder not found")
+	}
+	if recorder.S3SecretAccessKey != fixture.s3Secret {
+		t.Fatalf("recorder S3 secret = %q, want unchanged %q", recorder.S3SecretAccessKey, fixture.s3Secret)
+	}
 }
 
 // TestHandleAPITestEmailOmittedSecretFallsBackToSaved (#243) pins that a

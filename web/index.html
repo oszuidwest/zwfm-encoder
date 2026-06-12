@@ -769,8 +769,16 @@
                             <div class="group">
                                 <label for="stream-password">Password</label>
                                 <input id="stream-password" type="password"
-                                       :placeholder="isEditMode ? 'Leave empty to keep' : 'Optional'"
-                                       x-model="streamForm.password" @input="markStreamFormDirty()">
+                                       :placeholder="streamForm.clear_password ? '(will be cleared on save)' : (isEditMode && streamForm.has_password ? '••••••••' : (isEditMode ? 'Leave empty to keep' : 'Optional'))"
+                                       x-model="streamForm.password"
+                                       @input="markStreamFormDirty()"
+                                       :disabled="streamForm.clear_password"
+                                       aria-describedby="stream-password-hint">
+                                <span id="stream-password-hint" class="input-hint" x-show="isEditMode">Leave empty to keep, type new value to replace, or click Clear to remove on save.</span>
+                                <div class="secret-actions">
+                                    <button class="btn" data-variant="danger" data-size="sm" type="button" tabindex="0" x-show="isEditMode && streamForm.has_password && !streamForm.clear_password" @click="clearStreamPassword()">Clear saved password</button>
+                                    <button class="btn" data-variant="secondary" data-size="sm" type="button" tabindex="0" x-show="streamForm.clear_password" @click="undoClearStreamPassword()">Undo clear</button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -976,9 +984,16 @@
                             <div class="group">
                                 <label for="recorder-secret-key">Secret Access Key</label>
                                 <input id="recorder-secret-key" type="password"
-                                       :placeholder="isRecorderEditMode ? 'Leave empty to keep' : 'Enter secret key'"
+                                       :placeholder="recorderForm.clear_s3_secret ? '(will be cleared on save)' : (isRecorderEditMode && recorderForm.has_s3_secret ? '••••••••' : (isRecorderEditMode ? 'Leave empty to keep' : 'Enter secret key'))"
                                        x-model="recorderForm.s3_secret_access_key"
-                                       @input="markRecorderFormDirty()">
+                                       @input="markRecorderFormDirty()"
+                                       :disabled="recorderForm.clear_s3_secret"
+                                       aria-describedby="recorder-secret-key-hint">
+                                <span id="recorder-secret-key-hint" class="input-hint" x-show="isRecorderEditMode">Leave empty to keep, type new value to replace, or click Clear to remove on save.</span>
+                                <div class="secret-actions">
+                                    <button class="btn" data-variant="danger" data-size="sm" type="button" tabindex="0" x-show="isRecorderEditMode && recorderForm.has_s3_secret && !recorderForm.clear_s3_secret" @click="clearRecorderS3Secret()">Clear saved secret</button>
+                                    <button class="btn" data-variant="secondary" data-size="sm" type="button" tabindex="0" x-show="recorderForm.clear_s3_secret" @click="undoClearRecorderS3Secret()">Undo clear</button>
+                                </div>
                             </div>
                         </div>
                         <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0"

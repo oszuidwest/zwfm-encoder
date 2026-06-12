@@ -25,8 +25,11 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// LevelUpdateSamples is the sample count between level updates.
-const LevelUpdateSamples = 12000
+const (
+	// LevelUpdateSamples is the sample count between level updates.
+	LevelUpdateSamples    = 12000
+	distributorBufferSize = audio.SampleRate * audio.Channels * 2 / 10
+)
 
 // ErrNoAudioInput is returned when no audio input device is configured.
 var ErrNoAudioInput = errors.New("no audio input configured")
@@ -702,7 +705,7 @@ func (e *Encoder) startEnabledStreams() {
 
 // runDistributor reads PCM audio and distributes it to streams, recorders, and silence detection.
 func (e *Encoder) runDistributor() {
-	buf := make([]byte, 19200) // ~100ms of audio at 48kHz stereo
+	buf := make([]byte, distributorBufferSize)
 
 	distributor := NewDistributor(DistributorConfig{
 		SilenceDetect:      e.silenceDetect,
