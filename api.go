@@ -274,6 +274,8 @@ type StreamRequest struct {
 	Port int `json:"port"`
 	// Password is the SRT encryption passphrase.
 	Password string `json:"password"` //nolint:gosec // G117: intentional field for SRT stream auth
+	// ClearPassword removes the saved password when Password is empty.
+	ClearPassword bool `json:"clear_password"`
 	// StreamID identifies the stream at the destination server.
 	StreamID string `json:"stream_id"`
 	// Codec selects the audio codec.
@@ -290,12 +292,17 @@ func (s *Server) handleCreateStream(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	password, err := preserveSecret(req.Password, "", req.ClearPassword, "clear_password", "password")
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	stream := &types.Stream{
 		Enabled:    true,
 		Host:       req.Host,
 		Port:       req.Port,
-		Password:   req.Password,
+		Password:   password,
 		StreamID:   req.StreamID,
 		Codec:      req.Codec, // Already validated by UnmarshalJSON
 		Bitrate:    req.Bitrate,
@@ -337,15 +344,20 @@ func (s *Server) handleUpdateStream(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	password, err := preserveSecret(req.Password, existing.Password, req.ClearPassword, "clear_password", "password")
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
-	// Full replacement - preserve only ID and CreatedAt
-	// For password: empty string means "keep existing" (not sent from frontend for security)
+	// Full replacement - preserve only ID and CreatedAt.
+	// For password: empty string means keep existing unless clear_password is true.
 	updated := &types.Stream{
 		ID:         id,
 		Enabled:    req.Enabled,
 		Host:       req.Host,
 		Port:       req.Port,
-		Password:   cmp.Or(req.Password, existing.Password),
+		Password:   password,
 		StreamID:   req.StreamID,
 		Codec:      req.Codec,
 		Bitrate:    req.Bitrate,
@@ -449,6 +461,8 @@ type RecorderRequest struct {
 	S3AccessKeyID string `json:"s3_access_key_id"`
 	// S3SecretAccessKey is the S3 secret for authentication.
 	S3SecretAccessKey string `json:"s3_secret_access_key"`
+	// ClearS3Secret removes the saved S3 secret when S3SecretAccessKey is empty.
+	ClearS3Secret bool `json:"clear_s3_secret"`
 	// RetentionDays is the number of days to retain recordings.
 	RetentionDays int `json:"retention_days"`
 }
@@ -457,6 +471,17 @@ type RecorderRequest struct {
 func (s *Server) handleCreateRecorder(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[RecorderRequest](s, w, r)
 	if !ok {
+		return
+	}
+	s3Secret, err := preserveSecret(
+		req.S3SecretAccessKey,
+		"",
+		req.ClearS3Secret,
+		"clear_s3_secret",
+		"s3_secret_access_key",
+	)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -471,7 +496,7 @@ func (s *Server) handleCreateRecorder(w http.ResponseWriter, r *http.Request) {
 		S3Endpoint:        req.S3Endpoint,
 		S3Bucket:          req.S3Bucket,
 		S3AccessKeyID:     req.S3AccessKeyID,
-		S3SecretAccessKey: req.S3SecretAccessKey,
+		S3SecretAccessKey: s3Secret,
 		RetentionDays:     req.RetentionDays,
 	}
 
@@ -508,9 +533,20 @@ func (s *Server) handleUpdateRecorder(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	s3Secret, err := preserveSecret(
+		req.S3SecretAccessKey,
+		existing.S3SecretAccessKey,
+		req.ClearS3Secret,
+		"clear_s3_secret",
+		"s3_secret_access_key",
+	)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
-	// Full replacement - preserve only ID and CreatedAt
-	// For S3 secret: empty string means "keep existing" (not sent from frontend for security)
+	// Full replacement - preserve only ID and CreatedAt.
+	// For S3 secret: empty string means keep existing unless clear_s3_secret is true.
 	updated := &types.Recorder{
 		ID:                id,
 		Name:              req.Name,
@@ -523,7 +559,7 @@ func (s *Server) handleUpdateRecorder(w http.ResponseWriter, r *http.Request) {
 		S3Endpoint:        req.S3Endpoint,
 		S3Bucket:          req.S3Bucket,
 		S3AccessKeyID:     req.S3AccessKeyID,
-		S3SecretAccessKey: cmp.Or(req.S3SecretAccessKey, existing.S3SecretAccessKey),
+		S3SecretAccessKey: s3Secret,
 		RetentionDays:     req.RetentionDays,
 		CreatedAt:         existing.CreatedAt,
 	}
@@ -689,8 +725,17 @@ func deref[T any](p *T, fallback T) T {
 	return fallback
 }
 
-func preserveHiddenString(value *string, saved string) {
-	*value = cmp.Or(*value, saved)
+// preserveSecret resolves a submitted secret against the stored one: empty
+// keeps the saved value, non-empty replaces it, and the clear flag blanks it.
+// A clear flag combined with a new value is rejected as ambiguous.
+func preserveSecret(value, saved string, clearRequested bool, clearField, valueField string) (string, error) {
+	if clearRequested && value != "" {
+		return "", fmt.Errorf("%s: conflicts with non-empty %s", clearField, valueField)
+	}
+	if clearRequested {
+		return "", nil
+	}
+	return cmp.Or(value, saved), nil
 }
 
 // preserveHiddenSettings keeps saved hidden values when settings forms submit
@@ -698,10 +743,10 @@ func preserveHiddenString(value *string, saved string) {
 // conflicts with newly submitted values.
 func preserveHiddenSettings(req *config.SettingsUpdate, cfg *config.Snapshot) {
 	if !req.ClearWebhookURL {
-		preserveHiddenString(&req.WebhookURL, cfg.WebhookURL)
+		req.WebhookURL = cmp.Or(req.WebhookURL, cfg.WebhookURL)
 	}
 	if !req.ClearGraphClientSecret {
-		preserveHiddenString(&req.GraphClientSecret, cfg.GraphClientSecret)
+		req.GraphClientSecret = cmp.Or(req.GraphClientSecret, cfg.GraphClientSecret)
 	}
 }
 

@@ -8,6 +8,8 @@ const (
 	SampleRate = 48000
 	// Channels is the number of audio channels (stereo).
 	Channels = 2
+	// BytesPerSecond is the PCM byte rate for 16-bit samples (192000).
+	BytesPerSecond = SampleRate * Channels * 2
 )
 
 // ErrNoAudioDevice is returned when no audio input device is available.

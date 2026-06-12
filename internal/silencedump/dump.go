@@ -18,9 +18,6 @@ import (
 )
 
 const (
-	// Audio format constants (must match encoder's PCM format).
-	bytesPerSecond = audio.SampleRate * audio.Channels * 2 // 48kHz * 2ch * 16bit = 192000
-
 	// Dump timing.
 	beforeSeconds     = 15
 	maxSilenceSeconds = 5
@@ -28,7 +25,7 @@ const (
 	bufferSeconds     = beforeSeconds + maxSilenceSeconds + afterSeconds // 35 seconds
 
 	// Buffer capacity in bytes.
-	bufferCapacity = bufferSeconds * bytesPerSecond // ~6.7 MB
+	bufferCapacity = bufferSeconds * audio.BytesPerSecond // ~6.7 MB
 
 	// MP3 encoding settings.
 	mp3Bitrate    = "64k"
@@ -137,7 +134,7 @@ func (c *Capturer) OnSilenceStart() {
 	}
 
 	// Snapshot pre-silence audio to prevent loss during long silences
-	beforeBytes := min(c.totalWritten, int64(beforeSeconds*bytesPerSecond))
+	beforeBytes := min(c.totalWritten, int64(beforeSeconds*audio.BytesPerSecond))
 	if beforeBytes > 0 {
 		c.savedBefore = make([]byte, beforeBytes)
 		c.copyFromRing(c.savedBefore, c.totalWritten-beforeBytes)
@@ -167,7 +164,7 @@ func (c *Capturer) OnSilenceRecover(totalDuration, recoveryDuration time.Duratio
 	// Backdate silenceEndPos to when audio actually returned, not when recovery was confirmed.
 	// The JustRecovered event fires after recoveryDuration has elapsed, so we need to
 	// subtract that amount to capture the moment audio came back.
-	recoveryBytes := int64(recoveryDuration.Seconds() * float64(bytesPerSecond))
+	recoveryBytes := int64(recoveryDuration.Seconds() * float64(audio.BytesPerSecond))
 	c.silenceEndPos = c.totalWritten - recoveryBytes
 
 	slog.Debug("silence dump recovery detected",
@@ -185,7 +182,7 @@ func (c *Capturer) checkAndFinalize() {
 	}
 
 	// Wait for 15 seconds of audio after recovery
-	requiredBytes := c.silenceEndPos + int64(afterSeconds*bytesPerSecond)
+	requiredBytes := c.silenceEndPos + int64(afterSeconds*audio.BytesPerSecond)
 	if c.totalWritten < requiredBytes {
 		return
 	}
@@ -203,10 +200,10 @@ func (c *Capturer) checkAndFinalize() {
 // extractAndEncode encodes buffered audio to an MP3 file.
 func (c *Capturer) extractAndEncode() {
 	// Calculate section sizes (silence capped at maxSilenceSeconds)
-	silenceBytes := min(max(0, c.silenceEndPos-c.silenceStartPos), int64(maxSilenceSeconds*bytesPerSecond))
+	silenceBytes := min(max(0, c.silenceEndPos-c.silenceStartPos), int64(maxSilenceSeconds*audio.BytesPerSecond))
 	afterBytes := int64(0)
 	if c.silenceEndPos > 0 {
-		afterBytes = int64(afterSeconds * bytesPerSecond)
+		afterBytes = int64(afterSeconds * audio.BytesPerSecond)
 	}
 
 	// Build PCM: savedBefore (guaranteed intact) + silence (capped) + after
@@ -218,7 +215,7 @@ func (c *Capturer) extractAndEncode() {
 
 	// Capture all values needed for encoding before releasing lock
 	silenceStart := c.silenceStart
-	silenceDuration := time.Duration(c.silenceEndPos-c.silenceStartPos) * time.Second / time.Duration(bytesPerSecond)
+	silenceDuration := time.Duration(c.silenceEndPos-c.silenceStartPos) * time.Second / time.Duration(audio.BytesPerSecond)
 	ffmpegPath := c.ffmpegPath
 	outputDir := c.outputDir
 	callback := c.onDumpReady
