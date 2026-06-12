@@ -16,9 +16,10 @@ import (
 
 // uploadRequest represents a file to be uploaded to S3.
 type uploadRequest struct {
-	localPath string
-	s3Key     string
-	fileSize  int64
+	localPath         string
+	s3Key             string
+	fileSize          int64
+	deleteAfterUpload bool
 }
 
 // pendingUpload tracks a failed upload for retry.
@@ -27,6 +28,7 @@ type pendingUpload struct {
 	firstAttempt time.Time
 	retryCount   int
 	lastError    string
+	metadataPath string
 }
 
 // MaxUploadRetryAge is the maximum age for retrying uploads.
@@ -44,6 +46,7 @@ func (r *GenericRecorder) queueForUpload(filePath string) {
 		r.logUploadEvent(eventlog.UploadQueued, filepath.Base(filePath), req.s3Key, "", 0)
 	default:
 		slog.Warn("upload queue full", "id", r.id)
+		r.addToRetryQueue(req, "upload queue full")
 	}
 }
 
@@ -68,22 +71,29 @@ func (r *GenericRecorder) prepareUploadRequest(filePath string) (uploadRequest, 
 		return uploadRequest{}, false
 	}
 
+	r.mu.RLock()
+	storageMode := r.config.StorageMode
+	recorderName := r.config.Name
+	s3Configured := r.config.S3Bucket != "" && r.config.S3AccessKeyID != "" && r.config.S3SecretAccessKey != ""
+	r.mu.RUnlock()
+
 	// Local-only mode: no upload needed
-	if r.config.StorageMode == types.StorageLocal {
+	if storageMode == types.StorageLocal {
 		slog.Info("local storage mode, file saved", "id", r.id, "path", filePath)
 		return uploadRequest{}, false
 	}
 
 	// S3 or Both mode: need S3 config
-	if !r.isS3Configured() {
-		slog.Warn("S3 not configured but storage mode requires it", "id", r.id, "mode", r.config.StorageMode)
+	if !s3Configured {
+		slog.Warn("S3 not configured but storage mode requires it", "id", r.id, "mode", storageMode)
 		return uploadRequest{}, false
 	}
 
 	return uploadRequest{
-		localPath: filePath,
-		s3Key:     r.generateS3Key(filepath.Base(filePath)),
-		fileSize:  info.Size(),
+		localPath:         filePath,
+		s3Key:             s3ObjectKey(recorderName, filepath.Base(filePath)),
+		fileSize:          info.Size(),
+		deleteAfterUpload: storageMode == types.StorageS3,
 	}, true
 }
 
@@ -137,7 +147,7 @@ func (r *GenericRecorder) uploadFile(req uploadRequest) {
 
 	slog.Info("upload completed", "id", r.id, "s3_key", req.s3Key)
 	r.logUploadEvent(eventlog.UploadCompleted, filepath.Base(req.localPath), req.s3Key, "", 0)
-	r.deleteIfS3Only(req.localPath)
+	r.deleteAfterUpload(req)
 }
 
 // doUpload performs the actual S3 upload using the transfer manager for
@@ -232,43 +242,46 @@ func (l *uploadProgressListener) OnObjectBytesTransferred(
 	}
 }
 
-// deleteIfS3Only removes the local file if storage mode is S3-only.
-func (r *GenericRecorder) deleteIfS3Only(localPath string) {
-	r.mu.RLock()
-	storageMode := r.config.StorageMode
-	r.mu.RUnlock()
-
-	if storageMode != types.StorageS3 {
+// deleteAfterUpload removes spool-only files after successful upload.
+func (r *GenericRecorder) deleteAfterUpload(req uploadRequest) {
+	if !req.deleteAfterUpload {
 		return
 	}
 
-	if err := os.Remove(localPath); err != nil {
-		slog.Warn("failed to delete temp file after upload", "id", r.id, "path", localPath, "error", err)
+	if err := os.Remove(req.localPath); err != nil {
+		slog.Warn("failed to delete spool file after upload", "id", r.id, "path", req.localPath, "error", err)
 	} else {
-		slog.Debug("deleted temp file after upload", "id", r.id, "path", localPath)
+		slog.Debug("deleted spool file after upload", "id", r.id, "path", req.localPath)
 	}
 }
 
 // addToRetryQueue adds a failed upload to the retry queue.
 func (r *GenericRecorder) addToRetryQueue(req uploadRequest, errMsg string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	// Prevent duplicates
-	for _, p := range r.retryQueue {
-		if p.request.localPath == req.localPath {
-			return
-		}
-	}
-
-	r.retryQueue = append(r.retryQueue, pendingUpload{
+	pending := pendingUpload{
 		request:      req,
 		firstAttempt: time.Now(),
 		retryCount:   0,
 		lastError:    errMsg,
-	})
+		metadataPath: r.pendingUploadMetadataPath(req),
+	}
+
+	r.mu.Lock()
+
+	// Prevent duplicates
+	for _, p := range r.retryQueue {
+		if p.request.localPath == req.localPath {
+			r.mu.Unlock()
+			return
+		}
+	}
+
+	r.retryQueue = append(r.retryQueue, pending)
+	r.mu.Unlock()
 
 	slog.Info("upload queued for retry", "id", r.id, "file", filepath.Base(req.localPath))
+	if err := r.savePendingUpload(&pending); err != nil {
+		slog.Error("failed to persist pending upload", "id", r.id, "file", filepath.Base(req.localPath), "error", err)
+	}
 }
 
 // processRetryQueue attempts to upload all pending files.
@@ -301,6 +314,7 @@ func (r *GenericRecorder) processRetryQueue() {
 			r.logUploadEvent(eventlog.UploadAbandoned,
 				filepath.Base(p.request.localPath), p.request.s3Key,
 				p.lastError, p.retryCount)
+			r.removePendingMetadata(p)
 			if r.onUploadAbandoned != nil {
 				r.mu.RLock()
 				recorderName := r.config.Name
@@ -326,6 +340,9 @@ func (r *GenericRecorder) processRetryQueue() {
 
 		if !r.retryUpload(p) {
 			// Failed - re-add to queue
+			if err := r.savePendingUpload(p); err != nil {
+				slog.Error("failed to persist pending upload", "id", r.id, "file", filepath.Base(p.request.localPath), "error", err)
+			}
 			r.mu.Lock()
 			r.retryQueue = append(r.retryQueue, *p)
 			r.mu.Unlock()
@@ -338,6 +355,7 @@ func (r *GenericRecorder) retryUpload(p *pendingUpload) bool {
 	// Check if file still exists before attempting upload
 	if _, err := os.Stat(p.request.localPath); os.IsNotExist(err) {
 		slog.Warn("retry file no longer exists", "id", r.id, "path", p.request.localPath)
+		r.removePendingMetadata(p)
 		return true // Nothing to upload
 	}
 
@@ -353,6 +371,7 @@ func (r *GenericRecorder) retryUpload(p *pendingUpload) bool {
 
 	slog.Info("retry upload completed", "id", r.id, "s3_key", p.request.s3Key)
 	r.logUploadEvent(eventlog.UploadCompleted, filepath.Base(p.request.localPath), p.request.s3Key, "", p.retryCount)
-	r.deleteIfS3Only(p.request.localPath)
+	r.removePendingMetadata(p)
+	r.deleteAfterUpload(p.request)
 	return true
 }

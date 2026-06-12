@@ -936,11 +936,11 @@
                         <div class="form">
                             <div class="group">
                                 <label for="recorder-local-path">Local Path</label>
-                                <input id="recorder-local-path" type="text" placeholder="/var/recordings/my-recorder"
+                                <input id="recorder-local-path" type="text" placeholder="/var/lib/encoder/recordings"
                                        x-model="recorderForm.local_path"
                                        @input="markRecorderFormDirty()"
                                        aria-describedby="recorder-local-path-hint">
-                                <span id="recorder-local-path-hint" class="input-hint">Ensure the service user has write permission to this directory.</span>
+                                <span id="recorder-local-path-hint" class="input-hint">Use /var/lib/encoder/recordings with the packaged service, or add a systemd ReadWritePaths override for custom paths.</span>
                             </div>
                         </div>
                     </div>

@@ -16,6 +16,8 @@ Group=encoder
 # Systemd-managed directories
 LogsDirectory=encoder
 LogsDirectoryMode=0750
+StateDirectory=encoder
+StateDirectoryMode=0750
 
 # Security hardening
 NoNewPrivileges=true

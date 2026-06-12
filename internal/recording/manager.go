@@ -30,7 +30,7 @@ type Manager struct {
 	mu sync.RWMutex
 
 	recorders          map[string]*GenericRecorder
-	tempDir            string
+	spoolDir           string
 	ffmpegPath         string
 	maxDurationMinutes int  // Global max duration for on-demand recorders
 	running            bool // Whether encoder is running (recorders should be active)
@@ -42,19 +42,19 @@ type Manager struct {
 }
 
 // NewManager creates a new recording manager.
-func NewManager(ffmpegPath, tempDir string, maxDurationMinutes int, eventLogger *eventlog.Logger) (*Manager, error) {
-	if tempDir == "" {
-		tempDir = DefaultTempDir
+func NewManager(ffmpegPath, spoolDir string, maxDurationMinutes int, eventLogger *eventlog.Logger) (*Manager, error) {
+	if spoolDir == "" {
+		spoolDir = DefaultSpoolDir()
 	}
 
-	// Ensure temp directory exists
-	if err := os.MkdirAll(tempDir, 0o755); err != nil { //nolint:gosec // Temp directory needs to be readable
-		return nil, fmt.Errorf("create temp directory: %w", err)
+	// Ensure spool directory exists.
+	if err := os.MkdirAll(spoolDir, 0o755); err != nil { //nolint:gosec // Spool directory needs to be readable
+		return nil, fmt.Errorf("create recording spool directory: %w", err)
 	}
 
 	return &Manager{
 		recorders:          make(map[string]*GenericRecorder),
-		tempDir:            tempDir,
+		spoolDir:           spoolDir,
 		ffmpegPath:         ffmpegPath,
 		maxDurationMinutes: maxDurationMinutes,
 		eventLogger:        eventLogger,
@@ -102,13 +102,16 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 	recorder, err := NewGenericRecorder(GenericRecorderConfig{
 		Recorder:           cfg,
 		FFmpegPath:         m.ffmpegPath,
-		TempDir:            m.tempDir,
+		SpoolDir:           m.spoolDir,
 		MaxDurationMinutes: m.maxDurationMinutes,
 		EventLogger:        m.eventLogger,
 		OnUploadAbandoned:  m.onUploadAbandoned,
 	})
 	if err != nil {
 		return fmt.Errorf("create recorder: %w", err)
+	}
+	if err := recorder.reconcilePendingUploads(); err != nil {
+		return fmt.Errorf("reconcile pending uploads: %w", err)
 	}
 
 	m.recorders[cfg.ID] = recorder
@@ -225,6 +228,7 @@ func (m *Manager) Start() error {
 
 	// Start hourly retry scheduler for failed recorders
 	m.startHourlyRetryScheduler()
+	go m.processUploadRetryQueues()
 
 	slog.Info("recording manager started", "recorders", len(m.recorders))
 	return nil
@@ -287,16 +291,19 @@ func (m *Manager) Statuses() map[string]types.ProcessStatus {
 	return statuses
 }
 
-// startHourlyRetryScheduler retries failed hourly recorders at each hour boundary.
+// startHourlyRetryScheduler retries failed hourly recorders and pending uploads at each hour boundary.
 func (m *Manager) startHourlyRetryScheduler() {
 	go func() {
 		for {
 			duration := util.TimeUntilNextHour(time.Now())
+			timer := time.NewTimer(duration)
 			select {
 			case <-m.hourlyRetryStopCh:
+				timer.Stop()
 				return
-			case <-time.After(duration):
+			case <-timer.C:
 				m.retryFailedHourlyRecorders()
+				m.processUploadRetryQueues()
 			}
 		}
 	}()
@@ -319,5 +326,18 @@ func (m *Manager) retryFailedHourlyRecorders() {
 				}(recorder)
 			}
 		}
+	}
+}
+
+func (m *Manager) processUploadRetryQueues() {
+	m.mu.RLock()
+	recorders := make([]*GenericRecorder, 0, len(m.recorders))
+	for _, recorder := range m.recorders {
+		recorders = append(recorders, recorder)
+	}
+	m.mu.RUnlock()
+
+	for _, recorder := range recorders {
+		recorder.processRetryQueue()
 	}
 }

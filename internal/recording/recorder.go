@@ -27,7 +27,7 @@ type GenericRecorder struct {
 	eventLogger        *eventlog.Logger
 	onUploadAbandoned  UploadAbandonedCallback
 
-	tempDir   string
+	spoolDir  string
 	state     types.ProcessState
 	lastError string
 
@@ -63,7 +63,7 @@ type GenericRecorder struct {
 type GenericRecorderConfig struct {
 	Recorder           *types.Recorder
 	FFmpegPath         string
-	TempDir            string
+	SpoolDir           string
 	MaxDurationMinutes int
 	EventLogger        *eventlog.Logger
 	OnUploadAbandoned  UploadAbandonedCallback
@@ -78,7 +78,7 @@ func NewGenericRecorder(cfg GenericRecorderConfig) (*GenericRecorder, error) {
 		maxDurationMinutes: cfg.MaxDurationMinutes,
 		eventLogger:        cfg.EventLogger,
 		onUploadAbandoned:  cfg.OnUploadAbandoned,
-		tempDir:            cfg.TempDir,
+		spoolDir:           cfg.SpoolDir,
 		state:              types.ProcessStopped,
 		uploadQueue:        make(chan uploadRequest, 100),
 		uploadStopCh:       make(chan struct{}),
@@ -168,15 +168,15 @@ func (r *GenericRecorder) startAsync() {
 	storageMode := r.config.StorageMode
 	localPath := r.config.LocalPath
 	id := r.id
-	tempDir := r.tempDir
+	spoolDir := r.spoolDir
 	r.mu.RUnlock()
 
 	// Validate and prepare output directory based on storage mode
 	if storageMode == types.StorageS3 {
-		// S3-only: create temp directory (should always be writable)
-		//nolint:gosec // Temp directory needs to be readable
-		if err := os.MkdirAll(filepath.Join(tempDir, "recorders", id), 0o755); err != nil {
-			r.setError(fmt.Sprintf("failed to create temp directory: %v", err))
+		// S3-only: create spool directory (should always be writable)
+		//nolint:gosec // Spool directory needs to be readable
+		if err := os.MkdirAll(filepath.Join(spoolDir, "recorders", id), 0o755); err != nil {
+			r.setError(fmt.Sprintf("failed to create spool directory: %v", err))
 			return
 		}
 	}
@@ -313,12 +313,6 @@ func (r *GenericRecorder) Stop() error {
 	r.uploadQueue = make(chan uploadRequest, 100) // Reset for next start
 	r.stopOnce = sync.Once{}                      // Reset Once for next start
 	r.uploadWorkerRunning = false                 // Reset for next start
-
-	// Clear retry queue on shutdown (files remain in temp dir)
-	if len(r.retryQueue) > 0 {
-		slog.Info("clearing retry queue on stop", "id", r.id, "pending", len(r.retryQueue))
-	}
-	r.retryQueue = nil
 
 	// Capture log params while holding lock
 	logParams := r.captureLogParamsLocked()
@@ -472,8 +466,8 @@ func (r *GenericRecorder) startEncoderLocked() error {
 	// Determine output directory based on storage mode
 	var outputDir string
 	if r.config.StorageMode == types.StorageS3 {
-		// S3-only: use temp directory
-		outputDir = filepath.Join(r.tempDir, "recorders", r.id)
+		// S3-only: use durable spool directory
+		outputDir = filepath.Join(r.spoolDir, "recorders", r.id)
 	} else {
 		// Local or Both: use configured LocalPath
 		outputDir = r.config.LocalPath
@@ -638,9 +632,9 @@ func (r *GenericRecorder) generateFilename(t time.Time) string {
 	return fmt.Sprintf("%s-%s.%s", safeName, t.Format("2006-01-02-15-04"), ext)
 }
 
-func (r *GenericRecorder) generateS3Key(filename string) string {
+func s3ObjectKey(recorderName, filename string) string {
 	// Prefix: recordings/{sanitized-recorder-name}/filename
-	safeName := sanitizeFilename(r.config.Name)
+	safeName := sanitizeFilename(recorderName)
 	return fmt.Sprintf("recordings/%s/%s", safeName, filename)
 }
 

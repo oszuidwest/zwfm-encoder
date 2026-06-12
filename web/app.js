@@ -91,6 +91,8 @@ const DEFAULT_STREAM = {
     max_retries: 99
 };
 
+const DEFAULT_LOCAL_RECORDING_PATH = '/var/lib/encoder/recordings';
+
 const DEFAULT_RECORDER = {
     name: '',
     enabled: true,
@@ -1103,6 +1105,9 @@ document.addEventListener('alpine:init', () => {
                 };
             } else {
                 this.recorderForm = { ...DEFAULT_RECORDER, id: '' };
+                if (this.config.platform === 'linux') {
+                    this.recorderForm.local_path = DEFAULT_LOCAL_RECORDING_PATH;
+                }
             }
             this.recorderFormDirty = false;
             this.view = 'recorder-form';

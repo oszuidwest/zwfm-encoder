@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime"
@@ -18,6 +19,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/notify"
 	"github.com/oszuidwest/zwfm-encoder/internal/recording"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 )
 
@@ -114,6 +116,19 @@ func redactRecorder(recorder *types.Recorder) types.RecorderResponse {
 		RetentionDays: recorder.RetentionDays,
 		CreatedAt:     recorder.CreatedAt,
 	}
+}
+
+func validateRecorderLocalPath(recorder *types.Recorder) error {
+	if recorder.StorageMode == types.StorageS3 {
+		return nil
+	}
+	if err := util.ValidatePath("local_path", recorder.LocalPath); err != nil {
+		return err
+	}
+	if err := util.CheckPathWritable(recorder.LocalPath); err != nil {
+		return fmt.Errorf("local_path: %w", err)
+	}
+	return nil
 }
 
 // handleAPIConfig returns the full configuration for the frontend.
@@ -465,6 +480,10 @@ func (s *Server) handleCreateRecorder(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := validateRecorderLocalPath(recorder); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	// Persistence/manager failures are server errors
 	if err := s.encoder.AddRecorder(recorder); err != nil {
@@ -511,6 +530,10 @@ func (s *Server) handleUpdateRecorder(w http.ResponseWriter, r *http.Request) {
 
 	// Validate first - client error
 	if err := updated.Validate(); err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateRecorderLocalPath(updated); err != nil {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
