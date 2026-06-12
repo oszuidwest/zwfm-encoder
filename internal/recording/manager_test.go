@@ -200,6 +200,59 @@ func TestProcessRetryQueueAbandonsExpiredUploadAndRemovesMetadata(t *testing.T) 
 	if _, err := os.Stat(pending.metadataPath); !os.IsNotExist(err) {
 		t.Fatalf("metadata stat error = %v, want not exist", err)
 	}
+	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
+		t.Fatalf("file stat error = %v, want not exist", err)
+	}
+}
+
+func TestProcessRetryQueueKeepsLocalFileForExpiredBothUpload(t *testing.T) {
+	t.Parallel()
+
+	spoolDir := t.TempDir()
+	localDir := t.TempDir()
+	cfg := testS3Recorder()
+	cfg.StorageMode = types.StorageBoth
+	cfg.LocalPath = localDir
+	recorder, err := NewGenericRecorder(GenericRecorderConfig{
+		Recorder: cfg,
+		SpoolDir: spoolDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	filePath := filepath.Join(localDir, "expired-both.mp3")
+	if err := os.WriteFile(filePath, []byte("audio"), 0o600); err != nil {
+		t.Fatalf("write local file: %v", err)
+	}
+	pending := pendingUpload{
+		request: uploadRequest{
+			localPath:         filePath,
+			s3Key:             "recordings/Test/expired-both.mp3",
+			fileSize:          5,
+			deleteAfterUpload: false,
+		},
+		firstAttempt: time.Now().Add(-MaxUploadRetryAge - time.Hour),
+		retryCount:   3,
+		lastError:    "still down",
+	}
+	pending.metadataPath = recorder.pendingUploadMetadataPath(pending.request)
+	if err := recorder.savePendingUpload(&pending); err != nil {
+		t.Fatal(err)
+	}
+	recorder.retryQueue = []pendingUpload{pending}
+
+	recorder.processRetryQueue()
+
+	if got := len(recorder.retryQueue); got != 0 {
+		t.Fatalf("retryQueue len = %d, want 0", got)
+	}
+	if _, err := os.Stat(pending.metadataPath); !os.IsNotExist(err) {
+		t.Fatalf("metadata stat error = %v, want not exist", err)
+	}
+	if _, err := os.Stat(filePath); err != nil {
+		t.Fatalf("stat local file: %v", err)
+	}
 }
 
 func TestProcessRetryQueueRemovesMetadataForMissingFile(t *testing.T) {
