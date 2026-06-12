@@ -2,7 +2,7 @@
 # Encoder is bare-metal Pi software - no docker job.
 name: Release
 
-on:
+"on":
   push:
     tags: ['v*']
   workflow_dispatch:
@@ -42,6 +42,7 @@ jobs:
          {"os":"windows","arch":"amd64"},
          {"os":"windows","arch":"arm64"}]
       version: ${{ inputs.version }}
+      allow-tag-rebuild: false
       release-body: |
         ## Installation
 
