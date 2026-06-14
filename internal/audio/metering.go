@@ -27,11 +27,9 @@ type LevelData struct {
 	ClipCountR  int
 	SampleCount int
 
-	// remainder holds the trailing bytes (0-3) of the previous buffer that did
-	// not complete a stereo frame. Pipe reads are not guaranteed to align to
-	// frame boundaries, so these bytes are carried into the next ProcessSamples
-	// call to keep frame decoding aligned with the PCM stream instead of
-	// dropping them and drifting on every unaligned read.
+	// remainder holds the trailing bytes (0-3) of a stereo frame split across
+	// reads; ProcessSamples carries them into the next call. See ProcessSamples
+	// for why, and Reset for why the carry outlives a metering window.
 	remainder    [bytesPerFrame - 1]byte
 	remainderLen int
 }

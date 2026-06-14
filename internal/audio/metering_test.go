@@ -1,6 +1,9 @@
 package audio
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 // makeStereoPCM builds deterministic S16LE stereo PCM of the given frame count.
 // Each byte is a distinct step of a stride-7 ramp, so every position differs from
@@ -71,6 +74,71 @@ func TestProcessSamplesChunkingInvariance(t *testing.T) {
 				t.Errorf("levels depend on chunk boundaries:\n got  %+v\n want %+v", gotLevels, refLevels)
 			}
 		})
+	}
+}
+
+// TestProcessSamplesSplitFrameClipCounting exercises the split-frame
+// reconstruction path for the clip counter specifically. The ramp data in
+// TestProcessSamplesChunkingInvariance never reaches ClipThreshold, so a frame
+// reassembled from the wrong bytes could miscount clips and nothing would fail.
+// Each case clips exactly one channel, so a byte drift or L/R swap in the split
+// reassembly flips the clip attribution; every split point must decode
+// identically to the aligned read.
+func TestProcessSamplesSplitFrameClipCounting(t *testing.T) {
+	cases := []struct {
+		name      string
+		frame     []byte
+		wantClipL int
+		wantClipR int
+	}{
+		// left = 32767 (0x7FFF) clips; right = 100 (0x0064) does not.
+		{"left clips", []byte{0xFF, 0x7F, 0x64, 0x00}, 1, 0},
+		// right = -32768 (0x8000) clips; left = 100 (0x0064) does not.
+		{"right clips", []byte{0x64, 0x00, 0x00, 0x80}, 0, 1},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var aligned LevelData
+			ProcessSamples(c.frame, len(c.frame), &aligned)
+			want := CalculateLevels(&aligned)
+			if want.ClipLeft != c.wantClipL || want.ClipRight != c.wantClipR {
+				t.Fatalf("setup: aligned clip counts L=%d R=%d, want L=%d R=%d",
+					want.ClipLeft, want.ClipRight, c.wantClipL, c.wantClipR)
+			}
+
+			for split := 1; split <= 3; split++ {
+				t.Run(fmt.Sprintf("split %d+%d", split, len(c.frame)-split), func(t *testing.T) {
+					var d LevelData
+					ProcessSamples(c.frame[:split], split, &d)
+					ProcessSamples(c.frame[split:], len(c.frame)-split, &d)
+
+					if d.remainderLen != 0 {
+						t.Fatalf("frame not fully consumed: remainderLen=%d", d.remainderLen)
+					}
+					if got := CalculateLevels(&d); got != want {
+						t.Errorf("split decode differs from aligned:\n got  %+v\n want %+v", got, want)
+					}
+				})
+			}
+		})
+	}
+}
+
+// TestProcessSamplesCarriesTrailingPartialFrame asserts the end-of-stream carry:
+// a buffer that ends mid-frame accumulates the whole frames and holds the
+// trailing bytes for the next read.
+func TestProcessSamplesCarriesTrailingPartialFrame(t *testing.T) {
+	buf := makeStereoPCM(6)[:22] // 5 full frames (20 bytes) + 2 trailing bytes
+
+	var d LevelData
+	ProcessSamples(buf, len(buf), &d)
+
+	if d.SampleCount != 5 {
+		t.Fatalf("expected 5 whole frames, got %d", d.SampleCount)
+	}
+	if d.remainderLen != 2 {
+		t.Fatalf("expected 2 carried bytes, got %d", d.remainderLen)
 	}
 }
 
