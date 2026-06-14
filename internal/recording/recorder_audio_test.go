@@ -107,6 +107,14 @@ func TestWriteAudioNoopWhenNotRecording(t *testing.T) {
 	if got := len(stopped.audioCh); got != 0 {
 		t.Fatalf("buffered chunks while stopped = %d, want 0", got)
 	}
+
+	// Rotating recorder: the manager only feeds Running recorders, so WriteAudio
+	// must skip a rotating one too (its writer/channel are being torn down).
+	rotating := &GenericRecorder{id: "r3", state: types.ProcessRotating, audioCh: make(chan []byte, 2)}
+	rotating.WriteAudio([]byte{1})
+	if got := len(rotating.audioCh); got != 0 {
+		t.Fatalf("buffered chunks while rotating = %d, want 0", got)
+	}
 }
 
 // TestStatusReportsAudioDrops verifies dropped chunks surface in the recorder

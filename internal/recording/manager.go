@@ -264,16 +264,14 @@ func (m *Manager) Stop() error {
 	)
 	// Stop is idempotent; transitional states may still own FFmpeg processes.
 	for _, recorder := range recorders {
-		wg.Add(1)
-		go func(rec *GenericRecorder) {
-			defer wg.Done()
-			if err := rec.Stop(); err != nil {
-				slog.Warn("error stopping recorder", "id", rec.ID(), "error", err)
+		wg.Go(func() {
+			if err := recorder.Stop(); err != nil {
+				slog.Warn("error stopping recorder", "id", recorder.ID(), "error", err)
 				errMu.Lock()
 				errs = append(errs, err)
 				errMu.Unlock()
 			}
-		}(recorder)
+		})
 	}
 	wg.Wait()
 

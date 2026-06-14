@@ -359,8 +359,10 @@ func (r *GenericRecorder) WriteAudio(pcm []byte) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
+	// Only running recorders have a live writer; Manager.WriteAudio already
+	// gates on IsRecording (Running), so other states are skipped here too.
 	ch := r.audioCh
-	if ch == nil || (r.state != types.ProcessRunning && r.state != types.ProcessRotating) {
+	if ch == nil || r.state != types.ProcessRunning {
 		return
 	}
 
@@ -463,6 +465,10 @@ func (r *GenericRecorder) drainProcess(result *ffmpeg.StartResult) {
 			_ = result.Kill()
 			<-done
 		}
+		// FFmpeg hung and had to be signalled/killed - exactly the case where
+		// its own log is the most useful diagnostic. The process has exited
+		// (<-done above), so Stderr() is safe to read.
+		r.recordStderr(result)
 	}
 }
 
@@ -608,10 +614,9 @@ func (r *GenericRecorder) stopEncoderAndUpload() {
 		return
 	}
 
-	// Closing audioCh lets the writer drain buffered chunks and close writerDone.
-	if audioCh != nil {
-		close(audioCh)
-	}
+	// result and audioCh are set and cleared as a unit, so audioCh is non-nil
+	// here. Closing it lets the writer drain buffered chunks and close writerDone.
+	close(audioCh)
 
 	select {
 	case <-writerDone:
@@ -619,12 +624,22 @@ func (r *GenericRecorder) stopEncoderAndUpload() {
 		result.CloseStdin()
 		r.drainProcess(result)
 	case <-time.After(writerDrainTimeout):
-		// Writer is blocked in WriteStdin; cancel FFmpeg to break the pipe first.
+		// Writer is blocked in WriteStdin; cancel FFmpeg to break the pipe. The
+		// process is then dead, so there is no EOF to deliver - os/exec closes
+		// the pipe when Wait returns.
 		slog.Warn("recorder writer stuck, cancelling ffmpeg to break the pipe", "id", r.id)
 		result.Cancel(errRecorderStopped)
 		r.drainProcess(result)
 		<-writerDone
-		result.CloseStdin() // writer has released stdinMu
+	}
+
+	// Chunks the writer never flushed (stuck path) are a real recording gap;
+	// count them so AudioDrops reflects the whole gap, not just buffer-full
+	// drops. The writer has exited, so reading len(audioCh) is race-free.
+	if abandoned := len(audioCh); abandoned > 0 {
+		drops := r.audioDrops.Add(int64(abandoned))
+		slog.Warn("recorder abandoned buffered audio during teardown",
+			"id", r.id, "chunks", abandoned, "total_drops", drops)
 	}
 
 	// queueForUpload no-ops for local-only or missing S3 config.
