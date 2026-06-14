@@ -108,10 +108,7 @@ func (c *Capturer) WriteAudio(pcm []byte) {
 	}
 
 	// Write to ring buffer with wrap-around
-	for i := range pcm {
-		c.buffer[c.writePos] = pcm[i]
-		c.writePos = (c.writePos + 1) % bufferCapacity
-	}
+	c.writePos = c.writeToRing(pcm)
 	c.totalWritten += int64(len(pcm))
 
 	// Check if we have enough recovery audio to finalize
@@ -233,14 +230,37 @@ func (c *Capturer) extractAndEncode() {
 	}()
 }
 
-// copyFromRing copies buffered audio data into the destination slice.
-func (c *Capturer) copyFromRing(dst []byte, startPos int64) {
-	// Calculate start position in buffer, accounting for wrap-around
-	bufferStart := startPos % int64(bufferCapacity)
+// writeToRing copies src into the ring buffer starting at the current writePos,
+// wrapping around the end of the buffer as needed, and returns the new write
+// position. It mirrors copyFromRing on the write side: copy() calls instead of a
+// per-byte modulo loop. This runs on every chunk (~10x/sec) under c.mu, so
+// keeping it off the byte-at-a-time path keeps lock hold time minimal.
+func (c *Capturer) writeToRing(src []byte) int {
+	pos := c.writePos
+	for len(src) > 0 {
+		n := copy(c.buffer[pos:], src)
+		src = src[n:]
+		pos += n
+		if pos == bufferCapacity {
+			pos = 0
+		}
+	}
+	return pos
+}
 
-	for i := range dst {
-		pos := (bufferStart + int64(i)) % int64(bufferCapacity)
-		dst[i] = c.buffer[pos]
+// copyFromRing copies len(dst) bytes out of the ring buffer, starting at the
+// absolute byte position startPos and wrapping around the end of the buffer as
+// needed. It uses copy() rather than a per-byte modulo loop: the byte-by-byte
+// version it replaced ran ~26x slower for a full extract and held c.mu (the
+// audio hot-path lock) for several ms, risking stream dropouts during a silence
+// event (issue #297). The loop also handles dst longer than bufferCapacity,
+// though no caller currently relies on that.
+func (c *Capturer) copyFromRing(dst []byte, startPos int64) {
+	pos := int(startPos % int64(bufferCapacity))
+	for len(dst) > 0 {
+		n := copy(dst, c.buffer[pos:])
+		dst = dst[n:]
+		pos = 0 // any continuation resumes at the buffer start after a wrap
 	}
 }
 
