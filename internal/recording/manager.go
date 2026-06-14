@@ -130,19 +130,25 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 // RemoveRecorder removes a recorder from the manager.
 func (m *Manager) RemoveRecorder(id string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	recorder, exists := m.recorders[id]
+	if exists {
+		delete(m.recorders, id)
+	}
+	m.mu.Unlock()
+
 	if !exists {
 		return fmt.Errorf("recorder not found: %s", id)
 	}
 
-	// Always stop to clean up resources (timers, upload worker) even in error state
+	// Stop outside m.mu: Stop can take seconds while it breaks a stuck writer's
+	// pipe and force-kills FFmpeg, and holding the manager lock would block the
+	// distributor's WriteAudio (RLock) - the exact hot-path stall this package
+	// works to avoid. The recorder is already out of the map, so the
+	// distributor will not feed it while it stops.
 	if err := recorder.Stop(); err != nil {
 		slog.Warn("error stopping recorder during removal", "id", id, "error", err)
 	}
 
-	delete(m.recorders, id)
 	slog.Info("recorder removed", "id", id)
 	return nil
 }
@@ -265,10 +271,12 @@ func (m *Manager) Stop() error {
 		errMu sync.Mutex
 		errs  []error
 	)
+	// Stop every recorder, not only those whose state is exactly
+	// ProcessRunning. Stop is idempotent, and gating on IsRecording would skip
+	// recorders that are mid-startup or mid-rotation (ProcessStarting /
+	// ProcessRotating): such a recorder would be left running and
+	// startAsync/rotateFile could spin up a fresh FFmpeg after Stop returned.
 	for _, recorder := range recorders {
-		if !recorder.IsRecording() {
-			continue
-		}
 		wg.Add(1)
 		go func(rec *GenericRecorder) {
 			defer wg.Done()

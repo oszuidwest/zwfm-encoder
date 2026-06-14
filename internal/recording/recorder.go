@@ -338,10 +338,14 @@ func (r *GenericRecorder) Stop() error {
 	r.mu.Lock()
 	r.state = types.ProcessStopped
 	r.lastError = ""
-	r.uploadStopCh = make(chan struct{})          // Reset for next start
-	r.uploadQueue = make(chan uploadRequest, 100) // Reset for next start
-	r.stopOnce = sync.Once{}                      // Reset Once for next start
-	r.uploadWorkerRunning = false                 // Reset for next start
+	r.uploadStopCh = make(chan struct{}) // Reset for next start
+	// uploadQueue is intentionally NOT reassigned here. It is created once in
+	// NewGenericRecorder and reused for the recorder's lifetime: the upload
+	// worker drains it before exiting on stop, so reuse is safe. Reassigning it
+	// would race a concurrent rotation's queueForUpload, which reads the field
+	// without a lock, and could drop the rotated file's upload.
+	r.stopOnce = sync.Once{}      // Reset Once for next start
+	r.uploadWorkerRunning = false // Reset for next start
 
 	// Capture log params while holding lock
 	logParams := r.captureLogParamsLocked()
