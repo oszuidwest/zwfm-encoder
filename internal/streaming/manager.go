@@ -104,6 +104,22 @@ func (m *Manager) emitEvent(streamID, event, message, errMsg string, retryCount,
 	cb(streamID, name, event, message, errMsg, retryCount, maxRetries)
 }
 
+// maybeEmitStable emits the stream_stable event for id, but only when started is
+// still the current, running instance. The deferred stable goroutine captures
+// the instance it launched; a fast restart can replace that instance within the
+// stability window, so checking identity (cur == started), not just the ID,
+// avoids a premature stable event for a seconds-old replacement. Mirrors the
+// cur == s guard in runWriter.
+func (m *Manager) maybeEmitStable(id string, started *Stream) {
+	m.mu.RLock()
+	cur, exists := m.streams[id]
+	stable := exists && cur == started && cur.state == types.ProcessRunning
+	m.mu.RUnlock()
+	if stable {
+		m.emitEvent(id, "stream_stable", "Stream connected and stable", "", 0, 0)
+	}
+}
+
 // runWriter is the per-stream goroutine that drains audioCh and writes to FFmpeg stdin.
 func (m *Manager) runWriter(streamID string, s *Stream) {
 	defer s.writerWg.Done()
@@ -139,7 +155,8 @@ func (m *Manager) runWriter(streamID string, s *Stream) {
 // rely on this to spawn exactly one monitor goroutine per running process: a
 // redundant Start on an already-running stream must not start a second monitor
 // (see MonitorAndRetry). On a real start, a goroutine emits a "stream_stable"
-// event after the stability threshold is reached.
+// event after the stability threshold, but only if this same instance is still
+// running then (see maybeEmitStable).
 //
 // A ProcessStarting placeholder is inserted into the map while the lock is
 // released for old-writer cleanup and process startup. This prevents
@@ -230,17 +247,13 @@ func (m *Manager) Start(stream *types.Stream) (bool, error) {
 
 	m.emitEvent(stream.ID, "stream_started", fmt.Sprintf("Connecting to %s:%d", stream.Host, stream.Port), "", 0, 0)
 
-	// Emit stable event after threshold if still running
-	go func(id string) {
+	// Emit stable event after the threshold, but only if this exact instance is
+	// still running. Capturing s (not just the ID) guards against a fast restart
+	// replacing the stream within the window - see maybeEmitStable.
+	go func(id string, started *Stream) {
 		time.Sleep(types.StableThreshold)
-		m.mu.RLock()
-		s, exists := m.streams[id]
-		isRunning := exists && s.state == types.ProcessRunning
-		m.mu.RUnlock()
-		if isRunning {
-			m.emitEvent(id, "stream_stable", "Stream connected and stable", "", 0, 0)
-		}
-	}(stream.ID)
+		m.maybeEmitStable(id, started)
+	}(stream.ID, s)
 
 	return true, nil
 }
