@@ -471,11 +471,17 @@ func (e *Encoder) StartStream(streamID string) error {
 	}
 
 	// Start preserves existing retry state automatically
-	if err := e.streamManager.Start(stream); err != nil {
+	started, err := e.streamManager.Start(stream)
+	if err != nil {
 		return fmt.Errorf("failed to start stream: %w", err)
 	}
 
-	go e.streamManager.MonitorAndRetry(streamID, e, stopChan)
+	// Spawn the monitor only on a real launch: a redundant StartStream on an
+	// already-running stream (e.g. startEnabledStreams during a source retry)
+	// must not add a second monitor.
+	if started {
+		go e.streamManager.MonitorAndRetry(streamID, e, stopChan)
+	}
 
 	return nil
 }
