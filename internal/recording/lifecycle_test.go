@@ -46,10 +46,12 @@ func TestManagerStopStopsRotatingRecorder(t *testing.T) {
 	}
 }
 
-// TestStopReusesUploadQueue is a regression test for finding 3: Stop must not
-// reassign uploadQueue. queueForUpload reads that field without a lock, so a
-// concurrent rotation racing Stop's reassignment is a data race and can drop an
-// upload. The channel is created once and reused for the recorder's lifetime.
+// TestStopReusesUploadQueue guards the invariant that uploadQueue is created
+// once in NewGenericRecorder and reused for the recorder's lifetime: Stop must
+// not reassign it. The upload worker drains the channel before exiting on stop,
+// so reuse is safe, and keeping the field immutable means it never needs
+// lock-tracing. (queueForUpload does its intake check and send under r.mu; late
+// uploads after stop are routed to the retry queue via the uploadClosed gate.)
 func TestStopReusesUploadQueue(t *testing.T) {
 	r, err := NewGenericRecorder(GenericRecorderConfig{
 		Recorder: testS3Recorder(),
@@ -70,7 +72,7 @@ func TestStopReusesUploadQueue(t *testing.T) {
 	}
 
 	if r.uploadQueue != before {
-		t.Fatal("Stop reassigned uploadQueue; queueForUpload reads it without a lock, so this races a concurrent rotation and can drop an upload")
+		t.Fatal("Stop reassigned uploadQueue; it must be created once and reused for the recorder's lifetime")
 	}
 }
 

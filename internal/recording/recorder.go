@@ -352,9 +352,10 @@ func (r *GenericRecorder) Stop() error {
 	r.uploadStopCh = make(chan struct{}) // Reset for next start
 	// uploadQueue is intentionally NOT reassigned here. It is created once in
 	// NewGenericRecorder and reused for the recorder's lifetime: the upload
-	// worker drains it before exiting on stop, so reuse is safe. Reassigning it
-	// would race a concurrent rotation's queueForUpload, which reads the field
-	// without a lock, and could drop the rotated file's upload.
+	// worker drains it before exiting on stop, so reuse is safe. Keeping the
+	// field immutable after construction means it can never be involved in a
+	// field-level race. Late uploads after stop are handled by the uploadClosed
+	// intake gate, not by swapping this channel.
 	r.stopOnce = sync.Once{}      // Reset Once for next start
 	r.uploadWorkerRunning = false // Reset for next start
 
