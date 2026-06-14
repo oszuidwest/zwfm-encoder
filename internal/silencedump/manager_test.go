@@ -5,9 +5,7 @@ import (
 	"testing"
 )
 
-// TestStartStopConcurrent hammers Start and Stop concurrently to surface the
-// data race between the cleanup scheduler reading its stop channel and Stop
-// closing and nil-ing the field. It must run clean under -race.
+// TestStartStopConcurrent verifies cleanup scheduling does not race Stop.
 func TestStartStopConcurrent(t *testing.T) {
 	m := NewManager("", 0, false, 0, nil)
 
@@ -32,14 +30,13 @@ func TestStartStopConcurrent(t *testing.T) {
 	m.Stop()
 }
 
-// TestStopBeforeStartIsNoop ensures Stop is safe when never started (cleanupStopCh is nil).
+// TestStopBeforeStartIsNoop verifies nil cleanupStopCh is safe.
 func TestStopBeforeStartIsNoop(t *testing.T) {
 	m := NewManager("", 0, false, 0, nil)
 	m.Stop() // must not panic on the nil stop channel
 }
 
-// TestStartStopCycle ensures repeated cycles neither panic on a double close nor
-// leave the running flag stuck (Start stays idempotent).
+// TestStartStopCycle verifies repeated lifecycle cycles stay idempotent.
 func TestStartStopCycle(t *testing.T) {
 	m := NewManager("", 0, false, 0, nil)
 	for range 5 {

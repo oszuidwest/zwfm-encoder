@@ -5,10 +5,7 @@ import (
 	"testing"
 )
 
-// makeStereoPCM builds deterministic S16LE stereo PCM of the given frame count.
-// Each byte is a distinct step of a stride-7 ramp, so every position differs from
-// its neighbours and any frame misalignment - a byte drift or an L/R swap -
-// changes the decoded samples and is observable in the accumulated levels.
+// makeStereoPCM builds deterministic S16LE stereo PCM that exposes byte drift.
 func makeStereoPCM(frames int) []byte {
 	buf := make([]byte, frames*bytesPerFrame)
 	var b byte = 1
@@ -19,8 +16,7 @@ func makeStereoPCM(frames int) []byte {
 	return buf
 }
 
-// feedInChunks streams pcm into data using the repeating sequence of chunk sizes,
-// mimicking pipe reads that do not respect 4-byte frame boundaries.
+// feedInChunks mimics pipe reads that ignore stereo-frame boundaries.
 func feedInChunks(data *LevelData, pcm []byte, sizes []int) {
 	pos, si := 0, 0
 	for pos < len(pcm) {
@@ -34,12 +30,7 @@ func feedInChunks(data *LevelData, pcm []byte, sizes []int) {
 	}
 }
 
-// TestProcessSamplesChunkingInvariance is the regression test for issue #296:
-// the accumulated levels must not depend on where the byte stream is split. Pipe
-// reads can land off frame boundaries; before the remainder carry, those splits
-// dropped bytes and drifted the L/R alignment, producing garbage RMS/peak/clip
-// values. The aligned single-call result is the reference every chunking must
-// reproduce exactly (identical frames in identical order give identical floats).
+// TestProcessSamplesChunkingInvariance verifies levels ignore read boundaries.
 func TestProcessSamplesChunkingInvariance(t *testing.T) {
 	const frames = 5000
 	pcm := makeStereoPCM(frames)
@@ -77,13 +68,8 @@ func TestProcessSamplesChunkingInvariance(t *testing.T) {
 	}
 }
 
-// TestProcessSamplesSplitFrameClipCounting exercises the split-frame
-// reconstruction path for the clip counter specifically. The ramp data in
-// TestProcessSamplesChunkingInvariance never reaches ClipThreshold, so a frame
-// reassembled from the wrong bytes could miscount clips and nothing would fail.
-// Each case clips exactly one channel, so a byte drift or L/R swap in the split
-// reassembly flips the clip attribution; every split point must decode
-// identically to the aligned read.
+// TestProcessSamplesSplitFrameClipCounting verifies split frames keep clip
+// attribution on the correct channel.
 func TestProcessSamplesSplitFrameClipCounting(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -125,9 +111,8 @@ func TestProcessSamplesSplitFrameClipCounting(t *testing.T) {
 	}
 }
 
-// TestProcessSamplesCarriesTrailingPartialFrame asserts the end-of-stream carry:
-// a buffer that ends mid-frame accumulates the whole frames and holds the
-// trailing bytes for the next read.
+// TestProcessSamplesCarriesTrailingPartialFrame verifies mid-frame tails are
+// held for the next read.
 func TestProcessSamplesCarriesTrailingPartialFrame(t *testing.T) {
 	buf := makeStereoPCM(6)[:22] // 5 full frames (20 bytes) + 2 trailing bytes
 
@@ -142,10 +127,8 @@ func TestProcessSamplesCarriesTrailingPartialFrame(t *testing.T) {
 	}
 }
 
-// TestResetPreservesRemainder verifies that the periodic metering-window Reset
-// keeps the partial-frame carry. Reset fires roughly every 250ms, far more often
-// than reads split a frame, so dropping the carry on Reset would re-introduce the
-// misalignment the fix removes.
+// TestResetPreservesRemainder verifies metering resets do not break PCM frame
+// alignment.
 func TestResetPreservesRemainder(t *testing.T) {
 	pcm := makeStereoPCM(3) // 12 bytes = 3 frames
 
@@ -181,8 +164,8 @@ func TestResetPreservesRemainder(t *testing.T) {
 	}
 }
 
-// TestProcessSamplesEmptyBufferKeepsRemainder guards the n==0 edge: a zero-length
-// read must not disturb a pending carry.
+// TestProcessSamplesEmptyBufferKeepsRemainder verifies empty reads do not clear
+// a pending carry.
 func TestProcessSamplesEmptyBufferKeepsRemainder(t *testing.T) {
 	pcm := makeStereoPCM(1)
 

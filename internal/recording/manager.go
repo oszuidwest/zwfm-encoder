@@ -206,10 +206,7 @@ func (m *Manager) StopRecorder(id string) error {
 	return recorder.Stop()
 }
 
-// Start begins recorder management, starting hourly recorders and cleanup schedulers.
-// It is idempotent: a redundant call while already running (e.g. on a source
-// retry, which re-enters startEnabledStreams) is a no-op rather than spawning a
-// second set of schedulers.
+// Start begins recorder management and is idempotent across source retries.
 func (m *Manager) Start() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -219,8 +216,7 @@ func (m *Manager) Start() error {
 	}
 	m.running = true
 
-	// Fresh per-run stop channels; each scheduler captures its own locally
-	// (see startCleanupScheduler/startHourlyRetryScheduler) to avoid racing Stop.
+	// Each scheduler captures its per-run stop channel.
 	m.cleanupStopCh = make(chan struct{})
 	m.hourlyRetryStopCh = make(chan struct{})
 
@@ -248,30 +244,26 @@ func (m *Manager) Start() error {
 // Stop stops all recorders and background schedulers.
 func (m *Manager) Stop() error {
 	m.mu.Lock()
-	// Only the running->stopped transition tears down the schedulers, so the
-	// stop channels are closed exactly once even if Stop is called repeatedly.
-	// Recorders are stopped unconditionally below to catch any started outside
-	// the running window (e.g. an on-demand recorder).
+	// Close scheduler channels once; on-demand recorders may still need Stop.
 	if m.running {
 		m.running = false
 		close(m.cleanupStopCh)
 		close(m.hourlyRetryStopCh)
 	}
 
-	// Snapshot recorders before shutdown; Stop can block on FFmpeg.
+	// Snapshot before blocking on FFmpeg shutdown.
 	recorders := make([]*GenericRecorder, 0, len(m.recorders))
 	for _, recorder := range m.recorders {
 		recorders = append(recorders, recorder)
 	}
 	m.mu.Unlock()
 
-	// Fan out shutdown so one stuck FFmpeg process does not block the rest.
+	// Stop recorders concurrently so one process cannot stall the rest.
 	var (
 		wg    sync.WaitGroup
 		errMu sync.Mutex
 		errs  []error
 	)
-	// Transitional states may still own FFmpeg processes.
 	for _, recorder := range recorders {
 		wg.Go(func() {
 			if err := recorder.Stop(); err != nil {
@@ -288,8 +280,7 @@ func (m *Manager) Stop() error {
 	return errors.Join(errs...)
 }
 
-// WriteAudio fans out PCM without blocking the distributor.
-// It copies pcm once because the distributor reuses its buffer.
+// WriteAudio fans out one PCM copy without blocking the distributor.
 func (m *Manager) WriteAudio(pcm []byte) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -331,9 +322,8 @@ func (m *Manager) PendingUploadCount() int {
 	return count
 }
 
-// startHourlyRetryScheduler retries failed hourly recorders and pending uploads at each hour boundary.
-// stopCh is captured by the goroutine so it observes the channel created for this
-// run, decoupled from later reassignment of the manager field.
+// startHourlyRetryScheduler retries hourly recorders and uploads until stopCh closes.
+// Capturing stopCh avoids racing Stop's field reset.
 func (m *Manager) startHourlyRetryScheduler(stopCh <-chan struct{}) {
 	go func() {
 		for {

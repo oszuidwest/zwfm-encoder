@@ -132,10 +132,8 @@ func (m *Manager) SetRetentionDays(days int) {
 	m.mu.Unlock()
 }
 
-// startCleanupScheduler schedules hourly cleanup of old dump files until stopCh
-// is closed. stopCh is captured by the goroutine so it observes the channel
-// created for this run instead of re-reading the field, which Stop reassigns to
-// nil and would otherwise race.
+// startCleanupScheduler deletes old dump files until stopCh closes.
+// Capturing stopCh avoids racing Stop's field reset.
 func (m *Manager) startCleanupScheduler(stopCh <-chan struct{}) {
 	go func() {
 		for {

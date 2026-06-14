@@ -104,12 +104,8 @@ func (m *Manager) emitEvent(streamID, event, message, errMsg string, retryCount,
 	cb(streamID, name, event, message, errMsg, retryCount, maxRetries)
 }
 
-// maybeEmitStable emits the stream_stable event for id, but only when started is
-// still the current, running instance. The deferred stable goroutine captures
-// the instance it launched; a fast restart can replace that instance within the
-// stability window, so checking identity (cur == started), not just the ID,
-// avoids a premature stable event for a seconds-old replacement. Mirrors the
-// cur == s guard in runWriter.
+// maybeEmitStable emits stream_stable only for the same running stream instance.
+// Pointer identity protects fast restarts that reuse the stream ID.
 func (m *Manager) maybeEmitStable(id string, started *Stream) {
 	m.mu.RLock()
 	cur, exists := m.streams[id]
@@ -148,15 +144,11 @@ func (m *Manager) runWriter(streamID string, s *Stream) {
 	}
 }
 
-// Start launches a stream and reports whether this call actually started a new
-// process. The returned bool is true only when a new FFmpeg process was
-// launched; it is false with a nil error when the stream was already running or
-// starting, or when the stream was stopped concurrently during startup. Callers
-// rely on this to spawn exactly one monitor goroutine per running process: a
-// redundant Start on an already-running stream must not start a second monitor
-// (see MonitorAndRetry). On a real start, a goroutine emits a "stream_stable"
-// event after the stability threshold, but only if this same instance is still
-// running then (see maybeEmitStable).
+// Start launches a stream and reports whether it created a process.
+//
+// The returned bool is false with a nil error when another path already owns the
+// stream or removed it during startup. Callers use it to avoid duplicate retry
+// monitors. Successful starts schedule stream_stable through maybeEmitStable.
 //
 // A ProcessStarting placeholder is inserted into the map while the lock is
 // released for old-writer cleanup and process startup. This prevents
@@ -247,8 +239,7 @@ func (m *Manager) Start(stream *types.Stream) (bool, error) {
 
 	m.emitEvent(stream.ID, "stream_started", fmt.Sprintf("Connecting to %s:%d", stream.Host, stream.Port), "", 0, 0)
 
-	// After the stability window, emit stable only if this same instance is
-	// still current - see maybeEmitStable.
+	// Guard the stable event against restarts during the stability window.
 	go func() {
 		time.Sleep(types.StableThreshold)
 		m.maybeEmitStable(stream.ID, s)
@@ -633,11 +624,7 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 			return
 		}
 		if !started {
-			// Another path (startEnabledStreams on a source retry, or a manual
-			// StartStream) relaunched this stream during the retry sleep and now
-			// owns its monitor. Relinquish ownership instead of looping to Wait
-			// on that process, which would resurrect the duplicate monitor this
-			// guards against.
+			// The new owner already has a monitor.
 			slog.Info("stream already restarted by another path, stopping duplicate monitor",
 				"stream_id", streamID)
 			return

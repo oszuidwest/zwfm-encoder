@@ -5,11 +5,7 @@ import (
 	"testing"
 )
 
-// TestStartIsIdempotent verifies that a redundant Start (the source-retry path,
-// which re-enters startEnabledStreams without a preceding Stop) does not spawn a
-// second set of schedulers. Start creates the stop channels and the schedulers
-// together, so an unchanged channel identity proves no duplicate schedulers were
-// launched.
+// TestStartIsIdempotent verifies source retries do not duplicate schedulers.
 func TestStartIsIdempotent(t *testing.T) {
 	m, err := NewManager("", t.TempDir(), 60, nil)
 	if err != nil {
@@ -41,9 +37,7 @@ func TestStartIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestStartStopConcurrent hammers Start and Stop concurrently to surface the
-// data race between a scheduler reading its stop channel and Stop closing and
-// reassigning the field. It must run clean under -race.
+// TestStartStopConcurrent verifies schedulers do not race Stop's channel reset.
 func TestStartStopConcurrent(t *testing.T) {
 	m, err := NewManager("", t.TempDir(), 60, nil)
 	if err != nil {
@@ -71,8 +65,7 @@ func TestStartStopConcurrent(t *testing.T) {
 	_ = m.Stop()
 }
 
-// TestStopBeforeStartIsNoop ensures Stop is safe when the manager was never
-// started (the stop channels are nil until the first Start).
+// TestStopBeforeStartIsNoop verifies nil scheduler channels are safe.
 func TestStopBeforeStartIsNoop(t *testing.T) {
 	m, err := NewManager("", t.TempDir(), 60, nil)
 	if err != nil {
@@ -83,8 +76,7 @@ func TestStopBeforeStartIsNoop(t *testing.T) {
 	}
 }
 
-// TestStartStopCycle ensures repeated start/stop cycles neither panic on a
-// double close nor leave the running flag stuck.
+// TestStartStopCycle verifies repeated lifecycle cycles stay idempotent.
 func TestStartStopCycle(t *testing.T) {
 	m, err := NewManager("", t.TempDir(), 60, nil)
 	if err != nil {

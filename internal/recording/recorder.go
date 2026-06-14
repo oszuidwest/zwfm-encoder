@@ -22,7 +22,7 @@ import (
 var errRecorderStopped = errors.New("recorder stopped")
 
 const (
-	// recorderAudioBufferChunks bounds backlog to about 3s of distributor audio.
+	// recorderAudioBufferChunks bounds backlog to about 3s of audio.
 	recorderAudioBufferChunks = 30
 	// writerDrainTimeout bounds graceful writer drain before cancelling FFmpeg.
 	writerDrainTimeout = 5 * time.Second
@@ -316,10 +316,10 @@ func (r *GenericRecorder) Stop() error {
 	}
 	r.mu.Unlock()
 
-	// Queue the final file while the upload worker can still drain.
+	// Queue the final file before stopping the worker.
 	r.stopEncoderAndUpload()
 
-	// Late rotation uploads must persist to the retry queue after this point.
+	// Late rotation uploads go to durable retry storage after this point.
 	r.mu.Lock()
 	r.uploadClosed = true
 	r.mu.Unlock()
@@ -334,7 +334,7 @@ func (r *GenericRecorder) Stop() error {
 	r.state = types.ProcessStopped
 	r.lastError = ""
 	r.uploadStopCh = make(chan struct{}) // Fresh stop channel for next Start.
-	// Reuse uploadQueue; uploadClosed routes late files to the retry queue.
+	// Keep uploadQueue stable; uploadClosed reroutes late files.
 	r.stopOnce = sync.Once{}      // Allow the next Stop to close uploadStopCh.
 	r.uploadWorkerRunning = false // Allow the next Start to launch a worker.
 
@@ -349,14 +349,14 @@ func (r *GenericRecorder) Stop() error {
 }
 
 // WriteAudio queues pcm for non-blocking FFmpeg stdin writes.
-// The caller must keep pcm immutable after the call.
-// On full backlog, WriteAudio drops the newest chunk and increments AudioDrops.
+// The caller must not mutate pcm after the call. Full buffers drop the newest
+// chunk and increment AudioDrops.
 func (r *GenericRecorder) WriteAudio(pcm []byte) {
-	// Keep the send under r.mu so teardown cannot close ch between check and send.
+	// Keep send under r.mu because teardown may close ch.
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	// Accept a live rotating writer; IsRecording and WriteAudio are not atomic.
+	// Rotation may still own a live writer.
 	ch := r.audioCh
 	if ch == nil || (r.state != types.ProcessRunning && r.state != types.ProcessRotating) {
 		return
@@ -383,7 +383,7 @@ func (r *GenericRecorder) audioWriter(result *ffmpeg.StartResult, audioCh <-chan
 			continue
 		}
 
-		// Stop and rotation intentionally close stdin or cancel the process.
+		// Stop and rotation intentionally close this path.
 		if errors.Is(err, ffmpeg.ErrStdinClosed) ||
 			errors.Is(context.Cause(result.Context()), errRecorderStopped) {
 			return
@@ -398,7 +398,7 @@ func (r *GenericRecorder) audioWriter(result *ffmpeg.StartResult, audioCh <-chan
 // handleWriteError finalizes the partial file after an unexpected write failure.
 func (r *GenericRecorder) handleWriteError(result *ffmpeg.StartResult, writeErr error) {
 	r.mu.Lock()
-	// Rotation or Stop owns cleanup for swapped processes.
+	// Stop or rotation owns cleanup for swapped processes.
 	if r.result != result {
 		r.mu.Unlock()
 		return
@@ -409,7 +409,7 @@ func (r *GenericRecorder) handleWriteError(result *ffmpeg.StartResult, writeErr 
 	r.result = nil
 	r.currentFile = ""
 	r.audioCh = nil
-	// audioWriter closes writerDone when it returns.
+	// audioWriter closes writerDone on return.
 	r.writerDone = nil
 	r.mu.Unlock()
 
@@ -437,8 +437,7 @@ func (r *GenericRecorder) cleanupAfterWriteError(result *ffmpeg.StartResult, cur
 	}
 }
 
-// drainProcess waits for FFmpeg, escalating from wait to SIGTERM to SIGKILL.
-// It records stderr on failure.
+// drainProcess waits for FFmpeg, escalating through SIGTERM and SIGKILL.
 func (r *GenericRecorder) drainProcess(result *ffmpeg.StartResult) {
 	done := make(chan error, 1)
 	go func() {
@@ -588,9 +587,9 @@ func (r *GenericRecorder) startEncoderLocked() error {
 }
 
 // stopEncoderAndUpload claims the active FFmpeg process and queues its file.
-// If the writer is stuck, it cancels FFmpeg instead of taking stdinMu.
+// Stuck writers are cancelled instead of taking stdinMu.
 func (r *GenericRecorder) stopEncoderAndUpload() {
-	// Claim and clear the process under lock; the winner is the only channel closer.
+	// The claim winner is the only channel closer.
 	r.mu.Lock()
 	result := r.result
 	audioCh := r.audioCh
@@ -614,7 +613,7 @@ func (r *GenericRecorder) stopEncoderAndUpload() {
 		result.CloseStdin()
 		r.drainProcess(result)
 	case <-time.After(writerDrainTimeout):
-		// WriteStdin holds stdinMu; cancel FFmpeg to break the pipe.
+		// WriteStdin holds stdinMu; cancel FFmpeg to unblock it.
 		slog.Warn("recorder writer stuck, cancelling ffmpeg to break the pipe", "id", r.id)
 		result.Cancel(errRecorderStopped)
 		r.drainProcess(result)

@@ -7,8 +7,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 )
 
-// refCopyFromRing is the byte-by-byte reference the optimized copyFromRing
-// replaced. Tests assert the fast version is bit-for-bit equivalent to it.
+// refCopyFromRing is the byte-loop reference for copyFromRing.
 func refCopyFromRing(buf, dst []byte, startPos int64) {
 	capacity := int64(len(buf))
 	bufferStart := startPos % capacity
@@ -18,9 +17,7 @@ func refCopyFromRing(buf, dst []byte, startPos int64) {
 	}
 }
 
-// newPatternedCapturer returns a Capturer whose ring buffer is filled with a
-// deterministic, non-repeating-within-a-byte pattern so off-by-one and wrap
-// errors surface as mismatches.
+// newPatternedCapturer returns a ring pattern that exposes wrap mistakes.
 func newPatternedCapturer() *Capturer {
 	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
 	for i := range c.buffer {
@@ -29,9 +26,7 @@ func newPatternedCapturer() *Capturer {
 	return c
 }
 
-// writePattern feeds total bytes through WriteAudio in chunks, where the byte at
-// absolute position p is byte(p). This lets tests assert ring contents and
-// snapshots by formula instead of keeping a full history.
+// writePattern writes byte(p) at absolute position p for formula-based checks.
 func writePattern(c *Capturer, total int64) {
 	const chunk = 19200
 	var abs int64
@@ -49,10 +44,7 @@ func writePattern(c *Capturer, total int64) {
 	}
 }
 
-// TestCopyFromRingMatchesReference checks the optimized copy against the
-// byte-loop reference across start positions and lengths, including the
-// wrap-around boundary and the real caller sizes (15s before, 5s silence,
-// 15s after).
+// TestCopyFromRingMatchesReference checks wrap boundaries and real snapshot sizes.
 func TestCopyFromRingMatchesReference(t *testing.T) {
 	c := newPatternedCapturer()
 
@@ -83,9 +75,8 @@ func TestCopyFromRingMatchesReference(t *testing.T) {
 	}
 }
 
-// TestWriteAudioMatchesByteLoopReference drives WriteAudio (which now uses
-// writeToRing) with chunks that cross the wrap boundary and compares the ring
-// contents, write position, and total against the original per-byte write loop.
+// TestWriteAudioMatchesByteLoopReference verifies writeToRing matches byte-loop
+// behavior across mid-chunk wraps.
 func TestWriteAudioMatchesByteLoopReference(t *testing.T) {
 	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
 
@@ -123,10 +114,8 @@ func TestWriteAudioMatchesByteLoopReference(t *testing.T) {
 	}
 }
 
-// TestOnSilenceStartSavedBeforeWrap exercises copyFromRing through its real
-// caller. Writing more than one ring's worth forces the savedBefore start
-// position to wrap, and the byte(p)-at-position-p pattern lets us assert the
-// snapshot is exactly the most recent 15s by formula.
+// TestOnSilenceStartSavedBeforeWrap verifies savedBefore keeps the newest
+// pre-silence audio after the ring wraps.
 func TestOnSilenceStartSavedBeforeWrap(t *testing.T) {
 	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
 

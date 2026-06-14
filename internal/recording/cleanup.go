@@ -18,9 +18,8 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// startCleanupScheduler runs hourly retention cleanup until stopCh is closed.
-// stopCh is captured by the goroutine so it observes the channel created for this
-// run, decoupled from later reassignment of the manager field.
+// startCleanupScheduler runs hourly retention cleanup until stopCh closes.
+// Capturing stopCh avoids racing Stop's field reset.
 func (m *Manager) startCleanupScheduler(stopCh <-chan struct{}) {
 	go func() {
 		for {

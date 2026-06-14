@@ -230,14 +230,10 @@ func (c *Capturer) extractAndEncode() {
 	}()
 }
 
-// writeToRing copies src into the ring buffer at the current write position,
-// wrapping around the end once if src runs past it, and returns the new write
-// position. Like copyFromRing, it uses copy() instead of a per-byte modulo loop.
-// It runs on every chunk (~10x/sec) under c.mu, so it stays off the
-// byte-at-a-time path.
+// writeToRing copies src into the ring and returns the next write position.
 //
-// Precondition: len(src) <= bufferCapacity. A single write is one distributor
-// chunk (~19 KB) against a 6.7 MB ring, so it wraps at most once.
+// Precondition: len(src) <= bufferCapacity. Distributor chunks are smaller than
+// the ring, so one write wraps at most once.
 func (c *Capturer) writeToRing(src []byte) int {
 	n := copy(c.buffer[c.writePos:], src)
 	if n < len(src) {
@@ -250,17 +246,10 @@ func (c *Capturer) writeToRing(src []byte) int {
 	return pos
 }
 
-// copyFromRing copies len(dst) bytes out of the ring buffer, starting at the
-// absolute byte position startPos and wrapping around the end once if the read
-// runs past it. It uses copy() instead of the former per-byte modulo loop, which
-// held c.mu (the audio hot-path lock) for several ms while copying a 15s section
-// (~2.9 MB) one byte at a time - long enough to risk dropouts on every live
-// stream during a silence event (issue #297). See BenchmarkCopyFromRing.
+// copyFromRing copies len(dst) bytes from startPos using at most two copy calls.
 //
-// Precondition: startPos >= 0 and len(dst) <= bufferCapacity. The largest read is
-// 15s against a 35s ring (OnSilenceStart, extractAndEncode), so a read wraps at
-// most once; reading more than the whole buffer would only return
-// already-overwritten data.
+// Precondition: startPos >= 0 and len(dst) <= bufferCapacity. Silence snapshots
+// are smaller than the ring, so one read wraps at most once.
 func (c *Capturer) copyFromRing(dst []byte, startPos int64) {
 	pos := int(startPos % int64(bufferCapacity))
 	n := copy(dst, c.buffer[pos:])

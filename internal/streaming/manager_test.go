@@ -7,8 +7,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-// validStream returns a stream that passes Validate so Start proceeds past the
-// validation gate into the running-state checks.
+// validStream returns a stream that reaches Start's state checks.
 func validStream() *types.Stream {
 	return &types.Stream{
 		ID:      "s1",
@@ -19,12 +18,8 @@ func validStream() *types.Stream {
 	}
 }
 
-// TestStartReportsNotStartedWhenAlreadyActive is the regression guard for the
-// duplicate-MonitorAndRetry bug (finding 3, #293). Start must report
-// started=false with no error when the stream is already running or starting,
-// so the caller does not spawn a second monitor goroutine. The reachable path
-// is startEnabledStreams re-calling StartStream on every source retry while the
-// stream FFmpeg processes keep running.
+// TestStartReportsNotStartedWhenAlreadyActive verifies active streams do not
+// spawn duplicate monitors.
 func TestStartReportsNotStartedWhenAlreadyActive(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -47,7 +42,7 @@ func TestStartReportsNotStartedWhenAlreadyActive(t *testing.T) {
 				t.Errorf("Start reported started=true for an already-%s stream; "+
 					"the caller would spawn a duplicate monitor", tc.name)
 			}
-			// The existing entry must be left untouched - no placeholder swap.
+			// No placeholder swap: the existing process still owns the stream.
 			if m.streams[stream.ID] != existing {
 				t.Errorf("Start replaced the existing stream entry")
 			}
@@ -55,14 +50,8 @@ func TestStartReportsNotStartedWhenAlreadyActive(t *testing.T) {
 	}
 }
 
-// TestStartRelaunchesErroredOrStoppedEntry guards the state-specific early
-// return: only ProcessRunning and ProcessStarting count as already-active. An
-// errored or stopped entry must fall through to a real (re)launch - the path
-// MonitorAndRetry drives on every retry. Broadening the guard to "any existing
-// entry" would silently kill retry-driven restarts, and the already-active
-// tests above would still pass. Here the relaunch is forced to fail with a
-// bogus ffmpeg path, so a non-nil error is precisely what proves Start did not
-// take the (false, nil) already-active shortcut.
+// TestStartRelaunchesErroredOrStoppedEntry verifies retryable states attempt a
+// new process instead of taking the already-active shortcut.
 func TestStartRelaunchesErroredOrStoppedEntry(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -88,13 +77,8 @@ func TestStartRelaunchesErroredOrStoppedEntry(t *testing.T) {
 	}
 }
 
-// TestMaybeEmitStableOnlyForSameRunningInstance is the regression guard for the
-// premature stream_stable bug (finding 8, #298). The deferred stable goroutine
-// captures the instance it launched and must emit only when that same instance
-// is still the current, running stream. A fast restart that replaces the
-// instance within StableThreshold must not produce a stable event for the
-// seconds-old replacement. Checking only the ID (the pre-fix behavior) would
-// emit on the "different running instance" case below.
+// TestMaybeEmitStableOnlyForSameRunningInstance verifies fast restarts cannot
+// inherit another instance's stable event.
 func TestMaybeEmitStableOnlyForSameRunningInstance(t *testing.T) {
 	const id = "s1"
 
@@ -113,9 +97,7 @@ func TestMaybeEmitStableOnlyForSameRunningInstance(t *testing.T) {
 		{
 			name: "different running instance does not emit",
 			setup: func(m *Manager, _ *Stream) {
-				// A fast restart replaced the launched instance: a different
-				// *Stream now owns the ID and is running, but it is not the
-				// instance the stable goroutine was spawned for.
+				// Same ID, different owner.
 				m.streams[id] = &Stream{state: types.ProcessRunning}
 			},
 			wantEmit: false,
@@ -131,7 +113,7 @@ func TestMaybeEmitStableOnlyForSameRunningInstance(t *testing.T) {
 		{
 			name: "id removed does not emit",
 			setup: func(_ *Manager, _ *Stream) {
-				// Leave the map empty: the stream was stopped/removed.
+				// Stopped/removed streams have no current owner.
 			},
 			wantEmit: false,
 		},

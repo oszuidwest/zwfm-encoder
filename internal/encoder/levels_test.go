@@ -10,8 +10,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-// TestAudioLevelsNilReadsSilence verifies that AudioLevels() returns the silent
-// snapshot before any levels have been published (the atomic.Pointer is nil).
+// TestAudioLevelsNilReadsSilence verifies nil level storage reports silence.
 func TestAudioLevelsNilReadsSilence(t *testing.T) {
 	e := &Encoder{}
 	if got := e.AudioLevels(); got != silentAudioLevels {
@@ -19,8 +18,7 @@ func TestAudioLevelsNilReadsSilence(t *testing.T) {
 	}
 }
 
-// TestAudioLevelsPublishRoundTrip verifies that a published snapshot is read back
-// by value.
+// TestAudioLevelsPublishRoundTrip verifies published levels are read by value.
 func TestAudioLevelsPublishRoundTrip(t *testing.T) {
 	e := &Encoder{}
 	want := audio.AudioLevels{Left: -12.5, Right: -9.25, PeakLeft: -3, PeakRight: -2, ClipLeft: 1}
@@ -35,13 +33,8 @@ func TestAudioLevelsPublishRoundTrip(t *testing.T) {
 	}
 }
 
-// TestRunDistributorPublishesSilenceOnExit verifies that the distributor
-// republishes silence when it exits, overriding the last live reading. This is
-// what lets AudioLevels() report silence after the source stops without a
-// state gate, and it closes the window where a trailing publish from this
-// goroutine could outlive a reset issued from runSource. An immediate-EOF
-// source makes runDistributor return on its first read; the deferred reset must
-// then win over the non-silent value seeded below.
+// TestRunDistributorPublishesSilenceOnExit verifies the distributor's final
+// publish clears the last live level.
 func TestRunDistributorPublishesSilenceOnExit(t *testing.T) {
 	e := &Encoder{
 		state:        types.StateRunning,
@@ -57,11 +50,8 @@ func TestRunDistributorPublishesSilenceOnExit(t *testing.T) {
 	}
 }
 
-// TestAudioLevelsConcurrent exercises AudioLevels() against concurrent
-// updateAudioLevels()/resetAudioLevels() publishers. Storing the levels in an
-// atomic.Pointer makes this race-free; the previous implementation returned a
-// cached copy without synchronization on the TryRLock fallback path, which the
-// race detector flags. Run with `go test -race`.
+// TestAudioLevelsConcurrent keeps AudioLevels race-free under concurrent
+// publishers. Run with `go test -race`.
 func TestAudioLevelsConcurrent(t *testing.T) {
 	e := &Encoder{}
 	e.resetAudioLevels()

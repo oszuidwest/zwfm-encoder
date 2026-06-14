@@ -42,7 +42,7 @@ func TestManagerStopStopsRotatingRecorder(t *testing.T) {
 	}
 }
 
-// TestStopReusesUploadQueue pins the queue lifetime used for late-upload routing.
+// TestStopReusesUploadQueue verifies late uploads keep a stable queue target.
 func TestStopReusesUploadQueue(t *testing.T) {
 	r, err := NewGenericRecorder(GenericRecorderConfig{
 		Recorder: testS3Recorder(),
@@ -67,7 +67,8 @@ func TestStopReusesUploadQueue(t *testing.T) {
 	}
 }
 
-// TestQueueForUploadAfterWorkerStopPersistsToRetryQueue verifies late uploads retry after Stop.
+// TestQueueForUploadAfterWorkerStopPersistsToRetryQueue verifies Stop cannot
+// strand late uploads in a closed worker queue.
 func TestQueueForUploadAfterWorkerStopPersistsToRetryQueue(t *testing.T) {
 	spoolDir := t.TempDir()
 	r, err := NewGenericRecorder(GenericRecorderConfig{
@@ -78,7 +79,7 @@ func TestQueueForUploadAfterWorkerStopPersistsToRetryQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Seed a running worker so Stop closes upload intake.
+	// Seed a worker for Stop to close.
 	r.mu.Lock()
 	r.state = types.ProcessRunning
 	r.uploadWorkerRunning = true
@@ -90,7 +91,7 @@ func TestQueueForUploadAfterWorkerStopPersistsToRetryQueue(t *testing.T) {
 		t.Fatalf("Stop: %v", err)
 	}
 
-	// A rotation finishing after Stop must use the retry queue.
+	// Rotation can finish after Stop.
 	filePath := writeSpoolFile(t, spoolDir, r.id, "late.mp3", "late-recording")
 	r.queueForUpload(filePath)
 

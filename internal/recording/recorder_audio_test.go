@@ -12,7 +12,7 @@ import (
 func TestWriteAudioNeverBlocksAndCountsDrops(t *testing.T) {
 	t.Parallel()
 
-	// Buffer of 2 with no writer draining it: the third chunk onwards overflow.
+	// With no writer draining, the third chunk onwards overflows.
 	r := &GenericRecorder{id: "r1", state: types.ProcessRunning, audioCh: make(chan []byte, 2)}
 
 	done := make(chan struct{})
@@ -45,12 +45,12 @@ func TestWriteAudioNeverBlocksAndCountsDrops(t *testing.T) {
 	}
 }
 
-// TestWriteAudioConcurrentWithTeardownNoPanic pins the send-vs-close race.
+// TestWriteAudioConcurrentWithTeardownNoPanic pins send-vs-close teardown.
 func TestWriteAudioConcurrentWithTeardownNoPanic(t *testing.T) {
 	for range 50 {
 		r := &GenericRecorder{id: "r1", state: types.ProcessRunning, audioCh: make(chan []byte, 4)}
 
-		// Drain the channel so WriteAudio mostly hits the successful send path.
+		// Keep most writes on the successful send path.
 		ch := r.audioCh
 		drained := make(chan struct{})
 		go func() {
@@ -88,11 +88,11 @@ func TestWriteAudioConcurrentWithTeardownNoPanic(t *testing.T) {
 	}
 }
 
-// TestWriteAudioNoopWhenNotRecording verifies missing or inactive writers never enqueue.
+// TestWriteAudioNoopWhenNotRecording verifies inactive writers never enqueue.
 func TestWriteAudioNoopWhenNotRecording(t *testing.T) {
 	t.Parallel()
 
-	// Running but no channel (before startEncoderLocked): must not panic/drop.
+	// Running before startEncoderLocked has no writer channel.
 	noCh := &GenericRecorder{id: "r1", state: types.ProcessRunning}
 	noCh.WriteAudio([]byte{1})
 	if got := noCh.audioDrops.Load(); got != 0 {
@@ -107,7 +107,7 @@ func TestWriteAudioNoopWhenNotRecording(t *testing.T) {
 	}
 }
 
-// TestWriteAudioEnqueuesWhileRotating verifies boundary audio reaches a live rotating writer.
+// TestWriteAudioEnqueuesWhileRotating verifies rotation keeps a live writer fed.
 func TestWriteAudioEnqueuesWhileRotating(t *testing.T) {
 	t.Parallel()
 
@@ -136,7 +136,8 @@ func TestStatusReportsAudioDrops(t *testing.T) {
 	}
 }
 
-// TestManagerWriteAudioSharesOneCopyAcrossRecorders verifies active recorders share one copy.
+// TestManagerWriteAudioSharesOneCopyAcrossRecorders verifies one defensive copy
+// serves all active recorders.
 func TestManagerWriteAudioSharesOneCopyAcrossRecorders(t *testing.T) {
 	t.Parallel()
 
@@ -177,7 +178,7 @@ func TestManagerWriteAudioSharesOneCopyAcrossRecorders(t *testing.T) {
 	if ga[0] != 1 || gb[0] != 1 {
 		t.Fatalf("recorders saw the mutated source buffer: a=%d b=%d, want 1", ga[0], gb[0])
 	}
-	// Both recorders share the single copied slice (copy-once optimization).
+	// Active recorders share the copy.
 	if &ga[0] != &gb[0] {
 		t.Fatal("expected active recorders to share one copied slice")
 	}
