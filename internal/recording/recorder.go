@@ -80,6 +80,7 @@ type GenericRecorder struct {
 	uploadStopCh        chan struct{}
 	stopOnce            sync.Once // Prevents double-close of uploadStopCh
 	uploadWorkerRunning bool      // Guards against starting multiple upload workers
+	uploadClosed        bool      // Intake gate: true once Stop begins draining the worker
 
 	// Retry queue for failed uploads (protected by mu)
 	retryQueue []pendingUpload
@@ -248,6 +249,7 @@ func (r *GenericRecorder) startAsync() {
 	// Start upload worker (after encoder to prevent goroutine leak on failure)
 	if !r.uploadWorkerRunning {
 		r.uploadWorkerRunning = true
+		r.uploadClosed = false // worker now accepts queued uploads
 		r.uploadWg.Add(1)
 		go r.uploadWorker()
 	}
@@ -327,7 +329,16 @@ func (r *GenericRecorder) Stop() error {
 
 	// Finalize the encoder and its writer goroutine. No-op if the recorder is
 	// not encoding (e.g. already errored - the writer's error path cleaned up).
+	// This queues our own final file while the worker is still draining.
 	r.stopEncoderAndUpload()
+
+	// Close the upload intake before stopping the worker. Any later
+	// queueForUpload (e.g. a rotation that finalized after we claimed the
+	// result) must persist via the retry queue instead of landing in the
+	// channel the worker is about to stop draining, where it would be stranded.
+	r.mu.Lock()
+	r.uploadClosed = true
+	r.mu.Unlock()
 
 	// Always stop upload worker - may be running even after write error
 	r.stopOnce.Do(func() {

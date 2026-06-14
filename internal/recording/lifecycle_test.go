@@ -74,6 +74,46 @@ func TestStopReusesUploadQueue(t *testing.T) {
 	}
 }
 
+// TestQueueForUploadAfterWorkerStopPersistsToRetryQueue is a regression test for
+// the stop-vs-rotation upload stranding: once Stop has drained and exited the
+// upload worker, a late queueForUpload (e.g. from a rotation that finalized
+// after Stop claimed the result) must NOT land in the now-undrained in-memory
+// channel. It must be persisted durably via the retry queue so it is recovered
+// on restart for every storage mode.
+func TestQueueForUploadAfterWorkerStopPersistsToRetryQueue(t *testing.T) {
+	spoolDir := t.TempDir()
+	r, err := NewGenericRecorder(GenericRecorderConfig{
+		Recorder: testS3Recorder(),
+		SpoolDir: spoolDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate an active recorder with a running upload worker, then stop it.
+	r.mu.Lock()
+	r.state = types.ProcessRunning
+	r.uploadWorkerRunning = true
+	r.mu.Unlock()
+	r.uploadWg.Add(1)
+	go r.uploadWorker()
+
+	if err := r.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	// A rotation that finished after Stop now tries to queue its file.
+	filePath := writeSpoolFile(t, spoolDir, r.id, "late.mp3", "late-recording")
+	r.queueForUpload(filePath)
+
+	if got := len(r.uploadQueue); got != 0 {
+		t.Fatalf("late upload stranded in channel with no worker: uploadQueue len = %d, want 0", got)
+	}
+	if got := len(r.retryQueue); got != 1 {
+		t.Fatalf("late upload not persisted: retryQueue len = %d, want 1", got)
+	}
+}
+
 // TestRemoveRecorderStopsAndRemoves verifies RemoveRecorder removes the recorder
 // from the map and stops it (finding 2 fix keeps Stop outside the manager lock).
 func TestRemoveRecorderStopsAndRemoves(t *testing.T) {

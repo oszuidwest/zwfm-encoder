@@ -40,14 +40,35 @@ func (r *GenericRecorder) queueForUpload(filePath string) {
 		return
 	}
 
-	select {
-	case r.uploadQueue <- req:
+	// Decide under the lock whether the worker can still accept this request.
+	// The intake check and the non-blocking send are atomic with respect to
+	// Stop setting uploadClosed and closing the worker: a request either lands
+	// in the channel before the worker's final drain, or is routed to the
+	// durable retry queue - it is never stranded in an undrained channel.
+	r.mu.Lock()
+	closed := r.uploadClosed
+	queued := false
+	if !closed {
+		select {
+		case r.uploadQueue <- req:
+			queued = true
+		default:
+		}
+	}
+	r.mu.Unlock()
+
+	if queued {
 		slog.Info("queued file for upload", "id", r.id, "file", filepath.Base(filePath))
 		r.logUploadEvent(eventlog.UploadQueued, filepath.Base(filePath), req.s3Key, "", 0)
-	default:
-		slog.Warn("upload queue full", "id", r.id)
-		r.addToRetryQueue(req, "upload queue full")
+		return
 	}
+
+	reason := "upload queue full"
+	if closed {
+		reason = "upload worker stopped"
+	}
+	slog.Warn("queuing upload via retry queue", "id", r.id, "reason", reason)
+	r.addToRetryQueue(req, reason)
 }
 
 // uploadDirectly uploads a file synchronously, bypassing the queue.
