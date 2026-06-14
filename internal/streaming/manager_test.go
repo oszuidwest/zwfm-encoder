@@ -54,6 +54,39 @@ func TestStartReportsNotStartedWhenAlreadyActive(t *testing.T) {
 	}
 }
 
+// TestStartRelaunchesErroredOrStoppedEntry guards the state-specific early
+// return: only ProcessRunning and ProcessStarting count as already-active. An
+// errored or stopped entry must fall through to a real (re)launch - the path
+// MonitorAndRetry drives on every retry. Broadening the guard to "any existing
+// entry" would silently kill retry-driven restarts, and the already-active
+// tests above would still pass. Here the relaunch is forced to fail with a
+// bogus ffmpeg path, so a non-nil error is precisely what proves Start did not
+// take the (false, nil) already-active shortcut.
+func TestStartRelaunchesErroredOrStoppedEntry(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		state types.ProcessState
+	}{
+		{"error", types.ProcessError},
+		{"stopped", types.ProcessStopped},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewManager("/nonexistent/ffmpeg-binary-for-test")
+			stream := validStream()
+			m.streams[stream.ID] = &Stream{state: tc.state}
+
+			started, err := m.Start(stream)
+			if started {
+				t.Fatalf("Start reported started=true despite a failed relaunch")
+			}
+			if err == nil {
+				t.Errorf("Start took the already-active shortcut for a %s entry; "+
+					"it must fall through to a relaunch", tc.name)
+			}
+		})
+	}
+}
+
 // TestStartReportsNotStartedOnValidationError verifies an invalid stream yields
 // started=false so the caller does not monitor a stream that never launched.
 func TestStartReportsNotStartedOnValidationError(t *testing.T) {

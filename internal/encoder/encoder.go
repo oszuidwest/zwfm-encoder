@@ -476,9 +476,9 @@ func (e *Encoder) StartStream(streamID string) error {
 		return fmt.Errorf("failed to start stream: %w", err)
 	}
 
-	// Only the call that actually started the process owns the monitor.
-	// A redundant StartStream on an already-running stream (e.g. source
-	// retry calling startEnabledStreams again) must not spawn a duplicate.
+	// Spawn the monitor only on a real launch: a redundant StartStream on an
+	// already-running stream (e.g. startEnabledStreams during a source retry)
+	// must not add a second monitor.
 	if started {
 		go e.streamManager.MonitorAndRetry(streamID, e, stopChan)
 	}

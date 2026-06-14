@@ -614,11 +614,20 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 		}
 
 		stream = ctx.Stream(streamID)
-		// The bool result is ignored: this goroutine is already the monitor,
-		// so it keeps looping to Wait on the (re)started process itself.
-		if _, err := m.Start(stream); err != nil {
+		started, err := m.Start(stream)
+		if err != nil {
 			slog.Error("failed to restart stream", "stream_id", streamID, "error", err)
 			m.Remove(streamID)
+			return
+		}
+		if !started {
+			// Another path (startEnabledStreams on a source retry, or a manual
+			// StartStream) relaunched this stream during the retry sleep and now
+			// owns its monitor. Relinquish ownership instead of looping to Wait
+			// on that process, which would resurrect the duplicate monitor this
+			// guards against.
+			slog.Info("stream already restarted by another path, stopping duplicate monitor",
+				"stream_id", streamID)
 			return
 		}
 	}
