@@ -95,7 +95,7 @@ Stream events track the lifecycle and health of audio output streams.
 
 - **Severity:** `success`
 - **UI Label:** Connected
-- **Triggered:** When a stream has been running successfully for the stability threshold (default: 30 seconds).
+- **Triggered:** When a stream has been running successfully for the stability threshold (default: 10 seconds).
 
 ```json
 {
@@ -552,7 +552,7 @@ GET /api/events?limit=50&offset=0&type=stream
 | Event Type | Category | Severity | UI Label | Trigger |
 |------------|----------|----------|----------|---------|
 | `stream_started` | Stream | info | Started | Stream begins connecting |
-| `stream_stable` | Stream | success | Connected | Stream stable for 30s |
+| `stream_stable` | Stream | success | Connected | Stream stable for 10s |
 | `stream_error` | Stream | error | Error | Stream encounters error |
 | `stream_retry` | Stream | warning | Retry | Stream retrying after failure |
 | `stream_stopped` | Stream | info | Stopped | Stream intentionally stopped |

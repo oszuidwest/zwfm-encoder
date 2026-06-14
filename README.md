@@ -23,8 +23,6 @@ Audio streaming software for [ZuidWest FM](https://www.zuidwestfm.nl/) (Linux), 
 | macOS | Development only | FFmpeg (AVFoundation) |
 | Windows | Experimental | FFmpeg (DirectShow) |
 
-Linux on Raspberry Pi is the primary target. macOS works for development. Windows is experimental.
-
 ## Deployment Model
 
 This is bare-metal software for a Raspberry Pi with a HiFiBerry sound card - there is no Docker target. Audio capture goes directly through ALSA (`arecord`) on the host, which needs the kernel sound device, the HiFiBerry overlay, and predictable real-time scheduling. Containerizing it would add a layer without solving anything for this hardware path.
@@ -84,7 +82,7 @@ Connect the digital output of your audio processor to the HiFiBerry input.
 | Codec | Encoder | Bitrate | Notes |
 |-------|---------|---------|-------|
 | MP3 | libmp3lame | 320 kbit/s | - |
-| Opus | libopus | 128 kbit/s (64–256 configurable) | MPEG-TS container, 10 ms frames |
+| Opus | libopus | 128 kbit/s (64-256 configurable) | MPEG-TS container, 10 ms frames |
 | PCM | s302m | ~1.92 Mbit/s (16-bit) | MPEG-TS container, SMPTE 302M |
 
 ## Silence Detection
@@ -94,34 +92,34 @@ Monitors audio levels and sends alerts when silence is detected or recovered. Us
 | Setting | Default | Range | Description |
 |---------|---------|-------|-------------|
 | Threshold | -40 dB | -60 to -1 | Audio level below which silence is detected |
-| Duration | 15 s | 1 to 300 | Seconds of silence before alerting |
-| Recovery | 5 s | 1 to 60 | Seconds of audio before recovery |
+| Duration | 15 s | 0.5 to 300 | Seconds of silence before alerting |
+| Recovery | 5 s | 0.5 to 60 | Seconds of audio before recovery |
 
 **Alerting options** (can use multiple simultaneously, each with per-event control):
-- **Webhook** - POST request to a URL; independently enable `silence_start`, `silence_end`, and `audio_dump` (MP3 attachment). Abandoned S3 uploads are always sent when the channel is configured.
-- **Email** - Microsoft Graph API notification; independently enable `silence_start`, `silence_end`, and `audio_dump` (MP3 attachment). Abandoned S3 uploads are always sent when the channel is configured.
-- **File Log** - Appends JSON Lines for every silence event (always records all events, no per-event toggle)
-- **Zabbix** - Send trapper items to a Zabbix server; independently enable `silence_start` and `silence_end` (no `audio_dump` - trapper items do not support file attachments). Abandoned S3 uploads are always sent when the upload key is configured.
+- **Webhook** - POST request to a URL; independently enable `silence_start`, `silence_end`, and `audio_dump` (MP3 attachment).
+- **Email** - Microsoft Graph API notification; independently enable `silence_start`, `silence_end`, and `audio_dump` (MP3 attachment).
+- **File Log** - Appends JSON Lines for every silence event (always records all events, no per-event toggle).
+- **Zabbix** - Send trapper items to a Zabbix server; independently enable `silence_start` and `silence_end` (no `audio_dump` - trapper items do not support file attachments).
 
-`silence_end` is sent immediately on recovery. `audio_dump_ready` is dispatched as a separate event once the MP3 encoding completes.
+`silence_end` is sent immediately on recovery; `audio_dump_ready` is dispatched as a separate event once the MP3 encoding completes. Abandoned S3 uploads always alert every configured channel, regardless of per-event toggles.
 
-Configure via the web interface under Settings → Notifications.
+Configure via the web interface under Settings -> Notifications.
 
 ### Microsoft 365 Email Setup
 
 Email notifications use Microsoft Graph API with app-only authentication.
 
-1. [Create an App Registration](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade) → copy **Client ID** and **Tenant ID**
+1. [Create an App Registration](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade), then copy the **Client ID** and **Tenant ID**
 2. Add API permissions: `Mail.Send` (required), `Application.Read.All` (optional, for secret expiry warnings)
 3. Grant admin consent
-4. Create a client secret → copy the value immediately (won't be shown again)
+4. Create a client secret, then copy the value immediately (won't be shown again)
 5. [Create a shared mailbox](https://admin.exchange.microsoft.com/#/sharedmailboxes) as the sender (no license required)
 
 The encoder warns when the secret expires within 30 days.
 
 ### Zabbix Setup
 
-1. Import [`zabbix/template.xml`](https://github.com/oszuidwest/zwfm-encoder/blob/main/zabbix/template.xml) in Zabbix (**Data collection** → **Templates** → **Import**)
+1. Import [`zabbix/template.xml`](https://github.com/oszuidwest/zwfm-encoder/blob/main/zabbix/template.xml) in Zabbix (**Data collection** -> **Templates** -> **Import**)
 2. Link the template to your encoder host
 3. Configure in the encoder: server, port (default 10051), host name (must match Zabbix exactly), silence key, and upload key
 
@@ -141,7 +139,7 @@ curl -X POST "http://<host>:8080/api/recordings/stop?recorder_id=1" \
   -H "X-API-Key: <your-api-key>"
 ```
 
-Configure the API key and maximum recording duration under Settings → Audio → Recording API. The `max_duration_minutes` limit automatically stops a recording after the configured time (0 = no limit).
+Configure the API key and maximum recording duration under Settings -> Audio -> Recording API. The `max_duration_minutes` limit automatically stops a recording after the configured time (0 = no limit).
 
 For local recording storage under the packaged systemd service, use `/var/lib/encoder/recordings`. The service owns this state directory even with `ProtectSystem=strict`. Custom archive paths need a systemd override that adds the path to `ReadWritePaths=`.
 
@@ -224,7 +222,7 @@ flowchart LR
     A[Audio Input]
 
     subgraph Capture["Capture"]
-        B[arecord]
+        B[arecord / FFmpeg]
     end
 
     subgraph Processing["Audio Processing"]
@@ -261,12 +259,11 @@ flowchart LR
         SN[Alert Orchestrator]
         N1[Webhook]
         N2[Email]
-        N3[Log]
         N4[Zabbix]
     end
 
     subgraph UI["Web UI"]
-        WS[WebSocket<br>10fps]
+        WS[WebSocket<br>levels 10fps + status 3s]
     end
 
     subgraph EventLog["Event Log"]
@@ -293,9 +290,8 @@ flowchart LR
     SDM -->|MP3| SN
     SN -->|HTTP| N1
     SN -->|Graph API| N2
-    SN -->|file| N3
     SN -->|trapper| N4
-    SN -->|events| EL
+    SN -->|silence events| EL
 
     %% Streaming
     D ==>|PCM| OM
@@ -308,15 +304,16 @@ flowchart LR
     RM ==>|PCM| R1 -->|audio| ST
     RM ==>|PCM| R2 -->|audio| ST
     RM -->|events| EL
+    RM -->|upload abandoned| SN
 ```
 
 ### Audio Flow
 
 1. **Capture**: `arecord` (Linux) or FFmpeg (macOS/Windows) captures 48kHz 16-bit stereo PCM
 2. **Distributor**: Processes PCM in ~100ms chunks, fans out to all consumers
-3. **Metering**: Calculates RMS/peak levels in Go (no FFmpeg filters), holds peaks for a configurable duration (default 3000 ms), detects clipping at ±32760
+3. **Metering**: Calculates RMS/peak levels in Go (no FFmpeg filters), holds peaks for a configurable duration (default 3000 ms), detects clipping at +/-32760
 4. **Silence Detection**: Hysteresis-based detection with configurable threshold/duration/recovery. Buffers 15s audio context before/after silence events
-5. **Alerting**: Silence events trigger webhook, email (MS Graph), log (JSON Lines), and/or Zabbix. Each channel has per-event subscriptions for `silence_start`, `silence_end`, and `audio_dump_ready`. `silence_end` fires immediately on recovery; `audio_dump_ready` fires separately once the MP3 is ready. Abandoned S3 uploads also trigger notifications.
+5. **Alerting**: Silence events trigger webhook, email (MS Graph), log (JSON Lines), and/or Zabbix. Each channel has per-event subscriptions for `silence_start`, `silence_end`, and `audio_dump`. `silence_end` fires immediately on recovery; the `audio_dump_ready` event fires separately once the MP3 is ready. Abandoned S3 uploads also trigger notifications.
 6. **Streaming**: Per-output FFmpeg processes with automatic retry and exponential backoff
 7. **Recording**: Hourly rotation or on-demand, with optional S3 upload
 8. **Event Log**: All stream, silence, and recording events written to a JSON Lines file; accessible via web UI and REST API with pagination
