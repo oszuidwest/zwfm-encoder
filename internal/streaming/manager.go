@@ -132,16 +132,22 @@ func (m *Manager) runWriter(streamID string, s *Stream) {
 	}
 }
 
-// Start launches a stream. On success, a goroutine emits a "stream_stable"
+// Start launches a stream and reports whether this call actually started a new
+// process. The returned bool is true only when a new FFmpeg process was
+// launched; it is false with a nil error when the stream was already running or
+// starting, or when the stream was stopped concurrently during startup. Callers
+// rely on this to spawn exactly one monitor goroutine per running process: a
+// redundant Start on an already-running stream must not start a second monitor
+// (see MonitorAndRetry). On a real start, a goroutine emits a "stream_stable"
 // event after the stability threshold is reached.
 //
 // A ProcessStarting placeholder is inserted into the map while the lock is
 // released for old-writer cleanup and process startup. This prevents
 // concurrent Start calls from launching duplicate FFmpeg processes while
 // keeping the lock free for WriteAudio and Statuses on other streams.
-func (m *Manager) Start(stream *types.Stream) error {
+func (m *Manager) Start(stream *types.Stream) (bool, error) {
 	if err := stream.Validate(); err != nil {
-		return err
+		return false, err
 	}
 
 	m.mu.Lock()
@@ -149,7 +155,7 @@ func (m *Manager) Start(stream *types.Stream) error {
 	existing, exists := m.streams[stream.ID]
 	if exists && (existing.state == types.ProcessRunning || existing.state == types.ProcessStarting) {
 		m.mu.Unlock()
-		return nil // Already running or being started
+		return false, nil // Already running or being started
 	}
 
 	// Preserve retry state and capture old stream for writer cleanup
@@ -194,7 +200,7 @@ func (m *Manager) Start(stream *types.Stream) error {
 			delete(m.streams, stream.ID)
 		}
 		m.mu.Unlock()
-		return err
+		return false, err
 	}
 
 	s := &Stream{
@@ -215,7 +221,7 @@ func (m *Manager) Start(stream *types.Stream) error {
 		result.Cancel(errStoppedByUser)
 		result.CloseStdin()
 		_ = result.Wait()
-		return nil
+		return false, nil
 	}
 	m.streams[stream.ID] = s
 	m.mu.Unlock()
@@ -236,7 +242,7 @@ func (m *Manager) Start(stream *types.Stream) error {
 		}
 	}(stream.ID)
 
-	return nil
+	return true, nil
 }
 
 // Stop terminates a stream with proper graceful shutdown.
@@ -608,7 +614,9 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 		}
 
 		stream = ctx.Stream(streamID)
-		if err := m.Start(stream); err != nil {
+		// The bool result is ignored: this goroutine is already the monitor,
+		// so it keeps looping to Wait on the (re)started process itself.
+		if _, err := m.Start(stream); err != nil {
 			slog.Error("failed to restart stream", "stream_id", streamID, "error", err)
 			m.Remove(streamID)
 			return
