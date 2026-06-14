@@ -247,13 +247,12 @@ func (m *Manager) Start(stream *types.Stream) (bool, error) {
 
 	m.emitEvent(stream.ID, "stream_started", fmt.Sprintf("Connecting to %s:%d", stream.Host, stream.Port), "", 0, 0)
 
-	// Emit stable event after the threshold, but only if this exact instance is
-	// still running. Capturing s (not just the ID) guards against a fast restart
-	// replacing the stream within the window - see maybeEmitStable.
-	go func(id string, started *Stream) {
+	// After the stability window, emit stable only if this same instance is
+	// still current - see maybeEmitStable.
+	go func() {
 		time.Sleep(types.StableThreshold)
-		m.maybeEmitStable(id, started)
-	}(stream.ID, s)
+		m.maybeEmitStable(stream.ID, s)
+	}()
 
 	return true, nil
 }
