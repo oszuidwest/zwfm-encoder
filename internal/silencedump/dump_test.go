@@ -83,22 +83,6 @@ func TestCopyFromRingMatchesReference(t *testing.T) {
 	}
 }
 
-// TestCopyFromRingLongerThanCapacity covers the defensive multi-wrap path: a
-// destination longer than the ring still matches the modulo reference, even
-// though no production caller requests more than 15s.
-func TestCopyFromRingLongerThanCapacity(t *testing.T) {
-	c := newPatternedCapturer()
-
-	l := bufferCapacity + 1234
-	got := make([]byte, l)
-	want := make([]byte, l)
-	c.copyFromRing(got, 5)
-	refCopyFromRing(c.buffer, want, 5)
-	if !bytes.Equal(got, want) {
-		t.Fatal("copyFromRing mismatch for dst longer than bufferCapacity")
-	}
-}
-
 // TestWriteAudioMatchesByteLoopReference drives WriteAudio (which now uses
 // writeToRing) with chunks that cross the wrap boundary and compares the ring
 // contents, write position, and total against the original per-byte write loop.

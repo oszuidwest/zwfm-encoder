@@ -230,38 +230,40 @@ func (c *Capturer) extractAndEncode() {
 	}()
 }
 
-// writeToRing copies src into the ring buffer starting at the current writePos,
-// wrapping around the end of the buffer as needed, and returns the new write
-// position. It mirrors copyFromRing on the write side: copy() calls instead of a
-// per-byte modulo loop. This runs on every chunk (~10x/sec) under c.mu, so
-// keeping it off the byte-at-a-time path keeps lock hold time minimal.
+// writeToRing copies src into the ring buffer at the current write position,
+// wrapping around the end once if src runs past it, and returns the new write
+// position. Like copyFromRing, it uses copy() instead of a per-byte modulo loop.
+// It runs on every chunk (~10x/sec) under c.mu, so it stays off the
+// byte-at-a-time path. A single write is one distributor chunk (~19 KB) against a
+// 6.7 MB ring (len(src) <= bufferCapacity), so it wraps at most once.
 func (c *Capturer) writeToRing(src []byte) int {
-	pos := c.writePos
-	for len(src) > 0 {
-		n := copy(c.buffer[pos:], src)
-		src = src[n:]
-		pos += n
-		if pos == bufferCapacity {
-			pos = 0
-		}
+	n := copy(c.buffer[c.writePos:], src)
+	if n < len(src) {
+		return copy(c.buffer, src[n:]) // wrapped: remainder goes to the front
+	}
+	pos := c.writePos + n
+	if pos == bufferCapacity {
+		return 0 // landed exactly on the end; next write resumes at the front
 	}
 	return pos
 }
 
 // copyFromRing copies len(dst) bytes out of the ring buffer, starting at the
-// absolute byte position startPos and wrapping around the end of the buffer as
-// needed. It uses copy() rather than a per-byte modulo loop: the byte-by-byte
-// version it replaced ran ~26x slower for a full extract and held c.mu (the
-// audio hot-path lock) for several ms, risking stream dropouts during a silence
-// event (issue #297). The loop also handles dst longer than bufferCapacity,
-// though no caller currently relies on that.
+// absolute byte position startPos and wrapping around the end once if the read
+// runs past it. It uses copy() instead of a per-byte modulo loop: the byte-by-byte
+// version it replaced held c.mu (the audio hot-path lock) for several ms while
+// copying a 15s section (~2.9 MB) one byte at a time, more than an order of
+// magnitude slower than copy() (see BenchmarkCopyFromRing; the ratio is larger on
+// the lower-bandwidth Pi target) and risking dropouts on every live stream during
+// a silence event (issue #297).
+//
+// Precondition: len(dst) <= bufferCapacity. The largest read is 15s against a 35s
+// ring (OnSilenceStart, extractAndEncode), so a read wraps at most once; reading
+// more than the whole buffer would only return already-overwritten data.
 func (c *Capturer) copyFromRing(dst []byte, startPos int64) {
 	pos := int(startPos % int64(bufferCapacity))
-	for len(dst) > 0 {
-		n := copy(dst, c.buffer[pos:])
-		dst = dst[n:]
-		pos = 0 // any continuation resumes at the buffer start after a wrap
-	}
+	n := copy(dst, c.buffer[pos:])
+	copy(dst[n:], c.buffer) // continuation after a single wrap; no-op when the read fit before the end
 }
 
 // encodeToMP3 encodes PCM audio to an MP3 file.
