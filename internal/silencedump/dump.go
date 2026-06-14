@@ -234,8 +234,10 @@ func (c *Capturer) extractAndEncode() {
 // wrapping around the end once if src runs past it, and returns the new write
 // position. Like copyFromRing, it uses copy() instead of a per-byte modulo loop.
 // It runs on every chunk (~10x/sec) under c.mu, so it stays off the
-// byte-at-a-time path. A single write is one distributor chunk (~19 KB) against a
-// 6.7 MB ring (len(src) <= bufferCapacity), so it wraps at most once.
+// byte-at-a-time path.
+//
+// Precondition: len(src) <= bufferCapacity. A single write is one distributor
+// chunk (~19 KB) against a 6.7 MB ring, so it wraps at most once.
 func (c *Capturer) writeToRing(src []byte) int {
 	n := copy(c.buffer[c.writePos:], src)
 	if n < len(src) {
