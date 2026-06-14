@@ -8,10 +8,8 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-// TestWriteAudioNeverBlocksAndCountsDrops verifies the core decoupling
-// guarantee: WriteAudio never blocks the distributor, and when the buffer is
-// full it drops the newest chunk and counts it (no silent loss, no
-// drop-oldest) so the gap is observable.
+// TestWriteAudioNeverBlocksAndCountsDrops verifies full buffers drop newest
+// chunks and report the gap instead of blocking the distributor.
 func TestWriteAudioNeverBlocksAndCountsDrops(t *testing.T) {
 	t.Parallel()
 
@@ -48,10 +46,8 @@ func TestWriteAudioNeverBlocksAndCountsDrops(t *testing.T) {
 	}
 }
 
-// TestWriteAudioConcurrentWithTeardownNoPanic stresses the send-vs-close race:
-// WriteAudio must never send on a channel that the stop/rotation path is
-// closing. It mirrors stopEncoderAndUpload's "claim under write lock, then
-// close" sequence while many writers run, and must stay clean under -race.
+// TestWriteAudioConcurrentWithTeardownNoPanic covers the send-vs-close race
+// between WriteAudio and stopEncoderAndUpload.
 func TestWriteAudioConcurrentWithTeardownNoPanic(t *testing.T) {
 	for range 50 {
 		r := &GenericRecorder{id: "r1", state: types.ProcessRunning, audioCh: make(chan []byte, 4)}
@@ -76,8 +72,7 @@ func TestWriteAudioConcurrentWithTeardownNoPanic(t *testing.T) {
 			}()
 		}
 
-		// Teardown exactly as stopEncoderAndUpload does it: clear the channel
-		// under the write lock, then close it outside the lock.
+		// Mirror stopEncoderAndUpload: clear under lock, close outside it.
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -95,8 +90,7 @@ func TestWriteAudioConcurrentWithTeardownNoPanic(t *testing.T) {
 	}
 }
 
-// TestWriteAudioNoopWhenNotRecording verifies WriteAudio is a safe no-op when
-// the recorder is not actively recording or has no writer channel yet.
+// TestWriteAudioNoopWhenNotRecording verifies missing or inactive writers never enqueue.
 func TestWriteAudioNoopWhenNotRecording(t *testing.T) {
 	t.Parallel()
 
@@ -127,9 +121,8 @@ func TestStatusReportsAudioDrops(t *testing.T) {
 	}
 }
 
-// TestManagerWriteAudioSharesOneCopyAcrossRecorders verifies the manager copies
-// the distributor's reusable buffer exactly once and shares the copy read-only
-// across active recorders, and never feeds inactive recorders.
+// TestManagerWriteAudioSharesOneCopyAcrossRecorders verifies one buffer copy is
+// shared by active recorders while inactive recorders are skipped.
 func TestManagerWriteAudioSharesOneCopyAcrossRecorders(t *testing.T) {
 	t.Parallel()
 

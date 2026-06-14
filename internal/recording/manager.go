@@ -140,11 +140,7 @@ func (m *Manager) RemoveRecorder(id string) error {
 		return fmt.Errorf("recorder not found: %s", id)
 	}
 
-	// Stop outside m.mu: Stop can take seconds while it breaks a stuck writer's
-	// pipe and force-kills FFmpeg, and holding the manager lock would block the
-	// distributor's WriteAudio (RLock) - the exact hot-path stall this package
-	// works to avoid. The recorder is already out of the map, so the
-	// distributor will not feed it while it stops.
+	// Remove before slow teardown so WriteAudio cannot feed this recorder.
 	if err := recorder.Stop(); err != nil {
 		slog.Warn("error stopping recorder during removal", "id", id, "error", err)
 	}
@@ -240,7 +236,7 @@ func (m *Manager) Start() error {
 	return nil
 }
 
-// Stop stops all active recorders and background schedulers.
+// Stop stops all recorders and background schedulers.
 func (m *Manager) Stop() error {
 	m.mu.Lock()
 	m.running = false
@@ -253,29 +249,20 @@ func (m *Manager) Stop() error {
 	close(m.hourlyRetryStopCh)
 	m.hourlyRetryStopCh = make(chan struct{}) // Reset for potential restart
 
-	// Snapshot recorders so the (potentially slow) per-recorder shutdown runs
-	// without holding m.mu. Otherwise the distributor's WriteAudio (RLock)
-	// would block behind a stuck recorder's stop path, defeating the whole
-	// point of decoupling the recorders from the hot path.
+	// Release m.mu before slow recorder shutdowns; WriteAudio takes the read lock.
 	recorders := make([]*GenericRecorder, 0, len(m.recorders))
 	for _, recorder := range m.recorders {
 		recorders = append(recorders, recorder)
 	}
 	m.mu.Unlock()
 
-	// Stop recorders concurrently: a single stuck recorder can take up to
-	// ~17s to break the pipe and force-kill FFmpeg, so stopping serially would
-	// multiply that worst case by the number of recorders during shutdown.
+	// Stop concurrently so one stuck FFmpeg process does not serialize shutdown.
 	var (
 		wg    sync.WaitGroup
 		errMu sync.Mutex
 		errs  []error
 	)
-	// Stop every recorder, not only those whose state is exactly
-	// ProcessRunning. Stop is idempotent, and gating on IsRecording would skip
-	// recorders that are mid-startup or mid-rotation (ProcessStarting /
-	// ProcessRotating): such a recorder would be left running and
-	// startAsync/rotateFile could spin up a fresh FFmpeg after Stop returned.
+	// Stop is idempotent; transitional states may still own FFmpeg processes.
 	for _, recorder := range recorders {
 		wg.Add(1)
 		go func(rec *GenericRecorder) {
@@ -294,11 +281,9 @@ func (m *Manager) Stop() error {
 	return errors.Join(errs...)
 }
 
-// WriteAudio fans PCM audio out to all active recorders without blocking.
-// Each recorder enqueues the chunk for its own writer goroutine, so a stalled
-// recorder FFmpeg can no longer block the distributor (and thus the live
-// streams). The chunk is copied once and shared read-only across recorders;
-// their writer goroutines only read it.
+// WriteAudio fans out PCM to active recorders without blocking the distributor.
+// It copies pcm once because the distributor reuses its buffer; active recorders
+// share that copy read-only.
 func (m *Manager) WriteAudio(pcm []byte) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
