@@ -130,19 +130,21 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 // RemoveRecorder removes a recorder from the manager.
 func (m *Manager) RemoveRecorder(id string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	recorder, exists := m.recorders[id]
+	if exists {
+		delete(m.recorders, id)
+	}
+	m.mu.Unlock()
+
 	if !exists {
 		return fmt.Errorf("recorder not found: %s", id)
 	}
 
-	// Always stop to clean up resources (timers, upload worker) even in error state
+	// Delete before teardown so WriteAudio stops seeing this recorder.
 	if err := recorder.Stop(); err != nil {
 		slog.Warn("error stopping recorder during removal", "id", id, "error", err)
 	}
 
-	delete(m.recorders, id)
 	slog.Info("recorder removed", "id", id)
 	return nil
 }
@@ -234,11 +236,9 @@ func (m *Manager) Start() error {
 	return nil
 }
 
-// Stop stops all active recorders and background schedulers.
+// Stop stops all recorders and background schedulers.
 func (m *Manager) Stop() error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	m.running = false
 
 	// Stop cleanup scheduler
@@ -249,34 +249,53 @@ func (m *Manager) Stop() error {
 	close(m.hourlyRetryStopCh)
 	m.hourlyRetryStopCh = make(chan struct{}) // Reset for potential restart
 
-	var errs []error
-	for id, recorder := range m.recorders {
-		if recorder.IsRecording() {
-			if err := recorder.Stop(); err != nil {
-				slog.Warn("error stopping recorder", "id", id, "error", err)
-				errs = append(errs, err)
-			}
-		}
+	// Snapshot recorders before shutdown; Stop can block on FFmpeg.
+	recorders := make([]*GenericRecorder, 0, len(m.recorders))
+	for _, recorder := range m.recorders {
+		recorders = append(recorders, recorder)
 	}
+	m.mu.Unlock()
+
+	// Fan out shutdown so one stuck FFmpeg process does not block the rest.
+	var (
+		wg    sync.WaitGroup
+		errMu sync.Mutex
+		errs  []error
+	)
+	// Transitional states may still own FFmpeg processes.
+	for _, recorder := range recorders {
+		wg.Go(func() {
+			if err := recorder.Stop(); err != nil {
+				slog.Warn("error stopping recorder", "id", recorder.ID(), "error", err)
+				errMu.Lock()
+				errs = append(errs, err)
+				errMu.Unlock()
+			}
+		})
+	}
+	wg.Wait()
 
 	slog.Info("recording manager stopped")
 	return errors.Join(errs...)
 }
 
-// WriteAudio writes PCM audio to any active recorders.
-func (m *Manager) WriteAudio(pcm []byte) error {
+// WriteAudio fans out PCM without blocking the distributor.
+// It copies pcm once because the distributor reuses its buffer.
+func (m *Manager) WriteAudio(pcm []byte) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	var shared []byte
 	for _, recorder := range m.recorders {
-		if recorder.IsRecording() {
-			if err := recorder.WriteAudio(pcm); err != nil {
-				slog.Warn("recorder write error", "id", recorder.ID(), "error", err)
-			}
+		if !recorder.IsRecording() {
+			continue
 		}
+		if shared == nil {
+			shared = make([]byte, len(pcm))
+			copy(shared, pcm)
+		}
+		recorder.WriteAudio(shared)
 	}
-
-	return nil
 }
 
 // Statuses returns the current status of all recorders.

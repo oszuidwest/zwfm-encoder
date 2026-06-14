@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"strconv"
 	"sync"
@@ -103,7 +104,8 @@ func (r *StartResult) CloseStdin() {
 		return
 	}
 
-	if err := stdin.Close(); err != nil {
+	// Wait may close stdin first; late CloseStdin calls are harmless.
+	if err := stdin.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
 		slog.Warn("failed to close stdin", "error", err)
 	}
 }
