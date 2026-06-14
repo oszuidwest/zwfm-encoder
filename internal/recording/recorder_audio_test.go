@@ -107,13 +107,27 @@ func TestWriteAudioNoopWhenNotRecording(t *testing.T) {
 	if got := len(stopped.audioCh); got != 0 {
 		t.Fatalf("buffered chunks while stopped = %d, want 0", got)
 	}
+}
 
-	// Rotating recorder: the manager only feeds Running recorders, so WriteAudio
-	// must skip a rotating one too (its writer/channel are being torn down).
-	rotating := &GenericRecorder{id: "r3", state: types.ProcessRotating, audioCh: make(chan []byte, 2)}
-	rotating.WriteAudio([]byte{1})
-	if got := len(rotating.audioCh); got != 0 {
-		t.Fatalf("buffered chunks while rotating = %d, want 0", got)
+// TestWriteAudioEnqueuesWhileRotating covers the TOCTOU between
+// Manager.WriteAudio's IsRecording (Running) check and the WriteAudio call:
+// rotateFile can flip state to ProcessRotating while audioCh is still live.
+// The chunk must still be enqueued (the old writer drains it to the old file),
+// not dropped at the rotation boundary.
+func TestWriteAudioEnqueuesWhileRotating(t *testing.T) {
+	t.Parallel()
+
+	r := &GenericRecorder{id: "r1", state: types.ProcessRotating, audioCh: make(chan []byte, 2)}
+	r.WriteAudio([]byte{1})
+	if got := len(r.audioCh); got != 1 {
+		t.Fatalf("rotating recorder with a live channel buffered %d chunks, want 1", got)
+	}
+
+	// Once teardown has nil'd the channel, a rotating recorder is skipped.
+	r.audioCh = nil
+	r.WriteAudio([]byte{2})
+	if got := r.audioDrops.Load(); got != 0 {
+		t.Fatalf("audioDrops after nil-channel rotating write = %d, want 0", got)
 	}
 }
 

@@ -53,7 +53,7 @@ type GenericRecorder struct {
 	// Per-process writer state; reset with each FFmpeg process.
 	audioCh    chan []byte
 	writerDone chan struct{}
-	audioDrops atomic.Int64 // chunks dropped when the writer backlog is full
+	audioDrops atomic.Int64 // lost chunks: backlog-full drops plus buffer abandoned on teardown
 
 	// Current recording
 	currentFile string
@@ -359,10 +359,13 @@ func (r *GenericRecorder) WriteAudio(pcm []byte) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	// Only running recorders have a live writer; Manager.WriteAudio already
-	// gates on IsRecording (Running), so other states are skipped here too.
+	// Manager.WriteAudio gates on IsRecording (Running), but that check and this
+	// call are not atomic: a recorder can be observed mid-rotation here with
+	// audioCh still alive. Accept ProcessRotating too so the boundary chunk is
+	// enqueued to the old writer (drained to the old file) instead of dropped.
+	// A nil channel (after teardown nils it) is always skipped.
 	ch := r.audioCh
-	if ch == nil || r.state != types.ProcessRunning {
+	if ch == nil || (r.state != types.ProcessRunning && r.state != types.ProcessRotating) {
 		return
 	}
 
@@ -633,9 +636,11 @@ func (r *GenericRecorder) stopEncoderAndUpload() {
 		<-writerDone
 	}
 
-	// Chunks the writer never flushed (stuck path) are a real recording gap;
-	// count them so AudioDrops reflects the whole gap, not just buffer-full
-	// drops. The writer has exited, so reading len(audioCh) is race-free.
+	// Chunks still buffered when the writer exits (stuck path) are lost audio;
+	// count them so AudioDrops reflects teardown loss too, not just buffer-full
+	// drops. This excludes the one chunk already pulled into the stuck WriteStdin
+	// call, so it is a lower bound on the gap. The writer has exited, so reading
+	// len(audioCh) is race-free.
 	if abandoned := len(audioCh); abandoned > 0 {
 		drops := r.audioDrops.Add(int64(abandoned))
 		slog.Warn("recorder abandoned buffered audio during teardown",
