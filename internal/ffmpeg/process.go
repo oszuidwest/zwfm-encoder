@@ -104,9 +104,7 @@ func (r *StartResult) CloseStdin() {
 		return
 	}
 
-	// os/exec closes the stdin pipe itself once Wait sees the process exit, so a
-	// CloseStdin that runs after Wait (e.g. the cancel-first teardown path)
-	// returns ErrClosed. That is expected, not worth warning about.
+	// Wait may close stdin first; late CloseStdin calls are harmless.
 	if err := stdin.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
 		slog.Warn("failed to close stdin", "error", err)
 	}

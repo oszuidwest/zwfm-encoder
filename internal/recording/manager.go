@@ -140,7 +140,7 @@ func (m *Manager) RemoveRecorder(id string) error {
 		return fmt.Errorf("recorder not found: %s", id)
 	}
 
-	// Remove before slow teardown so WriteAudio cannot feed this recorder.
+	// Delete before teardown so WriteAudio stops seeing this recorder.
 	if err := recorder.Stop(); err != nil {
 		slog.Warn("error stopping recorder during removal", "id", id, "error", err)
 	}
@@ -249,20 +249,20 @@ func (m *Manager) Stop() error {
 	close(m.hourlyRetryStopCh)
 	m.hourlyRetryStopCh = make(chan struct{}) // Reset for potential restart
 
-	// Release m.mu before slow recorder shutdowns; WriteAudio takes the read lock.
+	// Snapshot recorders before shutdown; Stop can block on FFmpeg.
 	recorders := make([]*GenericRecorder, 0, len(m.recorders))
 	for _, recorder := range m.recorders {
 		recorders = append(recorders, recorder)
 	}
 	m.mu.Unlock()
 
-	// Stop concurrently so one stuck FFmpeg process does not serialize shutdown.
+	// Fan out shutdown so one stuck FFmpeg process does not block the rest.
 	var (
 		wg    sync.WaitGroup
 		errMu sync.Mutex
 		errs  []error
 	)
-	// Stop is idempotent; transitional states may still own FFmpeg processes.
+	// Transitional states may still own FFmpeg processes.
 	for _, recorder := range recorders {
 		wg.Go(func() {
 			if err := recorder.Stop(); err != nil {
@@ -279,9 +279,8 @@ func (m *Manager) Stop() error {
 	return errors.Join(errs...)
 }
 
-// WriteAudio fans out PCM to active recorders without blocking the distributor.
-// It copies pcm once because the distributor reuses its buffer; active recorders
-// share that copy read-only.
+// WriteAudio fans out PCM without blocking the distributor.
+// It copies pcm once because the distributor reuses its buffer.
 func (m *Manager) WriteAudio(pcm []byte) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

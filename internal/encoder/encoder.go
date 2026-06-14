@@ -754,7 +754,7 @@ func (e *Encoder) runDistributor() {
 			_ = e.streamManager.WriteAudio(stream.ID, buf[:n]) //nolint:errcheck // Errors logged internally by WriteAudio
 		}
 
-		// Recorder fan-out must stay non-blocking; each recorder owns its queue.
+		// Recording fan-out stays non-blocking; recorders own their queues.
 		if e.recordingManager != nil {
 			e.recordingManager.WriteAudio(buf[:n])
 		}

@@ -40,8 +40,7 @@ func (r *GenericRecorder) queueForUpload(filePath string) {
 		return
 	}
 
-	// Hold r.mu across the intake check and send. A file either reaches the
-	// worker before its final drain or goes to the durable retry queue.
+	// Serialize intake with Stop; files reach the worker or durable retry queue.
 	r.mu.Lock()
 	closed := r.uploadClosed
 	queued := false
@@ -68,7 +67,7 @@ func (r *GenericRecorder) queueForUpload(filePath string) {
 	r.addToRetryQueue(req, reason)
 }
 
-// uploadDirectly bypasses the queue when Stop may already be draining it.
+// uploadDirectly skips the worker queue when Stop may be draining it.
 func (r *GenericRecorder) uploadDirectly(filePath string) {
 	req, ok := r.prepareUploadRequest(filePath)
 	if !ok {

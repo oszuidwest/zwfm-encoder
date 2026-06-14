@@ -18,8 +18,7 @@ func localOnDemandRecorder(t *testing.T, id string) *types.Recorder {
 	}
 }
 
-// TestManagerStopStopsRotatingRecorder verifies Stop covers transitional states
-// that may still own an FFmpeg process.
+// TestManagerStopStopsRotatingRecorder covers transitional states with live FFmpeg.
 func TestManagerStopStopsRotatingRecorder(t *testing.T) {
 	m, err := NewManager("", t.TempDir(), 60, nil)
 	if err != nil {
@@ -31,7 +30,7 @@ func TestManagerStopStopsRotatingRecorder(t *testing.T) {
 
 	rec := m.recorders["r1"]
 	rec.mu.Lock()
-	rec.state = types.ProcessRotating // the state rotateFile holds during a rotation
+	rec.state = types.ProcessRotating // rotateFile's transient state.
 	rec.mu.Unlock()
 
 	if err := m.Stop(); err != nil {
@@ -43,7 +42,7 @@ func TestManagerStopStopsRotatingRecorder(t *testing.T) {
 	}
 }
 
-// TestStopReusesUploadQueue verifies Stop reuses the recorder's lifetime queue.
+// TestStopReusesUploadQueue pins the queue lifetime used for late-upload routing.
 func TestStopReusesUploadQueue(t *testing.T) {
 	r, err := NewGenericRecorder(GenericRecorderConfig{
 		Recorder: testS3Recorder(),
@@ -68,8 +67,7 @@ func TestStopReusesUploadQueue(t *testing.T) {
 	}
 }
 
-// TestQueueForUploadAfterWorkerStopPersistsToRetryQueue verifies late rotation
-// uploads cannot land in an undrained worker channel after Stop.
+// TestQueueForUploadAfterWorkerStopPersistsToRetryQueue verifies late uploads retry after Stop.
 func TestQueueForUploadAfterWorkerStopPersistsToRetryQueue(t *testing.T) {
 	spoolDir := t.TempDir()
 	r, err := NewGenericRecorder(GenericRecorderConfig{
@@ -80,7 +78,7 @@ func TestQueueForUploadAfterWorkerStopPersistsToRetryQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Start and stop the upload worker so uploadClosed is set.
+	// Seed a running worker so Stop closes upload intake.
 	r.mu.Lock()
 	r.state = types.ProcessRunning
 	r.uploadWorkerRunning = true
@@ -104,7 +102,7 @@ func TestQueueForUploadAfterWorkerStopPersistsToRetryQueue(t *testing.T) {
 	}
 }
 
-// TestRemoveRecorderStopsAndRemoves verifies removal also stops the recorder.
+// TestRemoveRecorderStopsAndRemoves verifies removal also tears down the recorder.
 func TestRemoveRecorderStopsAndRemoves(t *testing.T) {
 	m, err := NewManager("", t.TempDir(), 60, nil)
 	if err != nil {

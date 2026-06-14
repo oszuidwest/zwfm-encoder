@@ -8,8 +8,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-// TestWriteAudioNeverBlocksAndCountsDrops verifies full buffers drop newest
-// chunks and report the gap instead of blocking the distributor.
+// TestWriteAudioNeverBlocksAndCountsDrops verifies overflow drops newest chunks and counts them.
 func TestWriteAudioNeverBlocksAndCountsDrops(t *testing.T) {
 	t.Parallel()
 
@@ -46,8 +45,7 @@ func TestWriteAudioNeverBlocksAndCountsDrops(t *testing.T) {
 	}
 }
 
-// TestWriteAudioConcurrentWithTeardownNoPanic covers the send-vs-close race
-// between WriteAudio and stopEncoderAndUpload.
+// TestWriteAudioConcurrentWithTeardownNoPanic pins the send-vs-close race.
 func TestWriteAudioConcurrentWithTeardownNoPanic(t *testing.T) {
 	for range 50 {
 		r := &GenericRecorder{id: "r1", state: types.ProcessRunning, audioCh: make(chan []byte, 4)}
@@ -109,11 +107,7 @@ func TestWriteAudioNoopWhenNotRecording(t *testing.T) {
 	}
 }
 
-// TestWriteAudioEnqueuesWhileRotating covers the TOCTOU between
-// Manager.WriteAudio's IsRecording (Running) check and the WriteAudio call:
-// rotateFile can flip state to ProcessRotating while audioCh is still live.
-// The chunk must still be enqueued (the old writer drains it to the old file),
-// not dropped at the rotation boundary.
+// TestWriteAudioEnqueuesWhileRotating verifies boundary audio reaches a live rotating writer.
 func TestWriteAudioEnqueuesWhileRotating(t *testing.T) {
 	t.Parallel()
 
@@ -131,8 +125,7 @@ func TestWriteAudioEnqueuesWhileRotating(t *testing.T) {
 	}
 }
 
-// TestStatusReportsAudioDrops verifies dropped chunks surface in the recorder
-// status so the gap is observable to operators.
+// TestStatusReportsAudioDrops verifies dropped chunks surface in recorder status.
 func TestStatusReportsAudioDrops(t *testing.T) {
 	t.Parallel()
 
@@ -143,8 +136,7 @@ func TestStatusReportsAudioDrops(t *testing.T) {
 	}
 }
 
-// TestManagerWriteAudioSharesOneCopyAcrossRecorders verifies one buffer copy is
-// shared by active recorders while inactive recorders are skipped.
+// TestManagerWriteAudioSharesOneCopyAcrossRecorders verifies active recorders share one copy.
 func TestManagerWriteAudioSharesOneCopyAcrossRecorders(t *testing.T) {
 	t.Parallel()
 
@@ -178,7 +170,7 @@ func TestManagerWriteAudioSharesOneCopyAcrossRecorders(t *testing.T) {
 	// Distributor passes a reusable buffer; the manager must copy it.
 	src := []byte{1, 2, 3, 4}
 	m.WriteAudio(src)
-	src[0] = 99 // mutate the reusable buffer after the call
+	src[0] = 99 // Simulate distributor buffer reuse.
 
 	ga := <-a.audioCh
 	gb := <-b.audioCh
