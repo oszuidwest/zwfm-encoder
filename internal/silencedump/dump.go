@@ -250,16 +250,15 @@ func (c *Capturer) writeToRing(src []byte) int {
 
 // copyFromRing copies len(dst) bytes out of the ring buffer, starting at the
 // absolute byte position startPos and wrapping around the end once if the read
-// runs past it. It uses copy() instead of a per-byte modulo loop: the byte-by-byte
-// version it replaced held c.mu (the audio hot-path lock) for several ms while
-// copying a 15s section (~2.9 MB) one byte at a time, more than an order of
-// magnitude slower than copy() (see BenchmarkCopyFromRing; the ratio is larger on
-// the lower-bandwidth Pi target) and risking dropouts on every live stream during
-// a silence event (issue #297).
+// runs past it. It uses copy() instead of the former per-byte modulo loop, which
+// held c.mu (the audio hot-path lock) for several ms while copying a 15s section
+// (~2.9 MB) one byte at a time - long enough to risk dropouts on every live
+// stream during a silence event (issue #297). See BenchmarkCopyFromRing.
 //
-// Precondition: len(dst) <= bufferCapacity. The largest read is 15s against a 35s
-// ring (OnSilenceStart, extractAndEncode), so a read wraps at most once; reading
-// more than the whole buffer would only return already-overwritten data.
+// Precondition: startPos >= 0 and len(dst) <= bufferCapacity. The largest read is
+// 15s against a 35s ring (OnSilenceStart, extractAndEncode), so a read wraps at
+// most once; reading more than the whole buffer would only return
+// already-overwritten data.
 func (c *Capturer) copyFromRing(dst []byte, startPos int64) {
 	pos := int(startPos % int64(bufferCapacity))
 	n := copy(dst, c.buffer[pos:])
