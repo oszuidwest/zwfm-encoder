@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -81,6 +82,11 @@ func (r *GenericRecorder) uploadDirectly(filePath string) {
 // prepareUploadRequest validates and creates an upload request for the given file.
 // Returns false if the file should not be uploaded.
 func (r *GenericRecorder) prepareUploadRequest(filePath string) (uploadRequest, bool) {
+	if strings.Contains(filePath, "..") {
+		slog.Warn("recording upload path contains parent directory reference", "id", r.id, "path", filePath)
+		return uploadRequest{}, false
+	}
+
 	info, err := os.Stat(filePath)
 	if err != nil {
 		slog.Warn("failed to stat recording file", "id", r.id, "error", err)

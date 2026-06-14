@@ -73,6 +73,24 @@ func TestRecorderCodecMetadata(t *testing.T) {
 	}
 }
 
+func TestPrepareUploadRequestRejectsParentDirectoryReference(t *testing.T) {
+	t.Parallel()
+
+	cfg := testS3Recorder()
+	recorder, err := NewGenericRecorder(GenericRecorderConfig{
+		Recorder: cfg,
+		SpoolDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.FromSlash(t.TempDir() + "/../escape.mp3")
+	if _, ok := recorder.prepareUploadRequest(path); ok {
+		t.Fatal("prepareUploadRequest() ok = true, want false")
+	}
+}
+
 func TestPendingUploadsPersistAndReload(t *testing.T) {
 	t.Parallel()
 
