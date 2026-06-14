@@ -1,10 +1,13 @@
 package encoder
 
 import (
+	"io"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
 // TestAudioLevelsNilReadsSilence verifies that AudioLevels() returns the silent
@@ -29,6 +32,28 @@ func TestAudioLevelsPublishRoundTrip(t *testing.T) {
 	e.resetAudioLevels()
 	if got := e.AudioLevels(); got != silentAudioLevels {
 		t.Errorf("AudioLevels() after reset = %+v, want %+v", got, silentAudioLevels)
+	}
+}
+
+// TestRunDistributorPublishesSilenceOnExit verifies that the distributor
+// republishes silence when it exits, overriding the last live reading. This is
+// what lets AudioLevels() report silence after the source stops without a
+// state gate, and it closes the window where a trailing publish from this
+// goroutine could outlive a reset issued from runSource. An immediate-EOF
+// source makes runDistributor return on its first read; the deferred reset must
+// then win over the non-silent value seeded below.
+func TestRunDistributorPublishesSilenceOnExit(t *testing.T) {
+	e := &Encoder{
+		state:        types.StateRunning,
+		stopChan:     make(chan struct{}),
+		sourceStdout: io.NopCloser(strings.NewReader("")), // first Read returns EOF
+	}
+	e.updateAudioLevels(&audio.AudioLevels{Left: -3, Right: -3, PeakLeft: -1, PeakRight: -1})
+
+	e.runDistributor() // returns on EOF; the deferred resetAudioLevels runs
+
+	if got := e.AudioLevels(); got != silentAudioLevels {
+		t.Errorf("AudioLevels() after distributor exit = %+v, want silence %+v", got, silentAudioLevels)
 	}
 }
 

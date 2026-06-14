@@ -241,14 +241,15 @@ func (e *Encoder) IsRunning() bool {
 
 // silentAudioLevels is the snapshot reported when no audio is flowing: the
 // encoder is stopped, or the source has not produced a metered chunk yet.
+// -60 dB is the meter's floor (full silence).
 var silentAudioLevels = audio.AudioLevels{Left: -60, Right: -60, PeakLeft: -60, PeakRight: -60}
 
 // AudioLevels returns the most recently published audio levels.
 //
-// The levels live in an atomic.Pointer instead of under e.mu, so reads never
-// block the metering hot path and never race the distributor's writes (the
-// previous TryRLock fallback read a cached copy without synchronization). A nil
-// pointer, before the first publish, reads as silence.
+// The levels live in an atomic.Pointer rather than under e.mu, so reads are
+// lock-free: they never block the metering hot path and never tear against the
+// distributor's concurrent writes. Before the first publish the pointer is nil
+// and reads as silence.
 func (e *Encoder) AudioLevels() audio.AudioLevels {
 	if levels := e.audioLevels.Load(); levels != nil {
 		return *levels
@@ -678,7 +679,8 @@ func (e *Encoder) runSource() (string, error) {
 		e.sourceCancel = nil
 		e.sourceStdout = nil
 	}()
-	e.resetAudioLevels() // source stopped; report silence instead of stale levels
+	// Silence on source stop is published by runDistributor's deferred reset,
+	// which is ordered after the distributor's last publish (see runDistributor).
 
 	return util.ExtractLastError(stderrBuf.String()), err
 }
@@ -721,6 +723,13 @@ func (e *Encoder) runDistributor() {
 		Config:             e.config,
 		Callback:           e.updateAudioLevels,
 	})
+
+	// The distributor is the only goroutine that publishes live levels, so it
+	// republishes silence as its final act. Running this on exit (rather than
+	// from runSource after cmd.Wait) guarantees it lands after this goroutine's
+	// last ProcessSamples publish; a reset from another goroutine could lose
+	// that race and leave a stale frame on the meter after the audio stops.
+	defer e.resetAudioLevels()
 
 	for {
 		e.mu.RLock()
@@ -766,9 +775,12 @@ func (e *Encoder) runDistributor() {
 	}
 }
 
-// updateAudioLevels publishes the latest metered levels. The distributor hands
-// over a freshly allocated snapshot per call (see distributor.go), so the
-// pointer can be published directly without copying.
+// updateAudioLevels publishes levels and takes ownership of the pointer: it is
+// stored without copying, so the caller MUST pass a freshly allocated snapshot
+// and never retain or mutate it afterwards. Pooling or reusing the argument
+// would reintroduce the torn read this lock-free design removes. The only
+// production caller is the distributor callback (distributor.go), which
+// allocates a new AudioLevels per invocation.
 func (e *Encoder) updateAudioLevels(levels *audio.AudioLevels) {
 	e.audioLevels.Store(levels)
 }
