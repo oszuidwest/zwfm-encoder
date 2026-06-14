@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
@@ -70,8 +71,7 @@ type Encoder struct {
 	startTime           time.Time
 	retryCount          int
 	backoff             *util.Backoff
-	audioLevels         audio.AudioLevels
-	lastKnownLevels     audio.AudioLevels // Cache for TryRLock fallback
+	audioLevels         atomic.Pointer[audio.AudioLevels] // published lock-free; see AudioLevels
 	silenceDetect       *audio.SilenceDetector
 	alertOrchestrator   *notify.AlertOrchestrator
 	peakHolder          *audio.PeakHolder
@@ -239,17 +239,21 @@ func (e *Encoder) IsRunning() bool {
 	return e.state == types.StateRunning
 }
 
-// AudioLevels returns the current audio levels.
-func (e *Encoder) AudioLevels() audio.AudioLevels {
-	if !e.mu.TryRLock() {
-		return e.lastKnownLevels
-	}
-	defer e.mu.RUnlock()
+// silentAudioLevels is the snapshot reported when no audio is flowing: the
+// encoder is stopped, or the source has not produced a metered chunk yet.
+var silentAudioLevels = audio.AudioLevels{Left: -60, Right: -60, PeakLeft: -60, PeakRight: -60}
 
-	if e.state != types.StateRunning {
-		return audio.AudioLevels{Left: -60, Right: -60, PeakLeft: -60, PeakRight: -60}
+// AudioLevels returns the most recently published audio levels.
+//
+// The levels live in an atomic.Pointer instead of under e.mu, so reads never
+// block the metering hot path and never race the distributor's writes (the
+// previous TryRLock fallback read a cached copy without synchronization). A nil
+// pointer, before the first publish, reads as silence.
+func (e *Encoder) AudioLevels() audio.AudioLevels {
+	if levels := e.audioLevels.Load(); levels != nil {
+		return *levels
 	}
-	return e.audioLevels
+	return silentAudioLevels
 }
 
 // Status returns the current encoder status.
@@ -652,8 +656,8 @@ func (e *Encoder) runSource() (string, error) {
 		e.state = types.StateRunning
 		e.startTime = time.Now()
 		e.lastError = ""
-		e.audioLevels = audio.AudioLevels{Left: -60, Right: -60, PeakLeft: -60, PeakRight: -60}
 	}()
+	e.resetAudioLevels() // start each run silent until the first metered chunk
 
 	if err := cmd.Start(); err != nil {
 		return "", err
@@ -674,6 +678,7 @@ func (e *Encoder) runSource() (string, error) {
 		e.sourceCancel = nil
 		e.sourceStdout = nil
 	}()
+	e.resetAudioLevels() // source stopped; report silence instead of stale levels
 
 	return util.ExtractLastError(stderrBuf.String()), err
 }
@@ -761,11 +766,17 @@ func (e *Encoder) runDistributor() {
 	}
 }
 
+// updateAudioLevels publishes the latest metered levels. The distributor hands
+// over a freshly allocated snapshot per call (see distributor.go), so the
+// pointer can be published directly without copying.
 func (e *Encoder) updateAudioLevels(levels *audio.AudioLevels) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.audioLevels = *levels
-	e.lastKnownLevels = *levels // Update cache for TryRLock fallback
+	e.audioLevels.Store(levels)
+}
+
+// resetAudioLevels publishes the silent snapshot used when no audio is flowing.
+func (e *Encoder) resetAudioLevels() {
+	levels := silentAudioLevels
+	e.audioLevels.Store(&levels)
 }
 
 // pollUntil signals when the given condition becomes true.
