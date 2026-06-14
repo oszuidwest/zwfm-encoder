@@ -79,6 +79,9 @@ func (d *Distributor) ProcessSamples(buf []byte, n int) {
 		}
 
 		if d.callback != nil {
+			// Allocate a fresh snapshot per call: the callback (updateAudioLevels)
+			// stores this pointer without copying and takes ownership, so it must
+			// not be pooled, reused, or mutated after the callback returns.
 			d.callback(&audio.AudioLevels{
 				Left:              levels.RMSLeft,
 				Right:             levels.RMSRight,

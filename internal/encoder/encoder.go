@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
@@ -70,8 +71,7 @@ type Encoder struct {
 	startTime           time.Time
 	retryCount          int
 	backoff             *util.Backoff
-	audioLevels         audio.AudioLevels
-	lastKnownLevels     audio.AudioLevels // Cache for TryRLock fallback
+	audioLevels         atomic.Pointer[audio.AudioLevels] // published lock-free; see AudioLevels
 	silenceDetect       *audio.SilenceDetector
 	alertOrchestrator   *notify.AlertOrchestrator
 	peakHolder          *audio.PeakHolder
@@ -239,17 +239,22 @@ func (e *Encoder) IsRunning() bool {
 	return e.state == types.StateRunning
 }
 
-// AudioLevels returns the current audio levels.
-func (e *Encoder) AudioLevels() audio.AudioLevels {
-	if !e.mu.TryRLock() {
-		return e.lastKnownLevels
-	}
-	defer e.mu.RUnlock()
+// silentAudioLevels is the snapshot reported when no audio is flowing: the
+// encoder is stopped, or the source has not produced a metered chunk yet.
+// -60 dB is the meter's floor (full silence).
+var silentAudioLevels = audio.AudioLevels{Left: -60, Right: -60, PeakLeft: -60, PeakRight: -60}
 
-	if e.state != types.StateRunning {
-		return audio.AudioLevels{Left: -60, Right: -60, PeakLeft: -60, PeakRight: -60}
+// AudioLevels returns the most recently published audio levels.
+//
+// The levels live in an atomic.Pointer rather than under e.mu, so reads are
+// lock-free: they never block the metering hot path and never tear against the
+// distributor's concurrent writes. Before the first publish the pointer is nil
+// and reads as silence.
+func (e *Encoder) AudioLevels() audio.AudioLevels {
+	if levels := e.audioLevels.Load(); levels != nil {
+		return *levels
 	}
-	return e.audioLevels
+	return silentAudioLevels
 }
 
 // Status returns the current encoder status.
@@ -652,8 +657,8 @@ func (e *Encoder) runSource() (string, error) {
 		e.state = types.StateRunning
 		e.startTime = time.Now()
 		e.lastError = ""
-		e.audioLevels = audio.AudioLevels{Left: -60, Right: -60, PeakLeft: -60, PeakRight: -60}
 	}()
+	e.resetAudioLevels() // start each run silent until the first metered chunk
 
 	if err := cmd.Start(); err != nil {
 		return "", err
@@ -674,6 +679,8 @@ func (e *Encoder) runSource() (string, error) {
 		e.sourceCancel = nil
 		e.sourceStdout = nil
 	}()
+	// Silence on source stop is published by runDistributor's deferred reset,
+	// which is ordered after the distributor's last publish (see runDistributor).
 
 	return util.ExtractLastError(stderrBuf.String()), err
 }
@@ -716,6 +723,13 @@ func (e *Encoder) runDistributor() {
 		Config:             e.config,
 		Callback:           e.updateAudioLevels,
 	})
+
+	// The distributor is the only goroutine that publishes live levels, so it
+	// republishes silence as its final act. Running this on exit (rather than
+	// from runSource after cmd.Wait) guarantees it lands after this goroutine's
+	// last ProcessSamples publish; a reset from another goroutine could lose
+	// that race and leave a stale frame on the meter after the audio stops.
+	defer e.resetAudioLevels()
 
 	for {
 		e.mu.RLock()
@@ -761,11 +775,20 @@ func (e *Encoder) runDistributor() {
 	}
 }
 
+// updateAudioLevels publishes levels and takes ownership of the pointer: it is
+// stored without copying, so the caller MUST pass a freshly allocated snapshot
+// and never retain or mutate it afterwards. Pooling or reusing the argument
+// would reintroduce the torn read this lock-free design removes. The only
+// production caller is the distributor callback (distributor.go), which
+// allocates a new AudioLevels per invocation.
 func (e *Encoder) updateAudioLevels(levels *audio.AudioLevels) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.audioLevels = *levels
-	e.lastKnownLevels = *levels // Update cache for TryRLock fallback
+	e.audioLevels.Store(levels)
+}
+
+// resetAudioLevels publishes the silent snapshot used when no audio is flowing.
+func (e *Encoder) resetAudioLevels() {
+	levels := silentAudioLevels
+	e.audioLevels.Store(&levels)
 }
 
 // pollUntil signals when the given condition becomes true.
