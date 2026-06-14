@@ -222,7 +222,7 @@ flowchart LR
     A[Audio Input]
 
     subgraph Capture["Capture"]
-        B[arecord]
+        B[arecord / FFmpeg]
     end
 
     subgraph Processing["Audio Processing"]
@@ -259,12 +259,11 @@ flowchart LR
         SN[Alert Orchestrator]
         N1[Webhook]
         N2[Email]
-        N3[Log]
         N4[Zabbix]
     end
 
     subgraph UI["Web UI"]
-        WS[WebSocket<br>10fps]
+        WS[WebSocket<br>levels 10fps + status 3s]
     end
 
     subgraph EventLog["Event Log"]
@@ -291,9 +290,8 @@ flowchart LR
     SDM -->|MP3| SN
     SN -->|HTTP| N1
     SN -->|Graph API| N2
-    SN -->|file| N3
     SN -->|trapper| N4
-    SN -->|events| EL
+    SN -->|silence events| EL
 
     %% Streaming
     D ==>|PCM| OM
@@ -306,6 +304,7 @@ flowchart LR
     RM ==>|PCM| R1 -->|audio| ST
     RM ==>|PCM| R2 -->|audio| ST
     RM -->|events| EL
+    RM -->|upload abandoned| SN
 ```
 
 ### Audio Flow
