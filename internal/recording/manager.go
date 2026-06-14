@@ -237,8 +237,6 @@ func (m *Manager) Start() error {
 // Stop stops all active recorders and background schedulers.
 func (m *Manager) Stop() error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	m.running = false
 
 	// Stop cleanup scheduler
@@ -249,34 +247,65 @@ func (m *Manager) Stop() error {
 	close(m.hourlyRetryStopCh)
 	m.hourlyRetryStopCh = make(chan struct{}) // Reset for potential restart
 
-	var errs []error
-	for id, recorder := range m.recorders {
-		if recorder.IsRecording() {
-			if err := recorder.Stop(); err != nil {
-				slog.Warn("error stopping recorder", "id", id, "error", err)
-				errs = append(errs, err)
-			}
-		}
+	// Snapshot recorders so the (potentially slow) per-recorder shutdown runs
+	// without holding m.mu. Otherwise the distributor's WriteAudio (RLock)
+	// would block behind a stuck recorder's stop path, defeating the whole
+	// point of decoupling the recorders from the hot path.
+	recorders := make([]*GenericRecorder, 0, len(m.recorders))
+	for _, recorder := range m.recorders {
+		recorders = append(recorders, recorder)
 	}
+	m.mu.Unlock()
+
+	// Stop recorders concurrently: a single stuck recorder can take up to
+	// ~17s to break the pipe and force-kill FFmpeg, so stopping serially would
+	// multiply that worst case by the number of recorders during shutdown.
+	var (
+		wg    sync.WaitGroup
+		errMu sync.Mutex
+		errs  []error
+	)
+	for _, recorder := range recorders {
+		if !recorder.IsRecording() {
+			continue
+		}
+		wg.Add(1)
+		go func(rec *GenericRecorder) {
+			defer wg.Done()
+			if err := rec.Stop(); err != nil {
+				slog.Warn("error stopping recorder", "id", rec.ID(), "error", err)
+				errMu.Lock()
+				errs = append(errs, err)
+				errMu.Unlock()
+			}
+		}(recorder)
+	}
+	wg.Wait()
 
 	slog.Info("recording manager stopped")
 	return errors.Join(errs...)
 }
 
-// WriteAudio writes PCM audio to any active recorders.
-func (m *Manager) WriteAudio(pcm []byte) error {
+// WriteAudio fans PCM audio out to all active recorders without blocking.
+// Each recorder enqueues the chunk for its own writer goroutine, so a stalled
+// recorder FFmpeg can no longer block the distributor (and thus the live
+// streams). The chunk is copied once and shared read-only across recorders;
+// their writer goroutines only read it.
+func (m *Manager) WriteAudio(pcm []byte) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	var shared []byte
 	for _, recorder := range m.recorders {
-		if recorder.IsRecording() {
-			if err := recorder.WriteAudio(pcm); err != nil {
-				slog.Warn("recorder write error", "id", recorder.ID(), "error", err)
-			}
+		if !recorder.IsRecording() {
+			continue
 		}
+		if shared == nil {
+			shared = make([]byte, len(pcm))
+			copy(shared, pcm)
+		}
+		recorder.WriteAudio(shared)
 	}
-
-	return nil
 }
 
 // Statuses returns the current status of all recorders.

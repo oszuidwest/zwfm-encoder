@@ -754,9 +754,11 @@ func (e *Encoder) runDistributor() {
 			_ = e.streamManager.WriteAudio(stream.ID, buf[:n]) //nolint:errcheck // Errors logged internally by WriteAudio
 		}
 
-		// Send audio to recording manager
+		// Send audio to recording manager (non-blocking: each recorder
+		// enqueues for its own writer goroutine, so a stalled recorder
+		// FFmpeg never blocks the distributor or starves the streams).
 		if e.recordingManager != nil {
-			_ = e.recordingManager.WriteAudio(buf[:n]) //nolint:errcheck // Errors logged internally by recording manager
+			e.recordingManager.WriteAudio(buf[:n])
 		}
 	}
 }
