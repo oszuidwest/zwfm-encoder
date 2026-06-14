@@ -18,7 +18,10 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-func (m *Manager) startCleanupScheduler() {
+// startCleanupScheduler runs hourly retention cleanup until stopCh is closed.
+// stopCh is captured by the goroutine so it observes the channel created for this
+// run, decoupled from later reassignment of the manager field.
+func (m *Manager) startCleanupScheduler(stopCh <-chan struct{}) {
 	go func() {
 		for {
 			duration := util.TimeUntilNextHour(time.Now())
@@ -28,7 +31,7 @@ func (m *Manager) startCleanupScheduler() {
 			select {
 			case <-time.After(duration):
 				m.runCleanup()
-			case <-m.cleanupStopCh:
+			case <-stopCh:
 				slog.Info("cleanup scheduler stopped")
 				return
 			}

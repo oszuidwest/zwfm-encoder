@@ -37,8 +37,8 @@ type Manager struct {
 	eventLogger        *eventlog.Logger
 	onUploadAbandoned  UploadAbandonedCallback
 
-	cleanupStopCh     chan struct{} // Stop signal for cleanup scheduler
-	hourlyRetryStopCh chan struct{} // Stop signal for hourly retry scheduler
+	cleanupStopCh     chan struct{} // Stop signal for cleanup scheduler; created per run in Start, closed in Stop
+	hourlyRetryStopCh chan struct{} // Stop signal for hourly retry scheduler; created per run in Start, closed in Stop
 }
 
 // NewManager creates a new recording manager.
@@ -58,8 +58,6 @@ func NewManager(ffmpegPath, spoolDir string, maxDurationMinutes int, eventLogger
 		ffmpegPath:         ffmpegPath,
 		maxDurationMinutes: maxDurationMinutes,
 		eventLogger:        eventLogger,
-		cleanupStopCh:      make(chan struct{}),
-		hourlyRetryStopCh:  make(chan struct{}),
 	}, nil
 }
 
@@ -209,11 +207,22 @@ func (m *Manager) StopRecorder(id string) error {
 }
 
 // Start begins recorder management, starting hourly recorders and cleanup schedulers.
+// It is idempotent: a redundant call while already running (e.g. on a source
+// retry, which re-enters startEnabledStreams) is a no-op rather than spawning a
+// second set of schedulers.
 func (m *Manager) Start() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if m.running {
+		return nil
+	}
 	m.running = true
+
+	// Fresh per-run stop channels; each scheduler captures its own locally
+	// (see startCleanupScheduler/startHourlyRetryScheduler) to avoid racing Stop.
+	m.cleanupStopCh = make(chan struct{})
+	m.hourlyRetryStopCh = make(chan struct{})
 
 	// Start hourly recorders (ondemand never auto-starts)
 	for id, recorder := range m.recorders {
@@ -226,10 +235,10 @@ func (m *Manager) Start() error {
 	}
 
 	// Start cleanup scheduler
-	m.startCleanupScheduler()
+	m.startCleanupScheduler(m.cleanupStopCh)
 
 	// Start hourly retry scheduler for failed recorders
-	m.startHourlyRetryScheduler()
+	m.startHourlyRetryScheduler(m.hourlyRetryStopCh)
 	go m.processUploadRetryQueues()
 
 	slog.Info("recording manager started", "recorders", len(m.recorders))
@@ -239,15 +248,15 @@ func (m *Manager) Start() error {
 // Stop stops all recorders and background schedulers.
 func (m *Manager) Stop() error {
 	m.mu.Lock()
-	m.running = false
-
-	// Stop cleanup scheduler
-	close(m.cleanupStopCh)
-	m.cleanupStopCh = make(chan struct{}) // Reset for potential restart
-
-	// Stop hourly retry scheduler
-	close(m.hourlyRetryStopCh)
-	m.hourlyRetryStopCh = make(chan struct{}) // Reset for potential restart
+	// Only the running->stopped transition tears down the schedulers, so the
+	// stop channels are closed exactly once even if Stop is called repeatedly.
+	// Recorders are stopped unconditionally below to catch any started outside
+	// the running window (e.g. an on-demand recorder).
+	if m.running {
+		m.running = false
+		close(m.cleanupStopCh)
+		close(m.hourlyRetryStopCh)
+	}
 
 	// Snapshot recorders before shutdown; Stop can block on FFmpeg.
 	recorders := make([]*GenericRecorder, 0, len(m.recorders))
@@ -323,13 +332,15 @@ func (m *Manager) PendingUploadCount() int {
 }
 
 // startHourlyRetryScheduler retries failed hourly recorders and pending uploads at each hour boundary.
-func (m *Manager) startHourlyRetryScheduler() {
+// stopCh is captured by the goroutine so it observes the channel created for this
+// run, decoupled from later reassignment of the manager field.
+func (m *Manager) startHourlyRetryScheduler(stopCh <-chan struct{}) {
 	go func() {
 		for {
 			duration := util.TimeUntilNextHour(time.Now())
 			timer := time.NewTimer(duration)
 			select {
-			case <-m.hourlyRetryStopCh:
+			case <-stopCh:
 				timer.Stop()
 				return
 			case <-timer.C:

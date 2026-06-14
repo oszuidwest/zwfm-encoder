@@ -61,7 +61,7 @@ func (m *Manager) Start() {
 
 	m.running = true
 	m.cleanupStopCh = make(chan struct{})
-	m.startCleanupScheduler()
+	m.startCleanupScheduler(m.cleanupStopCh)
 
 	slog.Info("silence dump manager started", "enabled", m.enabled)
 }
@@ -132,8 +132,11 @@ func (m *Manager) SetRetentionDays(days int) {
 	m.mu.Unlock()
 }
 
-// startCleanupScheduler schedules hourly cleanup of old dump files.
-func (m *Manager) startCleanupScheduler() {
+// startCleanupScheduler schedules hourly cleanup of old dump files until stopCh
+// is closed. stopCh is captured by the goroutine so it observes the channel
+// created for this run instead of re-reading the field, which Stop reassigns to
+// nil and would otherwise race.
+func (m *Manager) startCleanupScheduler(stopCh <-chan struct{}) {
 	go func() {
 		for {
 			duration := util.TimeUntilNextHour(time.Now())
@@ -143,7 +146,7 @@ func (m *Manager) startCleanupScheduler() {
 			select {
 			case <-time.After(duration):
 				m.runCleanup()
-			case <-m.cleanupStopCh:
+			case <-stopCh:
 				slog.Debug("silence dump cleanup scheduler stopped")
 				return
 			}
