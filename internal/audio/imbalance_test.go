@@ -87,6 +87,25 @@ func TestImbalanceDetectorDeadChannelTriggers(t *testing.T) {
 	}
 }
 
+func TestImbalanceDetectorSignedBalanceReflectsLouderChannel(t *testing.T) {
+	t.Parallel()
+
+	d := NewImbalanceDetector()
+	cfg := testImbalanceConfig()
+	base := time.Now()
+
+	// Left louder -> positive balance.
+	if e := d.Update(-10, -30, cfg, base); e.BalanceDB != 20 || e.ImbalanceDB != 20 {
+		t.Fatalf("left louder: BalanceDB/ImbalanceDB = %v/%v, want 20/20", e.BalanceDB, e.ImbalanceDB)
+	}
+
+	// Right louder -> negative balance, same absolute magnitude. Guards against a
+	// sign-flip in BalanceDB = dbL - dbR going unnoticed.
+	if e := d.Update(-30, -10, cfg, base); e.BalanceDB != -20 || e.ImbalanceDB != 20 {
+		t.Fatalf("right louder: BalanceDB/ImbalanceDB = %v/%v, want -20/20", e.BalanceDB, e.ImbalanceDB)
+	}
+}
+
 func TestImbalanceDetectorThresholdIsExclusive(t *testing.T) {
 	t.Parallel()
 

@@ -841,6 +841,13 @@ func TestLoadRejectsInvalidFileSettings(t *testing.T) {
 			wantErr: "channel_imbalance_detection.recovery_ms: must be greater than 0",
 		},
 		{
+			// Explicit null is rejected, not backfilled: a present-but-null field
+			// keeps its zero value so validation can reject it (parity with silence).
+			name:    "explicit null channel imbalance duration",
+			data:    validConfigJSON(`"channel_imbalance_detection":{"threshold_db":12,"duration_ms":null,"recovery_ms":5000}`),
+			wantErr: "channel_imbalance_detection.duration_ms: must be greater than 0",
+		},
+		{
 			name:    "negative silence dump retention",
 			data:    validConfigJSON(`"silence_dump":{"retention_days":-1}`),
 			wantErr: "silence_dump.retention_days: cannot be negative",

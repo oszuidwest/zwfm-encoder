@@ -26,8 +26,8 @@ type AudioLevels struct {
 	ChannelImbalanceDurationMs int64          `json:"channel_imbalance_duration_ms,omitzero"`
 	ChannelImbalanceLevel      ImbalanceLevel `json:"channel_imbalance_level,omitzero"`
 	// BalanceDB and ImbalanceDB are continuous meter values like Left/Right, so
-	// they are always sent (no omitzero): 0 is the meaningful "perfectly balanced"
-	// reading live meter and API consumers expect, not an absent value.
+	// they are always sent (no omitzero): 0 is a meaningful "perfectly balanced"
+	// reading that live meter and API consumers expect, not an absent value.
 	BalanceDB   float64 `json:"balance_db"`   // dB; signed L-R
 	ImbalanceDB float64 `json:"imbalance_db"` // dB; abs(L-R)
 
