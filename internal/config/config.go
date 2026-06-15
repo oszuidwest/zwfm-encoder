@@ -47,6 +47,12 @@ const (
 	DefaultSilenceRecoveryMs = 5000
 	// DefaultPeakHoldMs is the default VU meter peak hold duration (3 seconds).
 	DefaultPeakHoldMs = 3000
+	// DefaultChannelImbalanceThreshold is the default L/R level difference in dB above which imbalance is detected (12 dB).
+	DefaultChannelImbalanceThreshold = 12.0
+	// DefaultChannelImbalanceDurationMs is the default imbalance duration before alert (15 seconds).
+	DefaultChannelImbalanceDurationMs = 15000
+	// DefaultChannelImbalanceRecoveryMs is the default recovery duration before clearing the imbalance alert (5 seconds).
+	DefaultChannelImbalanceRecoveryMs = 5000
 	// DefaultStationName is the default station display name shown in the web UI.
 	DefaultStationName = "ZuidWest FM"
 	// DefaultStationColorLight is the default accent color for light theme (#E6007E).
@@ -95,6 +101,16 @@ type SilenceDetectionConfig struct {
 	RecoveryMs int64 `json:"recovery_ms"`
 	// PeakHoldMs is how long the VU meter holds peak values before decay.
 	PeakHoldMs int64 `json:"peak_hold_ms"`
+}
+
+// ChannelImbalanceDetectionConfig holds L/R channel imbalance detection settings.
+type ChannelImbalanceDetectionConfig struct {
+	// ThresholdDB is the L/R level difference in dB above which imbalance is detected.
+	ThresholdDB float64 `json:"threshold_db"`
+	// DurationMs is how long the imbalance must persist before alerting.
+	DurationMs int64 `json:"duration_ms"`
+	// RecoveryMs is how long the channels must be balanced again before clearing the alert.
+	RecoveryMs int64 `json:"recovery_ms"`
 }
 
 // WebhookConfig holds webhook notification settings.
@@ -157,6 +173,8 @@ type ConfigData struct {
 	Audio AudioConfig `json:"audio"`
 	// SilenceDetection contains silence detection settings.
 	SilenceDetection SilenceDetectionConfig `json:"silence_detection"`
+	// ChannelImbalanceDetection contains L/R channel imbalance detection settings.
+	ChannelImbalanceDetection ChannelImbalanceDetectionConfig `json:"channel_imbalance_detection"`
 	// SilenceDump contains silence dump settings.
 	SilenceDump types.SilenceDumpConfig `json:"silence_dump"`
 	// Notifications contains notification settings.
@@ -201,6 +219,11 @@ func defaultConfig(filePath string) *Config {
 				RecoveryMs:  DefaultSilenceRecoveryMs,
 				PeakHoldMs:  DefaultPeakHoldMs,
 			},
+			ChannelImbalanceDetection: ChannelImbalanceDetectionConfig{
+				ThresholdDB: DefaultChannelImbalanceThreshold,
+				DurationMs:  DefaultChannelImbalanceDurationMs,
+				RecoveryMs:  DefaultChannelImbalanceRecoveryMs,
+			},
 			Streaming: StreamingConfig{Streams: []types.Stream{}},
 			Recording: RecordingConfig{Recorders: []types.Recorder{}},
 		},
@@ -210,9 +233,10 @@ func defaultConfig(filePath string) *Config {
 
 // Load reads and validates an existing config file. If the file does not exist,
 // Load writes a minimal validated default config. Existing files are decoded
-// as-is; optional Web and SilenceDetection fields that are omitted (not
-// explicitly null) inherit defaults so documented minimal configs stay valid.
-// Required system settings must still be present and valid.
+// as-is; optional Web, SilenceDetection and ChannelImbalanceDetection fields
+// that are omitted (not explicitly null) inherit defaults so documented minimal
+// configs — and configs written before channel imbalance detection existed —
+// stay valid. Required system settings must still be present and valid.
 func (c *Config) Load() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -250,11 +274,12 @@ func (c *Config) Load() error {
 	return nil
 }
 
-// applyOptionalDefaults fills defaults for optional Web and SilenceDetection
-// fields that were omitted from the raw JSON. Fields that are present (even
-// when explicitly null) are left at their unmarshalled value so validate()
-// can reject malformed input — distinguishing "missing" from "null" preserves
-// the strict semantics that existed before defaults were introduced.
+// applyOptionalDefaults fills defaults for optional Web, SilenceDetection and
+// ChannelImbalanceDetection fields that were omitted from the raw JSON. Fields
+// that are present (even when explicitly null) are left at their unmarshalled
+// value so validate() can reject malformed input — distinguishing "missing"
+// from "null" preserves the strict semantics that existed before defaults were
+// introduced.
 func applyOptionalDefaults(data []byte, cfg *Config) error {
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(data, &root); err != nil {
@@ -293,6 +318,22 @@ func applyOptionalDefaults(data []byte, cfg *Config) error {
 		}
 		if _, ok := silence["peak_hold_ms"]; !ok {
 			cfg.SilenceDetection.PeakHoldMs = DefaultPeakHoldMs
+		}
+	}
+
+	imbalance, err := presentObjectFields(root, "channel_imbalance_detection")
+	if err != nil {
+		return err
+	}
+	if imbalance != nil {
+		if _, ok := imbalance["threshold_db"]; !ok {
+			cfg.ChannelImbalanceDetection.ThresholdDB = DefaultChannelImbalanceThreshold
+		}
+		if _, ok := imbalance["duration_ms"]; !ok {
+			cfg.ChannelImbalanceDetection.DurationMs = DefaultChannelImbalanceDurationMs
+		}
+		if _, ok := imbalance["recovery_ms"]; !ok {
+			cfg.ChannelImbalanceDetection.RecoveryMs = DefaultChannelImbalanceRecoveryMs
 		}
 	}
 
@@ -405,6 +446,15 @@ func (c *Config) validate() error {
 	if msg := validatePeakHoldMs("silence_detection.peak_hold_ms", c.SilenceDetection.PeakHoldMs); msg != "" {
 		return fmt.Errorf("invalid %s", msg)
 	}
+	if msg := validateChannelImbalanceThreshold("channel_imbalance_detection.threshold_db", c.ChannelImbalanceDetection.ThresholdDB); msg != "" {
+		return fmt.Errorf("invalid %s", msg)
+	}
+	if msg := validatePositiveMilliseconds("channel_imbalance_detection.duration_ms", c.ChannelImbalanceDetection.DurationMs); msg != "" {
+		return fmt.Errorf("invalid %s", msg)
+	}
+	if msg := validatePositiveMilliseconds("channel_imbalance_detection.recovery_ms", c.ChannelImbalanceDetection.RecoveryMs); msg != "" {
+		return fmt.Errorf("invalid %s", msg)
+	}
 	if msg := validateMaxDurationMinutes("recording.max_duration_minutes", c.Recording.MaxDurationMinutes); msg != "" {
 		return fmt.Errorf("invalid %s", msg)
 	}
@@ -491,6 +541,17 @@ func (c *Config) validateRecorders() error {
 func validateSilenceThreshold(field string, threshold float64) string {
 	if threshold > -1 || threshold < -60 {
 		return field + ": must be between -60 and -1 dB"
+	}
+	return ""
+}
+
+// validateChannelImbalanceThreshold enforces 1 <= threshold < 60 dB. The upper
+// bound is exclusive: RMS is clamped at MinDB = -60, so abs(L-R) never exceeds
+// 60 dB and the detector compares with strict ">", making threshold = 60 a dead
+// zone that could never trigger.
+func validateChannelImbalanceThreshold(field string, threshold float64) string {
+	if threshold < 1 || threshold >= 60 {
+		return field + ": must be at least 1 dB and below 60 dB"
 	}
 	return ""
 }
@@ -872,6 +933,13 @@ type Snapshot struct {
 	// PeakHoldMs is how long the VU meter holds peak values before decay.
 	PeakHoldMs int64
 
+	// ChannelImbalanceThreshold is the L/R level difference in dB above which imbalance is detected.
+	ChannelImbalanceThreshold float64
+	// ChannelImbalanceDurationMs is how long the imbalance must persist before alerting.
+	ChannelImbalanceDurationMs int64
+	// ChannelImbalanceRecoveryMs is how long the channels must be balanced again before clearing the alert.
+	ChannelImbalanceRecoveryMs int64
+
 	// SilenceDumpEnabled reports whether silence audio dumping is enabled.
 	SilenceDumpEnabled bool
 	// SilenceDumpRetentionDays is how many days to keep silence dump files.
@@ -945,6 +1013,11 @@ func (c *Config) Snapshot() Snapshot {
 		SilenceRecoveryMs: c.SilenceDetection.RecoveryMs,
 		PeakHoldMs:        c.SilenceDetection.PeakHoldMs,
 
+		// Channel Imbalance Detection
+		ChannelImbalanceThreshold:  c.ChannelImbalanceDetection.ThresholdDB,
+		ChannelImbalanceDurationMs: c.ChannelImbalanceDetection.DurationMs,
+		ChannelImbalanceRecoveryMs: c.ChannelImbalanceDetection.RecoveryMs,
+
 		// Silence Dump
 		SilenceDumpEnabled:       c.SilenceDump.Enabled,
 		SilenceDumpRetentionDays: c.SilenceDump.RetentionDays,
@@ -1014,6 +1087,12 @@ type SettingsUpdate struct {
 	SilenceRecoveryMs int64 `json:"silence_recovery_ms"`
 	// PeakHoldMs is how long the VU meter holds peak values before decay.
 	PeakHoldMs int64 `json:"peak_hold_ms"`
+	// ChannelImbalanceThreshold is the L/R level difference in dB above which imbalance is detected.
+	ChannelImbalanceThreshold float64 `json:"channel_imbalance_threshold"`
+	// ChannelImbalanceDurationMs is how long the imbalance must persist before alerting.
+	ChannelImbalanceDurationMs int64 `json:"channel_imbalance_duration_ms"`
+	// ChannelImbalanceRecoveryMs is how long the channels must be balanced again before clearing the alert.
+	ChannelImbalanceRecoveryMs int64 `json:"channel_imbalance_recovery_ms"`
 	// SilenceDumpEnabled reports whether silence audio dumping is enabled.
 	SilenceDumpEnabled bool `json:"silence_dump_enabled"`
 	// SilenceDumpRetentionDays is how many days to keep silence dump files.
@@ -1076,6 +1155,18 @@ func (s *SettingsUpdate) Validate() []string {
 	if msg := validatePeakHoldMs("peak_hold_ms", s.PeakHoldMs); msg != "" {
 		errs = append(errs, msg)
 	}
+
+	// Channel imbalance detection thresholds
+	if msg := validateChannelImbalanceThreshold("channel_imbalance_threshold", s.ChannelImbalanceThreshold); msg != "" {
+		errs = append(errs, msg)
+	}
+	if msg := validatePositiveMilliseconds("channel_imbalance_duration_ms", s.ChannelImbalanceDurationMs); msg != "" {
+		errs = append(errs, msg)
+	}
+	if msg := validatePositiveMilliseconds("channel_imbalance_recovery_ms", s.ChannelImbalanceRecoveryMs); msg != "" {
+		errs = append(errs, msg)
+	}
+
 	if msg := validateNonNegativeDays("silence_dump_retention_days", s.SilenceDumpRetentionDays); msg != "" {
 		errs = append(errs, msg)
 	}
@@ -1125,6 +1216,12 @@ func (c *Config) ApplySettings(s *SettingsUpdate) error {
 	c.SilenceDetection.DurationMs = s.SilenceDurationMs
 	c.SilenceDetection.RecoveryMs = s.SilenceRecoveryMs
 	c.SilenceDetection.PeakHoldMs = s.PeakHoldMs
+
+	// Channel imbalance detection
+	c.ChannelImbalanceDetection.ThresholdDB = s.ChannelImbalanceThreshold
+	c.ChannelImbalanceDetection.DurationMs = s.ChannelImbalanceDurationMs
+	c.ChannelImbalanceDetection.RecoveryMs = s.ChannelImbalanceRecoveryMs
+
 	c.SilenceDump.Enabled = s.SilenceDumpEnabled
 	c.SilenceDump.RetentionDays = s.SilenceDumpRetentionDays
 

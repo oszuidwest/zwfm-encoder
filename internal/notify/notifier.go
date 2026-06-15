@@ -14,14 +14,15 @@ import (
 )
 
 // logQueueDepth is the buffer size of the serialized log worker channel.
-// Three log events are produced per silence cycle (start, end, dump); 16 gives ample headroom.
+// A handful of log events are produced per audio cycle (silence start/end/dump,
+// channel imbalance start/end); 16 gives ample headroom.
 const logQueueDepth = 16
 
-// logJob is a queued silence-event log write.
+// logJob is a queued event-log write.
 // Carrying the event type alongside the write function makes queue-full diagnostics specific
 // and keeps worker behaviour explicit without relying on opaque closures.
 type logJob struct {
-	eventType string // silence_start | silence_end | audio_dump_ready; empty for internal sentinels
+	eventType string // event type label for diagnostics; empty for internal sentinels
 	fn        func()
 }
 
@@ -66,7 +67,7 @@ func NewAlertOrchestrator(cfg *config.Config, dispatcher *Dispatcher) *AlertOrch
 	return o
 }
 
-// runLogWorker drains logQueue sequentially, guaranteeing that silence events are
+// runLogWorker drains logQueue sequentially, guaranteeing that events are
 // written to the JSONL file in the same order they were enqueued (i.e., event order).
 func (o *AlertOrchestrator) runLogWorker() {
 	for job := range o.logQueue {
@@ -78,7 +79,7 @@ func (o *AlertOrchestrator) runLogWorker() {
 // No-ops when no event logger is set.
 // If the queue is full (logQueueDepth pending entries), the entry is dropped and a warning is emitted.
 // Overflow policy: drop-and-warn. Queue saturation is only possible under extreme load
-// (more than logQueueDepth silence events backed up behind slow file I/O), so a dropped
+// (more than logQueueDepth events backed up behind slow file I/O), so a dropped
 // entry is preferable to blocking the caller on the audio hot path.
 func (o *AlertOrchestrator) enqueueLog(eventType string, fn func()) {
 	if o.eventLogger == nil {
@@ -94,11 +95,11 @@ func (o *AlertOrchestrator) enqueueLog(eventType string, fn func()) {
 	select {
 	case o.logQueue <- logJob{eventType: eventType, fn: fn}:
 	default:
-		slog.Warn("silence log queue full, log entry dropped", "event_type", eventType)
+		slog.Warn("log queue full, log entry dropped", "event_type", eventType)
 	}
 }
 
-// SetEventLogger sets the event logger for silence notifications.
+// SetEventLogger sets the event logger for event-log writes.
 func (o *AlertOrchestrator) SetEventLogger(logger *eventlog.Logger) {
 	o.eventLogger = logger
 }
@@ -155,6 +156,36 @@ func (o *AlertOrchestrator) handleSilenceEnd(durationMS int64, levelL, levelR fl
 	now := time.Now()
 	o.dispatcher.DispatchSilenceEnd(ctx, active, cfg, durationMS, levelL, levelR)
 	o.enqueueLog("silence_end", func() { o.logSilenceEnd(now, &cfg, durationMS, levelL, levelR) })
+}
+
+// HandleChannelImbalanceEvent records channel imbalance start and end events to the
+// event log. It deliberately does not touch activeChannels/pendingRecovery (which are
+// owned by the silence cycle) and does not dispatch to notification channels; external
+// imbalance notifications are a separate, later concern.
+func (o *AlertOrchestrator) HandleChannelImbalanceEvent(event *audio.ImbalanceEvent) {
+	if event.JustEntered {
+		o.handleChannelImbalanceStart(event.CurrentLevelL, event.CurrentLevelR, event.BalanceDB, event.ImbalanceDB)
+	}
+
+	if event.JustRecovered {
+		o.handleChannelImbalanceEnd(event.TotalDurationMs, event.CurrentLevelL, event.CurrentLevelR, event.BalanceDB, event.ImbalanceDB)
+	}
+}
+
+func (o *AlertOrchestrator) handleChannelImbalanceStart(levelL, levelR, balanceDB, imbalanceDB float64) {
+	cfg := o.cfg.Snapshot()
+	now := time.Now()
+	o.enqueueLog("channel_imbalance_start", func() {
+		o.logChannelImbalanceStart(now, &cfg, levelL, levelR, balanceDB, imbalanceDB)
+	})
+}
+
+func (o *AlertOrchestrator) handleChannelImbalanceEnd(durationMS int64, levelL, levelR, balanceDB, imbalanceDB float64) {
+	cfg := o.cfg.Snapshot()
+	now := time.Now()
+	o.enqueueLog("channel_imbalance_end", func() {
+		o.logChannelImbalanceEnd(now, &cfg, durationMS, levelL, levelR, balanceDB, imbalanceDB)
+	})
 }
 
 // OnDumpReady dispatches audio_dump_ready notifications to subscribed channels.
@@ -262,6 +293,22 @@ func (o *AlertOrchestrator) logSilenceStart(t time.Time, cfg *config.Snapshot, l
 func (o *AlertOrchestrator) logSilenceEnd(t time.Time, cfg *config.Snapshot, durationMS int64, levelL, levelR float64) {
 	if err := o.eventLogger.LogSilenceEnd(t, durationMS, levelL, levelR, cfg.SilenceThreshold); err != nil {
 		slog.Warn("failed to log silence end", "error", err)
+	}
+}
+
+func (o *AlertOrchestrator) logChannelImbalanceStart(t time.Time, cfg *config.Snapshot, levelL, levelR, balanceDB, imbalanceDB float64) {
+	if err := o.eventLogger.LogChannelImbalanceStart(
+		t, levelL, levelR, balanceDB, imbalanceDB, cfg.ChannelImbalanceThreshold,
+	); err != nil {
+		slog.Warn("failed to log channel imbalance start", "error", err)
+	}
+}
+
+func (o *AlertOrchestrator) logChannelImbalanceEnd(t time.Time, cfg *config.Snapshot, durationMS int64, levelL, levelR, balanceDB, imbalanceDB float64) {
+	if err := o.eventLogger.LogChannelImbalanceEnd(
+		t, durationMS, levelL, levelR, balanceDB, imbalanceDB, cfg.ChannelImbalanceThreshold,
+	); err != nil {
+		slog.Warn("failed to log channel imbalance end", "error", err)
 	}
 }
 

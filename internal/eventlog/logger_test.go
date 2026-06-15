@@ -152,6 +152,50 @@ func TestLoggerRotatesWhenSizeLimitIsReached(t *testing.T) {
 	assertMessages(t, got, []string{"rotated"})
 }
 
+func TestFilterAudioMatchesChannelImbalanceButIsSilenceDoesNot(t *testing.T) {
+	t.Parallel()
+
+	imbalance := []EventType{ChannelImbalanceStart, ChannelImbalanceEnd}
+	for _, ty := range imbalance {
+		if !IsChannelImbalanceEvent(ty) {
+			t.Errorf("IsChannelImbalanceEvent(%s) = false, want true", ty)
+		}
+		if IsSilenceEvent(ty) {
+			t.Errorf("IsSilenceEvent(%s) = true, want false (must not pollute the silence filter)", ty)
+		}
+		if !matchesFilter(ty, FilterAudio) {
+			t.Errorf("matchesFilter(%s, FilterAudio) = false, want true", ty)
+		}
+	}
+
+	silence := []EventType{SilenceStart, SilenceEnd, AudioDumpReady}
+	for _, ty := range silence {
+		if IsChannelImbalanceEvent(ty) {
+			t.Errorf("IsChannelImbalanceEvent(%s) = true, want false", ty)
+		}
+		if !matchesFilter(ty, FilterAudio) {
+			t.Errorf("matchesFilter(%s, FilterAudio) = false, want true", ty)
+		}
+	}
+}
+
+func TestReadLastIncludesChannelImbalanceUnderAudioFilter(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "encoder.jsonl")
+	writeEvents(t, path, []Event{
+		{Type: StreamStarted, Message: "stream"},
+		{Type: ChannelImbalanceStart, Message: "imbalance-start"},
+		{Type: ChannelImbalanceEnd, Message: "imbalance-end"},
+	})
+
+	got, _, err := ReadLast(path, 10, 0, FilterAudio)
+	if err != nil {
+		t.Fatalf("ReadLast() error = %v", err)
+	}
+	assertMessages(t, got, []string{"imbalance-end", "imbalance-start"})
+}
+
 func writeEvents(t *testing.T, path string, events []Event) {
 	t.Helper()
 

@@ -169,6 +169,7 @@
                              Clip: Red flash when audio exceeds 0dB -->
                         <div class="indicators">
                             <span class="indicator" aria-label="Silence indicator"><span class="dot" :class="getSilenceStateClass()"></span>Silence</span>
+                            <span class="indicator" aria-label="Channel imbalance indicator"><span class="dot" :class="getChannelImbalanceStateClass()"></span>Imbalance</span>
                             <span class="indicator" aria-label="Clip indicator"><span class="dot" :class="getClipStateClass()"></span>Clip</span>
                         </div>
                     </div>
@@ -385,6 +386,41 @@
                                         <span class="input-unit">sec</span>
                                     </div>
                                     <span id="silence-recovery-hint" class="input-hint">Audio before clearing.</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="section">
+                        <div class="section-header">
+                            <span class="icon-container" x-html="icons.audio"></span>
+                            <h3>Channel Imbalance</h3>
+                        </div>
+                        <p class="section-desc">Alert when the left and right channels differ by too much for too long (e.g. a dead channel). Only evaluated while audio is above the silence threshold.</p>
+                        <div class="form">
+                            <div class="group">
+                                <label for="imbalance-threshold">Threshold</label>
+                                <div class="input-group">
+                                    <input id="imbalance-threshold" type="number" max="59" min="1" step="1" x-model.number="settingsForm.channelImbalanceThreshold" @input="markSettingsDirty()" aria-describedby="imbalance-threshold-hint">
+                                    <span class="input-unit">dB</span>
+                                </div>
+                                <span id="imbalance-threshold-hint" class="input-hint">L/R level difference above which imbalance is detected.</span>
+                            </div>
+                            <div class="row">
+                                <div class="group">
+                                    <label for="imbalance-duration">Imbalance Duration</label>
+                                    <div class="input-group">
+                                        <input id="imbalance-duration" type="number" max="300" min="0.5" step="0.5" x-model.number="settingsForm.channelImbalanceDuration" @input="markSettingsDirty()" aria-describedby="imbalance-duration-hint">
+                                        <span class="input-unit">sec</span>
+                                    </div>
+                                    <span id="imbalance-duration-hint" class="input-hint">Imbalance before alerting.</span>
+                                </div>
+                                <div class="group">
+                                    <label for="imbalance-recovery">Recovery Time</label>
+                                    <div class="input-group">
+                                        <input id="imbalance-recovery" type="number" max="60" min="0.5" step="0.5" x-model.number="settingsForm.channelImbalanceRecovery" @input="markSettingsDirty()" aria-describedby="imbalance-recovery-hint">
+                                        <span class="input-unit">sec</span>
+                                    </div>
+                                    <span id="imbalance-recovery-hint" class="input-hint">Balance before clearing.</span>
                                 </div>
                             </div>
                         </div>

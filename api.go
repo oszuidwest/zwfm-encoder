@@ -151,6 +151,11 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 			RetentionDays: cfg.SilenceDumpRetentionDays,
 		},
 
+		// Channel imbalance detection
+		ChannelImbalanceThreshold:  cfg.ChannelImbalanceThreshold,
+		ChannelImbalanceDurationMs: cfg.ChannelImbalanceDurationMs,
+		ChannelImbalanceRecoveryMs: cfg.ChannelImbalanceRecoveryMs,
+
 		// Notifications - Webhook
 		WebhookHasURL: cfg.WebhookURL != "",
 		WebhookEvents: cfg.WebhookEvents,
@@ -217,6 +222,7 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 
 	// Side effects after successful save
 	s.encoder.UpdateSilenceConfig()
+	s.encoder.UpdateChannelImbalanceConfig()
 	s.encoder.UpdateSilenceDumpConfig()
 	s.encoder.UpdateRecordingMaxDuration()
 	s.encoder.InvalidateGraphSecretExpiryCache()
@@ -878,6 +884,9 @@ type HealthResponse struct {
 	UptimeSeconds int64 `json:"uptime_seconds"`
 	// SilenceDetected reports whether silence is currently detected.
 	SilenceDetected bool `json:"silence_detected"`
+	// ChannelImbalanceDetected reports whether an L/R channel imbalance is currently detected.
+	// Informational only: like silence, it does not affect the health status.
+	ChannelImbalanceDetected bool `json:"channel_imbalance_detected"`
 }
 
 // ReadyResponse is the response body for the readiness endpoint.
@@ -903,6 +912,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	encoderStatus := s.encoder.Status()
 	streamStatuses := s.encoder.StreamStatuses(cfg.Streams)
 	recorderStatuses := s.encoder.RecorderStatuses()
+	levels := s.encoder.AudioLevels()
 
 	streamsStable := countStableStreams(streamStatuses)
 	recordersRunning := countRunningRecorders(recorderStatuses)
@@ -917,14 +927,15 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, httpStatus, HealthResponse{
-		Status:           status,
-		EncoderState:     string(encoderStatus.State),
-		StreamCount:      len(cfg.Streams),
-		StreamsStable:    streamsStable,
-		RecorderCount:    len(cfg.Recorders),
-		RecordersRunning: recordersRunning,
-		UptimeSeconds:    encoderStatus.UptimeSeconds,
-		SilenceDetected:  s.encoder.AudioLevels().SilenceLevel == audio.SilenceLevelActive,
+		Status:                   status,
+		EncoderState:             string(encoderStatus.State),
+		StreamCount:              len(cfg.Streams),
+		StreamsStable:            streamsStable,
+		RecorderCount:            len(cfg.Recorders),
+		RecordersRunning:         recordersRunning,
+		UptimeSeconds:            encoderStatus.UptimeSeconds,
+		SilenceDetected:          levels.SilenceLevel == audio.SilenceLevelActive,
+		ChannelImbalanceDetected: levels.ChannelImbalanceLevel == audio.ImbalanceLevelActive,
 	})
 }
 
@@ -960,11 +971,12 @@ type readyInputs struct {
 
 func buildReadyResponse(in *readyInputs) (resp ReadyResponse, httpStatus int) {
 	components := map[string]ReadyComponent{
-		"process":   readyProcess(in.ffmpegAvailable, &in.encoderStatus),
-		"streams":   readyStreams(in.streams, in.streamStatuses),
-		"silence":   readySilence(&in.audioLevels),
-		"recorders": readyRecorders(in.recordingAvailable, in.recorders, in.recorderStatuses),
-		"uploads":   readyUploads(in.pendingUploads),
+		"process":           readyProcess(in.ffmpegAvailable, &in.encoderStatus),
+		"streams":           readyStreams(in.streams, in.streamStatuses),
+		"silence":           readySilence(&in.audioLevels),
+		"channel_imbalance": readyChannelImbalance(&in.audioLevels),
+		"recorders":         readyRecorders(in.recordingAvailable, in.recorders, in.recorderStatuses),
+		"uploads":           readyUploads(in.pendingUploads),
 	}
 
 	status := "ready"
@@ -1030,6 +1042,18 @@ func readySilence(levels *audio.AudioLevels) ReadyComponent {
 	}
 	if levels.SilenceLevel == audio.SilenceLevelActive {
 		return ReadyComponent{OK: false, Message: "silence is active", Details: details}
+	}
+	return ReadyComponent{OK: true, Details: details}
+}
+
+func readyChannelImbalance(levels *audio.AudioLevels) ReadyComponent {
+	details := map[string]any{
+		"channel_imbalance_level": levels.ChannelImbalanceLevel,
+		"balance_db":              levels.BalanceDB,
+		"imbalance_db":            levels.ImbalanceDB,
+	}
+	if levels.ChannelImbalanceLevel == audio.ImbalanceLevelActive {
+		return ReadyComponent{OK: false, Message: "channel imbalance is active", Details: details}
 	}
 	return ReadyComponent{OK: true, Details: details}
 }

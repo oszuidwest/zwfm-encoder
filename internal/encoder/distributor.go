@@ -16,6 +16,7 @@ type AudioLevelCallback func(levels *audio.AudioLevels)
 type Distributor struct {
 	levelData          *audio.LevelData
 	silenceDetect      *audio.SilenceDetector
+	imbalanceDetect    *audio.ImbalanceDetector
 	alertOrchestrator  *notify.AlertOrchestrator
 	silenceDumpManager *silencedump.Manager
 	peakHolder         *audio.PeakHolder
@@ -26,6 +27,7 @@ type Distributor struct {
 // DistributorConfig holds the parameters for creating a Distributor.
 type DistributorConfig struct {
 	SilenceDetect      *audio.SilenceDetector
+	ImbalanceDetect    *audio.ImbalanceDetector
 	AlertOrchestrator  *notify.AlertOrchestrator
 	SilenceDumpManager *silencedump.Manager
 	PeakHolder         *audio.PeakHolder
@@ -38,6 +40,7 @@ func NewDistributor(cfg DistributorConfig) *Distributor {
 	return &Distributor{
 		levelData:          &audio.LevelData{},
 		silenceDetect:      cfg.SilenceDetect,
+		imbalanceDetect:    cfg.ImbalanceDetect,
 		alertOrchestrator:  cfg.AlertOrchestrator,
 		silenceDumpManager: cfg.SilenceDumpManager,
 		peakHolder:         cfg.PeakHolder,
@@ -70,8 +73,19 @@ func (d *Distributor) ProcessSamples(buf []byte) {
 		}
 		silenceEvent := d.silenceDetect.Update(levels.RMSLeft, levels.RMSRight, silenceCfg, now)
 
+		// Channel imbalance detection reuses the silence threshold as its presence floor,
+		// so it is only evaluated while at least one channel is above the silence level.
+		imbalanceCfg := audio.ImbalanceConfig{
+			ThresholdDB:     cfg.ChannelImbalanceThreshold,
+			DurationMs:      cfg.ChannelImbalanceDurationMs,
+			RecoveryMs:      cfg.ChannelImbalanceRecoveryMs,
+			PresenceFloorDB: cfg.SilenceThreshold,
+		}
+		imbalanceEvent := d.imbalanceDetect.Update(levels.RMSLeft, levels.RMSRight, imbalanceCfg, now)
+
 		// Delegate notification handling to the alert orchestrator (separation of concerns)
 		d.alertOrchestrator.HandleSilenceEvent(silenceEvent)
+		d.alertOrchestrator.HandleChannelImbalanceEvent(&imbalanceEvent)
 
 		// Forward silence events to dump manager for capture
 		if d.silenceDumpManager != nil {
@@ -81,15 +95,20 @@ func (d *Distributor) ProcessSamples(buf []byte) {
 		if d.callback != nil {
 			// updateAudioLevels stores this pointer, so each snapshot must be fresh.
 			d.callback(&audio.AudioLevels{
-				Left:              levels.RMSLeft,
-				Right:             levels.RMSRight,
-				PeakLeft:          heldPeakL,
-				PeakRight:         heldPeakR,
-				Silence:           silenceEvent.InSilence,
-				SilenceDurationMs: silenceEvent.DurationMs,
-				SilenceLevel:      silenceEvent.Level,
-				ClipLeft:          levels.ClipLeft,
-				ClipRight:         levels.ClipRight,
+				Left:                       levels.RMSLeft,
+				Right:                      levels.RMSRight,
+				PeakLeft:                   heldPeakL,
+				PeakRight:                  heldPeakR,
+				Silence:                    silenceEvent.InSilence,
+				SilenceDurationMs:          silenceEvent.DurationMs,
+				SilenceLevel:               silenceEvent.Level,
+				ChannelImbalance:           imbalanceEvent.InImbalance,
+				ChannelImbalanceDurationMs: imbalanceEvent.DurationMs,
+				ChannelImbalanceLevel:      imbalanceEvent.Level,
+				BalanceDB:                  imbalanceEvent.BalanceDB,
+				ImbalanceDB:                imbalanceEvent.ImbalanceDB,
+				ClipLeft:                   levels.ClipLeft,
+				ClipRight:                  levels.ClipRight,
 			})
 		}
 

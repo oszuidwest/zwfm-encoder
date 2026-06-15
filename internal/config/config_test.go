@@ -132,6 +132,75 @@ func TestLoadKeepsSilenceDefaultsForPartialBlock(t *testing.T) {
 	assertEqual(t, "PeakHoldMs", snap.PeakHoldMs, DefaultPeakHoldMs)
 }
 
+func TestLoadDefaultsChannelImbalanceWhenBlockMissing(t *testing.T) {
+	t.Parallel()
+
+	// validConfigJSON("") has no channel_imbalance_detection block, mirroring a
+	// config written before the feature existed. Defaults must backfill.
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(validConfigJSON("")), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg := New(configPath)
+	if err := cfg.Load(); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	snap := cfg.Snapshot()
+	assertEqual(t, "ChannelImbalanceThreshold", snap.ChannelImbalanceThreshold, DefaultChannelImbalanceThreshold)
+	assertEqual(t, "ChannelImbalanceDurationMs", snap.ChannelImbalanceDurationMs, DefaultChannelImbalanceDurationMs)
+	assertEqual(t, "ChannelImbalanceRecoveryMs", snap.ChannelImbalanceRecoveryMs, DefaultChannelImbalanceRecoveryMs)
+}
+
+func TestLoadKeepsChannelImbalanceDefaultsForEmptyAndPartialBlock(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		block         string
+		wantThreshold float64
+		wantDuration  int64
+		wantRecovery  int64
+	}{
+		{
+			name:          "empty object keeps all defaults",
+			block:         `"channel_imbalance_detection":{}`,
+			wantThreshold: DefaultChannelImbalanceThreshold,
+			wantDuration:  DefaultChannelImbalanceDurationMs,
+			wantRecovery:  DefaultChannelImbalanceRecoveryMs,
+		},
+		{
+			name:          "partial block only overrides present fields",
+			block:         `"channel_imbalance_detection":{"threshold_db":20}`,
+			wantThreshold: 20,
+			wantDuration:  DefaultChannelImbalanceDurationMs,
+			wantRecovery:  DefaultChannelImbalanceRecoveryMs,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			configPath := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(configPath, []byte(validConfigJSON(tt.block)), 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+
+			cfg := New(configPath)
+			if err := cfg.Load(); err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+
+			snap := cfg.Snapshot()
+			assertEqual(t, "ChannelImbalanceThreshold", snap.ChannelImbalanceThreshold, tt.wantThreshold)
+			assertEqual(t, "ChannelImbalanceDurationMs", snap.ChannelImbalanceDurationMs, tt.wantDuration)
+			assertEqual(t, "ChannelImbalanceRecoveryMs", snap.ChannelImbalanceRecoveryMs, tt.wantRecovery)
+		})
+	}
+}
+
 func TestLoadAcceptsEmptyWebBlock(t *testing.T) {
 	t.Parallel()
 
@@ -297,6 +366,9 @@ func assertDefaultScalarSettings(t *testing.T, snap *Snapshot) {
 	assertEqual(t, "SilenceDurationMs", snap.SilenceDurationMs, DefaultSilenceDurationMs)
 	assertEqual(t, "SilenceRecoveryMs", snap.SilenceRecoveryMs, DefaultSilenceRecoveryMs)
 	assertEqual(t, "PeakHoldMs", snap.PeakHoldMs, DefaultPeakHoldMs)
+	assertEqual(t, "ChannelImbalanceThreshold", snap.ChannelImbalanceThreshold, DefaultChannelImbalanceThreshold)
+	assertEqual(t, "ChannelImbalanceDurationMs", snap.ChannelImbalanceDurationMs, DefaultChannelImbalanceDurationMs)
+	assertEqual(t, "ChannelImbalanceRecoveryMs", snap.ChannelImbalanceRecoveryMs, DefaultChannelImbalanceRecoveryMs)
 	assertEqual(t, "SilenceDumpEnabled", snap.SilenceDumpEnabled, false)
 	assertEqual(t, "SilenceDumpRetentionDays", snap.SilenceDumpRetentionDays, 0)
 	assertEqual(t, "ZabbixPort", snap.ZabbixPort, 0)
@@ -329,6 +401,11 @@ func fullyPopulatedConfigData(t *testing.T) ConfigData {
 			DurationMs:  12000,
 			RecoveryMs:  4000,
 			PeakHoldMs:  2500,
+		},
+		ChannelImbalanceDetection: ChannelImbalanceDetectionConfig{
+			ThresholdDB: 10,
+			DurationMs:  10000,
+			RecoveryMs:  3000,
 		},
 		SilenceDump: types.SilenceDumpConfig{
 			Enabled:       true,
@@ -739,6 +816,31 @@ func TestLoadRejectsInvalidFileSettings(t *testing.T) {
 			wantErr: "silence_detection.peak_hold_ms: must be between 500 and 10000 ms",
 		},
 		{
+			name:    "zero channel imbalance threshold",
+			data:    validConfigJSON(`"channel_imbalance_detection":{"threshold_db":0,"duration_ms":15000,"recovery_ms":5000}`),
+			wantErr: "channel_imbalance_detection.threshold_db: must be at least 1 dB and below 60 dB",
+		},
+		{
+			name:    "channel imbalance threshold at 60 is rejected",
+			data:    validConfigJSON(`"channel_imbalance_detection":{"threshold_db":60,"duration_ms":15000,"recovery_ms":5000}`),
+			wantErr: "channel_imbalance_detection.threshold_db: must be at least 1 dB and below 60 dB",
+		},
+		{
+			name:    "channel imbalance threshold above 60 is rejected",
+			data:    validConfigJSON(`"channel_imbalance_detection":{"threshold_db":61,"duration_ms":15000,"recovery_ms":5000}`),
+			wantErr: "channel_imbalance_detection.threshold_db: must be at least 1 dB and below 60 dB",
+		},
+		{
+			name:    "zero channel imbalance duration",
+			data:    validConfigJSON(`"channel_imbalance_detection":{"threshold_db":12,"duration_ms":0,"recovery_ms":5000}`),
+			wantErr: "channel_imbalance_detection.duration_ms: must be greater than 0",
+		},
+		{
+			name:    "zero channel imbalance recovery",
+			data:    validConfigJSON(`"channel_imbalance_detection":{"threshold_db":12,"duration_ms":15000,"recovery_ms":0}`),
+			wantErr: "channel_imbalance_detection.recovery_ms: must be greater than 0",
+		},
+		{
 			name:    "negative silence dump retention",
 			data:    validConfigJSON(`"silence_dump":{"retention_days":-1}`),
 			wantErr: "silence_dump.retention_days: cannot be negative",
@@ -977,15 +1079,113 @@ func TestSilenceThresholdBoundary(t *testing.T) {
 }
 
 // minimalValidUpdate returns a SettingsUpdate with the validator's required
-// range fields filled (silence threshold, durations, and peak hold). The rest
-// stays at zero defaults for tests that exercise one specific validation rule.
+// range fields filled (silence threshold, durations, peak hold, and channel
+// imbalance). The rest stays at zero defaults for tests that exercise one
+// specific validation rule.
 func minimalValidUpdate() *SettingsUpdate {
 	return &SettingsUpdate{
-		SilenceThreshold:  -40,
-		SilenceDurationMs: 15000,
-		SilenceRecoveryMs: 5000,
-		PeakHoldMs:        1500,
+		SilenceThreshold:           -40,
+		SilenceDurationMs:          15000,
+		SilenceRecoveryMs:          5000,
+		PeakHoldMs:                 1500,
+		ChannelImbalanceThreshold:  12,
+		ChannelImbalanceDurationMs: 15000,
+		ChannelImbalanceRecoveryMs: 5000,
 	}
+}
+
+func TestChannelImbalanceThresholdBoundary(t *testing.T) {
+	t.Parallel()
+
+	fileTests := []struct {
+		name      string
+		threshold string
+		wantErr   bool
+	}{
+		{"one is valid", "1", false},
+		{"just below sixty is valid", "59.9", false},
+		{"zero is rejected", "0", true},
+		{"sixty is rejected", "60", true},
+		{"above sixty is rejected", "61", true},
+	}
+	for _, tt := range fileTests {
+		t.Run("file/"+tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			configPath := filepath.Join(t.TempDir(), "config.json")
+			block := `"channel_imbalance_detection":{"threshold_db":` + tt.threshold + `,"duration_ms":15000,"recovery_ms":5000}`
+			if err := os.WriteFile(configPath, []byte(validConfigJSON(block)), 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+
+			err := New(configPath).Load()
+			if tt.wantErr && err == nil {
+				t.Fatalf("Load() error = nil, want rejection for threshold %s", tt.threshold)
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("Load() error = %v, want nil for threshold %s", err, tt.threshold)
+			}
+		})
+	}
+
+	apiTests := []struct {
+		name      string
+		threshold float64
+		wantErr   bool
+	}{
+		{"one is valid", 1, false},
+		{"just below sixty is valid", 59.9, false},
+		{"zero is rejected", 0, true},
+		{"sixty is rejected", 60, true},
+		{"above sixty is rejected", 61, true},
+	}
+	for _, tt := range apiTests {
+		t.Run("api/"+tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			upd := minimalValidUpdate()
+			upd.ChannelImbalanceThreshold = tt.threshold
+
+			var found bool
+			for _, e := range upd.Validate() {
+				if strings.Contains(e, "channel_imbalance_threshold") {
+					found = true
+					break
+				}
+			}
+			if found != tt.wantErr {
+				t.Fatalf("Validate() reported channel_imbalance_threshold error = %v, want %v for %v", found, tt.wantErr, tt.threshold)
+			}
+		})
+	}
+}
+
+func TestApplySettingsRoundTripsChannelImbalance(t *testing.T) {
+	t.Parallel()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	cfg := New(configPath)
+	if err := cfg.Load(); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	upd := minimalValidUpdate()
+	upd.ChannelImbalanceThreshold = 18
+	upd.ChannelImbalanceDurationMs = 20000
+	upd.ChannelImbalanceRecoveryMs = 4000
+	if err := cfg.ApplySettings(upd); err != nil {
+		t.Fatalf("ApplySettings() error = %v", err)
+	}
+
+	reloaded := New(configPath)
+	if err := reloaded.Load(); err != nil {
+		t.Fatalf("second Load() error = %v", err)
+	}
+
+	snap := reloaded.Snapshot()
+	assertEqual(t, "ChannelImbalanceThreshold", snap.ChannelImbalanceThreshold, 18.0)
+	assertEqual(t, "ChannelImbalanceDurationMs", snap.ChannelImbalanceDurationMs, int64(20000))
+	assertEqual(t, "ChannelImbalanceRecoveryMs", snap.ChannelImbalanceRecoveryMs, int64(4000))
 }
 
 // TestSettingsUpdateValidate_ClearGraphSecretConflict pins #247: when both

@@ -179,6 +179,9 @@ const DEFAULT_LEVELS = {
     peak_left: -60,
     peak_right: -60,
     silence_level: null,
+    channel_imbalance_level: null,
+    balance_db: 0,
+    imbalance_db: 0,
     // PPM display levels (with ballistics applied)
     display_left: -60,
     display_right: -60,
@@ -239,7 +242,7 @@ document.addEventListener('alpine:init', () => {
         recorderForm: { ...DEFAULT_RECORDER, id: '' },
         recorderFormDirty: false,
 
-        // Event history (all event types: stream_* and silence_*)
+        // Event history (all event types: stream_*, silence_*, channel_imbalance_*, recorder_*)
         events: [],
         eventFilter: '',
         eventsLoading: false,
@@ -261,6 +264,9 @@ document.addEventListener('alpine:init', () => {
             silence_duration_ms: 15000,
             silence_recovery_ms: 5000,
             peak_hold_ms: 3000,
+            channel_imbalance_threshold: 12,
+            channel_imbalance_duration_ms: 15000,
+            channel_imbalance_recovery_ms: 5000,
             silence_dump: { enabled: true, retention_days: 7 },
             recording_max_duration_minutes: 240,
             webhook_has_url: false,
@@ -287,6 +293,9 @@ document.addEventListener('alpine:init', () => {
             silenceDuration: 15,
             silenceRecovery: 5,
             peakHoldMs: 3000,
+            channelImbalanceThreshold: 12,
+            channelImbalanceDuration: 15,
+            channelImbalanceRecovery: 5,
             silenceDump: { enabled: true, retentionDays: 7 },
             recordingMaxDurationMinutes: 240,
             silenceWebhook: '',
@@ -644,6 +653,14 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
+         * Returns CSS class for the channel imbalance indicator dot.
+         * @returns {string} State class for dot styling
+         */
+        getChannelImbalanceStateClass() {
+            return this.levels.channel_imbalance_level === 'active' ? 'state-warning' : '';
+        },
+
+        /**
          * Returns CSS class for clip indicator dot.
          * @returns {string} State class for dot styling
          */
@@ -751,6 +768,9 @@ document.addEventListener('alpine:init', () => {
                 silenceDuration: msToSeconds(this.config.silence_duration_ms ?? 15000),
                 silenceRecovery: msToSeconds(this.config.silence_recovery_ms ?? 5000),
                 peakHoldMs: this.config.peak_hold_ms ?? 3000,
+                channelImbalanceThreshold: this.config.channel_imbalance_threshold ?? 12,
+                channelImbalanceDuration: msToSeconds(this.config.channel_imbalance_duration_ms ?? 15000),
+                channelImbalanceRecovery: msToSeconds(this.config.channel_imbalance_recovery_ms ?? 5000),
                 silenceDump: {
                     enabled: this.config.silence_dump?.enabled ?? true,
                     retentionDays: this.config.silence_dump?.retention_days ?? 7
@@ -842,6 +862,9 @@ document.addEventListener('alpine:init', () => {
                         silence_duration_ms: this.config.silence_duration_ms,
                         silence_recovery_ms: this.config.silence_recovery_ms,
                         peak_hold_ms: this.config.peak_hold_ms,
+                        channel_imbalance_threshold: this.config.channel_imbalance_threshold,
+                        channel_imbalance_duration_ms: this.config.channel_imbalance_duration_ms,
+                        channel_imbalance_recovery_ms: this.config.channel_imbalance_recovery_ms,
                         silence_dump_enabled: this.config.silence_dump.enabled,
                         silence_dump_retention_days: this.config.silence_dump.retention_days,
                         webhook_url: '', // Empty = keep saved URL server-side.
@@ -892,6 +915,9 @@ document.addEventListener('alpine:init', () => {
                 silence_duration_ms: secondsToMs(form.silenceDuration),
                 silence_recovery_ms: secondsToMs(form.silenceRecovery),
                 peak_hold_ms: form.peakHoldMs,
+                channel_imbalance_threshold: form.channelImbalanceThreshold,
+                channel_imbalance_duration_ms: secondsToMs(form.channelImbalanceDuration),
+                channel_imbalance_recovery_ms: secondsToMs(form.channelImbalanceRecovery),
                 silence_dump_enabled: form.silenceDump.enabled,
                 silence_dump_retention_days: form.silenceDump.retentionDays,
                 webhook_url: form.silenceWebhook,
@@ -1522,6 +1548,8 @@ document.addEventListener('alpine:init', () => {
             if (type === 'silence_start') return 'warning';
             if (type === 'silence_end') return 'success';
             if (type === 'audio_dump_ready') return 'info';
+            if (type === 'channel_imbalance_start') return 'warning';
+            if (type === 'channel_imbalance_end') return 'success';
             if (type === 'recorder_error' || type === 'upload_failed' || type === 'upload_abandoned') return 'error';
             if (type === 'upload_completed' || type === 'cleanup_completed') return 'success';
             if (type === 'upload_retry') return 'warning';
@@ -1543,6 +1571,8 @@ document.addEventListener('alpine:init', () => {
                 'silence_start': 'Silence',
                 'silence_end': 'Recovered',
                 'audio_dump_ready': 'Audio Dump',
+                'channel_imbalance_start': 'Imbalance',
+                'channel_imbalance_end': 'Balanced',
                 'recorder_started': 'Started',
                 'recorder_stopped': 'Stopped',
                 'recorder_error': 'Error',
@@ -1583,6 +1613,15 @@ document.addEventListener('alpine:init', () => {
             if (event.type === 'silence_end') {
                 return details.duration_ms ? `Duration: ${formatSmartDuration(details.duration_ms)}` : '';
             }
+            if (event.type === 'channel_imbalance_start') {
+                if (details.imbalance_db !== undefined) {
+                    return `L: ${details.level_left_db.toFixed(1)}dB  R: ${details.level_right_db.toFixed(1)}dB (${details.imbalance_db.toFixed(1)}dB diff)`;
+                }
+                return '';
+            }
+            if (event.type === 'channel_imbalance_end') {
+                return details.duration_ms ? `Duration: ${formatSmartDuration(details.duration_ms)}` : '';
+            }
             if (event.type === 'audio_dump_ready') {
                 if (details.dump_error) return `Error: ${details.dump_error}`;
                 if (details.dump_filename) return details.dump_filename;
@@ -1618,7 +1657,7 @@ document.addEventListener('alpine:init', () => {
          * @returns {string} Short stream identifier
          */
         isAudioEvent(event) {
-            return event.type?.startsWith('silence_') || event.type === 'audio_dump_ready';
+            return event.type?.startsWith('silence_') || event.type === 'audio_dump_ready' || event.type?.startsWith('channel_imbalance_');
         },
 
         getStreamBadgeText(event) {

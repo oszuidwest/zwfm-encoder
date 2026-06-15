@@ -414,6 +414,10 @@ type APIConfigResponse struct {
 	PeakHoldMs        int64             `json:"peak_hold_ms"`
 	SilenceDump       SilenceDumpConfig `json:"silence_dump"`
 
+	ChannelImbalanceThreshold  float64 `json:"channel_imbalance_threshold"` // dB
+	ChannelImbalanceDurationMs int64   `json:"channel_imbalance_duration_ms"`
+	ChannelImbalanceRecoveryMs int64   `json:"channel_imbalance_recovery_ms"`
+
 	WebhookHasURL bool               `json:"webhook_has_url"`
 	WebhookEvents EventSubscriptions `json:"webhook_events"`
 

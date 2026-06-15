@@ -175,7 +175,7 @@ See [docs/events.md](docs/events.md) for the complete event reference.
 - Encoder state is `stopped`, `starting`, or `stopping`
 - FFmpeg binary is not found
 
-Note: Stream connection failures, silence detection, and recorder errors do **not** affect health status. These are reported in the response body for informational purposes only.
+Note: Stream connection failures, silence detection, channel imbalance detection, and recorder errors do **not** affect health status. These are reported in the response body for informational purposes only.
 
 Response example:
 
@@ -188,7 +188,8 @@ Response example:
   "recorder_count": 1,
   "recorders_running": 1,
   "uptime_seconds": 9252,
-  "silence_detected": false
+  "silence_detected": false,
+  "channel_imbalance_detected": false
 }
 ```
 
@@ -196,9 +197,9 @@ No authentication required.
 
 ## Readiness Endpoint
 
-`GET /ready` is a public production-readiness endpoint. It returns 200 only when the process is usable for broadcast monitoring: FFmpeg is available, the encoder is running, enabled streams are stable, no silence alarm is active, enabled hourly recorders are running, no recorder is in error, and no recording uploads are pending retry.
+`GET /ready` is a public production-readiness endpoint. It returns 200 only when the process is usable for broadcast monitoring: FFmpeg is available, the encoder is running, enabled streams are stable, no silence alarm is active, no channel imbalance alarm is active, enabled hourly recorders are running, no recorder is in error, and no recording uploads are pending retry.
 
-The readiness rollup is intentionally strict: one pending recording upload makes the overall endpoint return `503` because the archive path is degraded. Monitoring that should only page for live broadcast impact should alert on the relevant components in the JSON body, such as `process`, `streams`, and `silence`, instead of the aggregate `status`. Planned off-air periods or other intentional silence also make the `silence` component not ready while the silence alarm is active.
+The readiness rollup is intentionally strict: one pending recording upload makes the overall endpoint return `503` because the archive path is degraded. A confirmed channel imbalance (for example one dead channel) makes the `channel_imbalance` component not ready, since the broadcast is degraded even though the encoder keeps running. Monitoring that should only page for live broadcast impact should alert on the relevant components in the JSON body, such as `process`, `streams`, `silence`, and `channel_imbalance`, instead of the aggregate `status`. Planned off-air periods or other intentional silence also make the `silence` component not ready while the silence alarm is active.
 
 When any component is not ready, the endpoint returns 503 with component details:
 
