@@ -161,8 +161,14 @@ func (c *Capturer) OnSilenceRecover(totalDuration, recoveryDuration time.Duratio
 	// Backdate silenceEndPos to when audio actually returned, not when recovery was confirmed.
 	// The JustRecovered event fires after recoveryDuration has elapsed, so we need to
 	// subtract that amount to capture the moment audio came back.
+	//
+	// recoveryDuration is a wall-clock measurement while totalWritten counts bytes
+	// actually written to the ring; the two can diverge if the distributor stalls
+	// during the recovery window. Clamp to silenceStartPos so the recovery point is
+	// never before silence started: this keeps copyFromRing's startPos >= 0
+	// precondition and avoids a negative-length silence section.
 	recoveryBytes := int64(recoveryDuration.Seconds() * float64(audio.BytesPerSecond))
-	c.silenceEndPos = c.totalWritten - recoveryBytes
+	c.silenceEndPos = max(c.silenceStartPos, c.totalWritten-recoveryBytes)
 
 	slog.Debug("silence dump recovery detected",
 		"start_pos", c.silenceStartPos,
