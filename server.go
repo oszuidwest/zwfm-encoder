@@ -191,6 +191,7 @@ func (s *Server) buildWSRuntime() types.WSRuntimeStatus {
 	return types.WSRuntimeStatus{
 		Type:               "status",
 		FFmpegAvailable:    s.ffmpegAvailable,
+		SRTAvailable:       s.encoder.SRTAvailable(),
 		RecordingAvailable: s.encoder.RecordingAvailable(),
 		Encoder:            status,
 		StreamStatus:       s.encoder.StreamStatuses(cfg.Streams),

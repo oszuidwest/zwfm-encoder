@@ -26,6 +26,9 @@ var (
 	// ErrStreamNotFound is returned when a stream ID does not exist in config.
 	ErrStreamNotFound = errors.New("stream not found")
 
+	// ErrInvalidStreamConfig is returned when a stream change would make config invalid.
+	ErrInvalidStreamConfig = errors.New("invalid stream config")
+
 	// ErrRecorderNotFound is returned when a recorder ID does not exist in config.
 	ErrRecorderNotFound = errors.New("recorder not found")
 )
@@ -501,8 +504,10 @@ func (c *Config) validateSystem() error {
 
 func (c *Config) validateStreams() error {
 	seen := make(map[string]int, len(c.Streaming.Streams))
+	listenerBinds := make(map[string]int, len(c.Streaming.Streams))
 	for i := range c.Streaming.Streams {
 		stream := &c.Streaming.Streams[i]
+		normalizeStreamDefaults(stream)
 		if strings.TrimSpace(stream.ID) == "" {
 			return fmt.Errorf("invalid streaming.streams[%d].id: is required", i)
 		}
@@ -513,8 +518,29 @@ func (c *Config) validateStreams() error {
 		if err := stream.Validate(); err != nil {
 			return fmt.Errorf("invalid streaming.streams[%d]: %w", i, err)
 		}
+		if !stream.Enabled || stream.ModeOrDefault() != types.StreamModeListener {
+			continue
+		}
+		bind := listenerBindKey(stream)
+		if first, ok := listenerBinds[bind]; ok {
+			return fmt.Errorf("invalid streaming.streams[%d]: duplicate listener bind %q also used by streaming.streams[%d]", i, bind, first)
+		}
+		listenerBinds[bind] = i
 	}
 	return nil
+}
+
+func normalizeStreamDefaults(stream *types.Stream) {
+	if stream.ModeOrDefault() != types.StreamModeListener {
+		return
+	}
+	if strings.TrimSpace(stream.Host) == "" {
+		stream.Host = types.DefaultListenerBindHost
+	}
+}
+
+func listenerBindKey(stream *types.Stream) string {
+	return fmt.Sprintf("%s:%d", stream.ListenerBindHost(), stream.Port)
 }
 
 func (c *Config) validateRecorders() error {
@@ -737,6 +763,10 @@ func (c *Config) AddStream(stream *types.Stream) error {
 	stream.CreatedAt = time.Now().UnixMilli()
 
 	c.Streaming.Streams = append(c.Streaming.Streams, *stream)
+	if err := c.validateStreams(); err != nil {
+		c.Streaming.Streams = c.Streaming.Streams[:len(c.Streaming.Streams)-1]
+		return fmt.Errorf("%w: %w", ErrInvalidStreamConfig, err)
+	}
 	return c.saveLocked()
 }
 
@@ -768,7 +798,12 @@ func (c *Config) UpdateStream(stream *types.Stream) error {
 		return fmt.Errorf("%w: %s", ErrStreamNotFound, stream.ID)
 	}
 
+	old := c.Streaming.Streams[i]
 	c.Streaming.Streams[i] = *stream
+	if err := c.validateStreams(); err != nil {
+		c.Streaming.Streams[i] = old
+		return fmt.Errorf("%w: %w", ErrInvalidStreamConfig, err)
+	}
 	return c.saveLocked()
 }
 

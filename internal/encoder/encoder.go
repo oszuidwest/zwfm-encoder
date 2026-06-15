@@ -48,6 +48,9 @@ var ErrStreamDisabled = errors.New("stream is disabled")
 // ErrStreamNotFound is returned when the stream was not found.
 var ErrStreamNotFound = errors.New("stream not found")
 
+// ErrSRTUnsupported is returned when the FFmpeg build lacks SRT protocol support.
+var ErrSRTUnsupported = errors.New("ffmpeg does not support srt protocol")
+
 // ErrRecordingNotAvailable is returned when the recording manager is not initialized.
 var ErrRecordingNotAvailable = errors.New("recording not available")
 
@@ -55,6 +58,7 @@ var ErrRecordingNotAvailable = errors.New("recording not available")
 type Encoder struct {
 	config              *config.Config
 	ffmpegPath          string
+	srtAvailable        bool
 	streamManager       *streaming.Manager
 	recordingManager    *recording.Manager
 	silenceDumpManager  *silencedump.Manager
@@ -115,6 +119,7 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 	e := &Encoder{
 		config:              cfg,
 		ffmpegPath:          ffmpegPath,
+		srtAvailable:        util.FFmpegSupportsProtocol(ffmpegPath, "srt"),
 		streamManager:       streamMgr,
 		silenceDumpManager:  dumpManager,
 		eventLogger:         logger,
@@ -131,6 +136,14 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 	streamMgr.SetEventCallback(e.onStreamEvent, e.getStreamName)
 
 	return e, nil
+}
+
+// SRTAvailable reports whether the configured FFmpeg binary supports SRT.
+func (e *Encoder) SRTAvailable() bool {
+	if e == nil {
+		return false
+	}
+	return e.srtAvailable
 }
 
 func (e *Encoder) onStreamEvent(streamID, streamName, eventType, message, errMsg string, retryCount, maxRetries int) {
@@ -150,6 +163,9 @@ func (e *Encoder) getStreamName(streamID string) string {
 	stream := e.config.Stream(streamID)
 	if stream == nil {
 		return ""
+	}
+	if stream.ModeOrDefault() == types.StreamModeListener {
+		return fmt.Sprintf("%s:%d", stream.ListenerBindHost(), stream.Port)
 	}
 	return fmt.Sprintf("%s:%d", stream.Host, stream.Port)
 }
@@ -282,30 +298,34 @@ func (e *Encoder) Status() types.EncoderStatus {
 // StreamStatuses returns status for all configured streams.
 func (e *Encoder) StreamStatuses(streams []types.Stream) map[string]types.ProcessStatus {
 	// Get statuses for streams with active processes
-	processStatuses := e.streamManager.Statuses(func(id string) int {
-		if s := e.config.Stream(id); s != nil {
-			return s.MaxRetriesOrDefault()
-		}
-		return types.DefaultMaxRetries
-	})
+	processStatuses := e.streamManager.Statuses(e.config.Stream)
 
 	// Build complete status map for all configured streams
 	result := make(map[string]types.ProcessStatus, len(streams))
-	for _, stream := range streams {
-		if status, exists := processStatuses[stream.ID]; exists {
+	for i := range streams {
+		stream := &streams[i]
+		status, exists := processStatuses[stream.ID]
+		switch {
+		case exists:
 			// Stream has active process - use its status
 			// Also reflect disabled state if stream was disabled while running
 			if !stream.Enabled {
 				status.State = types.ProcessDisabled
 			}
 			result[stream.ID] = status
-		} else if !stream.Enabled {
+		case !stream.Enabled:
 			// Stream is disabled - mark explicitly
 			result[stream.ID] = types.ProcessStatus{
 				State:      types.ProcessDisabled,
 				MaxRetries: stream.MaxRetriesOrDefault(),
 			}
-		} else {
+		case e.ffmpegPath != "" && !e.srtAvailable:
+			result[stream.ID] = types.ProcessStatus{
+				State:      types.ProcessError,
+				MaxRetries: stream.MaxRetriesOrDefault(),
+				Error:      ErrSRTUnsupported.Error(),
+			}
+		default:
 			// Stream is enabled but has no process (encoder not running)
 			result[stream.ID] = types.ProcessStatus{
 				State:      types.ProcessStopped,
@@ -469,6 +489,9 @@ func (e *Encoder) StartStream(streamID string) error {
 	}
 	if !stream.Enabled {
 		return ErrStreamDisabled
+	}
+	if !e.srtAvailable {
+		return ErrSRTUnsupported
 	}
 
 	// Start preserves existing retry state automatically
@@ -707,7 +730,9 @@ func (e *Encoder) startEnabledStreams() {
 
 	go e.runDistributor()
 
-	for _, stream := range e.config.ConfiguredStreams() {
+	streams := e.config.ConfiguredStreams()
+	for i := range streams {
+		stream := &streams[i]
 		if !stream.Enabled {
 			slog.Info("skipping disabled stream", "stream_id", stream.ID)
 			continue
@@ -774,7 +799,9 @@ func (e *Encoder) runDistributor() {
 
 		distributor.ProcessSamples(buf[:n])
 
-		for _, stream := range e.config.ConfiguredStreams() {
+		streams := e.config.ConfiguredStreams()
+		for i := range streams {
+			stream := &streams[i]
 			// WriteAudio logs errors internally and marks stream as stopped
 			_ = e.streamManager.WriteAudio(stream.ID, buf[:n]) //nolint:errcheck // Errors logged internally by WriteAudio
 		}

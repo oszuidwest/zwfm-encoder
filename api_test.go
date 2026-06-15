@@ -190,6 +190,37 @@ func TestBuildReadyResponseAllowsStoppedOnDemandRecorder(t *testing.T) {
 	}
 }
 
+func TestBuildReadyResponseIgnoresListenerStreams(t *testing.T) {
+	t.Parallel()
+
+	input := readyFixture()
+	input.streams = []types.Stream{
+		{
+			ID:      "listener-1",
+			Enabled: true,
+			Mode:    types.StreamModeListener,
+		},
+	}
+	input.streamStatuses = map[string]types.ProcessStatus{
+		"listener-1": {
+			State:  types.ProcessRunning,
+			Stable: false,
+		},
+	}
+
+	resp, status := buildReadyResponse(&input)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d; response = %+v", status, http.StatusOK, resp)
+	}
+	streams := resp.Components["streams"]
+	if !streams.OK {
+		t.Fatalf("streams component = %+v, want OK for listener-only config", streams)
+	}
+	if got := streams.Details["production_monitored"]; got != 0 {
+		t.Fatalf("production_monitored = %v, want 0", got)
+	}
+}
+
 func readyFixture() readyInputs {
 	return readyInputs{
 		ffmpegAvailable:    true,
@@ -814,6 +845,43 @@ func TestHandleStreamEndpointsRedactPassword(t *testing.T) {
 	}
 }
 
+func TestHandleCreateStreamListenerDefaults(t *testing.T) {
+	t.Parallel()
+
+	s := freshServer(t)
+	s.encoder = &encoder.Encoder{}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/streams", bytes.NewBufferString(`{
+		"mode": "listener",
+		"host": "",
+		"port": 9000,
+		"max_retries": 3
+	}`))
+	rec := httptest.NewRecorder()
+
+	s.handleCreateStream(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	var resp types.StreamResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response JSON = %q, error = %v", rec.Body.String(), err)
+	}
+	if resp.Mode != types.StreamModeListener {
+		t.Fatalf("mode = %q, want listener", resp.Mode)
+	}
+	if resp.Host != types.DefaultListenerBindHost {
+		t.Fatalf("host = %q, want %q", resp.Host, types.DefaultListenerBindHost)
+	}
+	if resp.Codec != types.CodecMP3 {
+		t.Fatalf("codec = %q, want mp3", resp.Codec)
+	}
+	if resp.StreamID != "" {
+		t.Fatalf("stream_id = %q, want empty for listener", resp.StreamID)
+	}
+}
+
 func TestHandleRecorderEndpointsRedactS3Secret(t *testing.T) {
 	t.Parallel()
 
@@ -857,12 +925,13 @@ func TestRedactionHelpersOmitSecretFields(t *testing.T) {
 
 	streamBody, err := json.Marshal(redactStream(&types.Stream{
 		Password: "helper-stream-secret",
+		Mode:     types.StreamModeListener,
 	}))
 	if err != nil {
 		t.Fatalf("marshal redacted stream: %v", err)
 	}
 	assertNotContains(t, streamBody, "helper-stream-secret", `"password":"`)
-	assertContains(t, streamBody, `"has_password":true`)
+	assertContains(t, streamBody, `"has_password":true`, `"mode":"listener"`)
 
 	recorderBody, err := json.Marshal(redactRecorder(&types.Recorder{
 		S3SecretAccessKey: "helper-recorder-secret",

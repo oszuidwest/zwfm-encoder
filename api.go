@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
@@ -46,6 +47,10 @@ func (s *Server) writeNoContent(w http.ResponseWriter) {
 func (s *Server) writeConfigError(w http.ResponseWriter, err error) {
 	if errors.Is(err, config.ErrStreamNotFound) || errors.Is(err, config.ErrRecorderNotFound) {
 		s.writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if errors.Is(err, config.ErrInvalidStreamConfig) {
+		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if errors.Is(err, encoder.ErrRecordingNotAvailable) {
@@ -88,6 +93,7 @@ func redactStream(stream *types.Stream) types.StreamResponse {
 	return types.StreamResponse{
 		ID:          stream.ID,
 		Enabled:     stream.Enabled,
+		Mode:        stream.ModeOrDefault(),
 		Host:        stream.Host,
 		Port:        stream.Port,
 		HasPassword: stream.Password != "",
@@ -179,6 +185,7 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 		// Recording
 		RecordingHasAPIKey:          cfg.RecordingAPIKey != "",
 		RecordingMaxDurationMinutes: cfg.RecordingMaxDurationMinutes,
+		SRTAvailable:                s.encoder.SRTAvailable(),
 
 		// Entities
 		Streams:   redactSlice(cfg.Streams, redactStream),
@@ -274,6 +281,8 @@ func (s *Server) handleGetStream(w http.ResponseWriter, r *http.Request) {
 type StreamRequest struct {
 	// Enabled reports whether the stream is active.
 	Enabled bool `json:"enabled"`
+	// Mode selects caller push or local listener pull behavior.
+	Mode types.StreamMode `json:"mode"`
 	// Host is the SRT server hostname.
 	Host string `json:"host"`
 	// Port is the SRT server port.
@@ -303,14 +312,24 @@ func (s *Server) handleCreateStream(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	mode := req.Mode.OrDefault()
+	codec := req.Codec
+	if mode == types.StreamModeListener && codec == "" {
+		codec = types.CodecMP3
+	}
+	host := strings.TrimSpace(req.Host)
+	if mode == types.StreamModeListener && host == "" {
+		host = types.DefaultListenerBindHost
+	}
 
 	stream := &types.Stream{
 		Enabled:    true,
-		Host:       req.Host,
+		Mode:       mode,
+		Host:       host,
 		Port:       req.Port,
 		Password:   password,
 		StreamID:   req.StreamID,
-		Codec:      req.Codec, // Already validated by UnmarshalJSON
+		Codec:      codec, // Already validated by UnmarshalJSON when present
 		Bitrate:    req.Bitrate,
 		MaxRetries: req.MaxRetries,
 	}
@@ -323,7 +342,7 @@ func (s *Server) handleCreateStream(w http.ResponseWriter, r *http.Request) {
 
 	// Persistence failures are server errors
 	if err := s.config.AddStream(stream); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeConfigError(w, err)
 		return
 	}
 
@@ -355,17 +374,27 @@ func (s *Server) handleUpdateStream(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	mode := req.Mode.OrDefault()
+	codec := req.Codec
+	if mode == types.StreamModeListener && codec == "" {
+		codec = types.CodecMP3
+	}
+	host := strings.TrimSpace(req.Host)
+	if mode == types.StreamModeListener && host == "" {
+		host = types.DefaultListenerBindHost
+	}
 
 	// Full replacement - preserve only ID and CreatedAt.
 	// For password: empty string means keep existing unless clear_password is true.
 	updated := &types.Stream{
 		ID:         id,
 		Enabled:    req.Enabled,
-		Host:       req.Host,
+		Mode:       mode,
+		Host:       host,
 		Port:       req.Port,
 		Password:   password,
 		StreamID:   req.StreamID,
-		Codec:      req.Codec,
+		Codec:      codec,
 		Bitrate:    req.Bitrate,
 		MaxRetries: req.MaxRetries,
 		CreatedAt:  existing.CreatedAt,
@@ -1028,12 +1057,18 @@ func readyProcess(ffmpegAvailable bool, status *types.EncoderStatus) ReadyCompon
 
 func readyStreams(streams []types.Stream, statuses map[string]types.ProcessStatus) ReadyComponent {
 	enabled := 0
+	monitored := 0
 	notReady := []string{}
-	for _, stream := range streams {
+	for i := range streams {
+		stream := &streams[i]
 		if !stream.Enabled {
 			continue
 		}
 		enabled++
+		if stream.ModeOrDefault() == types.StreamModeListener {
+			continue
+		}
+		monitored++
 		status := statuses[stream.ID]
 		if status.State == types.ProcessRunning && status.Stable && !status.Exhausted {
 			continue
@@ -1042,8 +1077,9 @@ func readyStreams(streams []types.Stream, statuses map[string]types.ProcessStatu
 	}
 
 	details := map[string]any{
-		"enabled":   enabled,
-		"not_ready": notReady,
+		"enabled":              enabled,
+		"production_monitored": monitored,
+		"not_ready":            notReady,
 	}
 	if len(notReady) > 0 {
 		return ReadyComponent{OK: false, Message: "one or more enabled streams are not stable", Details: details}

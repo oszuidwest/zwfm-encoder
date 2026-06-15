@@ -8,6 +8,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/notify"
+	"github.com/oszuidwest/zwfm-encoder/internal/streaming"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
@@ -63,5 +64,32 @@ func TestCloseIdempotent(t *testing.T) {
 	}
 	if err := e.Close(); err != nil {
 		t.Fatalf("second Close() failed: %v", err)
+	}
+}
+
+func TestStreamStatusesReportsSRTUnsupported(t *testing.T) {
+	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
+	stream := types.Stream{
+		ID:      "stream-1",
+		Enabled: true,
+		Host:    "stream.example.com",
+		Port:    9000,
+		Codec:   types.CodecMP3,
+	}
+
+	e := &Encoder{
+		config:        cfg,
+		ffmpegPath:    "ffmpeg",
+		srtAvailable:  false,
+		streamManager: streaming.NewManager("ffmpeg"),
+	}
+
+	statuses := e.StreamStatuses([]types.Stream{stream})
+	status := statuses[stream.ID]
+	if status.State != types.ProcessError {
+		t.Fatalf("status state = %q, want error", status.State)
+	}
+	if status.Error != ErrSRTUnsupported.Error() {
+		t.Fatalf("status error = %q, want %q", status.Error, ErrSRTUnsupported.Error())
 	}
 }

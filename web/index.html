@@ -252,15 +252,16 @@
                              :data-deleting="deletingStreams[stream.id] === stream.created_at ? true : null">
                             <div class="row">
                                 <span class="dot" :class="d.stateClass" :data-connected="connectingAnimations[stream.id] ? 'true' : null"></span>
-                                <span class="host" x-text="`${stream.host}:${stream.port}`"></span>
+                                <span class="host" x-text="streamEndpoint(stream)"></span>
                                 <button class="icon-btn" data-variant="edit" type="button" tabindex="0" title="Edit" aria-label="Edit stream"
                                         @click="showStreamForm(stream.id)">
                                     <span class="icon-container" x-html="icons.edit"></span>
                                 </button>
                             </div>
                             <div class="details">
+                                <span class="mode-label" x-text="isListenerStream(stream) ? 'Pull' : 'Push'"></span>
                                 <span class="codec" x-text="formatCodecBitrate(stream.codec, stream.bitrate)"></span>
-                                <span class="streamid" x-text="`#${stream.stream_id}`"></span>
+                                <span class="streamid" x-show="!isListenerStream(stream)" x-text="`#${stream.stream_id}`"></span>
                                 <span class="status" :class="d.stateClass" x-text="d.statusText"></span>
                             </div>
                             <div class="alert" role="alert" x-show="d.showError">
@@ -772,22 +773,45 @@
                 <h2 x-text="isEditMode ? 'Edit Stream' : 'New Stream'">Stream</h2>
                 <button class="nav-btn" data-variant="save" type="button" tabindex="0"
                         @click="submitStreamForm()"
-                        :disabled="!streamForm.host || (isEditMode && !streamFormDirty)">Save</button>
+                        :disabled="!canSaveStreamForm()">Save</button>
             </header>
 
             <div class="panels">
                 <div class="panel">
+                    <!-- Mode Section -->
+                    <div class="section">
+                        <div class="section-header">
+                            <span class="icon-container" x-html="icons.server"></span>
+                            <h3>Mode</h3>
+                        </div>
+                        <div class="segmented segmented--neutral" role="group" aria-label="Stream mode">
+                            <button type="button" class="segmented-btn"
+                                    :aria-pressed="streamForm.mode !== 'listener'"
+                                    @click="setStreamMode('caller')">
+                                Push to server
+                            </button>
+                            <button type="button" class="segmented-btn"
+                                    :aria-pressed="streamForm.mode === 'listener'"
+                                    :disabled="!config.srt_available && streamForm.mode !== 'listener'"
+                                    :title="!config.srt_available && streamForm.mode !== 'listener' ? 'SRT unavailable in this FFmpeg build' : ''"
+                                    @click="setStreamMode('listener')">
+                                Local pull listener
+                            </button>
+                        </div>
+                        <span class="input-hint" x-show="!config.srt_available">SRT unavailable in this FFmpeg build.</span>
+                    </div>
+
                     <!-- Server Connection Section -->
                     <div class="section">
                         <div class="section-header">
                             <span class="icon-container" x-html="icons.server"></span>
-                            <h3>Server Connection</h3>
+                            <h3 x-text="streamForm.mode === 'listener' ? 'Local Listener' : 'Server Connection'">Server Connection</h3>
                         </div>
-                        <p class="section-desc">Configure the SRT server to stream audio to.</p>
                         <div class="form">
                             <div class="group">
-                                <label for="stream-host">Host</label>
-                                <input id="stream-host" type="text" placeholder="stream.example.com"
+                                <label for="stream-host" x-text="streamForm.mode === 'listener' ? 'Bind address' : 'Host'">Host</label>
+                                <input id="stream-host" type="text"
+                                       :placeholder="streamForm.mode === 'listener' ? '0.0.0.0' : 'stream.example.com'"
                                        x-model="streamForm.host" @input="markStreamFormDirty()">
                             </div>
                             <div class="row">
@@ -796,10 +820,18 @@
                                     <input id="stream-port" type="number"
                                            x-model.number="streamForm.port" @input="markStreamFormDirty()">
                                 </div>
-                                <div class="group">
+                                <div class="group" x-show="streamForm.mode !== 'listener'">
                                     <label for="stream-streamid">Stream ID</label>
                                     <input id="stream-streamid" type="text" placeholder="studio"
                                            x-model="streamForm.stream_id" @input="markStreamFormDirty()">
+                                </div>
+                            </div>
+                            <div class="group" x-show="streamForm.mode === 'listener'">
+                                <label for="stream-client-url">Client URL</label>
+                                <div class="copy-field">
+                                    <input id="stream-client-url" type="text" readonly :value="streamClientURL()">
+                                    <button class="btn" data-variant="secondary" type="button" tabindex="0"
+                                            @click="copyStreamClientURL()">Copy</button>
                                 </div>
                             </div>
                             <div class="group">

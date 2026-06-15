@@ -297,6 +297,21 @@ func TestLoadRejectsInvalidConfiguredEntities(t *testing.T) {
 			wantErr: `invalid streaming.streams[2].id: duplicate "stream-1" also used by streaming.streams[0]`,
 		},
 		{
+			name:    "duplicate enabled listener bind",
+			data:    validConfigJSON(`"streaming":{"streams":[{"id":"stream-1","mode":"listener","host":"","port":9000,"codec":"mp3","enabled":true},{"id":"stream-2","mode":"listener","host":"0.0.0.0","port":9000,"codec":"mp3","enabled":true}]}`),
+			wantErr: `invalid streaming.streams[1]: duplicate listener bind "0.0.0.0:9000" also used by streaming.streams[0]`,
+		},
+		{
+			name:    "listener stream id rejected",
+			data:    validConfigJSON(`"streaming":{"streams":[{"id":"stream-1","mode":"listener","host":"","port":9000,"stream_id":"studio","codec":"mp3"}]}`),
+			wantErr: `invalid streaming.streams[0]: stream_id: not supported for listener mode`,
+		},
+		{
+			name:    "short stream password rejected",
+			data:    validConfigJSON(`"streaming":{"streams":[{"id":"stream-1","host":"127.0.0.1","port":9000,"codec":"mp3","password":"short"}]}`),
+			wantErr: `invalid streaming.streams[0]: password: must be empty or between 10 and 64 characters`,
+		},
+		{
 			name:    "recorder missing id",
 			data:    validConfigJSON(`"recording":{"recorders":[{"name":"Archive","codec":"pcm","recording_mode":"hourly","storage_mode":"local","local_path":"/tmp"}]}`),
 			wantErr: "invalid recording.recorders[0].id: is required",
@@ -351,6 +366,29 @@ func TestLoadRejectsInvalidConfiguredEntities(t *testing.T) {
 				t.Fatalf("Load() error = %q, want substring %q", err.Error(), tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestLoadNormalizesListenerHostAndAllowsCallerSharedRemote(t *testing.T) {
+	t.Parallel()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data := validConfigJSON(`"streaming":{"streams":[
+		{"id":"listener-1","mode":"listener","host":"","port":9000,"codec":"mp3","enabled":true},
+		{"id":"caller-1","mode":"caller","host":"stream.example.com","port":9000,"codec":"mp3","enabled":true},
+		{"id":"caller-2","mode":"caller","host":"stream.example.com","port":9000,"codec":"mp3","enabled":true}
+	]}`)
+	if err := os.WriteFile(configPath, []byte(data), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg := New(configPath)
+	if err := cfg.Load(); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	streams := cfg.ConfiguredStreams()
+	if got := streams[0].Host; got != types.DefaultListenerBindHost {
+		t.Fatalf("listener host = %q, want %q", got, types.DefaultListenerBindHost)
 	}
 }
 

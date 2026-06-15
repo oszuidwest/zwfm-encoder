@@ -69,6 +69,12 @@ const (
 	SuccessThreshold = 30000 * time.Millisecond
 	// StableThreshold is the duration after which a connection is considered stable.
 	StableThreshold = 10000 * time.Millisecond
+	// ListenerStartFailureWindow is the period in which an SRT listener exit is
+	// treated as a bind/start failure rather than a completed client session.
+	ListenerStartFailureWindow = 1000 * time.Millisecond
+	// ListenerRelistenDelay is the fixed delay before restarting a listener
+	// after a normal client session ends.
+	ListenerRelistenDelay = 500 * time.Millisecond
 )
 
 const (
@@ -117,18 +123,53 @@ func (c *Codec) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// StreamMode identifies whether an SRT stream connects out or listens locally.
+type StreamMode string
+
+const (
+	// StreamModeCaller pushes audio to a remote SRT listener.
+	StreamModeCaller StreamMode = "caller"
+	// StreamModeListener starts a local SRT listener for clients to pull from.
+	StreamModeListener StreamMode = "listener"
+)
+
+const (
+	// DefaultListenerBindHost is the bind address used when a listener host is omitted.
+	DefaultListenerBindHost = "0.0.0.0"
+	minSRTPasswordLength    = 10
+	maxSRTPasswordLength    = 64
+)
+
+// OrDefault returns caller when mode is empty for backwards-compatible legacy configs.
+func (m StreamMode) OrDefault() StreamMode {
+	if m == "" {
+		return StreamModeCaller
+	}
+	return m
+}
+
+func validateStreamMode(mode StreamMode) error {
+	switch mode.OrDefault() {
+	case StreamModeCaller, StreamModeListener:
+		return nil
+	default:
+		return fmt.Errorf("mode: must be caller or listener")
+	}
+}
+
 // Stream defines an SRT streaming destination.
 type Stream struct {
-	ID         string `json:"id"`
-	Enabled    bool   `json:"enabled"`
-	Host       string `json:"host"`
-	Port       int    `json:"port"`
-	Password   string `json:"password"` //nolint:gosec // G117: intentional config field for SRT stream auth
-	StreamID   string `json:"stream_id"`
-	Codec      Codec  `json:"codec"`
-	Bitrate    int    `json:"bitrate"`     // kbit/s, 0 = codec default
-	MaxRetries int    `json:"max_retries"` // 0 = no retries
-	CreatedAt  int64  `json:"created_at"`  // Unix ms
+	ID         string     `json:"id"`
+	Enabled    bool       `json:"enabled"`
+	Mode       StreamMode `json:"mode"`
+	Host       string     `json:"host"`
+	Port       int        `json:"port"`
+	Password   string     `json:"password"` //nolint:gosec // G117: intentional config field for SRT stream auth
+	StreamID   string     `json:"stream_id"`
+	Codec      Codec      `json:"codec"`
+	Bitrate    int        `json:"bitrate"`     // kbit/s, 0 = codec default
+	MaxRetries int        `json:"max_retries"` // 0 = no retries
+	CreatedAt  int64      `json:"created_at"`  // Unix ms
 }
 
 // DefaultMaxRetries is the default number of retry attempts for streams.
@@ -136,6 +177,23 @@ const DefaultMaxRetries = 99
 
 // StreamRestartDelay is the delay between stopping and starting a stream during restart.
 const StreamRestartDelay = 2000 * time.Millisecond
+
+// ModeOrDefault returns the configured stream mode, defaulting legacy empty values to caller.
+func (s *Stream) ModeOrDefault() StreamMode {
+	if s == nil {
+		return StreamModeCaller
+	}
+	return s.Mode.OrDefault()
+}
+
+// ListenerBindHost returns the bind host for listener streams.
+func (s *Stream) ListenerBindHost() string {
+	host := strings.TrimSpace(s.Host)
+	if host == "" {
+		return DefaultListenerBindHost
+	}
+	return host
+}
 
 // MaxRetriesOrDefault returns MaxRetries, or [DefaultMaxRetries] if not set.
 func (s *Stream) MaxRetriesOrDefault() int {
@@ -216,8 +274,15 @@ func validateBitrate(codec Codec, bitrate int) error {
 
 // Validate reports an error if the stream configuration is invalid.
 func (s *Stream) Validate() error {
-	if strings.TrimSpace(s.Host) == "" {
+	if err := validateStreamMode(s.Mode); err != nil {
+		return err
+	}
+	mode := s.ModeOrDefault()
+	if mode == StreamModeCaller && strings.TrimSpace(s.Host) == "" {
 		return fmt.Errorf("host: is required")
+	}
+	if mode == StreamModeListener && strings.TrimSpace(s.StreamID) != "" {
+		return fmt.Errorf("stream_id: not supported for listener mode")
 	}
 	if err := validateCodec(s.Codec); err != nil {
 		return err
@@ -227,6 +292,9 @@ func (s *Stream) Validate() error {
 	}
 	if s.MaxRetries < 0 {
 		return fmt.Errorf("max_retries: cannot be negative")
+	}
+	if s.Password != "" && (len(s.Password) < minSRTPasswordLength || len(s.Password) > maxSRTPasswordLength) {
+		return fmt.Errorf("password: must be empty or between 10 and 64 characters")
 	}
 	if err := validateBitrate(s.Codec, s.Bitrate); err != nil {
 		return err
@@ -394,6 +462,7 @@ type EncoderStatus struct {
 type WSRuntimeStatus struct {
 	Type               string                   `json:"type"` // Always "status"
 	FFmpegAvailable    bool                     `json:"ffmpeg_available"`
+	SRTAvailable       bool                     `json:"srt_available"`
 	RecordingAvailable bool                     `json:"recording_available"`
 	Encoder            EncoderStatus            `json:"encoder"`
 	StreamStatus       map[string]ProcessStatus `json:"stream_status"`
@@ -437,6 +506,7 @@ type APIConfigResponse struct {
 
 	RecordingHasAPIKey          bool `json:"recording_has_api_key"`
 	RecordingMaxDurationMinutes int  `json:"recording_max_duration_minutes"`
+	SRTAvailable                bool `json:"srt_available"`
 
 	Streams   []StreamResponse   `json:"streams"`
 	Recorders []RecorderResponse `json:"recorders"`
@@ -444,16 +514,17 @@ type APIConfigResponse struct {
 
 // StreamResponse is the browser-safe representation of a stream.
 type StreamResponse struct {
-	ID          string `json:"id"`
-	Enabled     bool   `json:"enabled"`
-	Host        string `json:"host"`
-	Port        int    `json:"port"`
-	HasPassword bool   `json:"has_password"`
-	StreamID    string `json:"stream_id"`
-	Codec       Codec  `json:"codec"`
-	Bitrate     int    `json:"bitrate"`     // kbit/s, 0 = codec default
-	MaxRetries  int    `json:"max_retries"` // 0 = no retries
-	CreatedAt   int64  `json:"created_at"`  // Unix ms
+	ID          string     `json:"id"`
+	Enabled     bool       `json:"enabled"`
+	Mode        StreamMode `json:"mode"`
+	Host        string     `json:"host"`
+	Port        int        `json:"port"`
+	HasPassword bool       `json:"has_password"`
+	StreamID    string     `json:"stream_id"`
+	Codec       Codec      `json:"codec"`
+	Bitrate     int        `json:"bitrate"`     // kbit/s, 0 = codec default
+	MaxRetries  int        `json:"max_retries"` // 0 = no retries
+	CreatedAt   int64      `json:"created_at"`  // Unix ms
 }
 
 // RecorderResponse is the browser-safe representation of a recorder.

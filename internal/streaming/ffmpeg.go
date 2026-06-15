@@ -29,11 +29,24 @@ func BuildSRTURL(stream *types.Stream) string {
 	params.Set("pkt_size", "1316")
 	params.Set("oheadbw", "100")
 	params.Set("maxbw", "-1")
-	params.Set("latency", "10000000")
-	params.Set("mode", "caller")
 	params.Set("transtype", "live")
-	params.Set("streamid", stream.StreamID)
-	params.Set("passphrase", stream.Password)
 
-	return fmt.Sprintf("srt://%s:%d?%s", stream.Host, stream.Port, params.Encode())
+	host := stream.Host
+	switch stream.ModeOrDefault() {
+	case types.StreamModeListener:
+		host = stream.ListenerBindHost()
+		params.Set("latency", "300000")
+		params.Set("listen_timeout", "-1")
+		params.Set("mode", string(types.StreamModeListener))
+	default:
+		params.Set("latency", "10000000")
+		params.Set("mode", string(types.StreamModeCaller))
+		params.Set("streamid", stream.StreamID)
+	}
+	if stream.Password != "" {
+		params.Set("passphrase", stream.Password)
+		params.Set("pbkeylen", "16")
+	}
+
+	return fmt.Sprintf("srt://%s:%d?%s", host, stream.Port, params.Encode())
 }

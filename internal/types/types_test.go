@@ -210,6 +210,138 @@ func TestCodecFormat(t *testing.T) {
 	}
 }
 
+func TestStreamModeOrDefault(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		mode StreamMode
+		want StreamMode
+	}{
+		{name: "legacy empty defaults to caller", want: StreamModeCaller},
+		{name: "caller", mode: StreamModeCaller, want: StreamModeCaller},
+		{name: "listener", mode: StreamModeListener, want: StreamModeListener},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := tt.mode.OrDefault(); got != tt.want {
+				t.Fatalf("OrDefault() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStreamValidateModeAware(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		stream  Stream
+		wantErr string
+	}{
+		{
+			name: "legacy caller remains valid",
+			stream: Stream{
+				Host:  "stream.example.com",
+				Port:  9000,
+				Codec: CodecMP3,
+			},
+		},
+		{
+			name: "caller requires host",
+			stream: Stream{
+				Mode:  StreamModeCaller,
+				Port:  9000,
+				Codec: CodecMP3,
+			},
+			wantErr: "host: is required",
+		},
+		{
+			name: "listener allows empty host",
+			stream: Stream{
+				Mode:  StreamModeListener,
+				Port:  9000,
+				Codec: CodecMP3,
+			},
+		},
+		{
+			name: "listener rejects stream id",
+			stream: Stream{
+				Mode:     StreamModeListener,
+				Port:     9000,
+				Codec:    CodecMP3,
+				StreamID: "studio",
+			},
+			wantErr: "stream_id: not supported for listener mode",
+		},
+		{
+			name: "invalid mode",
+			stream: Stream{
+				Mode:  StreamMode("pull"),
+				Host:  "stream.example.com",
+				Port:  9000,
+				Codec: CodecMP3,
+			},
+			wantErr: "mode: must be caller or listener",
+		},
+		{
+			name: "empty password allowed",
+			stream: Stream{
+				Host:  "stream.example.com",
+				Port:  9000,
+				Codec: CodecMP3,
+			},
+		},
+		{
+			name: "password min length accepted",
+			stream: Stream{
+				Host:     "stream.example.com",
+				Port:     9000,
+				Codec:    CodecMP3,
+				Password: "1234567890",
+			},
+		},
+		{
+			name: "short password rejected",
+			stream: Stream{
+				Host:     "stream.example.com",
+				Port:     9000,
+				Codec:    CodecMP3,
+				Password: "short",
+			},
+			wantErr: "password: must be empty or between 10 and 64 characters",
+		},
+		{
+			name: "long password rejected",
+			stream: Stream{
+				Host:     "stream.example.com",
+				Port:     9000,
+				Codec:    CodecMP3,
+				Password: strings.Repeat("x", 65),
+			},
+			wantErr: "password: must be empty or between 10 and 64 characters",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := tt.stream.Validate()
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Validate() error = %v, want containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
+	}
+}
+
 func TestEventSubscriptionsToZabbixEventSubscriptionsOmitsAudioDump(t *testing.T) {
 	t.Parallel()
 

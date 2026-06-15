@@ -65,6 +65,9 @@ func main() {
 		slog.Error("failed to create encoder", "error", err)
 		os.Exit(1)
 	}
+	if ffmpegAvailable && !enc.SRTAvailable() {
+		slog.Warn("FFmpeg found but SRT protocol is not available", "path", ffmpegPath)
+	}
 
 	srv := NewServer(cfg, enc, ffmpegAvailable)
 

@@ -171,6 +171,17 @@ Configuration is stored in `/etc/encoder/config.json` on production systems. For
 
 The installer creates a minimal config file. All other settings are configured through the web interface.
 
+## Streaming Modes
+
+Streams can run in two SRT modes:
+
+- **Push to server** (`mode: "caller"`): the encoder connects to a remote SRT listener. `host`, `port`, optional `stream_id`, codec, password, and retry settings behave as before.
+- **Local pull listener** (`mode: "listener"`): the encoder opens a local SRT UDP port and clients connect to the Raspberry Pi, for example `srt://<encoder-ip>:9000?mode=caller`.
+
+Listener streams bind to `0.0.0.0` when no bind address is entered. They use MP3 by default for broad client compatibility; PCM remains available for clients that support SMPTE 302M in MPEG-TS. A listener handles one client session per FFmpeg process; after the client disconnects, the encoder starts a new listener process after a short fixed delay.
+
+SRT encryption is optional. Empty passwords leave `passphrase` and `pbkeylen` unset. Non-empty passwords must be 10-64 characters and are sent to FFmpeg with `pbkeylen=16`. The configured FFmpeg build must list the exact `srt` protocol in `ffmpeg -hide_banner -protocols`; `srtp` alone is not enough.
+
 ## Event Log
 
 The encoder logs all stream, audio, and recording events to a JSON Lines file for monitoring and debugging. Audio events include silence, audio dump, and channel imbalance events. Events are accessible via the web interface and REST API.
@@ -212,7 +223,7 @@ No authentication required.
 
 ## Readiness Endpoint
 
-`GET /ready` is a public production-readiness endpoint. It returns 200 only when the process is usable for broadcast monitoring: FFmpeg is available, the encoder is running, enabled streams are stable, no silence alarm is active, no channel imbalance alarm is active, enabled hourly recorders are running, no recorder is in error, and no recording uploads are pending retry.
+`GET /ready` is a public production-readiness endpoint. It returns 200 only when the process is usable for broadcast monitoring: FFmpeg is available, the encoder is running, enabled caller streams are stable, no silence alarm is active, no channel imbalance alarm is active, enabled hourly recorders are running, no recorder is in error, and no recording uploads are pending retry. Local pull listener streams are excluded from production-readiness because a running listener means "waiting for clients", not "connected remote output".
 
 The readiness rollup is intentionally strict: one pending recording upload makes the overall endpoint return `503` because the archive path is degraded. A confirmed channel imbalance (for example one dead channel) makes the `channel_imbalance` component not ready, since the broadcast is degraded even though the encoder keeps running. Monitoring that should only page for live broadcast impact should alert on the relevant components in the JSON body, such as `process`, `streams`, `silence`, and `channel_imbalance`, instead of the aggregate `status`. Planned off-air periods or other intentional silence also make the `silence` component not ready while the silence alarm is active.
 
@@ -340,7 +351,7 @@ flowchart LR
 4. **Silence Detection**: Hysteresis-based detection with configurable threshold/duration/recovery. Buffers 15s audio context before/after silence events
 5. **Channel Imbalance Detection**: Hysteresis-based L/R balance detection with configurable threshold/duration/recovery. Reuses the silence threshold as a presence floor and reports live balance/imbalance values.
 6. **Alerting**: Silence events trigger webhook, email (MS Graph), log (JSON Lines), and/or Zabbix. Each channel has per-event subscriptions for `silence_start`, `silence_end`, and `audio_dump`. `silence_end` fires immediately on recovery; the `audio_dump_ready` event fires separately once the MP3 is ready. Channel imbalance events are logged and surfaced in health/readiness. Abandoned S3 uploads also trigger notifications.
-7. **Streaming**: Per-output FFmpeg processes with automatic retry and exponential backoff
+7. **Streaming**: Per-output FFmpeg processes; caller streams use retry/backoff, listener streams relisten after client disconnect
 8. **Recording**: Hourly rotation or on-demand, with optional S3 upload
 9. **Event Log**: All stream, audio, and recording events written to a JSON Lines file; accessible via web UI and REST API with pagination
 

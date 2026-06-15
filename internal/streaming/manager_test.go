@@ -1,8 +1,10 @@
 package streaming
 
 import (
+	"errors"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
@@ -134,6 +136,115 @@ func TestMaybeEmitStableOnlyForSameRunningInstance(t *testing.T) {
 			if emitted != tc.wantEmit {
 				t.Errorf("maybeEmitStable emitted=%v, want %v (events=%v)",
 					emitted, tc.wantEmit, events)
+			}
+		})
+	}
+}
+
+func TestMaybeEmitStableSuppressesListener(t *testing.T) {
+	t.Parallel()
+
+	const id = "listener-1"
+	m := NewManager("ffmpeg")
+	var events []string
+	m.SetEventCallback(func(_, _, event, _, _ string, _, _ int) {
+		events = append(events, event)
+	}, nil)
+
+	started := &Stream{state: types.ProcessRunning, mode: types.StreamModeListener}
+	m.streams[id] = started
+
+	m.maybeEmitStable(id, started)
+
+	if slices.Contains(events, "stream_stable") {
+		t.Fatalf("maybeEmitStable emitted stream_stable for listener: events=%v", events)
+	}
+}
+
+func TestStatusesNeverMarksListenerStable(t *testing.T) {
+	t.Parallel()
+
+	const id = "listener-1"
+	m := NewManager("ffmpeg")
+	m.streams[id] = &Stream{
+		state:     types.ProcessRunning,
+		mode:      types.StreamModeListener,
+		startTime: time.Now().Add(-2 * types.StableThreshold),
+	}
+
+	statuses := m.Statuses(func(string) *types.Stream {
+		return &types.Stream{ID: id, Mode: types.StreamModeListener, MaxRetries: 3}
+	})
+	status := statuses[id]
+	if status.State != types.ProcessRunning {
+		t.Fatalf("status state = %q, want running", status.State)
+	}
+	if status.Stable {
+		t.Fatal("listener status Stable = true, want false")
+	}
+}
+
+func TestClassifyStreamExit(t *testing.T) {
+	t.Parallel()
+
+	errFailed := errors.New("ffmpeg failed")
+	tests := []struct {
+		name        string
+		mode        types.StreamMode
+		err         error
+		cause       error
+		runDuration time.Duration
+		want        streamExitClass
+	}{
+		{
+			name:        "caller failure uses retry path",
+			mode:        types.StreamModeCaller,
+			err:         errFailed,
+			runDuration: time.Second,
+			want:        streamExitFailure,
+		},
+		{
+			name:        "listener failure inside start window uses retry path",
+			mode:        types.StreamModeListener,
+			err:         errFailed,
+			runDuration: types.ListenerStartFailureWindow - time.Millisecond,
+			want:        streamExitFailure,
+		},
+		{
+			name:        "listener exit after window relistens",
+			mode:        types.StreamModeListener,
+			err:         errFailed,
+			runDuration: types.ListenerStartFailureWindow,
+			want:        streamExitListenerRelisten,
+		},
+		{
+			name:        "listener clean exit after window relistens",
+			mode:        types.StreamModeListener,
+			runDuration: types.ListenerStartFailureWindow + time.Second,
+			want:        streamExitListenerRelisten,
+		},
+		{
+			name:        "intentional stop wins",
+			mode:        types.StreamModeListener,
+			err:         errFailed,
+			cause:       errStoppedByUser,
+			runDuration: types.ListenerStartFailureWindow + time.Second,
+			want:        streamExitIntentionalStop,
+		},
+		{
+			name:        "caller clean exit stops normally",
+			mode:        types.StreamModeCaller,
+			runDuration: time.Second,
+			want:        streamExitNormalStop,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := classifyStreamExit(tt.mode, tt.err, tt.cause, tt.runDuration)
+			if got != tt.want {
+				t.Fatalf("classifyStreamExit() = %v, want %v", got, tt.want)
 			}
 		})
 	}
