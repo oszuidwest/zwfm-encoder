@@ -68,6 +68,10 @@ type Capturer struct {
 	silenceStart    time.Time // time when silence started
 	// capturing reports whether we're waiting for recovery audio.
 	capturing bool
+	// recovered reports whether recovery has been signalled for the current
+	// capture. Tracked explicitly because silenceEndPos can legitimately be 0
+	// (silence starting at byte position 0) and cannot double as the sentinel.
+	recovered bool
 
 	// Saved pre-silence audio snapshot. Captured immediately on silence start
 	// to prevent data loss during long silences that exceed ring buffer capacity.
@@ -126,7 +130,7 @@ func (c *Capturer) OnSilenceStart() {
 
 	// If already capturing with recovery detected, finalize current dump first.
 	// This prevents losing silence1 when silence2 starts before 15s post-recovery completes.
-	if c.capturing && c.silenceEndPos > 0 {
+	if c.capturing && c.recovered {
 		c.extractAndEncode()
 	}
 
@@ -143,6 +147,7 @@ func (c *Capturer) OnSilenceStart() {
 	c.silenceStart = time.Now()
 	c.silenceEndPos = 0
 	c.capturing = true
+	c.recovered = false
 
 	slog.Debug("silence dump capture started", "position", c.silenceStartPos, "saved_before_bytes", len(c.savedBefore))
 }
@@ -169,6 +174,7 @@ func (c *Capturer) OnSilenceRecover(totalDuration, recoveryDuration time.Duratio
 	// precondition and avoids a negative-length silence section.
 	recoveryBytes := int64(recoveryDuration.Seconds() * float64(audio.BytesPerSecond))
 	c.silenceEndPos = max(c.silenceStartPos, c.totalWritten-recoveryBytes)
+	c.recovered = true
 
 	slog.Debug("silence dump recovery detected",
 		"start_pos", c.silenceStartPos,
@@ -180,7 +186,7 @@ func (c *Capturer) OnSilenceRecover(totalDuration, recoveryDuration time.Duratio
 
 // checkAndFinalize completes a dump capture if sufficient audio context is available.
 func (c *Capturer) checkAndFinalize() {
-	if !c.capturing || c.silenceEndPos == 0 {
+	if !c.capturing || !c.recovered {
 		return
 	}
 
@@ -195,6 +201,7 @@ func (c *Capturer) checkAndFinalize() {
 
 	// Reset state for next silence event
 	c.capturing = false
+	c.recovered = false
 	c.silenceStartPos = 0
 	c.silenceEndPos = 0
 	c.silenceStart = time.Time{}
@@ -205,7 +212,7 @@ func (c *Capturer) extractAndEncode() {
 	// Calculate section sizes (silence capped at maxSilenceSeconds)
 	silenceBytes := min(max(0, c.silenceEndPos-c.silenceStartPos), int64(maxSilenceSeconds*audio.BytesPerSecond))
 	afterBytes := int64(0)
-	if c.silenceEndPos > 0 {
+	if c.recovered {
 		afterBytes = int64(afterSeconds * audio.BytesPerSecond)
 	}
 
@@ -338,6 +345,7 @@ func (c *Capturer) Reset() {
 	c.silenceEndPos = 0
 	c.silenceStart = time.Time{}
 	c.capturing = false
+	c.recovered = false
 	c.savedBefore = nil // Free memory
 
 	slog.Debug("silence dump capturer reset")

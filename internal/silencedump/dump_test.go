@@ -198,6 +198,33 @@ func TestOnSilenceRecoverClampsEndPos(t *testing.T) {
 	}
 }
 
+// TestCheckAndFinalizeRecoversAtZeroStart verifies a dump still finalizes when
+// silence begins at byte position 0 (before any audio is written) and a divergent
+// wall-clock recovery clamps silenceEndPos back to 0. Finalization keys off the
+// explicit recovered flag, not silenceEndPos; keying off the position would stall
+// the capturer forever in this case.
+func TestCheckAndFinalizeRecoversAtZeroStart(t *testing.T) {
+	// Empty ffmpeg/output paths keep the async encode a no-op (MkdirAll fails fast).
+	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
+
+	c.OnSilenceStart()                     // totalWritten==0 -> silenceStartPos==0
+	c.OnSilenceRecover(0, 100*time.Second) // wall-clock outruns bytes -> silenceEndPos clamps to 0
+
+	if !c.recovered {
+		t.Fatal("recovered not set after OnSilenceRecover")
+	}
+	if c.silenceEndPos != 0 {
+		t.Fatalf("silenceEndPos = %d, want 0 (clamped to start)", c.silenceEndPos)
+	}
+
+	// Feed exactly enough post-recovery audio for checkAndFinalize to fire.
+	writePattern(c, int64(afterSeconds*audio.BytesPerSecond))
+
+	if c.capturing {
+		t.Fatal("capturer stuck capturing; recovery at byte position 0 never finalized")
+	}
+}
+
 func BenchmarkCopyFromRing(b *testing.B) {
 	c := newPatternedCapturer()
 	dst := make([]byte, afterSeconds*audio.BytesPerSecond) // 15s, a real extract size
