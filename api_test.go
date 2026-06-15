@@ -121,6 +121,13 @@ func TestBuildReadyResponseFailures(t *testing.T) {
 			},
 		},
 		{
+			name:      "active channel imbalance",
+			component: "channel_imbalance",
+			mutate: func(in *readyInputs) {
+				in.audioLevels.ChannelImbalanceLevel = audio.ImbalanceLevelActive
+			},
+		},
+		{
 			name:      "hourly recorder stopped",
 			component: "recorders",
 			mutate: func(in *readyInputs) {
@@ -216,6 +223,78 @@ func readyFixture() readyInputs {
 		},
 		audioLevels:    audio.AudioLevels{},
 		pendingUploads: 0,
+	}
+}
+
+func healthFixture() healthInputs {
+	return healthInputs{
+		ffmpegAvailable: true,
+		encoderStatus:   types.EncoderStatus{State: types.StateRunning},
+		audioLevels:     audio.AudioLevels{},
+	}
+}
+
+// TestBuildHealthResponseAudioConditionsAreInformational pins the monitoring
+// contract: an active silence or channel imbalance is reported in the body but
+// must never change the health status (that is /ready's job).
+func TestBuildHealthResponseAudioConditionsAreInformational(t *testing.T) {
+	t.Parallel()
+
+	t.Run("active channel imbalance stays healthy", func(t *testing.T) {
+		t.Parallel()
+
+		in := healthFixture()
+		in.audioLevels.ChannelImbalanceLevel = audio.ImbalanceLevelActive
+
+		resp, status := buildHealthResponse(&in)
+		if status != http.StatusOK || resp.Status != "healthy" {
+			t.Fatalf("status = %d/%q, want 200/healthy", status, resp.Status)
+		}
+		if !resp.ChannelImbalanceDetected {
+			t.Fatal("ChannelImbalanceDetected = false, want true (informational field must still be reported)")
+		}
+	})
+
+	t.Run("active silence stays healthy", func(t *testing.T) {
+		t.Parallel()
+
+		in := healthFixture()
+		in.audioLevels.SilenceLevel = audio.SilenceLevelActive
+
+		resp, status := buildHealthResponse(&in)
+		if status != http.StatusOK || resp.Status != "healthy" {
+			t.Fatalf("status = %d/%q, want 200/healthy", status, resp.Status)
+		}
+		if !resp.SilenceDetected {
+			t.Fatal("SilenceDetected = false, want true")
+		}
+	})
+}
+
+// TestBuildHealthResponseUnhealthyConditions pins that the genuine health gates
+// (FFmpeg available, encoder running) still flip the status to 503.
+func TestBuildHealthResponseUnhealthyConditions(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		mutate func(*healthInputs)
+	}{
+		{"ffmpeg unavailable", func(in *healthInputs) { in.ffmpegAvailable = false }},
+		{"encoder not running", func(in *healthInputs) { in.encoderStatus.State = types.StateStopped }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			in := healthFixture()
+			tt.mutate(&in)
+
+			resp, status := buildHealthResponse(&in)
+			if status != http.StatusServiceUnavailable || resp.Status != "unhealthy" {
+				t.Fatalf("status = %d/%q, want 503/unhealthy", status, resp.Status)
+			}
+		})
 	}
 }
 
@@ -485,6 +564,15 @@ func seededServer(t *testing.T, upd *config.SettingsUpdate) *Server {
 	if upd.PeakHoldMs == 0 {
 		upd.PeakHoldMs = 1500
 	}
+	if upd.ChannelImbalanceThreshold == 0 {
+		upd.ChannelImbalanceThreshold = 12
+	}
+	if upd.ChannelImbalanceDurationMs == 0 {
+		upd.ChannelImbalanceDurationMs = 15000
+	}
+	if upd.ChannelImbalanceRecoveryMs == 0 {
+		upd.ChannelImbalanceRecoveryMs = 5000
+	}
 	if err := cfg.ApplySettings(upd); err != nil {
 		t.Fatalf("ApplySettings() error = %v", err)
 	}
@@ -626,6 +714,67 @@ func TestHandleAPIConfigRedactsStoredSecrets(t *testing.T) {
 	}
 	if len(resp.Recorders) != 1 || !resp.Recorders[0].HasS3Secret {
 		t.Fatalf("Recorders = %+v, want one redacted recorder with HasS3Secret=true", resp.Recorders)
+	}
+}
+
+// TestHandleAPIConfigIncludesChannelImbalance verifies the frontend config
+// snapshot carries the channel imbalance detection settings with defaults.
+func TestHandleAPIConfigIncludesChannelImbalance(t *testing.T) {
+	t.Parallel()
+
+	s := freshServer(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
+
+	s.handleAPIConfig(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	assertContains(t, rec.Body.Bytes(),
+		`"channel_imbalance_threshold":`,
+		`"channel_imbalance_duration_ms":`,
+		`"channel_imbalance_recovery_ms":`,
+	)
+
+	var resp types.APIConfigResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response JSON = %q, error = %v", rec.Body.String(), err)
+	}
+	if resp.ChannelImbalanceThreshold != config.DefaultChannelImbalanceThreshold {
+		t.Fatalf("ChannelImbalanceThreshold = %v, want %v", resp.ChannelImbalanceThreshold, config.DefaultChannelImbalanceThreshold)
+	}
+	if resp.ChannelImbalanceDurationMs != config.DefaultChannelImbalanceDurationMs {
+		t.Fatalf("ChannelImbalanceDurationMs = %d, want %d", resp.ChannelImbalanceDurationMs, config.DefaultChannelImbalanceDurationMs)
+	}
+	if resp.ChannelImbalanceRecoveryMs != config.DefaultChannelImbalanceRecoveryMs {
+		t.Fatalf("ChannelImbalanceRecoveryMs = %d, want %d", resp.ChannelImbalanceRecoveryMs, config.DefaultChannelImbalanceRecoveryMs)
+	}
+}
+
+// TestApplyWithPreserveRoundTripsChannelImbalance verifies the settings pipeline
+// applies channel imbalance values (handler success paths run this same pipeline).
+func TestApplyWithPreserveRoundTripsChannelImbalance(t *testing.T) {
+	t.Parallel()
+
+	s := freshServer(t)
+	upd := validBaselineSettings(s.config)
+	upd.ChannelImbalanceThreshold = 18
+	upd.ChannelImbalanceDurationMs = 20000
+	upd.ChannelImbalanceRecoveryMs = 4000
+
+	snap, err := applyWithPreserve(t, s.config, upd)
+	if err != nil {
+		t.Fatalf("applyWithPreserve() error = %v", err)
+	}
+	if snap.ChannelImbalanceThreshold != 18 {
+		t.Fatalf("ChannelImbalanceThreshold = %v, want 18", snap.ChannelImbalanceThreshold)
+	}
+	if snap.ChannelImbalanceDurationMs != 20000 {
+		t.Fatalf("ChannelImbalanceDurationMs = %d, want 20000", snap.ChannelImbalanceDurationMs)
+	}
+	if snap.ChannelImbalanceRecoveryMs != 4000 {
+		t.Fatalf("ChannelImbalanceRecoveryMs = %d, want 4000", snap.ChannelImbalanceRecoveryMs)
 	}
 }
 
@@ -1043,6 +1192,9 @@ func validBaselineSettings(cfg *config.Config) *config.SettingsUpdate {
 		SilenceDurationMs:           snap.SilenceDurationMs,
 		SilenceRecoveryMs:           snap.SilenceRecoveryMs,
 		PeakHoldMs:                  snap.PeakHoldMs,
+		ChannelImbalanceThreshold:   snap.ChannelImbalanceThreshold,
+		ChannelImbalanceDurationMs:  snap.ChannelImbalanceDurationMs,
+		ChannelImbalanceRecoveryMs:  snap.ChannelImbalanceRecoveryMs,
 		SilenceDumpEnabled:          snap.SilenceDumpEnabled,
 		SilenceDumpRetentionDays:    snap.SilenceDumpRetentionDays,
 		WebhookURL:                  snap.WebhookURL,

@@ -27,6 +27,9 @@ func TestStartRejectsStateStopping(t *testing.T) {
 		SilenceDurationMs:           config.DefaultSilenceDurationMs,
 		SilenceRecoveryMs:           config.DefaultSilenceRecoveryMs,
 		PeakHoldMs:                  config.DefaultPeakHoldMs,
+		ChannelImbalanceThreshold:   config.DefaultChannelImbalanceThreshold,
+		ChannelImbalanceDurationMs:  config.DefaultChannelImbalanceDurationMs,
+		ChannelImbalanceRecoveryMs:  config.DefaultChannelImbalanceRecoveryMs,
 		RecordingMaxDurationMinutes: config.DefaultRecordingMaxDurationMinutes,
 	}); err != nil {
 		t.Fatalf("ApplySettings: %v", err)

@@ -33,6 +33,25 @@ func TestAudioLevelsPublishRoundTrip(t *testing.T) {
 	}
 }
 
+// TestResetAudioLevelsClearsImbalance verifies the silent snapshot wipes an
+// active channel imbalance, so a stopped encoder never reports stale imbalance.
+func TestResetAudioLevelsClearsImbalance(t *testing.T) {
+	e := &Encoder{}
+	e.updateAudioLevels(&audio.AudioLevels{
+		ChannelImbalance:      true,
+		ChannelImbalanceLevel: audio.ImbalanceLevelActive,
+		ImbalanceDB:           40,
+		BalanceDB:             40,
+	})
+
+	e.resetAudioLevels()
+
+	got := e.AudioLevels()
+	if got.ChannelImbalance || got.ChannelImbalanceLevel == audio.ImbalanceLevelActive || got.ImbalanceDB != 0 {
+		t.Fatalf("resetAudioLevels did not clear imbalance: %+v", got)
+	}
+}
+
 // TestRunDistributorPublishesSilenceOnExit verifies the distributor's final
 // publish clears the last live level.
 func TestRunDistributorPublishesSilenceOnExit(t *testing.T) {

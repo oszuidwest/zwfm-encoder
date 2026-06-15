@@ -151,6 +151,11 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 			RetentionDays: cfg.SilenceDumpRetentionDays,
 		},
 
+		// Channel imbalance detection
+		ChannelImbalanceThreshold:  cfg.ChannelImbalanceThreshold,
+		ChannelImbalanceDurationMs: cfg.ChannelImbalanceDurationMs,
+		ChannelImbalanceRecoveryMs: cfg.ChannelImbalanceRecoveryMs,
+
 		// Notifications - Webhook
 		WebhookHasURL: cfg.WebhookURL != "",
 		WebhookEvents: cfg.WebhookEvents,
@@ -217,6 +222,7 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 
 	// Side effects after successful save
 	s.encoder.UpdateSilenceConfig()
+	s.encoder.UpdateChannelImbalanceConfig()
 	s.encoder.UpdateSilenceDumpConfig()
 	s.encoder.UpdateRecordingMaxDuration()
 	s.encoder.InvalidateGraphSecretExpiryCache()
@@ -878,6 +884,9 @@ type HealthResponse struct {
 	UptimeSeconds int64 `json:"uptime_seconds"`
 	// SilenceDetected reports whether silence is currently detected.
 	SilenceDetected bool `json:"silence_detected"`
+	// ChannelImbalanceDetected reports whether an L/R channel imbalance is currently detected.
+	// Informational only: like silence, it does not affect the health status.
+	ChannelImbalanceDetected bool `json:"channel_imbalance_detected"`
 }
 
 // ReadyResponse is the response body for the readiness endpoint.
@@ -900,32 +909,53 @@ const readinessMaxPendingUploads = 0
 // Health is defined as: encoder running AND FFmpeg available.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
-	encoderStatus := s.encoder.Status()
-	streamStatuses := s.encoder.StreamStatuses(cfg.Streams)
-	recorderStatuses := s.encoder.RecorderStatuses()
+	resp, httpStatus := buildHealthResponse(&healthInputs{
+		ffmpegAvailable:  s.ffmpegAvailable,
+		encoderStatus:    s.encoder.Status(),
+		streams:          cfg.Streams,
+		streamStatuses:   s.encoder.StreamStatuses(cfg.Streams),
+		recorders:        cfg.Recorders,
+		recorderStatuses: s.encoder.RecorderStatuses(),
+		audioLevels:      s.encoder.AudioLevels(),
+	})
+	s.writeJSON(w, httpStatus, resp)
+}
 
-	streamsStable := countStableStreams(streamStatuses)
-	recordersRunning := countRunningRecorders(recorderStatuses)
+type healthInputs struct {
+	ffmpegAvailable  bool
+	encoderStatus    types.EncoderStatus
+	streams          []types.Stream
+	streamStatuses   map[string]types.ProcessStatus
+	recorders        []types.Recorder
+	recorderStatuses map[string]types.ProcessStatus
+	audioLevels      audio.AudioLevels
+}
 
-	isHealthy := s.ffmpegAvailable && encoderStatus.State == types.StateRunning
+// buildHealthResponse assembles the health payload and HTTP status. Health is
+// intentionally narrow: only FFmpeg availability and a running encoder gate the
+// status. Silence and channel imbalance are reported as informational fields and
+// must never flip the status (broadcast-impact monitoring uses /ready instead).
+func buildHealthResponse(in *healthInputs) (resp HealthResponse, httpStatus int) {
+	isHealthy := in.ffmpegAvailable && in.encoderStatus.State == types.StateRunning
 
 	status := "healthy"
-	httpStatus := http.StatusOK
+	httpStatus = http.StatusOK
 	if !isHealthy {
 		status = "unhealthy"
 		httpStatus = http.StatusServiceUnavailable
 	}
 
-	s.writeJSON(w, httpStatus, HealthResponse{
-		Status:           status,
-		EncoderState:     string(encoderStatus.State),
-		StreamCount:      len(cfg.Streams),
-		StreamsStable:    streamsStable,
-		RecorderCount:    len(cfg.Recorders),
-		RecordersRunning: recordersRunning,
-		UptimeSeconds:    encoderStatus.UptimeSeconds,
-		SilenceDetected:  s.encoder.AudioLevels().SilenceLevel == audio.SilenceLevelActive,
-	})
+	return HealthResponse{
+		Status:                   status,
+		EncoderState:             string(in.encoderStatus.State),
+		StreamCount:              len(in.streams),
+		StreamsStable:            countStableStreams(in.streamStatuses),
+		RecorderCount:            len(in.recorders),
+		RecordersRunning:         countRunningRecorders(in.recorderStatuses),
+		UptimeSeconds:            in.encoderStatus.UptimeSeconds,
+		SilenceDetected:          in.audioLevels.SilenceLevel == audio.SilenceLevelActive,
+		ChannelImbalanceDetected: in.audioLevels.ChannelImbalanceLevel == audio.ImbalanceLevelActive,
+	}, httpStatus
 }
 
 // handleReady returns broadcast-readiness status for production monitoring.
@@ -960,11 +990,12 @@ type readyInputs struct {
 
 func buildReadyResponse(in *readyInputs) (resp ReadyResponse, httpStatus int) {
 	components := map[string]ReadyComponent{
-		"process":   readyProcess(in.ffmpegAvailable, &in.encoderStatus),
-		"streams":   readyStreams(in.streams, in.streamStatuses),
-		"silence":   readySilence(&in.audioLevels),
-		"recorders": readyRecorders(in.recordingAvailable, in.recorders, in.recorderStatuses),
-		"uploads":   readyUploads(in.pendingUploads),
+		"process":           readyProcess(in.ffmpegAvailable, &in.encoderStatus),
+		"streams":           readyStreams(in.streams, in.streamStatuses),
+		"silence":           readySilence(&in.audioLevels),
+		"channel_imbalance": readyChannelImbalance(&in.audioLevels),
+		"recorders":         readyRecorders(in.recordingAvailable, in.recorders, in.recorderStatuses),
+		"uploads":           readyUploads(in.pendingUploads),
 	}
 
 	status := "ready"
@@ -1030,6 +1061,18 @@ func readySilence(levels *audio.AudioLevels) ReadyComponent {
 	}
 	if levels.SilenceLevel == audio.SilenceLevelActive {
 		return ReadyComponent{OK: false, Message: "silence is active", Details: details}
+	}
+	return ReadyComponent{OK: true, Details: details}
+}
+
+func readyChannelImbalance(levels *audio.AudioLevels) ReadyComponent {
+	details := map[string]any{
+		"channel_imbalance_level": levels.ChannelImbalanceLevel,
+		"balance_db":              levels.BalanceDB,
+		"imbalance_db":            levels.ImbalanceDB,
+	}
+	if levels.ChannelImbalanceLevel == audio.ImbalanceLevelActive {
+		return ReadyComponent{OK: false, Message: "channel imbalance is active", Details: details}
 	}
 	return ReadyComponent{OK: true, Details: details}
 }

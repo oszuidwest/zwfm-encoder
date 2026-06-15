@@ -173,7 +173,9 @@ Stream events track the lifecycle and health of audio output streams.
 
 ## Audio Events
 
-Audio events track periods when audio levels drop below the configured threshold.
+Audio events track periods when audio levels drop below the configured threshold
+(silence) and periods when the left and right channels differ by too much (channel
+imbalance). All of them are returned by the `audio` type filter.
 
 ### Details Structure
 
@@ -268,6 +270,84 @@ Audio events track periods when audio levels drop below the configured threshold
 ```
 
 If encoding fails, `dump_size_bytes` is `0` and `dump_error` contains the error message.
+
+---
+
+### Channel Imbalance Details Structure
+
+Channel imbalance events carry the live levels plus the signed and absolute L/R
+difference. Imbalance is only evaluated while at least one channel is above the
+silence threshold (the presence floor), so the *instantaneous* silence and
+imbalance conditions are mutually exclusive. The *confirmed* states can still
+briefly overlap during their recovery windows: an imbalance that is still
+counting down its recovery time can coexist with a silence that has already been
+confirmed (and vice versa), depending on the two detectors' relative duration
+and recovery settings.
+
+```json
+{
+  "level_left_db": -6.2,
+  "level_right_db": -56.0,
+  "balance_db": 49.8,
+  "imbalance_db": 49.8,
+  "threshold_db": 12.0,
+  "duration_ms": 18000
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `level_left_db` | float | Left channel RMS level in dB |
+| `level_right_db` | float | Right channel RMS level in dB |
+| `balance_db` | float | Signed L/R difference in dB (positive = left louder) |
+| `imbalance_db` | float | Absolute L/R difference in dB (the alarm magnitude) |
+| `threshold_db` | float | Configured channel imbalance threshold in dB |
+| `duration_ms` | int | Imbalance duration in milliseconds (`channel_imbalance_end` only) |
+
+---
+
+### `channel_imbalance_start`
+
+- **Severity:** `warning`
+- **UI Label:** Imbalance
+- **Triggered:** When the absolute L/R level difference stays above the threshold for the configured duration (hysteresis), while audio is present.
+
+```json
+{
+  "ts": "2024-01-15T14:31:00.000Z",
+  "type": "channel_imbalance_start",
+  "details": {
+    "level_left_db": -6.2,
+    "level_right_db": -56.0,
+    "balance_db": 49.8,
+    "imbalance_db": 49.8,
+    "threshold_db": 12.0
+  }
+}
+```
+
+---
+
+### `channel_imbalance_end`
+
+- **Severity:** `success`
+- **UI Label:** Balanced
+- **Triggered:** When the channels are balanced again (or audio drops away) for the configured recovery time after an imbalance period.
+
+```json
+{
+  "ts": "2024-01-15T14:34:00.000Z",
+  "type": "channel_imbalance_end",
+  "details": {
+    "level_left_db": -8.0,
+    "level_right_db": -9.5,
+    "balance_db": 1.5,
+    "imbalance_db": 1.5,
+    "threshold_db": 12.0,
+    "duration_ms": 18000
+  }
+}
+```
 
 ---
 
@@ -559,6 +639,8 @@ GET /api/events?limit=50&offset=0&type=stream
 | `silence_start` | Audio | warning | Silence | Audio below threshold |
 | `silence_end` | Audio | success | Recovered | Audio returns above threshold |
 | `audio_dump_ready` | Audio | info | Audio Dump | MP3 context file ready after silence |
+| `channel_imbalance_start` | Audio | warning | Imbalance | L/R level difference above threshold |
+| `channel_imbalance_end` | Audio | success | Balanced | L/R channels balanced again |
 | `recorder_started` | Recorder | info | Started | Recorder begins recording |
 | `recorder_stopped` | Recorder | info | Stopped | Recorder stops recording |
 | `recorder_error` | Recorder | error | Error | Recorder encounters error |

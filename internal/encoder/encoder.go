@@ -73,6 +73,7 @@ type Encoder struct {
 	backoff             *util.Backoff
 	audioLevels         atomic.Pointer[audio.AudioLevels] // published lock-free; see AudioLevels
 	silenceDetect       *audio.SilenceDetector
+	imbalanceDetect     *audio.ImbalanceDetector
 	alertOrchestrator   *notify.AlertOrchestrator
 	peakHolder          *audio.PeakHolder
 	secretExpiryChecker *notify.SecretExpiryChecker
@@ -120,6 +121,7 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 		state:               types.StateStopped,
 		backoff:             util.NewBackoff(types.InitialRetryDelay, types.MaxRetryDelay),
 		silenceDetect:       audio.NewSilenceDetector(),
+		imbalanceDetect:     audio.NewImbalanceDetector(),
 		alertOrchestrator:   orchestrator,
 		peakHolder:          audio.NewPeakHolder(),
 		secretExpiryChecker: notify.NewSecretExpiryChecker(&graphCfg),
@@ -332,6 +334,7 @@ func (e *Encoder) Start() error {
 	e.retryCount = 0
 	e.backoff.Reset()
 	e.silenceDetect.Reset()
+	e.imbalanceDetect.Reset()
 	e.alertOrchestrator.Reset()
 	e.peakHolder.Reset()
 
@@ -404,8 +407,9 @@ func (e *Encoder) Stop() error {
 		errs = append(errs, fmt.Errorf("source shutdown timeout"))
 	}
 
-	// Reset silence detection and notification state
+	// Reset silence/imbalance detection and notification state
 	e.silenceDetect.Reset()
+	e.imbalanceDetect.Reset()
 	e.alertOrchestrator.Reset()
 
 	// Stop silence dump manager
@@ -515,6 +519,16 @@ func (e *Encoder) UpdateSilenceConfig() {
 	}
 }
 
+// UpdateChannelImbalanceConfig resets channel imbalance detection after config changes.
+// The handler calls this alongside UpdateSilenceConfig because imbalance reuses the
+// silence threshold as its presence floor, so a silence-threshold change must also
+// clear stale imbalance timing state.
+func (e *Encoder) UpdateChannelImbalanceConfig() {
+	if e.imbalanceDetect != nil {
+		e.imbalanceDetect.Reset()
+	}
+}
+
 // UpdateRecordingMaxDuration applies the current max duration setting to the recording manager.
 func (e *Encoder) UpdateRecordingMaxDuration() {
 	if e.recordingManager == nil {
@@ -584,6 +598,7 @@ func (e *Encoder) runSourceLoop() {
 					slog.Error("failed to stop streams during source failure", "error", err)
 				}
 				e.silenceDetect.Reset()
+				e.imbalanceDetect.Reset()
 				e.alertOrchestrator.Reset()
 				if e.silenceDumpManager != nil {
 					e.silenceDumpManager.Stop()
@@ -717,6 +732,7 @@ func (e *Encoder) runDistributor() {
 
 	distributor := NewDistributor(DistributorConfig{
 		SilenceDetect:      e.silenceDetect,
+		ImbalanceDetect:    e.imbalanceDetect,
 		AlertOrchestrator:  e.alertOrchestrator,
 		SilenceDumpManager: e.silenceDumpManager,
 		PeakHolder:         e.peakHolder,

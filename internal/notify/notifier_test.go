@@ -142,7 +142,7 @@ func (h *captureHandler) Enabled(context.Context, slog.Level) bool { return true
 
 //nolint:gocritic // slog.Handler requires slog.Record by value.
 func (h *captureHandler) Handle(_ context.Context, r slog.Record) error {
-	if r.Level != slog.LevelWarn || r.Message != "silence log queue full, log entry dropped" {
+	if r.Level != slog.LevelWarn || r.Message != "log queue full, log entry dropped" {
 		return nil
 	}
 
@@ -518,6 +518,9 @@ func TestAudioDumpUsesSnapshotFromSilenceEnd(t *testing.T) {
 		SilenceDurationMs:           15000,
 		SilenceRecoveryMs:           5000,
 		PeakHoldMs:                  config.DefaultPeakHoldMs,
+		ChannelImbalanceThreshold:   config.DefaultChannelImbalanceThreshold,
+		ChannelImbalanceDurationMs:  config.DefaultChannelImbalanceDurationMs,
+		ChannelImbalanceRecoveryMs:  config.DefaultChannelImbalanceRecoveryMs,
 		SilenceDumpEnabled:          true,
 		SilenceDumpRetentionDays:    7,
 		RecordingMaxDurationMinutes: config.DefaultRecordingMaxDurationMinutes,
@@ -531,6 +534,67 @@ func TestAudioDumpUsesSnapshotFromSilenceEnd(t *testing.T) {
 	if audioDumpSnap.SilenceThreshold != silenceEndSnap.SilenceThreshold {
 		t.Fatalf("SendAudioDump received threshold %.1f dB, want %.1f dB (from silence-end snapshot)",
 			audioDumpSnap.SilenceThreshold, silenceEndSnap.SilenceThreshold)
+	}
+}
+
+// TestHandleChannelImbalanceEventLogsWithoutMutatingSilenceState verifies that
+// channel imbalance events are written to the event log but do not touch the
+// silence cycle's activeChannels/pendingRecovery: an imbalance start/end fired
+// mid-silence must not stop the in-progress silence cycle from dispatching its
+// recovery to the same active channel set.
+func TestHandleChannelImbalanceEventLogsWithoutMutatingSilenceState(t *testing.T) {
+	t.Parallel()
+
+	logPath := filepath.Join(t.TempDir(), "encoder.jsonl")
+	logger, err := eventlog.NewLogger(logPath)
+	if err != nil {
+		t.Fatalf("create logger: %v", err)
+	}
+	defer logger.Close() //nolint:errcheck // test teardown
+
+	ch := newTestChannel(false)
+	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
+	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
+	t.Cleanup(o.Close)
+	o.SetEventLogger(logger)
+
+	// Begin a silence cycle: this builds activeChannels.
+	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
+	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
+
+	// Channel imbalance start and end fire while silence is active. They must log
+	// but neither dispatch to channels nor clear activeChannels.
+	o.HandleChannelImbalanceEvent(&audio.ImbalanceEvent{
+		JustEntered: true, ImbalanceDB: 40, BalanceDB: 40, CurrentLevelL: -6, CurrentLevelR: -46,
+	})
+	o.HandleChannelImbalanceEvent(&audio.ImbalanceEvent{
+		JustRecovered: true, TotalDurationMs: 16000, CurrentLevelL: -6, CurrentLevelR: -8,
+	})
+	assertNoCall(t, ch.silenceStartCalled, "SendSilenceStart from imbalance event")
+	assertNoCall(t, ch.silenceEndCalled, "SendSilenceEnd from imbalance event")
+
+	// Silence recovery must still reach the active channel set; if the imbalance
+	// handler had cleared activeChannels, this dispatch would never happen.
+	o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 3000})
+	awaitCall(t, ch.silenceEndCalled, "SendSilenceEnd")
+
+	o.DrainLogs()
+
+	events, _, err := eventlog.ReadLast(logPath, 10, 0, eventlog.FilterAudio)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	var sawStart, sawEnd bool
+	for _, e := range events {
+		switch e.Type {
+		case eventlog.ChannelImbalanceStart:
+			sawStart = true
+		case eventlog.ChannelImbalanceEnd:
+			sawEnd = true
+		}
+	}
+	if !sawStart || !sawEnd {
+		t.Fatalf("channel imbalance events not logged: start=%v end=%v (events=%+v)", sawStart, sawEnd, events)
 	}
 }
 

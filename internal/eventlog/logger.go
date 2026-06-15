@@ -1,6 +1,7 @@
 // Package eventlog provides unified event logging for the encoder.
-// It captures both stream events (started, stable, error, retry, stopped)
-// and silence events (silence_start, silence_end, audio_dump_ready) in a single JSON lines file.
+// It captures both stream events (started, stable, error, retry, stopped) and
+// audio events (silence_start, silence_end, audio_dump_ready,
+// channel_imbalance_start, channel_imbalance_end) in a single JSON lines file.
 package eventlog
 
 import (
@@ -39,6 +40,10 @@ const (
 	SilenceEnd EventType = "silence_end"
 	// AudioDumpReady indicates an audio dump MP3 is ready after a silence event.
 	AudioDumpReady EventType = "audio_dump_ready"
+	// ChannelImbalanceStart indicates an L/R channel imbalance start event.
+	ChannelImbalanceStart EventType = "channel_imbalance_start"
+	// ChannelImbalanceEnd indicates an L/R channel imbalance end event.
+	ChannelImbalanceEnd EventType = "channel_imbalance_end"
 )
 
 const (
@@ -91,6 +96,16 @@ type SilenceDetails struct {
 	DumpFilename  string  `json:"dump_filename,omitempty"`
 	DumpSizeBytes int64   `json:"dump_size_bytes,omitempty"`
 	DumpError     string  `json:"dump_error,omitempty"`
+}
+
+// ImbalanceDetails holds channel imbalance event information.
+type ImbalanceDetails struct {
+	LevelLeftDB  float64 `json:"level_left_db"`  // dB
+	LevelRightDB float64 `json:"level_right_db"` // dB
+	BalanceDB    float64 `json:"balance_db"`     // dB; signed L-R
+	ImbalanceDB  float64 `json:"imbalance_db"`   // dB; abs(L-R)
+	ThresholdDB  float64 `json:"threshold_db"`   // dB
+	DurationMs   int64   `json:"duration_ms,omitempty"`
 }
 
 // RecorderDetails holds recorder event information.
@@ -319,6 +334,41 @@ func (l *Logger) LogAudioDumpReady(
 	})
 }
 
+// LogChannelImbalanceStart records when an L/R channel imbalance is first confirmed.
+// t must be captured at the moment the event occurs so the timestamp is
+// accurate even when the write is deferred to a background goroutine.
+func (l *Logger) LogChannelImbalanceStart(t time.Time, levelL, levelR, balanceDB, imbalanceDB, threshold float64) error {
+	return l.Log(&Event{
+		Timestamp: t,
+		Type:      ChannelImbalanceStart,
+		Details: &ImbalanceDetails{
+			LevelLeftDB:  levelL,
+			LevelRightDB: levelR,
+			BalanceDB:    balanceDB,
+			ImbalanceDB:  imbalanceDB,
+			ThresholdDB:  threshold,
+		},
+	})
+}
+
+// LogChannelImbalanceEnd records when an L/R channel imbalance clears, with duration information.
+// t must be captured at the moment the event occurs so the timestamp is
+// accurate even when the write is deferred to a background goroutine.
+func (l *Logger) LogChannelImbalanceEnd(t time.Time, durationMs int64, levelL, levelR, balanceDB, imbalanceDB, threshold float64) error {
+	return l.Log(&Event{
+		Timestamp: t,
+		Type:      ChannelImbalanceEnd,
+		Details: &ImbalanceDetails{
+			LevelLeftDB:  levelL,
+			LevelRightDB: levelR,
+			BalanceDB:    balanceDB,
+			ImbalanceDB:  imbalanceDB,
+			ThresholdDB:  threshold,
+			DurationMs:   durationMs,
+		},
+	})
+}
+
 // LogRecorder records a recorder lifecycle or upload event.
 func (l *Logger) LogRecorder(eventType EventType, p *RecorderEventParams) error {
 	return l.Log(&Event{
@@ -361,7 +411,8 @@ const (
 	FilterAll TypeFilter = ""
 	// FilterStream selects stream events.
 	FilterStream TypeFilter = "stream"
-	// FilterAudio selects silence and audio dump events (silence_start, silence_end, audio_dump_ready).
+	// FilterAudio selects audio events: silence (silence_start, silence_end,
+	// audio_dump_ready) and channel imbalance (channel_imbalance_start, channel_imbalance_end).
 	FilterAudio TypeFilter = "audio"
 	// FilterRecorder selects recorder events.
 	FilterRecorder TypeFilter = "recorder"
@@ -506,7 +557,7 @@ func matchesFilter(t EventType, filter TypeFilter) bool {
 	case FilterStream:
 		return IsStreamEvent(t)
 	case FilterAudio:
-		return IsSilenceEvent(t)
+		return IsSilenceEvent(t) || IsChannelImbalanceEvent(t)
 	case FilterRecorder:
 		return IsRecorderEvent(t)
 	default:
@@ -528,6 +579,16 @@ func IsStreamEvent(t EventType) bool {
 func IsSilenceEvent(t EventType) bool {
 	switch t {
 	case SilenceStart, SilenceEnd, AudioDumpReady:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsChannelImbalanceEvent reports whether t is a channel imbalance event type.
+func IsChannelImbalanceEvent(t EventType) bool {
+	switch t {
+	case ChannelImbalanceStart, ChannelImbalanceEnd:
 		return true
 	default:
 		return false
