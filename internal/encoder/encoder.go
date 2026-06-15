@@ -757,7 +757,7 @@ func (e *Encoder) runDistributor() {
 			e.silenceDumpManager.WriteAudio(buf[:n])
 		}
 
-		distributor.ProcessSamples(buf, n)
+		distributor.ProcessSamples(buf[:n])
 
 		for _, stream := range e.config.ConfiguredStreams() {
 			// WriteAudio logs errors internally and marks stream as stopped
