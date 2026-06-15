@@ -32,14 +32,11 @@ type ImbalanceEvent struct {
 }
 
 // ImbalanceDetector tracks L/R channel imbalance state and generates detection events.
-// It is safe for concurrent use. The state machine mirrors [SilenceDetector]: a confirmed
-// state is entered after DurationMs above threshold and cleared after RecoveryMs below it.
+// It is safe for concurrent use. The timing/hysteresis is the shared [debouncer]; only
+// the trigger predicate differs from [SilenceDetector]: present && abs(L-R) > threshold.
 type ImbalanceDetector struct {
-	mu                  sync.Mutex
-	imbalanceStart      time.Time // when current imbalance period started
-	recoveryStart       time.Time // when balance returned after imbalance
-	inImbalance         bool      // currently in confirmed imbalance state
-	imbalanceDurationMs int64     // tracks duration in ms for recovery reporting
+	mu       sync.Mutex
+	debounce debouncer
 }
 
 // NewImbalanceDetector creates a new channel imbalance detector.
@@ -59,67 +56,23 @@ func (d *ImbalanceDetector) Update(dbL, dbR float64, cfg ImbalanceConfig, now ti
 	present := max(dbL, dbR) >= cfg.PresenceFloorDB
 	channelsImbalanced := present && imbalanceDB > cfg.ThresholdDB
 
+	r := d.debounce.update(channelsImbalanced, cfg.DurationMs, cfg.RecoveryMs, now)
+
 	event := ImbalanceEvent{
-		BalanceDB:     balanceDB,
-		ImbalanceDB:   imbalanceDB,
-		CurrentLevelL: dbL,
-		CurrentLevelR: dbR,
+		InImbalance:        r.active,
+		DurationMs:         r.durationMs,
+		BalanceDB:          balanceDB,
+		ImbalanceDB:        imbalanceDB,
+		CurrentLevelL:      dbL,
+		CurrentLevelR:      dbR,
+		JustEntered:        r.justEntered,
+		JustRecovered:      r.justRecovered,
+		TotalDurationMs:    r.totalDurationMs,
+		RecoveryDurationMs: r.recoveryDurationMs,
 	}
-
-	if channelsImbalanced {
-		d.recoveryStart = time.Time{}
-
-		if d.imbalanceStart.IsZero() {
-			d.imbalanceStart = now
-		}
-
-		imbalanceDurationMs := now.Sub(d.imbalanceStart).Milliseconds()
-		d.imbalanceDurationMs = imbalanceDurationMs
-
-		if d.inImbalance {
-			// Already in confirmed imbalance state
-			event.InImbalance = true
-			event.DurationMs = imbalanceDurationMs
-			event.Level = ImbalanceLevelActive
-		} else if imbalanceDurationMs >= cfg.DurationMs {
-			// Just crossed the duration threshold - enter imbalance state
-			d.inImbalance = true
-			event.InImbalance = true
-			event.DurationMs = imbalanceDurationMs
-			event.Level = ImbalanceLevelActive
-			event.JustEntered = true
-		}
-	} else {
-		// Channels are balanced (or below the presence floor) - preserve imbalance start during recovery.
-		if !d.inImbalance {
-			d.imbalanceStart = time.Time{}
-		}
-
-		if d.inImbalance {
-			// Was imbalanced, now balanced - check recovery
-			if d.recoveryStart.IsZero() {
-				d.recoveryStart = now
-			}
-
-			recoveryDurationMs := now.Sub(d.recoveryStart).Milliseconds()
-
-			if recoveryDurationMs >= cfg.RecoveryMs {
-				event.JustRecovered = true
-				event.TotalDurationMs = d.imbalanceDurationMs
-				event.RecoveryDurationMs = recoveryDurationMs
-
-				d.inImbalance = false
-				d.imbalanceDurationMs = 0
-				d.imbalanceStart = time.Time{}
-				d.recoveryStart = time.Time{}
-			} else {
-				// Still in recovery period - remain in imbalance state
-				event.InImbalance = true
-				event.Level = ImbalanceLevelActive
-			}
-		}
+	if r.active {
+		event.Level = ImbalanceLevelActive
 	}
-
 	return event
 }
 
@@ -127,8 +80,5 @@ func (d *ImbalanceDetector) Update(dbL, dbR float64, cfg ImbalanceConfig, now ti
 func (d *ImbalanceDetector) Reset() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.imbalanceStart = time.Time{}
-	d.recoveryStart = time.Time{}
-	d.inImbalance = false
-	d.imbalanceDurationMs = 0
+	d.debounce.reset()
 }
