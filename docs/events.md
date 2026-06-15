@@ -281,7 +281,8 @@ silence threshold (the presence floor), so the *instantaneous* silence and
 imbalance conditions are mutually exclusive. The *confirmed* states can still
 briefly overlap during their recovery windows: an imbalance that is still
 counting down its recovery time can coexist with a silence that has already been
-confirmed (and vice versa) when the two have different durations.
+confirmed (and vice versa), depending on the two detectors' relative duration
+and recovery settings.
 
 ```json
 {
