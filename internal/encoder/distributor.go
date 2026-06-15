@@ -47,8 +47,8 @@ func NewDistributor(cfg DistributorConfig) *Distributor {
 }
 
 // ProcessSamples processes a buffer of PCM audio samples.
-func (d *Distributor) ProcessSamples(buf []byte, n int) {
-	audio.ProcessSamples(buf, n, d.levelData)
+func (d *Distributor) ProcessSamples(buf []byte) {
+	audio.ProcessSamples(buf, d.levelData)
 
 	// Update levels periodically
 	if d.levelData.SampleCount >= LevelUpdateSamples {

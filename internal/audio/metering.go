@@ -37,14 +37,14 @@ type LevelData struct {
 // Pipe reads can split 4-byte stereo frames, so partial frames are carried into
 // the next call. The carry survives Reset because frame alignment is independent
 // of metering-window boundaries.
-func ProcessSamples(buf []byte, n int, data *LevelData) {
+func ProcessSamples(buf []byte, data *LevelData) {
 	i := 0
 
 	// Complete a frame split by the previous read.
 	if data.remainderLen > 0 {
 		need := bytesPerFrame - data.remainderLen
-		if n < need {
-			data.remainderLen += copy(data.remainder[data.remainderLen:], buf[:n])
+		if len(buf) < need {
+			data.remainderLen += copy(data.remainder[data.remainderLen:], buf)
 			return
 		}
 		var frame [bytesPerFrame]byte
@@ -56,13 +56,13 @@ func ProcessSamples(buf []byte, n int, data *LevelData) {
 	}
 
 	// Accumulate every complete frame.
-	for ; i+bytesPerFrame <= n; i += bytesPerFrame {
+	for ; i+bytesPerFrame <= len(buf); i += bytesPerFrame {
 		accumulateFrame(buf[i:], data)
 	}
 
 	// Carry trailing bytes for the next read.
-	if i < n {
-		data.remainderLen = copy(data.remainder[:], buf[i:n])
+	if i < len(buf) {
+		data.remainderLen = copy(data.remainder[:], buf[i:])
 	}
 }
 
