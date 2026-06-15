@@ -226,6 +226,78 @@ func readyFixture() readyInputs {
 	}
 }
 
+func healthFixture() healthInputs {
+	return healthInputs{
+		ffmpegAvailable: true,
+		encoderStatus:   types.EncoderStatus{State: types.StateRunning},
+		audioLevels:     audio.AudioLevels{},
+	}
+}
+
+// TestBuildHealthResponseAudioConditionsAreInformational pins the monitoring
+// contract: an active silence or channel imbalance is reported in the body but
+// must never change the health status (that is /ready's job).
+func TestBuildHealthResponseAudioConditionsAreInformational(t *testing.T) {
+	t.Parallel()
+
+	t.Run("active channel imbalance stays healthy", func(t *testing.T) {
+		t.Parallel()
+
+		in := healthFixture()
+		in.audioLevels.ChannelImbalanceLevel = audio.ImbalanceLevelActive
+
+		resp, status := buildHealthResponse(&in)
+		if status != http.StatusOK || resp.Status != "healthy" {
+			t.Fatalf("status = %d/%q, want 200/healthy", status, resp.Status)
+		}
+		if !resp.ChannelImbalanceDetected {
+			t.Fatal("ChannelImbalanceDetected = false, want true (informational field must still be reported)")
+		}
+	})
+
+	t.Run("active silence stays healthy", func(t *testing.T) {
+		t.Parallel()
+
+		in := healthFixture()
+		in.audioLevels.SilenceLevel = audio.SilenceLevelActive
+
+		resp, status := buildHealthResponse(&in)
+		if status != http.StatusOK || resp.Status != "healthy" {
+			t.Fatalf("status = %d/%q, want 200/healthy", status, resp.Status)
+		}
+		if !resp.SilenceDetected {
+			t.Fatal("SilenceDetected = false, want true")
+		}
+	})
+}
+
+// TestBuildHealthResponseUnhealthyConditions pins that the genuine health gates
+// (FFmpeg available, encoder running) still flip the status to 503.
+func TestBuildHealthResponseUnhealthyConditions(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		mutate func(*healthInputs)
+	}{
+		{"ffmpeg unavailable", func(in *healthInputs) { in.ffmpegAvailable = false }},
+		{"encoder not running", func(in *healthInputs) { in.encoderStatus.State = types.StateStopped }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			in := healthFixture()
+			tt.mutate(&in)
+
+			resp, status := buildHealthResponse(&in)
+			if status != http.StatusServiceUnavailable || resp.Status != "unhealthy" {
+				t.Fatalf("status = %d/%q, want 503/unhealthy", status, resp.Status)
+			}
+		})
+	}
+}
+
 // freshServer returns a Server with a default in-memory config for handler tests.
 func freshServer(t *testing.T) *Server {
 	t.Helper()

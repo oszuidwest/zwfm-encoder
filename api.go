@@ -909,34 +909,53 @@ const readinessMaxPendingUploads = 0
 // Health is defined as: encoder running AND FFmpeg available.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
-	encoderStatus := s.encoder.Status()
-	streamStatuses := s.encoder.StreamStatuses(cfg.Streams)
-	recorderStatuses := s.encoder.RecorderStatuses()
-	levels := s.encoder.AudioLevels()
+	resp, httpStatus := buildHealthResponse(&healthInputs{
+		ffmpegAvailable:  s.ffmpegAvailable,
+		encoderStatus:    s.encoder.Status(),
+		streams:          cfg.Streams,
+		streamStatuses:   s.encoder.StreamStatuses(cfg.Streams),
+		recorders:        cfg.Recorders,
+		recorderStatuses: s.encoder.RecorderStatuses(),
+		audioLevels:      s.encoder.AudioLevels(),
+	})
+	s.writeJSON(w, httpStatus, resp)
+}
 
-	streamsStable := countStableStreams(streamStatuses)
-	recordersRunning := countRunningRecorders(recorderStatuses)
+type healthInputs struct {
+	ffmpegAvailable  bool
+	encoderStatus    types.EncoderStatus
+	streams          []types.Stream
+	streamStatuses   map[string]types.ProcessStatus
+	recorders        []types.Recorder
+	recorderStatuses map[string]types.ProcessStatus
+	audioLevels      audio.AudioLevels
+}
 
-	isHealthy := s.ffmpegAvailable && encoderStatus.State == types.StateRunning
+// buildHealthResponse assembles the health payload and HTTP status. Health is
+// intentionally narrow: only FFmpeg availability and a running encoder gate the
+// status. Silence and channel imbalance are reported as informational fields and
+// must never flip the status (broadcast-impact monitoring uses /ready instead).
+func buildHealthResponse(in *healthInputs) (resp HealthResponse, httpStatus int) {
+	isHealthy := in.ffmpegAvailable && in.encoderStatus.State == types.StateRunning
 
 	status := "healthy"
-	httpStatus := http.StatusOK
+	httpStatus = http.StatusOK
 	if !isHealthy {
 		status = "unhealthy"
 		httpStatus = http.StatusServiceUnavailable
 	}
 
-	s.writeJSON(w, httpStatus, HealthResponse{
+	return HealthResponse{
 		Status:                   status,
-		EncoderState:             string(encoderStatus.State),
-		StreamCount:              len(cfg.Streams),
-		StreamsStable:            streamsStable,
-		RecorderCount:            len(cfg.Recorders),
-		RecordersRunning:         recordersRunning,
-		UptimeSeconds:            encoderStatus.UptimeSeconds,
-		SilenceDetected:          levels.SilenceLevel == audio.SilenceLevelActive,
-		ChannelImbalanceDetected: levels.ChannelImbalanceLevel == audio.ImbalanceLevelActive,
-	})
+		EncoderState:             string(in.encoderStatus.State),
+		StreamCount:              len(in.streams),
+		StreamsStable:            countStableStreams(in.streamStatuses),
+		RecorderCount:            len(in.recorders),
+		RecordersRunning:         countRunningRecorders(in.recorderStatuses),
+		UptimeSeconds:            in.encoderStatus.UptimeSeconds,
+		SilenceDetected:          in.audioLevels.SilenceLevel == audio.SilenceLevelActive,
+		ChannelImbalanceDetected: in.audioLevels.ChannelImbalanceLevel == audio.ImbalanceLevelActive,
+	}, httpStatus
 }
 
 // handleReady returns broadcast-readiness status for production monitoring.

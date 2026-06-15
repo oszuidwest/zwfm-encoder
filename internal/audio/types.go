@@ -25,8 +25,11 @@ type AudioLevels struct {
 	ChannelImbalance           bool           `json:"channel_imbalance,omitzero"`
 	ChannelImbalanceDurationMs int64          `json:"channel_imbalance_duration_ms,omitzero"`
 	ChannelImbalanceLevel      ImbalanceLevel `json:"channel_imbalance_level,omitzero"`
-	BalanceDB                  float64        `json:"balance_db"`   // dB; signed L-R
-	ImbalanceDB                float64        `json:"imbalance_db"` // dB; abs(L-R)
+	// BalanceDB and ImbalanceDB are continuous meter values like Left/Right, so
+	// they are always sent (no omitzero): 0 is the meaningful "perfectly balanced"
+	// reading the live indicator needs, not an absent value.
+	BalanceDB   float64 `json:"balance_db"`   // dB; signed L-R
+	ImbalanceDB float64 `json:"imbalance_db"` // dB; abs(L-R)
 
 	ClipLeft  int `json:"clip_left,omitzero"`
 	ClipRight int `json:"clip_right,omitzero"`

@@ -277,8 +277,11 @@ If encoding fails, `dump_size_bytes` is `0` and `dump_error` contains the error 
 
 Channel imbalance events carry the live levels plus the signed and absolute L/R
 difference. Imbalance is only evaluated while at least one channel is above the
-silence threshold (the presence floor), so silence and imbalance never alarm at
-exactly the same instant.
+silence threshold (the presence floor), so the *instantaneous* silence and
+imbalance conditions are mutually exclusive. The *confirmed* states can still
+briefly overlap during their recovery windows: an imbalance that is still
+counting down its recovery time can coexist with a silence that has already been
+confirmed (and vice versa) when the two have different durations.
 
 ```json
 {
