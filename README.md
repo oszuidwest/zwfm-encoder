@@ -9,6 +9,7 @@ Audio streaming software for [ZuidWest FM](https://www.zuidwestfm.nl/) (Linux), 
 - **Multi-output streaming** - Send to multiple SRT servers with different codecs simultaneously
 - **Real-time VU meters** - Configurable peak hold with peak/RMS toggle, clip detection, updated via WebSocket
 - **Silence detection** - Alerts via webhook, email, file log, or Zabbix when audio drops below threshold
+- **Channel imbalance detection** - Detects dead or mismatched L/R channels with live UI state, event log entries, and readiness status
 - **Web interface** - Configure outputs, select audio input, monitor levels
 - **Auto-recovery** - Automatic reconnection with configurable retry limits per output
 - **Multiple codecs** - MP3, Opus, or uncompressed PCM per output
@@ -95,15 +96,29 @@ Monitors audio levels and sends alerts when silence is detected or recovered. Us
 | Duration | 15 s | 0.5 to 300 | Seconds of silence before alerting |
 | Recovery | 5 s | 0.5 to 60 | Seconds of audio before recovery |
 
-**Alerting options** (can use multiple simultaneously, each with per-event control):
+## Channel Imbalance Detection
+
+Detects dead or mismatched stereo channels by comparing the left and right RMS levels. Imbalance is only evaluated while at least one channel is above the configured silence threshold, so normal silence is handled by silence detection instead of imbalance detection.
+
+| Setting | Default | Range | Description |
+|---------|---------|-------|-------------|
+| Threshold | 12 dB | 1 to 59 | L/R level difference above which imbalance is detected |
+| Duration | 15 s | 0.5 to 300 | Seconds of imbalance before alerting |
+| Recovery | 5 s | 0.5 to 60 | Seconds of balanced audio, or dropped-away audio, before recovery |
+
+Channel imbalance events are written to the event log and exposed in the dashboard, `GET /health`, and `GET /ready`. A confirmed imbalance makes the `channel_imbalance` readiness component fail until the channels recover.
+
+## Alerting
+
+**Silence alerting options** (can use multiple simultaneously, each with per-event control):
 - **Webhook** - POST request to a URL; independently enable `silence_start`, `silence_end`, and `audio_dump` (MP3 attachment).
 - **Email** - Microsoft Graph API notification; independently enable `silence_start`, `silence_end`, and `audio_dump` (MP3 attachment).
-- **File Log** - Appends JSON Lines for every silence event (always records all events, no per-event toggle).
+- **File Log** - Appends JSON Lines for every audio event, including silence and channel imbalance events (always records all events, no per-event toggle).
 - **Zabbix** - Send trapper items to a Zabbix server; independently enable `silence_start` and `silence_end` (no `audio_dump` - trapper items do not support file attachments).
 
 `silence_end` is sent immediately on recovery; `audio_dump_ready` is dispatched as a separate event once the MP3 encoding completes. Abandoned S3 uploads always alert every configured channel, regardless of per-event toggles.
 
-Configure via the web interface under Settings -> Notifications.
+Configure silence and channel imbalance detection under Settings -> Audio. Configure silence notifications under Settings -> Notifications.
 
 ### Microsoft 365 Email Setup
 
@@ -158,7 +173,7 @@ The installer creates a minimal config file. All other settings are configured t
 
 ## Event Log
 
-The encoder logs all stream, silence, and recording events to a JSON Lines file for monitoring and debugging. Events are accessible via the web interface and REST API.
+The encoder logs all stream, audio, and recording events to a JSON Lines file for monitoring and debugging. Audio events include silence, audio dump, and channel imbalance events. Events are accessible via the web interface and REST API.
 The active log rotates at 50 MiB and keeps one previous file. The web interface and REST API read recent events from both files without loading the full log into memory.
 
 See [docs/events.md](docs/events.md) for the complete event reference.
@@ -239,6 +254,10 @@ flowchart LR
             SD[Detector<br>Hysteresis]
             SDM[Dump Manager<br>Ring Buffer]
         end
+
+        subgraph Imbalance["Channel Imbalance"]
+            ID[Detector<br>L/R Difference]
+        end
     end
 
     subgraph Outputs["Streaming Outputs"]
@@ -286,9 +305,14 @@ flowchart LR
     SD -->|events| SDM
     SD -->|state JSON| WS
 
+    %% Channel imbalance branch
+    D -->|dB| ID
+    ID -->|state JSON| WS
+
     %% Alerting
     SD -->|event| SN
     SDM -->|MP3| SN
+    ID -->|events| EL
     SN -->|HTTP| N1
     SN -->|Graph API| N2
     SN -->|trapper| N4
@@ -314,10 +338,11 @@ flowchart LR
 2. **Distributor**: Processes PCM in ~100ms chunks, fans out to all consumers
 3. **Metering**: Calculates RMS/peak levels in Go (no FFmpeg filters), holds peaks for a configurable duration (default 3000 ms), detects clipping at +/-32760
 4. **Silence Detection**: Hysteresis-based detection with configurable threshold/duration/recovery. Buffers 15s audio context before/after silence events
-5. **Alerting**: Silence events trigger webhook, email (MS Graph), log (JSON Lines), and/or Zabbix. Each channel has per-event subscriptions for `silence_start`, `silence_end`, and `audio_dump`. `silence_end` fires immediately on recovery; the `audio_dump_ready` event fires separately once the MP3 is ready. Abandoned S3 uploads also trigger notifications.
-6. **Streaming**: Per-output FFmpeg processes with automatic retry and exponential backoff
-7. **Recording**: Hourly rotation or on-demand, with optional S3 upload
-8. **Event Log**: All stream, silence, and recording events written to a JSON Lines file; accessible via web UI and REST API with pagination
+5. **Channel Imbalance Detection**: Hysteresis-based L/R balance detection with configurable threshold/duration/recovery. Reuses the silence threshold as a presence floor and reports live balance/imbalance values.
+6. **Alerting**: Silence events trigger webhook, email (MS Graph), log (JSON Lines), and/or Zabbix. Each channel has per-event subscriptions for `silence_start`, `silence_end`, and `audio_dump`. `silence_end` fires immediately on recovery; the `audio_dump_ready` event fires separately once the MP3 is ready. Channel imbalance events are logged and surfaced in health/readiness. Abandoned S3 uploads also trigger notifications.
+7. **Streaming**: Per-output FFmpeg processes with automatic retry and exponential backoff
+8. **Recording**: Hourly rotation or on-demand, with optional S3 upload
+9. **Event Log**: All stream, audio, and recording events written to a JSON Lines file; accessible via web UI and REST API with pagination
 
 ## Post-installation
 
