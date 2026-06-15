@@ -135,8 +135,7 @@ func TestLoadKeepsSilenceDefaultsForPartialBlock(t *testing.T) {
 func TestLoadDefaultsChannelImbalanceWhenBlockMissing(t *testing.T) {
 	t.Parallel()
 
-	// validConfigJSON("") has no channel_imbalance_detection block, mirroring a
-	// config written before the feature existed. Defaults must backfill.
+	// validConfigJSON("") omits the block, like pre-feature configs.
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(configPath, []byte(validConfigJSON("")), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -841,8 +840,7 @@ func TestLoadRejectsInvalidFileSettings(t *testing.T) {
 			wantErr: "channel_imbalance_detection.recovery_ms: must be greater than 0",
 		},
 		{
-			// Explicit null is rejected, not backfilled: a present-but-null field
-			// keeps its zero value so validation can reject it (parity with silence).
+			// Explicit null is rejected, matching silence_detection semantics.
 			name:    "explicit null channel imbalance duration",
 			data:    validConfigJSON(`"channel_imbalance_detection":{"threshold_db":12,"duration_ms":null,"recovery_ms":5000}`),
 			wantErr: "channel_imbalance_detection.duration_ms: must be greater than 0",
@@ -1085,10 +1083,8 @@ func TestSilenceThresholdBoundary(t *testing.T) {
 	})
 }
 
-// minimalValidUpdate returns a SettingsUpdate with the validator's required
-// range fields filled (silence threshold, durations, peak hold, and channel
-// imbalance). The rest stays at zero defaults for tests that exercise one
-// specific validation rule.
+// minimalValidUpdate returns a SettingsUpdate with required range fields filled.
+// Other fields stay at zero defaults for focused validation tests.
 func minimalValidUpdate() *SettingsUpdate {
 	return &SettingsUpdate{
 		SilenceThreshold:           -40,

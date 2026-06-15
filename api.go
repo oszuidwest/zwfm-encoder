@@ -884,8 +884,8 @@ type HealthResponse struct {
 	UptimeSeconds int64 `json:"uptime_seconds"`
 	// SilenceDetected reports whether silence is currently detected.
 	SilenceDetected bool `json:"silence_detected"`
-	// ChannelImbalanceDetected reports whether an L/R channel imbalance is currently detected.
-	// Informational only: like silence, it does not affect the health status.
+	// ChannelImbalanceDetected reports whether channel imbalance is active.
+	// It is informational and does not affect health status.
 	ChannelImbalanceDetected bool `json:"channel_imbalance_detected"`
 }
 
@@ -931,10 +931,8 @@ type healthInputs struct {
 	audioLevels      audio.AudioLevels
 }
 
-// buildHealthResponse assembles the health payload and HTTP status. Health is
-// intentionally narrow: only FFmpeg availability and a running encoder gate the
-// status. Silence and channel imbalance are reported as informational fields and
-// must never flip the status (broadcast-impact monitoring uses /ready instead).
+// buildHealthResponse assembles /health without treating audio conditions as failures.
+// Use /ready for broadcast-impacting conditions such as silence or imbalance.
 func buildHealthResponse(in *healthInputs) (resp HealthResponse, httpStatus int) {
 	isHealthy := in.ffmpegAvailable && in.encoderStatus.State == types.StateRunning
 

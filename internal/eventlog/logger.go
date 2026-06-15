@@ -1,7 +1,5 @@
 // Package eventlog provides unified event logging for the encoder.
-// It captures both stream events (started, stable, error, retry, stopped) and
-// audio events (silence_start, silence_end, audio_dump_ready,
-// channel_imbalance_start, channel_imbalance_end) in a single JSON lines file.
+// It stores stream, audio, and recorder events in one JSON lines file.
 package eventlog
 
 import (
@@ -334,9 +332,8 @@ func (l *Logger) LogAudioDumpReady(
 	})
 }
 
-// LogChannelImbalanceStart records when an L/R channel imbalance is first confirmed.
-// t must be captured at the moment the event occurs so the timestamp is
-// accurate even when the write is deferred to a background goroutine.
+// LogChannelImbalanceStart records when an L/R imbalance is confirmed.
+// t must be the event time, even if the write is deferred.
 func (l *Logger) LogChannelImbalanceStart(t time.Time, levelL, levelR, balanceDB, imbalanceDB, threshold float64) error {
 	return l.Log(&Event{
 		Timestamp: t,
@@ -351,9 +348,8 @@ func (l *Logger) LogChannelImbalanceStart(t time.Time, levelL, levelR, balanceDB
 	})
 }
 
-// LogChannelImbalanceEnd records when an L/R channel imbalance clears, with duration information.
-// t must be captured at the moment the event occurs so the timestamp is
-// accurate even when the write is deferred to a background goroutine.
+// LogChannelImbalanceEnd records when an L/R imbalance clears.
+// t must be the event time, even if the write is deferred.
 func (l *Logger) LogChannelImbalanceEnd(t time.Time, durationMs int64, levelL, levelR, balanceDB, imbalanceDB, threshold float64) error {
 	return l.Log(&Event{
 		Timestamp: t,
@@ -411,8 +407,7 @@ const (
 	FilterAll TypeFilter = ""
 	// FilterStream selects stream events.
 	FilterStream TypeFilter = "stream"
-	// FilterAudio selects audio events: silence (silence_start, silence_end,
-	// audio_dump_ready) and channel imbalance (channel_imbalance_start, channel_imbalance_end).
+	// FilterAudio selects silence, audio dump, and channel imbalance events.
 	FilterAudio TypeFilter = "audio"
 	// FilterRecorder selects recorder events.
 	FilterRecorder TypeFilter = "recorder"

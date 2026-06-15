@@ -537,11 +537,8 @@ func TestAudioDumpUsesSnapshotFromSilenceEnd(t *testing.T) {
 	}
 }
 
-// TestHandleChannelImbalanceEventLogsWithoutMutatingSilenceState verifies that
-// channel imbalance events are written to the event log but do not touch the
-// silence cycle's activeChannels/pendingRecovery: an imbalance start/end fired
-// mid-silence must not stop the in-progress silence cycle from dispatching its
-// recovery to the same active channel set.
+// TestHandleChannelImbalanceEventLogsWithoutMutatingSilenceState verifies
+// imbalance logging cannot disturb an active silence cycle.
 func TestHandleChannelImbalanceEventLogsWithoutMutatingSilenceState(t *testing.T) {
 	t.Parallel()
 
@@ -558,12 +555,11 @@ func TestHandleChannelImbalanceEventLogsWithoutMutatingSilenceState(t *testing.T
 	t.Cleanup(o.Close)
 	o.SetEventLogger(logger)
 
-	// Begin a silence cycle: this builds activeChannels.
+	// Begin a silence cycle and build activeChannels.
 	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
 
-	// Channel imbalance start and end fire while silence is active. They must log
-	// but neither dispatch to channels nor clear activeChannels.
+	// Imbalance events log only; they must not dispatch silence calls.
 	o.HandleChannelImbalanceEvent(&audio.ImbalanceEvent{
 		JustEntered: true, ImbalanceDB: 40, BalanceDB: 40, CurrentLevelL: -6, CurrentLevelR: -46,
 	})
@@ -573,8 +569,7 @@ func TestHandleChannelImbalanceEventLogsWithoutMutatingSilenceState(t *testing.T
 	assertNoCall(t, ch.silenceStartCalled, "SendSilenceStart from imbalance event")
 	assertNoCall(t, ch.silenceEndCalled, "SendSilenceEnd from imbalance event")
 
-	// Silence recovery must still reach the active channel set; if the imbalance
-	// handler had cleared activeChannels, this dispatch would never happen.
+	// Silence recovery must still reach the channel set captured at start.
 	o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 3000})
 	awaitCall(t, ch.silenceEndCalled, "SendSilenceEnd")
 

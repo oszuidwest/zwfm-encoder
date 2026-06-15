@@ -22,12 +22,12 @@ func TestDebouncerEnterAndRecover(t *testing.T) {
 		t.Fatalf("did not enter at duration threshold: %+v", r)
 	}
 
-	// Steady active: durationMs keeps growing, no repeated justEntered.
+	// Steady active: duration grows without another entry edge.
 	if r := d.update(true, 1000, 500, base.Add(2000*time.Millisecond)); !r.active || r.justEntered || r.durationMs != 2000 {
 		t.Fatalf("steady active wrong: %+v", r)
 	}
 
-	// Condition clears, still inside the recovery window: stay active, durationMs resets to 0.
+	// Recovery window: stay active but stop reporting live duration.
 	if r := d.update(false, 1000, 500, base.Add(2200*time.Millisecond)); !r.active || r.justRecovered || r.durationMs != 0 {
 		t.Fatalf("recovery window wrong: %+v", r)
 	}
@@ -42,9 +42,8 @@ func TestDebouncerEnterAndRecover(t *testing.T) {
 	}
 }
 
-// TestDebouncerNoEntryWhenConditionDropsBeforeDuration pins that an unconfirmed
-// run does not leak its start time into the next run (the start is reset while
-// inactive), so accumulation always restarts from scratch.
+// TestDebouncerNoEntryWhenConditionDropsBeforeDuration verifies an unconfirmed
+// run resets before the next accumulation.
 func TestDebouncerNoEntryWhenConditionDropsBeforeDuration(t *testing.T) {
 	t.Parallel()
 
@@ -59,10 +58,8 @@ func TestDebouncerNoEntryWhenConditionDropsBeforeDuration(t *testing.T) {
 	}
 }
 
-// TestDebouncerRetriggerCancelsRecovery pins the subtlest branch: a condition
-// that re-fires inside the recovery window must cancel the recovery (clear
-// recoveryStart), stay active without re-entering, and keep counting duration
-// from the original start rather than restarting.
+// TestDebouncerRetriggerCancelsRecovery verifies a re-fire cancels recovery
+// without resetting active duration.
 func TestDebouncerRetriggerCancelsRecovery(t *testing.T) {
 	t.Parallel()
 
@@ -74,13 +71,12 @@ func TestDebouncerRetriggerCancelsRecovery(t *testing.T) {
 		t.Fatalf("did not confirm: %+v", r)
 	}
 
-	// Condition clears -> enters the recovery window (recoveryStart = base+1200).
+	// Enter recovery at base+1200.
 	if r := d.update(false, 1000, 500, base.Add(1200*time.Millisecond)); !r.active || r.justRecovered {
 		t.Fatalf("expected active recovery window: %+v", r)
 	}
 
-	// Re-fire before recovery completes: stay active, no re-entry, duration
-	// continues from the original start.
+	// Re-fire; duration still counts from the original start.
 	r := d.update(true, 1000, 500, base.Add(1400*time.Millisecond))
 	if !r.active || r.justEntered || r.justRecovered {
 		t.Fatalf("re-trigger should stay active without re-entering: %+v", r)
@@ -89,8 +85,7 @@ func TestDebouncerRetriggerCancelsRecovery(t *testing.T) {
 		t.Fatalf("durationMs = %d, want 1400 (continues from original start)", r.durationMs)
 	}
 
-	// Recovery must have been cancelled: clearing 500ms after the *old*
-	// recoveryStart must NOT recover, because the re-trigger reset it.
+	// The old recoveryStart must not trigger recovery.
 	if r := d.update(false, 1000, 500, base.Add(1700*time.Millisecond)); r.justRecovered || !r.active {
 		t.Fatalf("stale recoveryStart caused premature recovery: %+v", r)
 	}

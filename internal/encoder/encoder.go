@@ -519,10 +519,9 @@ func (e *Encoder) UpdateSilenceConfig() {
 	}
 }
 
-// UpdateChannelImbalanceConfig resets channel imbalance detection after config changes.
-// The handler calls this alongside UpdateSilenceConfig because imbalance reuses the
-// silence threshold as its presence floor, so a silence-threshold change must also
-// clear stale imbalance timing state.
+// UpdateChannelImbalanceConfig resets imbalance timing after detector settings change.
+// It also runs when the silence threshold changes because that threshold is the
+// presence floor.
 func (e *Encoder) UpdateChannelImbalanceConfig() {
 	if e.imbalanceDetect != nil {
 		e.imbalanceDetect.Reset()
@@ -726,7 +725,7 @@ func (e *Encoder) startEnabledStreams() {
 	}
 }
 
-// runDistributor reads PCM audio and distributes it to streams, recorders, and silence detection.
+// runDistributor reads PCM audio and fans it out to meters, alerts, streams, and recorders.
 func (e *Encoder) runDistributor() {
 	buf := make([]byte, distributorBufferSize)
 

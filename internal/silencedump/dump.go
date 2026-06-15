@@ -68,9 +68,7 @@ type Capturer struct {
 	silenceStart    time.Time // time when silence started
 	// capturing reports whether we're waiting for recovery audio.
 	capturing bool
-	// recovered reports whether recovery has been signalled for the current
-	// capture. Tracked explicitly because silenceEndPos can legitimately be 0
-	// (silence starting at byte position 0) and cannot double as the sentinel.
+	// recovered is separate from silenceEndPos because position 0 is valid.
 	recovered bool
 
 	// Saved pre-silence audio snapshot. Captured immediately on silence start
@@ -167,11 +165,8 @@ func (c *Capturer) OnSilenceRecover(totalDuration, recoveryDuration time.Duratio
 	// The JustRecovered event fires after recoveryDuration has elapsed, so we need to
 	// subtract that amount to capture the moment audio came back.
 	//
-	// recoveryDuration is a wall-clock measurement while totalWritten counts bytes
-	// actually written to the ring; the two can diverge if the distributor stalls
-	// during the recovery window. Clamp to silenceStartPos so the recovery point is
-	// never before silence started: this keeps copyFromRing's startPos >= 0
-	// precondition and avoids a negative-length silence section.
+	// Wall-clock recovery can outpace bytes written; clamp so copyFromRing never
+	// receives a start before silenceStartPos.
 	recoveryBytes := int64(recoveryDuration.Seconds() * float64(audio.BytesPerSecond))
 	c.silenceEndPos = max(c.silenceStartPos, c.totalWritten-recoveryBytes)
 	c.recovered = true

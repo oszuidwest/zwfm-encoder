@@ -73,8 +73,8 @@ func (d *Distributor) ProcessSamples(buf []byte) {
 		}
 		silenceEvent := d.silenceDetect.Update(levels.RMSLeft, levels.RMSRight, silenceCfg, now)
 
-		// Channel imbalance detection reuses the silence threshold as its presence floor,
-		// so it is only evaluated while at least one channel is above the silence level.
+		// Use the silence threshold as a presence floor so all-silent audio stays
+		// a silence condition, not an imbalance.
 		imbalanceCfg := audio.ImbalanceConfig{
 			ThresholdDB:     cfg.ChannelImbalanceThreshold,
 			DurationMs:      cfg.ChannelImbalanceDurationMs,

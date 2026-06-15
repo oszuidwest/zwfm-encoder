@@ -6,34 +6,34 @@ import (
 	"time"
 )
 
-// ImbalanceConfig holds the configurable thresholds for channel imbalance detection.
+// ImbalanceConfig controls channel imbalance detection thresholds.
 type ImbalanceConfig struct {
-	ThresholdDB     float64 // dB; alarm when abs(L-R) exceeds this
-	DurationMs      int64
-	RecoveryMs      int64
-	PresenceFloorDB float64 // dB; imbalance is evaluated only when max(L,R) >= this (reuses the silence threshold)
+	ThresholdDB float64 // dB; strict abs(L-R) trigger threshold
+	DurationMs  int64   // milliseconds above threshold before entering active state
+	RecoveryMs  int64   // milliseconds below threshold before recovery
+	// PresenceFloorDB is the minimum channel level required to evaluate imbalance.
+	PresenceFloorDB float64
 }
 
-// ImbalanceEvent represents the result of a channel imbalance detection update.
+// ImbalanceEvent reports channel-balance state for one detector update.
 type ImbalanceEvent struct {
-	InImbalance bool
-	DurationMs  int64
-	Level       ImbalanceLevel
+	InImbalance bool           // active, including the recovery window
+	DurationMs  int64          // active duration, or 0 during recovery
+	Level       ImbalanceLevel // active label for API and websocket payloads
 
-	BalanceDB     float64 // dB; signed L-R (positive = left louder)
-	ImbalanceDB   float64 // dB; abs(L-R), the alarm magnitude
+	BalanceDB     float64 // dB; signed L-R, positive means left louder
+	ImbalanceDB   float64 // dB; abs(L-R)
 	CurrentLevelL float64 // dB
 	CurrentLevelR float64 // dB
 
-	JustEntered        bool
-	JustRecovered      bool
-	TotalDurationMs    int64
-	RecoveryDurationMs int64
+	JustEntered        bool  // true only on entry
+	JustRecovered      bool  // true only on recovery
+	TotalDurationMs    int64 // final active duration on recovery
+	RecoveryDurationMs int64 // elapsed recovery time on recovery
 }
 
-// ImbalanceDetector tracks L/R channel imbalance state and generates detection events.
-// It is safe for concurrent use. The timing/hysteresis is the shared [debouncer]; only
-// the trigger predicate differs from [SilenceDetector]: present && abs(L-R) > threshold.
+// ImbalanceDetector detects sustained L/R level differences.
+// It is safe for concurrent use.
 type ImbalanceDetector struct {
 	mu       sync.Mutex
 	debounce debouncer
@@ -44,15 +44,14 @@ func NewImbalanceDetector() *ImbalanceDetector {
 	return &ImbalanceDetector{}
 }
 
-// Update updates the imbalance detection state with new audio levels and returns the current state.
+// Update advances imbalance detection for one L/R level sample.
 func (d *ImbalanceDetector) Update(dbL, dbR float64, cfg ImbalanceConfig, now time.Time) ImbalanceEvent {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	balanceDB := dbL - dbR
 	imbalanceDB := math.Abs(balanceDB)
-	// present is the exact logical complement of "both channels silent", so the
-	// instantaneous silence and imbalance conditions are mutually exclusive.
+	// Presence gate keeps double-silence in the silence detector's domain.
 	present := max(dbL, dbR) >= cfg.PresenceFloorDB
 	channelsImbalanced := present && imbalanceDB > cfg.ThresholdDB
 

@@ -234,9 +234,8 @@ func healthFixture() healthInputs {
 	}
 }
 
-// TestBuildHealthResponseAudioConditionsAreInformational pins the monitoring
-// contract: an active silence or channel imbalance is reported in the body but
-// must never change the health status (that is /ready's job).
+// TestBuildHealthResponseAudioConditionsAreInformational verifies /health reports
+// audio conditions without failing the process health check.
 func TestBuildHealthResponseAudioConditionsAreInformational(t *testing.T) {
 	t.Parallel()
 
@@ -271,8 +270,7 @@ func TestBuildHealthResponseAudioConditionsAreInformational(t *testing.T) {
 	})
 }
 
-// TestBuildHealthResponseUnhealthyConditions pins that the genuine health gates
-// (FFmpeg available, encoder running) still flip the status to 503.
+// TestBuildHealthResponseUnhealthyConditions verifies only process gates fail /health.
 func TestBuildHealthResponseUnhealthyConditions(t *testing.T) {
 	t.Parallel()
 
@@ -717,8 +715,8 @@ func TestHandleAPIConfigRedactsStoredSecrets(t *testing.T) {
 	}
 }
 
-// TestHandleAPIConfigIncludesChannelImbalance verifies the frontend config
-// snapshot carries the channel imbalance detection settings with defaults.
+// TestHandleAPIConfigIncludesChannelImbalance verifies channel imbalance defaults
+// reach the frontend config payload.
 func TestHandleAPIConfigIncludesChannelImbalance(t *testing.T) {
 	t.Parallel()
 
@@ -752,8 +750,8 @@ func TestHandleAPIConfigIncludesChannelImbalance(t *testing.T) {
 	}
 }
 
-// TestApplyWithPreserveRoundTripsChannelImbalance verifies the settings pipeline
-// applies channel imbalance values (handler success paths run this same pipeline).
+// TestApplyWithPreserveRoundTripsChannelImbalance verifies settings updates persist
+// channel imbalance values.
 func TestApplyWithPreserveRoundTripsChannelImbalance(t *testing.T) {
 	t.Parallel()
 

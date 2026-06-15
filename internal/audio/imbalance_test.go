@@ -99,8 +99,7 @@ func TestImbalanceDetectorSignedBalanceReflectsLouderChannel(t *testing.T) {
 		t.Fatalf("left louder: BalanceDB/ImbalanceDB = %v/%v, want 20/20", e.BalanceDB, e.ImbalanceDB)
 	}
 
-	// Right louder -> negative balance, same absolute magnitude. Guards against a
-	// sign-flip in BalanceDB = dbL - dbR going unnoticed.
+	// Right louder means negative balance with the same magnitude.
 	if e := d.Update(-30, -10, cfg, base); e.BalanceDB != -20 || e.ImbalanceDB != 20 {
 		t.Fatalf("right louder: BalanceDB/ImbalanceDB = %v/%v, want -20/20", e.BalanceDB, e.ImbalanceDB)
 	}
@@ -113,7 +112,7 @@ func TestImbalanceDetectorThresholdIsExclusive(t *testing.T) {
 	cfg := testImbalanceConfig()
 	base := time.Now()
 
-	// Exactly at the threshold (12 dB) must not trigger: the condition is strict ">".
+	// Threshold comparison is strict: equality does not trigger.
 	d.Update(-10, -22, cfg, base)
 	if e := d.Update(-10, -22, cfg, base.Add(20000*time.Millisecond)); e.JustEntered || e.InImbalance {
 		t.Fatalf("triggered at exactly threshold (must be exclusive): %+v", e)
@@ -127,8 +126,7 @@ func TestImbalanceDetectorBelowPresenceFloorDoesNotTrigger(t *testing.T) {
 	cfg := testImbalanceConfig()
 	base := time.Now()
 
-	// 15 dB apart (over threshold) but the loudest channel is below the presence
-	// floor, so this is silence's domain, not imbalance's.
+	// Below the presence floor, silence owns the condition.
 	d.Update(-45, -60, cfg, base)
 	if e := d.Update(-45, -60, cfg, base.Add(20000*time.Millisecond)); e.JustEntered || e.InImbalance {
 		t.Fatalf("triggered below presence floor: %+v", e)
@@ -142,17 +140,15 @@ func TestImbalanceDetectorDoubleSilenceNeverTriggers(t *testing.T) {
 	cfg := testImbalanceConfig()
 	base := time.Now()
 
-	// Both channels silent: ImbalanceDB is 0 and the presence gate is closed.
+	// Double silence closes the presence gate.
 	d.Update(-60, -60, cfg, base)
 	if e := d.Update(-60, -60, cfg, base.Add(20000*time.Millisecond)); e.JustEntered || e.InImbalance {
 		t.Fatalf("double silence reported imbalance: %+v", e)
 	}
 }
 
-// TestImbalanceDetectorPresenceDropEndsCleanly pins the no-hard-reset design:
-// when audio drops below the presence floor during a confirmed imbalance (e.g.
-// the source dies), the detector must route through the recovery branch and emit
-// a clean end event rather than leaving a dangling start.
+// TestImbalanceDetectorPresenceDropEndsCleanly verifies a presence drop recovers
+// cleanly instead of leaving an open imbalance event.
 func TestImbalanceDetectorPresenceDropEndsCleanly(t *testing.T) {
 	t.Parallel()
 
@@ -165,7 +161,7 @@ func TestImbalanceDetectorPresenceDropEndsCleanly(t *testing.T) {
 		t.Fatalf("did not enter imbalance: %+v", e)
 	}
 
-	// Source dies completely (both channels silent) - presence gate closes.
+	// Source dies; the presence gate closes.
 	if e := d.Update(-60, -60, cfg, base.Add(16000*time.Millisecond)); e.JustRecovered || !e.InImbalance {
 		t.Fatalf("ended before recovery window after presence drop: %+v", e)
 	}
@@ -187,8 +183,7 @@ func TestImbalanceDetectorResetClearsState(t *testing.T) {
 
 	d.Reset()
 
-	// After Reset the duration counter restarts: an immediate imbalanced sample
-	// must not be treated as already-confirmed.
+	// After Reset, the duration counter restarts.
 	if e := d.Update(-10, -30, cfg, base.Add(16000*time.Millisecond)); e.InImbalance || e.JustEntered {
 		t.Fatalf("state leaked after Reset: %+v", e)
 	}

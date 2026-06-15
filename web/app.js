@@ -242,7 +242,7 @@ document.addEventListener('alpine:init', () => {
         recorderForm: { ...DEFAULT_RECORDER, id: '' },
         recorderFormDirty: false,
 
-        // Event history (all event types: stream_*, silence_*, channel_imbalance_*, recorder_*)
+        // Event history includes stream, audio, and recorder events.
         events: [],
         eventFilter: '',
         eventsLoading: false,

@@ -47,11 +47,11 @@ const (
 	DefaultSilenceRecoveryMs = 5000
 	// DefaultPeakHoldMs is the default VU meter peak hold duration (3 seconds).
 	DefaultPeakHoldMs = 3000
-	// DefaultChannelImbalanceThreshold is the default L/R level difference in dB above which imbalance is detected (12 dB).
+	// DefaultChannelImbalanceThreshold is the default L/R imbalance threshold in dB.
 	DefaultChannelImbalanceThreshold = 12.0
 	// DefaultChannelImbalanceDurationMs is the default imbalance duration before alert (15 seconds).
 	DefaultChannelImbalanceDurationMs = 15000
-	// DefaultChannelImbalanceRecoveryMs is the default recovery duration before clearing the imbalance alert (5 seconds).
+	// DefaultChannelImbalanceRecoveryMs is the default balance duration before recovery (5 seconds).
 	DefaultChannelImbalanceRecoveryMs = 5000
 	// DefaultStationName is the default station display name shown in the web UI.
 	DefaultStationName = "ZuidWest FM"
@@ -103,13 +103,13 @@ type SilenceDetectionConfig struct {
 	PeakHoldMs int64 `json:"peak_hold_ms"`
 }
 
-// ChannelImbalanceDetectionConfig holds L/R channel imbalance detection settings.
+// ChannelImbalanceDetectionConfig holds L/R imbalance detector settings.
 type ChannelImbalanceDetectionConfig struct {
-	// ThresholdDB is the L/R level difference in dB above which imbalance is detected.
+	// ThresholdDB is the strict L/R difference threshold in dB.
 	ThresholdDB float64 `json:"threshold_db"`
 	// DurationMs is how long the imbalance must persist before alerting.
 	DurationMs int64 `json:"duration_ms"`
-	// RecoveryMs is how long the channels must be balanced again before clearing the alert.
+	// RecoveryMs is how long balance must hold before clearing the alert.
 	RecoveryMs int64 `json:"recovery_ms"`
 }
 
@@ -173,7 +173,7 @@ type ConfigData struct {
 	Audio AudioConfig `json:"audio"`
 	// SilenceDetection contains silence detection settings.
 	SilenceDetection SilenceDetectionConfig `json:"silence_detection"`
-	// ChannelImbalanceDetection contains L/R channel imbalance detection settings.
+	// ChannelImbalanceDetection contains L/R imbalance detector settings.
 	ChannelImbalanceDetection ChannelImbalanceDetectionConfig `json:"channel_imbalance_detection"`
 	// SilenceDump contains silence dump settings.
 	SilenceDump types.SilenceDumpConfig `json:"silence_dump"`
@@ -233,9 +233,9 @@ func defaultConfig(filePath string) *Config {
 
 // Load reads and validates an existing config file. If the file does not exist,
 // Load writes a minimal validated default config. Existing files are decoded
-// as-is; optional Web, SilenceDetection and ChannelImbalanceDetection fields
-// that are omitted (not explicitly null) inherit defaults so documented minimal
-// configs — and configs written before channel imbalance detection existed —
+// as-is; omitted optional Web, SilenceDetection, and ChannelImbalanceDetection
+// fields inherit defaults. Explicit nulls remain zero so validation rejects
+// malformed input, preserving strict null semantics while older minimal configs
 // stay valid. Required system settings must still be present and valid.
 func (c *Config) Load() error {
 	c.mu.Lock()
@@ -274,12 +274,9 @@ func (c *Config) Load() error {
 	return nil
 }
 
-// applyOptionalDefaults fills defaults for optional Web, SilenceDetection and
-// ChannelImbalanceDetection fields that were omitted from the raw JSON. Fields
-// that are present (even when explicitly null) are left at their unmarshalled
-// value so validate() can reject malformed input — distinguishing "missing"
-// from "null" preserves the strict semantics that existed before defaults were
-// introduced.
+// applyOptionalDefaults fills defaults for omitted optional config fields.
+// Present fields, including explicit nulls, keep their unmarshalled value so
+// validate can reject malformed input.
 func applyOptionalDefaults(data []byte, cfg *Config) error {
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(data, &root); err != nil {
@@ -545,10 +542,9 @@ func validateSilenceThreshold(field string, threshold float64) string {
 	return ""
 }
 
-// validateChannelImbalanceThreshold enforces 1 <= threshold < 60 dB. The upper
-// bound is exclusive: RMS is clamped at MinDB = -60, so abs(L-R) never exceeds
-// 60 dB and the detector compares with strict ">", making threshold = 60 a dead
-// zone that could never trigger.
+// validateChannelImbalanceThreshold enforces 1 <= threshold < 60 dB.
+// The upper bound is exclusive because levels clamp at -60 dB and detection
+// uses a strict comparison.
 func validateChannelImbalanceThreshold(field string, threshold float64) string {
 	if threshold < 1 || threshold >= 60 {
 		return field + ": must be at least 1 dB and below 60 dB"
@@ -933,11 +929,11 @@ type Snapshot struct {
 	// PeakHoldMs is how long the VU meter holds peak values before decay.
 	PeakHoldMs int64
 
-	// ChannelImbalanceThreshold is the L/R level difference in dB above which imbalance is detected.
+	// ChannelImbalanceThreshold is the strict L/R difference threshold in dB.
 	ChannelImbalanceThreshold float64
 	// ChannelImbalanceDurationMs is how long the imbalance must persist before alerting.
 	ChannelImbalanceDurationMs int64
-	// ChannelImbalanceRecoveryMs is how long the channels must be balanced again before clearing the alert.
+	// ChannelImbalanceRecoveryMs is how long balance must hold before clearing the alert.
 	ChannelImbalanceRecoveryMs int64
 
 	// SilenceDumpEnabled reports whether silence audio dumping is enabled.
@@ -1087,11 +1083,11 @@ type SettingsUpdate struct {
 	SilenceRecoveryMs int64 `json:"silence_recovery_ms"`
 	// PeakHoldMs is how long the VU meter holds peak values before decay.
 	PeakHoldMs int64 `json:"peak_hold_ms"`
-	// ChannelImbalanceThreshold is the L/R level difference in dB above which imbalance is detected.
+	// ChannelImbalanceThreshold is the strict L/R difference threshold in dB.
 	ChannelImbalanceThreshold float64 `json:"channel_imbalance_threshold"`
 	// ChannelImbalanceDurationMs is how long the imbalance must persist before alerting.
 	ChannelImbalanceDurationMs int64 `json:"channel_imbalance_duration_ms"`
-	// ChannelImbalanceRecoveryMs is how long the channels must be balanced again before clearing the alert.
+	// ChannelImbalanceRecoveryMs is how long balance must hold before clearing the alert.
 	ChannelImbalanceRecoveryMs int64 `json:"channel_imbalance_recovery_ms"`
 	// SilenceDumpEnabled reports whether silence audio dumping is enabled.
 	SilenceDumpEnabled bool `json:"silence_dump_enabled"`

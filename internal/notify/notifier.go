@@ -13,14 +13,11 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 )
 
-// logQueueDepth is the buffer size of the serialized log worker channel.
-// A handful of log events are produced per audio cycle (silence start/end/dump,
-// channel imbalance start/end); 16 gives ample headroom.
+// logQueueDepth buffers ordered event-log writes from audio cycle handlers.
 const logQueueDepth = 16
 
 // logJob is a queued event-log write.
-// Carrying the event type alongside the write function makes queue-full diagnostics specific
-// and keeps worker behaviour explicit without relying on opaque closures.
+// eventType keeps queue-full diagnostics specific without inspecting the closure.
 type logJob struct {
 	eventType string // event type label for diagnostics; empty for internal sentinels
 	fn        func()
@@ -67,20 +64,15 @@ func NewAlertOrchestrator(cfg *config.Config, dispatcher *Dispatcher) *AlertOrch
 	return o
 }
 
-// runLogWorker drains logQueue sequentially, guaranteeing that events are
-// written to the JSONL file in the same order they were enqueued (i.e., event order).
+// runLogWorker writes queued log jobs in enqueue order.
 func (o *AlertOrchestrator) runLogWorker() {
 	for job := range o.logQueue {
 		job.fn()
 	}
 }
 
-// enqueueLog submits a log write for eventType to the serialized log worker.
-// No-ops when no event logger is set.
-// If the queue is full (logQueueDepth pending entries), the entry is dropped and a warning is emitted.
-// Overflow policy: drop-and-warn. Queue saturation is only possible under extreme load
-// (more than logQueueDepth events backed up behind slow file I/O), so a dropped
-// entry is preferable to blocking the caller on the audio hot path.
+// enqueueLog sends a log write to the ordered worker.
+// It drops and warns instead of blocking the audio path when the queue is full.
 func (o *AlertOrchestrator) enqueueLog(eventType string, fn func()) {
 	if o.eventLogger == nil {
 		return
@@ -158,10 +150,8 @@ func (o *AlertOrchestrator) handleSilenceEnd(durationMS int64, levelL, levelR fl
 	o.enqueueLog("silence_end", func() { o.logSilenceEnd(now, &cfg, durationMS, levelL, levelR) })
 }
 
-// HandleChannelImbalanceEvent records channel imbalance start and end events to the
-// event log. It deliberately does not touch activeChannels/pendingRecovery (which are
-// owned by the silence cycle) and does not dispatch to notification channels; external
-// imbalance notifications are a separate, later concern.
+// HandleChannelImbalanceEvent writes imbalance lifecycle events to the event log.
+// It leaves silence notification state untouched; imbalance notifications are not sent here.
 func (o *AlertOrchestrator) HandleChannelImbalanceEvent(event *audio.ImbalanceEvent) {
 	if event.JustEntered {
 		o.handleChannelImbalanceStart(event.CurrentLevelL, event.CurrentLevelR, event.BalanceDB, event.ImbalanceDB)

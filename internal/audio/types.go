@@ -6,10 +6,10 @@ type SilenceLevel string
 // SilenceLevelActive indicates silence is confirmed.
 const SilenceLevelActive SilenceLevel = "active"
 
-// ImbalanceLevel represents the channel imbalance detection state.
+// ImbalanceLevel names channel imbalance detector states.
 type ImbalanceLevel string
 
-// ImbalanceLevelActive indicates channel imbalance is confirmed.
+// ImbalanceLevelActive indicates confirmed channel imbalance.
 const ImbalanceLevelActive ImbalanceLevel = "active"
 
 // AudioLevels is the current audio level measurements for VU meters.
@@ -25,9 +25,8 @@ type AudioLevels struct {
 	ChannelImbalance           bool           `json:"channel_imbalance,omitzero"`
 	ChannelImbalanceDurationMs int64          `json:"channel_imbalance_duration_ms,omitzero"`
 	ChannelImbalanceLevel      ImbalanceLevel `json:"channel_imbalance_level,omitzero"`
-	// BalanceDB and ImbalanceDB are continuous meter values like Left/Right, so
-	// they are always sent (no omitzero): 0 is a meaningful "perfectly balanced"
-	// reading that live meter and API consumers expect, not an absent value.
+	// BalanceDB and ImbalanceDB are always emitted: 0 dB is a valid meter
+	// reading, not an absent value.
 	BalanceDB   float64 `json:"balance_db"`   // dB; signed L-R
 	ImbalanceDB float64 `json:"imbalance_db"` // dB; abs(L-R)
 

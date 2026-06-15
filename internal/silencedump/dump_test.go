@@ -139,10 +139,8 @@ func TestOnSilenceStartSavedBeforeWrap(t *testing.T) {
 	}
 }
 
-// TestOnSilenceRecoverClampsEndPos verifies silenceEndPos never lands before
-// silenceStartPos, even when the wall-clock recoveryDuration outruns the bytes
-// actually written. That upholds copyFromRing's startPos >= 0 precondition and
-// keeps the silence section non-negative.
+// TestOnSilenceRecoverClampsEndPos verifies recovery backdating cannot cross the
+// silence start.
 func TestOnSilenceRecoverClampsEndPos(t *testing.T) {
 	const sec = int64(audio.BytesPerSecond)
 
@@ -198,13 +196,10 @@ func TestOnSilenceRecoverClampsEndPos(t *testing.T) {
 	}
 }
 
-// TestCheckAndFinalizeRecoversAtZeroStart verifies a dump still finalizes when
-// silence begins at byte position 0 (before any audio is written) and a divergent
-// wall-clock recovery clamps silenceEndPos back to 0. Finalization keys off the
-// explicit recovered flag, not silenceEndPos; keying off the position would stall
-// the capturer forever in this case.
+// TestCheckAndFinalizeRecoversAtZeroStart verifies position 0 still finalizes
+// via the explicit recovered flag.
 func TestCheckAndFinalizeRecoversAtZeroStart(t *testing.T) {
-	// Empty ffmpeg/output paths keep the async encode a no-op (MkdirAll fails fast).
+	// Empty ffmpeg/output paths make async encoding fail fast.
 	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
 
 	c.OnSilenceStart()                     // totalWritten==0 -> silenceStartPos==0
@@ -217,7 +212,7 @@ func TestCheckAndFinalizeRecoversAtZeroStart(t *testing.T) {
 		t.Fatalf("silenceEndPos = %d, want 0 (clamped to start)", c.silenceEndPos)
 	}
 
-	// Feed exactly enough post-recovery audio for checkAndFinalize to fire.
+	// Feed enough post-recovery audio for checkAndFinalize.
 	writePattern(c, int64(afterSeconds*audio.BytesPerSecond))
 
 	if c.capturing {
