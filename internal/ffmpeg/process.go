@@ -27,6 +27,7 @@ type StartResult struct {
 	ctx    context.Context
 	cancel context.CancelCauseFunc
 	stderr *bytes.Buffer
+	stdout io.ReadCloser
 
 	stdin   io.WriteCloser
 	stdinMu sync.Mutex // protects stdin field
@@ -48,6 +49,15 @@ func BaseInputArgs() []string {
 
 // StartProcess launches an FFmpeg subprocess.
 func StartProcess(ffmpegPath string, args []string) (*StartResult, error) {
+	return startProcess(ffmpegPath, args, false)
+}
+
+// StartProcessWithStdout launches an FFmpeg subprocess and captures stdout.
+func StartProcessWithStdout(ffmpegPath string, args []string) (*StartResult, error) {
+	return startProcess(ffmpegPath, args, true)
+}
+
+func startProcess(ffmpegPath string, args []string, captureStdout bool) (*StartResult, error) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	//nolint:gosec // G204: ffmpegPath is from config or PATH lookup, not user HTTP input
 	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
@@ -56,6 +66,18 @@ func StartProcess(ffmpegPath string, args []string) (*StartResult, error) {
 	if err != nil {
 		cancel(fmt.Errorf("create stdin pipe: %w", err))
 		return nil, fmt.Errorf("create stdin pipe: %w", err)
+	}
+
+	var stdoutPipe io.ReadCloser
+	if captureStdout {
+		stdoutPipe, err = cmd.StdoutPipe()
+		if err != nil {
+			cancel(fmt.Errorf("create stdout pipe: %w", err))
+			if closeErr := stdinPipe.Close(); closeErr != nil {
+				slog.Warn("failed to close stdin pipe", "error", closeErr)
+			}
+			return nil, fmt.Errorf("create stdout pipe: %w", err)
+		}
 	}
 
 	var stderr bytes.Buffer
@@ -74,6 +96,7 @@ func StartProcess(ffmpegPath string, args []string) (*StartResult, error) {
 		ctx:      ctx,
 		cancel:   cancel,
 		stderr:   &stderr,
+		stdout:   stdoutPipe,
 		stdin:    stdinPipe,
 		waitDone: make(chan struct{}),
 	}, nil
@@ -158,4 +181,12 @@ func (r *StartResult) Stderr() string {
 		return ""
 	}
 	return r.stderr.String()
+}
+
+// Stdout returns the process stdout pipe when StartProcessWithStdout was used.
+func (r *StartResult) Stdout() io.Reader {
+	if r == nil {
+		return nil
+	}
+	return r.stdout
 }

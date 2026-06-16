@@ -1026,9 +1026,15 @@ document.addEventListener('alpine:init', () => {
             return `${host}:${stream.port}`;
         },
 
+        streamClientHost(stream = this.streamForm) {
+            const configuredHost = (stream.host || '').trim();
+            const wildcard = !configuredHost || configuredHost === '0.0.0.0' || configuredHost === '::' || configuredHost === '[::]';
+            const host = wildcard ? location.hostname : configuredHost;
+            return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+        },
+
         streamClientURL(stream = this.streamForm) {
-            const host = stream.host && stream.host !== '0.0.0.0' ? stream.host : location.hostname;
-            return `srt://${host}:${stream.port || ''}?mode=caller`;
+            return `srt://${this.streamClientHost(stream)}:${stream.port || ''}?mode=caller`;
         },
 
         async copyStreamClientURL(stream = this.streamForm) {
@@ -1416,6 +1422,8 @@ document.addEventListener('alpine:init', () => {
 
             let stateClass = 'state-stopped';
             let statusText = 'Offline';
+            let encoderText = '';
+            let clientText = '';
 
             if (isDeleting) {
                 stateClass = 'state-warning';
@@ -1432,8 +1440,16 @@ document.addEventListener('alpine:init', () => {
                         break;
                     case 'running':
                         if (isListener) {
-                            stateClass = 'state-success';
-                            statusText = status.uptime ? `Listening (${status.uptime})` : 'Listening';
+                            if (status.encoder_running) {
+                                stateClass = 'state-success';
+                                statusText = status.uptime ? `Listening (${status.uptime})` : 'Listening';
+                            } else if (status.retry_count > 0) {
+                                stateClass = 'state-warning';
+                                statusText = 'Listener open, encoder restarting';
+                            } else {
+                                stateClass = 'state-warning';
+                                statusText = 'Listener open, encoder starting';
+                            }
                         } else if (status.stable) {
                             stateClass = 'state-success';
                             statusText = status.uptime ? `Connected (${status.uptime})` : 'Connected';
@@ -1467,12 +1483,29 @@ document.addEventListener('alpine:init', () => {
 
             // Compute error visibility
             const showError = !isDeleting && status.state === 'error' && status.error;
+            if (isListener) {
+                const clients = Number(status.client_count || 0);
+                clientText = `Clients: ${clients}`;
+                if (status.state === 'error' || status.exhausted) {
+                    encoderText = 'Encoder: Failed';
+                } else if (status.encoder_running) {
+                    encoderText = 'Encoder: Running';
+                } else if (status.retry_count > 0) {
+                    encoderText = 'Encoder: Restarting';
+                } else if (status.state === 'running' || status.state === 'starting') {
+                    encoderText = 'Encoder: Starting';
+                } else {
+                    encoderText = 'Encoder: Stopped';
+                }
+            }
 
             return {
                 stateClass,
                 statusText,
                 showError,
-                lastError: status.error || ''
+                lastError: status.error || '',
+                encoderText,
+                clientText
             };
         },
 

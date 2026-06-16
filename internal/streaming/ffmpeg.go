@@ -9,44 +9,45 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-// BuildFFmpegArgs returns FFmpeg arguments for streaming.
-func BuildFFmpegArgs(stream *types.Stream) []string {
+// buildEncodeArgs returns the shared FFmpeg input and codec arguments used by
+// both caller and listener encoding modes.
+func buildEncodeArgs(stream *types.Stream) []string {
 	codecArgs := types.BuildCodecArgs(stream.Codec, stream.Bitrate)
-	format := stream.Codec.Format()
-	srtURL := BuildSRTURL(stream)
-
-	// Start with base input args, add stream-specific flags
 	args := ffmpeg.BaseInputArgs()
 	args = append(args, "-hide_banner", "-loglevel", "warning", "-codec:a")
-	args = append(args, codecArgs...)
-	args = append(args, "-f", format, srtURL)
-	return args
+	return append(args, codecArgs...)
 }
 
-// BuildSRTURL constructs an SRT streaming URL.
+// BuildCallerArgs returns FFmpeg arguments for caller-mode SRT streaming.
+func BuildCallerArgs(stream *types.Stream) []string {
+	args := buildEncodeArgs(stream)
+	return append(args, "-f", stream.Codec.Format(), BuildSRTURL(stream))
+}
+
+// BuildListenerPipeArgs returns FFmpeg arguments for listener-mode pipe encoding.
+func BuildListenerPipeArgs(stream *types.Stream) []string {
+	args := buildEncodeArgs(stream)
+	format := stream.Codec.Format()
+	if format == "mpegts" {
+		args = append(args, "-pat_period", "0.1")
+	}
+	return append(args, "-f", format, "pipe:1")
+}
+
+// BuildSRTURL constructs a caller-mode SRT streaming URL.
 func BuildSRTURL(stream *types.Stream) string {
 	params := url.Values{}
 	params.Set("pkt_size", "1316")
 	params.Set("oheadbw", "100")
 	params.Set("maxbw", "-1")
 	params.Set("transtype", "live")
-
-	host := stream.Host
-	switch stream.ModeOrDefault() {
-	case types.StreamModeListener:
-		host = stream.ListenerBindHost()
-		params.Set("latency", "300000")
-		params.Set("listen_timeout", "-1")
-		params.Set("mode", string(types.StreamModeListener))
-	default:
-		params.Set("latency", "10000000")
-		params.Set("mode", string(types.StreamModeCaller))
-		params.Set("streamid", stream.StreamID)
-	}
+	params.Set("latency", "10000000")
+	params.Set("mode", string(types.StreamModeCaller))
+	params.Set("streamid", stream.StreamID)
 	if stream.Password != "" {
 		params.Set("passphrase", stream.Password)
 		params.Set("pbkeylen", "16")
 	}
 
-	return fmt.Sprintf("srt://%s:%d?%s", host, stream.Port, params.Encode())
+	return fmt.Sprintf("srt://%s:%d?%s", stream.Host, stream.Port, params.Encode())
 }

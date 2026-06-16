@@ -357,7 +357,7 @@ func (e *Encoder) StreamStatuses(streams []types.Stream) map[string]types.Proces
 				State:      types.ProcessDisabled,
 				MaxRetries: stream.MaxRetriesOrDefault(),
 			}
-		case e.srtCapabilityError() != nil:
+		case stream.RequiresFFmpegSRT() && e.srtCapabilityError() != nil:
 			result[stream.ID] = types.ProcessStatus{
 				State:      types.ProcessError,
 				MaxRetries: stream.MaxRetriesOrDefault(),
@@ -528,7 +528,7 @@ func (e *Encoder) StartStream(streamID string) error {
 	if !stream.Enabled {
 		return ErrStreamDisabled
 	}
-	if !e.srtAvailable {
+	if stream.RequiresFFmpegSRT() && !e.srtAvailable {
 		return e.srtSentinel()
 	}
 

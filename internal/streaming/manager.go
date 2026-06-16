@@ -1,9 +1,11 @@
 package streaming
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"slices"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/ffmpeg"
+	"github.com/oszuidwest/zwfm-encoder/internal/srtfanout"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
@@ -23,10 +26,7 @@ var errStoppedByUser = errors.New("stopped by user")
 // At ~100ms per chunk, 5 chunks provides ~500ms of buffer.
 const audioBufferSize = 5
 
-type listenerRelistenWarningState struct {
-	windowStart time.Time
-	count       int
-}
+const listenerStdoutBufferSize = 4 * 1024
 
 // StreamContext provides encoder state for monitoring and retry decisions.
 type StreamContext interface {
@@ -64,6 +64,20 @@ type Stream struct {
 	closeOnce  sync.Once
 	writerWg   sync.WaitGroup
 	audioDrops atomic.Int64
+
+	fanout         *srtfanout.Server
+	encoderMu      sync.RWMutex
+	encoder        *encoderRun
+	encoderLastErr string
+}
+
+type encoderRun struct {
+	result     *ffmpeg.StartResult
+	audioCh    chan []byte
+	closeOnce  sync.Once
+	wg         sync.WaitGroup
+	stdoutDone chan struct{}
+	startedAt  time.Time
 }
 
 // closeAudioCh safely closes the audio channel exactly once.
@@ -74,6 +88,15 @@ func (s *Stream) closeAudioCh() {
 	}
 	s.closeOnce.Do(func() {
 		close(s.audioCh)
+	})
+}
+
+func (r *encoderRun) closeAudioCh() {
+	if r == nil || r.audioCh == nil {
+		return
+	}
+	r.closeOnce.Do(func() {
+		close(r.audioCh)
 	})
 }
 
@@ -115,8 +138,7 @@ func (m *Manager) emitEvent(streamID, event, message, errMsg string, retryCount,
 func (m *Manager) maybeEmitStable(id string, started *Stream) {
 	m.mu.RLock()
 	cur, exists := m.streams[id]
-	stable := exists && cur == started && cur.state == types.ProcessRunning &&
-		cur.mode != types.StreamModeListener
+	stable := exists && cur == started && cur.state == types.ProcessRunning
 	m.mu.RUnlock()
 	if stable {
 		m.emitEvent(id, "stream_stable", "Stream connected and stable", "", 0, 0)
@@ -140,12 +162,6 @@ func (m *Manager) runWriter(streamID string, s *Stream) {
 
 		m.mu.Lock()
 		if cur, exists := m.streams[streamID]; exists && cur == s && cur.state == types.ProcessRunning {
-			if cur.mode == types.StreamModeListener {
-				slog.Debug("srt listener write ended", "stream_id", streamID, "error", err)
-				cur.result.CloseStdin()
-				m.mu.Unlock()
-				return
-			}
 			slog.Warn("stream write failed, marking as error",
 				"stream_id", streamID, "error", err)
 			cur.state = types.ProcessError
@@ -168,6 +184,13 @@ func (m *Manager) runWriter(streamID string, s *Stream) {
 // concurrent Start calls from launching duplicate FFmpeg processes while
 // keeping the lock free for WriteAudio and Statuses on other streams.
 func (m *Manager) Start(stream *types.Stream) (bool, error) {
+	if stream.ModeOrDefault() == types.StreamModeListener {
+		return m.startListenerFanout(stream)
+	}
+	return m.startCaller(stream)
+}
+
+func (m *Manager) startCaller(stream *types.Stream) (bool, error) {
 	if err := stream.Validate(); err != nil {
 		return false, err
 	}
@@ -208,11 +231,10 @@ func (m *Manager) Start(stream *types.Stream) (bool, error) {
 	// The writer's error path acquires m.mu - waiting while holding
 	// the lock would deadlock.
 	if oldStream != nil {
-		oldStream.closeAudioCh()
-		oldStream.writerWg.Wait()
+		m.stopStreamResources(stream.ID, oldStream)
 	}
 
-	args := BuildFFmpegArgs(stream)
+	args := BuildCallerArgs(stream)
 
 	slog.Info("starting stream", "stream_id", stream.ID, "host", stream.Host, "port", stream.Port)
 
@@ -252,21 +274,265 @@ func (m *Manager) Start(stream *types.Stream) (bool, error) {
 
 	go m.runWriter(stream.ID, s)
 
-	prefix := "Connecting to"
-	if stream.ModeOrDefault() == types.StreamModeListener {
-		prefix = "Listening on"
-	}
-	m.emitEvent(stream.ID, "stream_started", fmt.Sprintf("%s %s", prefix, stream.Endpoint()), "", 0, 0)
+	m.emitEvent(stream.ID, "stream_started", fmt.Sprintf("Connecting to %s", stream.Endpoint()), "", 0, 0)
 
-	if stream.ModeOrDefault() != types.StreamModeListener {
-		// Guard the stable event against restarts during the stability window.
-		go func() {
-			time.Sleep(types.StableThreshold)
-			m.maybeEmitStable(stream.ID, s)
-		}()
-	}
+	// Guard the stable event against restarts during the stability window.
+	go func() {
+		time.Sleep(types.StableThreshold)
+		m.maybeEmitStable(stream.ID, s)
+	}()
 
 	return true, nil
+}
+
+func (m *Manager) startListenerFanout(stream *types.Stream) (bool, error) {
+	if err := stream.Validate(); err != nil {
+		return false, err
+	}
+
+	m.mu.Lock()
+
+	existing, exists := m.streams[stream.ID]
+	if exists && (existing.state == types.ProcessRunning || existing.state == types.ProcessStarting) {
+		m.mu.Unlock()
+		return false, nil
+	}
+
+	var oldStream *Stream
+	retryCount := 0
+	backoff := util.NewBackoff(types.InitialRetryDelay, types.MaxRetryDelay)
+	if exists {
+		oldStream = existing
+		if existing.backoff != nil {
+			retryCount = existing.retryCount
+			backoff = existing.backoff
+		}
+	}
+
+	placeholder := &Stream{
+		state:      types.ProcessStarting,
+		mode:       types.StreamModeListener,
+		retryCount: retryCount,
+		backoff:    backoff,
+	}
+	m.streams[stream.ID] = placeholder
+	m.mu.Unlock()
+
+	if oldStream != nil {
+		m.stopStreamResources(stream.ID, oldStream)
+	}
+
+	fanout, err := srtfanout.NewServer(srtfanout.Config{
+		StreamID: stream.ID,
+		BindHost: stream.ListenerBindHost(),
+		Port:     stream.Port,
+		Password: stream.Password,
+	})
+	if err != nil {
+		m.removePlaceholder(stream.ID, placeholder)
+		return false, err
+	}
+	if err := fanout.Start(); err != nil {
+		m.removePlaceholder(stream.ID, placeholder)
+		return false, err
+	}
+
+	s := &Stream{
+		state:      types.ProcessRunning,
+		mode:       types.StreamModeListener,
+		startTime:  time.Now(),
+		retryCount: retryCount,
+		backoff:    backoff,
+		fanout:     fanout,
+	}
+
+	if err := m.startListenerEncoderRun(stream.ID, s, stream); err != nil {
+		fanout.Shutdown()
+		if waitErr := fanout.Wait(); waitErr != nil {
+			slog.Warn("srt fanout shutdown after encoder start failure returned error",
+				"stream_id", stream.ID, "error", waitErr)
+		}
+		m.removePlaceholder(stream.ID, placeholder)
+		return false, err
+	}
+
+	m.mu.Lock()
+	if m.streams[stream.ID] != placeholder {
+		m.mu.Unlock()
+		m.stopStreamResources(stream.ID, s)
+		return false, nil
+	}
+	m.streams[stream.ID] = s
+	m.mu.Unlock()
+
+	m.emitEvent(stream.ID, "stream_started", fmt.Sprintf("Listening on %s", stream.Endpoint()), "", 0, 0)
+	return true, nil
+}
+
+func (m *Manager) removePlaceholder(streamID string, placeholder *Stream) {
+	m.mu.Lock()
+	if m.streams[streamID] == placeholder {
+		delete(m.streams, streamID)
+	}
+	m.mu.Unlock()
+}
+
+func (m *Manager) startListenerEncoderRun(
+	streamID string, s *Stream, cfg *types.Stream,
+) error {
+	args := BuildListenerPipeArgs(cfg)
+
+	slog.Info("starting listener encoder", "stream_id", streamID, "host", cfg.ListenerBindHost(), "port", cfg.Port)
+
+	result, err := ffmpeg.StartProcessWithStdout(m.ffmpegPath, args)
+	if err != nil {
+		return err
+	}
+	if result.Stdout() == nil {
+		result.Cancel(errStoppedByUser)
+		result.CloseStdin()
+		_ = result.Wait()
+		return fmt.Errorf("listener encoder stdout pipe unavailable")
+	}
+
+	run := &encoderRun{
+		result:     result,
+		audioCh:    make(chan []byte, audioBufferSize),
+		stdoutDone: make(chan struct{}),
+		startedAt:  time.Now(),
+	}
+	run.wg.Add(2)
+
+	s.encoderMu.Lock()
+	s.encoder = run
+	s.encoderLastErr = ""
+	s.encoderMu.Unlock()
+
+	go m.runListenerWriter(streamID, run)
+	go m.runListenerStdoutReader(streamID, s, run)
+
+	return nil
+}
+
+func (m *Manager) runListenerWriter(streamID string, run *encoderRun) {
+	defer run.wg.Done()
+
+	for data := range run.audioCh {
+		_, err := run.result.WriteStdin(data)
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, ffmpeg.ErrStdinClosed) {
+			return
+		}
+		slog.Warn("listener encoder stdin write failed", "stream_id", streamID, "error", err)
+		run.result.CloseStdin()
+		return
+	}
+}
+
+func (m *Manager) runListenerStdoutReader(streamID string, s *Stream, run *encoderRun) {
+	defer run.wg.Done()
+	defer close(run.stdoutDone)
+
+	stdout := run.result.Stdout()
+	if stdout == nil {
+		return
+	}
+
+	buf := make([]byte, listenerStdoutBufferSize)
+	for {
+		n, err := stdout.Read(buf)
+		if n > 0 && s.fanout != nil {
+			s.fanout.Write(buf[:n])
+		}
+		if err != nil {
+			if !errors.Is(err, io.EOF) && !errors.Is(context.Cause(run.result.Context()), errStoppedByUser) {
+				slog.Debug("listener encoder stdout read ended", "stream_id", streamID, "error", err)
+			}
+			return
+		}
+	}
+}
+
+func (m *Manager) stopStreamResources(streamID string, stream *Stream) {
+	if stream == nil {
+		return
+	}
+	if stream.mode == types.StreamModeListener {
+		m.stopListenerResources(streamID, stream)
+		return
+	}
+	stream.closeAudioCh()
+	stream.writerWg.Wait()
+}
+
+func (m *Manager) stopListenerResources(streamID string, stream *Stream) {
+	run := stream.detachEncoderRun(nil)
+	m.stopEncoderRun(streamID, run)
+
+	if stream.fanout != nil {
+		stream.fanout.Shutdown()
+		if err := stream.fanout.Wait(); err != nil {
+			slog.Warn("srt fanout shutdown returned error", "stream_id", streamID, "error", err)
+		}
+	}
+}
+
+func (s *Stream) detachEncoderRun(expected *encoderRun) *encoderRun {
+	s.encoderMu.Lock()
+	defer s.encoderMu.Unlock()
+
+	run := s.encoder
+	if expected != nil && run != expected {
+		return nil
+	}
+	if run != nil {
+		run.closeAudioCh()
+	}
+	s.encoder = nil
+	return run
+}
+
+func (m *Manager) stopEncoderRun(streamID string, run *encoderRun) {
+	if run == nil {
+		return
+	}
+	run.closeAudioCh()
+	if run.result != nil {
+		run.result.Cancel(errStoppedByUser)
+		m.waitEncoderRunGoroutines(streamID, run)
+		_ = run.result.Wait()
+		run.result.CloseStdin()
+		return
+	}
+	run.wg.Wait()
+}
+
+func (m *Manager) waitEncoderRunGoroutines(streamID string, run *encoderRun) {
+	done := make(chan struct{})
+	go func() {
+		run.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return
+	case <-time.After(5 * time.Second):
+		slog.Warn("listener encoder did not stop in time, sending signal", "stream_id", streamID)
+		_ = run.result.Signal()
+	}
+
+	select {
+	case <-done:
+		return
+	case <-time.After(2 * time.Second):
+		slog.Error("listener encoder force killed", "stream_id", streamID)
+		_ = run.result.Kill()
+	}
+
+	<-done
 }
 
 // Stop terminates a stream with proper graceful shutdown.
@@ -283,6 +549,23 @@ func (m *Manager) Stop(streamID string) error {
 	if stream.state == types.ProcessStarting {
 		delete(m.streams, streamID)
 		m.mu.Unlock()
+		return nil
+	}
+
+	if stream.mode == types.StreamModeListener {
+		stream.state = types.ProcessStopping
+		m.mu.Unlock()
+
+		slog.Info("stopping listener stream", "stream_id", streamID)
+		m.stopListenerResources(streamID, stream)
+
+		m.mu.Lock()
+		if m.streams[streamID] == stream {
+			delete(m.streams, streamID)
+		}
+		m.mu.Unlock()
+
+		m.emitEvent(streamID, "stream_stopped", "Stream stopped by user", "", 0, 0)
 		return nil
 	}
 
@@ -382,12 +665,40 @@ func (m *Manager) WriteAudio(streamID string, data []byte) error {
 		m.mu.RUnlock()
 		return nil
 	}
+	if stream.mode == types.StreamModeListener {
+		m.mu.RUnlock()
+		m.writeListenerAudio(streamID, stream, data)
+		return nil
+	}
 	ch := stream.audioCh
 
-	// Copy data - the caller reuses the buffer
-	buf := make([]byte, len(data))
-	copy(buf, data)
+	// Clone data - the caller reuses the buffer
+	buf := bytes.Clone(data)
 
+	stream.offerAudio(streamID, ch, buf, "audio buffer full, dropping chunk")
+
+	m.mu.RUnlock()
+	return nil
+}
+
+func (m *Manager) writeListenerAudio(streamID string, stream *Stream, data []byte) {
+	buf := bytes.Clone(data)
+
+	stream.encoderMu.RLock()
+	run := stream.encoder
+	if run == nil || run.audioCh == nil {
+		stream.encoderMu.RUnlock()
+		return
+	}
+	ch := run.audioCh
+	stream.offerAudio(streamID, ch, buf, "listener encoder audio buffer full, dropping chunk")
+	stream.encoderMu.RUnlock()
+}
+
+func (s *Stream) offerAudio(streamID string, ch chan []byte, buf []byte, logMessage string) {
+	// Each stream audio channel currently has one producer. Concurrent producers
+	// are memory-safe, but can race the final non-blocking send and skip their
+	// freshest chunk under contention.
 	// Drop-oldest: if full, discard one stale chunk, then enqueue fresh.
 	// Both inner selects have default cases to handle races with the
 	// writer goroutine that may drain the channel concurrently.
@@ -396,9 +707,9 @@ func (m *Manager) WriteAudio(streamID string, data []byte) error {
 	default:
 		select {
 		case <-ch:
-			drops := stream.audioDrops.Add(1)
+			drops := s.audioDrops.Add(1)
 			if drops == 1 || drops%100 == 0 {
-				slog.Warn("audio buffer full, dropping chunk",
+				slog.Warn(logMessage,
 					"stream_id", streamID, "total_drops", drops)
 			}
 		default:
@@ -408,9 +719,6 @@ func (m *Manager) WriteAudio(streamID string, data []byte) error {
 		default:
 		}
 	}
-
-	m.mu.RUnlock()
-	return nil
 }
 
 // Statuses returns status information for all managed streams.
@@ -428,6 +736,20 @@ func (m *Manager) Statuses(getStreamConfig func(string) *types.Stream) map[strin
 		isRunning := stream.state == types.ProcessRunning
 		runDuration := time.Since(stream.startTime)
 		isListener := stream.mode == types.StreamModeListener
+		encoderRunning := false
+		clientCount := int64(0)
+		errMsg := stream.lastError
+		if isListener {
+			stream.encoderMu.RLock()
+			encoderRunning = stream.encoder != nil
+			if stream.encoderLastErr != "" {
+				errMsg = stream.encoderLastErr
+			}
+			stream.encoderMu.RUnlock()
+			if stream.fanout != nil {
+				clientCount = stream.fanout.ClientCount()
+			}
+		}
 
 		var uptime string
 		if isRunning {
@@ -435,14 +757,16 @@ func (m *Manager) Statuses(getStreamConfig func(string) *types.Stream) map[strin
 		}
 
 		statuses[id] = types.ProcessStatus{
-			State:      stream.state,
-			Stable:     isRunning && !isListener && runDuration >= types.StableThreshold,
-			Exhausted:  stream.retryCount > maxRetries,
-			RetryCount: stream.retryCount,
-			MaxRetries: maxRetries,
-			Error:      stream.lastError,
-			Uptime:     uptime,
-			AudioDrops: stream.audioDrops.Load(),
+			State:          stream.state,
+			Stable:         isRunning && !isListener && runDuration >= types.StableThreshold,
+			Exhausted:      stream.retryCount > maxRetries,
+			RetryCount:     stream.retryCount,
+			MaxRetries:     maxRetries,
+			Error:          errMsg,
+			Uptime:         uptime,
+			AudioDrops:     stream.audioDrops.Load(),
+			EncoderRunning: isListener && encoderRunning,
+			ClientCount:    clientCount,
 		}
 	}
 	return statuses
@@ -515,8 +839,7 @@ func (m *Manager) Remove(streamID string) {
 	// The writer's error path acquires m.mu - waiting while holding
 	// the lock would deadlock.
 	if exists {
-		stream.closeAudioCh()
-		stream.writerWg.Wait()
+		m.stopStreamResources(streamID, stream)
 	}
 }
 
@@ -536,33 +859,21 @@ const (
 	streamExitNormalStop streamExitClass = iota
 	streamExitIntentionalStop
 	streamExitFailure
-	streamExitListenerRelisten
 )
 
 func classifyStreamExit(
-	mode types.StreamMode, err error, cause error, runDuration time.Duration,
+	mode types.StreamMode, err error, cause error,
 ) streamExitClass {
 	if errors.Is(cause, errStoppedByUser) {
 		return streamExitIntentionalStop
 	}
-	if mode.OrDefault() == types.StreamModeListener && runDuration >= types.ListenerStartFailureWindow {
-		return streamExitListenerRelisten
+	if mode.OrDefault() == types.StreamModeListener {
+		return streamExitFailure
 	}
 	if err != nil {
 		return streamExitFailure
 	}
 	return streamExitNormalStop
-}
-
-func listenerRelistenDelay(
-	now time.Time, state listenerRelistenWarningState,
-) (time.Duration, listenerRelistenWarningState, bool) {
-	if state.windowStart.IsZero() || now.Sub(state.windowStart) > types.ListenerRelistenWarningWindow {
-		state.windowStart = now
-		state.count = 0
-	}
-	state.count++
-	return types.ListenerRelistenDelay, state, state.count == types.ListenerRelistenWarningThreshold
 }
 
 func resolveExitError(result *ffmpeg.StartResult, err error) string {
@@ -580,22 +891,17 @@ func resolveExitError(result *ffmpeg.StartResult, err error) string {
 func (m *Manager) handleStreamExit(
 	streamID string, result *ffmpeg.StartResult, backoff *util.Backoff, mode types.StreamMode,
 	err error, runDuration time.Duration,
-) bool {
+) {
 	cause := context.Cause(result.Context())
 
-	switch classifyStreamExit(mode, err, cause, runDuration) {
+	switch classifyStreamExit(mode, err, cause) {
 	case streamExitIntentionalStop:
 		m.emitEvent(streamID, "stream_stopped", "Stream stopped by user", "", 0, 0)
-		return false
-	case streamExitListenerRelisten:
-		slog.Info("srt listener session ended, relistening",
-			"stream_id", streamID, "duration", runDuration, "error", resolveExitError(result, err))
-		m.ResetRetry(streamID)
-		return true
+		return
 	case streamExitNormalStop:
 		m.ResetRetry(streamID)
 		m.emitEvent(streamID, "stream_stopped", "Stream ended normally", "", 0, 0)
-		return false
+		return
 	case streamExitFailure:
 		// Handled by the shared error path below.
 	}
@@ -617,7 +923,6 @@ func (m *Manager) handleStreamExit(
 			backoff.Next()
 		}
 	}
-	return false
 }
 
 func (m *Manager) shouldContinueRetry(streamID string, ctx StreamContext) (shouldRetry bool, reason string) {
@@ -642,8 +947,6 @@ func (m *Manager) shouldContinueRetry(streamID string, ctx StreamContext) (shoul
 // MonitorAndRetry watches a stream and restarts it on failure. This method
 // blocks until the stream is stopped or retry limits are exceeded.
 func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <-chan struct{}) {
-	var relistenWarning listenerRelistenWarningState
-
 	for {
 		select {
 		case <-stopChan:
@@ -652,6 +955,10 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 		}
 
 		result, backoff, mode, exists := m.StreamInfo(streamID)
+		if exists && mode == types.StreamModeListener {
+			m.monitorListenerEncoder(streamID, ctx, stopChan)
+			return
+		}
 		if !exists || result == nil || backoff == nil {
 			return
 		}
@@ -661,7 +968,7 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 		runDuration := time.Since(startTime)
 
 		m.MarkStopped(streamID)
-		relisten := m.handleStreamExit(streamID, result, backoff, mode, err, runDuration)
+		m.handleStreamExit(streamID, result, backoff, mode, err, runDuration)
 
 		shouldRetry, reason := m.shouldContinueRetry(streamID, ctx)
 		if !shouldRetry {
@@ -675,25 +982,14 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 		}
 
 		retryDelay := backoff.Current()
-		if relisten {
-			var warn bool
-			retryDelay, relistenWarning, warn = listenerRelistenDelay(time.Now(), relistenWarning)
-			if warn {
-				slog.Warn("srt listener is relistening frequently",
-					"stream_id", streamID,
-					"count", relistenWarning.count,
-					"window", time.Since(relistenWarning.windowStart))
-			}
-		} else {
-			stream := ctx.Stream(streamID)
-			retryCount := m.RetryCount(streamID)
-			maxRetries := stream.MaxRetriesOrDefault()
-			slog.Info("stream stopped, waiting before retry",
-				"stream_id", streamID, "delay", retryDelay, "retry", retryCount, "max_retries", maxRetries)
-			m.emitEvent(streamID, "stream_retry",
-				fmt.Sprintf("Retrying in %s", retryDelay.Round(time.Second)),
-				"", retryCount, maxRetries)
-		}
+		stream := ctx.Stream(streamID)
+		retryCount := m.RetryCount(streamID)
+		maxRetries := stream.MaxRetriesOrDefault()
+		slog.Info("stream stopped, waiting before retry",
+			"stream_id", streamID, "delay", retryDelay, "retry", retryCount, "max_retries", maxRetries)
+		m.emitEvent(streamID, "stream_retry",
+			fmt.Sprintf("Retrying in %s", retryDelay.Round(time.Second)),
+			"", retryCount, maxRetries)
 
 		select {
 		case <-stopChan:
@@ -711,7 +1007,7 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 			return
 		}
 
-		stream := ctx.Stream(streamID)
+		stream = ctx.Stream(streamID)
 		started, err := m.Start(stream)
 		if err != nil {
 			slog.Error("failed to restart stream", "stream_id", streamID, "error", err)
@@ -725,4 +1021,169 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 			return
 		}
 	}
+}
+
+func (m *Manager) monitorListenerEncoder(streamID string, ctx StreamContext, stopChan <-chan struct{}) {
+	for {
+		select {
+		case <-stopChan:
+			return
+		default:
+		}
+
+		stream, run, backoff, exists := m.listenerEncoderInfo(streamID)
+		if !exists || stream == nil || backoff == nil || run == nil {
+			return
+		}
+
+		select {
+		case <-stopChan:
+			return
+		case <-run.stdoutDone:
+		}
+
+		if detached := stream.detachEncoderRun(run); detached == nil {
+			return
+		}
+		run.wg.Wait()
+		run.result.CloseStdin()
+		err := run.result.Wait()
+		runDuration := time.Since(run.startedAt)
+		cause := context.Cause(run.result.Context())
+
+		if errors.Is(cause, errStoppedByUser) {
+			return
+		}
+
+		errMsg := resolveExitError(run.result, err)
+		if errMsg == "" {
+			errMsg = "listener encoder exited"
+		}
+		m.recordListenerEncoderFailure(streamID, stream, backoff, errMsg, runDuration)
+
+		for {
+			cfg, ok := m.prepareListenerRetry(streamID, stream, ctx, errMsg)
+			if !ok {
+				return
+			}
+
+			retryDelay := backoff.Current()
+			retryCount := m.RetryCount(streamID)
+			maxRetries := cfg.MaxRetriesOrDefault()
+			slog.Info("listener encoder stopped, waiting before retry",
+				"stream_id", streamID, "delay", retryDelay, "retry", retryCount, "max_retries", maxRetries)
+			m.emitEvent(streamID, "stream_retry",
+				fmt.Sprintf("Retrying encoder in %s", retryDelay.Round(time.Second)),
+				"", retryCount, maxRetries)
+
+			select {
+			case <-stopChan:
+				return
+			case <-time.After(retryDelay):
+			}
+
+			cfg, ok = m.prepareListenerRetry(streamID, stream, ctx, errMsg)
+			if !ok {
+				return
+			}
+			if err := m.startListenerEncoderRun(streamID, stream, cfg); err != nil {
+				errMsg = err.Error()
+				slog.Error("failed to restart listener encoder", "stream_id", streamID, "error", err)
+				m.recordListenerEncoderFailure(streamID, stream, backoff, errMsg, 0)
+				continue
+			}
+			break
+		}
+	}
+}
+
+// prepareListenerRetry prepares the listener encoder to attempt another run.
+// When retry is no longer permitted it finalizes shutdown via
+// stopListenerAfterRetryEnd and returns ok=false; otherwise it returns the
+// current stream config.
+func (m *Manager) prepareListenerRetry(
+	streamID string, stream *Stream, ctx StreamContext, errMsg string,
+) (cfg *types.Stream, ok bool) {
+	shouldRetry, reason := m.shouldContinueRetry(streamID, ctx)
+	if !shouldRetry {
+		m.stopListenerAfterRetryEnd(streamID, stream, reason, errMsg)
+		return nil, false
+	}
+	cfg = ctx.Stream(streamID)
+	if cfg == nil {
+		m.stopListenerAfterRetryEnd(streamID, stream, "stream removed", errMsg)
+		return nil, false
+	}
+	return cfg, true
+}
+
+func (m *Manager) listenerEncoderInfo(
+	streamID string,
+) (stream *Stream, run *encoderRun, backoff *util.Backoff, exists bool) {
+	m.mu.RLock()
+	stream, exists = m.streams[streamID]
+	if !exists || stream.mode != types.StreamModeListener {
+		m.mu.RUnlock()
+		return nil, nil, nil, false
+	}
+	backoff = stream.backoff
+	m.mu.RUnlock()
+
+	stream.encoderMu.RLock()
+	run = stream.encoder
+	stream.encoderMu.RUnlock()
+	return stream, run, backoff, true
+}
+
+func (m *Manager) recordListenerEncoderFailure(
+	streamID string, stream *Stream, backoff *util.Backoff, errMsg string, runDuration time.Duration,
+) {
+	stream.encoderMu.Lock()
+	stream.encoderLastErr = errMsg
+	stream.encoderMu.Unlock()
+
+	slog.Error("listener encoder error", "stream_id", streamID, "error", errMsg)
+	m.emitEvent(streamID, "stream_error", "Listener encoder failed", errMsg, 0, 0)
+
+	m.mu.Lock()
+	if cur, exists := m.streams[streamID]; exists && cur == stream {
+		if runDuration >= types.SuccessThreshold {
+			cur.retryCount = 0
+			if backoff != nil {
+				backoff.Reset()
+			}
+		} else {
+			cur.retryCount++
+			if backoff != nil {
+				backoff.Next()
+			}
+		}
+	}
+	m.mu.Unlock()
+}
+
+func (m *Manager) stopListenerAfterRetryEnd(streamID string, stream *Stream, reason, errMsg string) {
+	if reason != "" {
+		slog.Info("listener encoder monitoring stopped", "stream_id", streamID, "reason", reason)
+	}
+
+	if reason == "max retries exceeded" {
+		m.mu.Lock()
+		if cur, exists := m.streams[streamID]; exists && cur == stream {
+			cur.state = types.ProcessError
+			cur.lastError = errMsg
+		}
+		m.mu.Unlock()
+
+		if stream.fanout != nil {
+			stream.fanout.Shutdown()
+			if err := stream.fanout.Wait(); err != nil {
+				slog.Warn("srt fanout shutdown after retry exhaustion returned error",
+					"stream_id", streamID, "error", err)
+			}
+		}
+		return
+	}
+
+	m.Remove(streamID)
 }

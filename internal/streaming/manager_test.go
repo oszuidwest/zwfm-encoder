@@ -2,11 +2,17 @@ package streaming
 
 import (
 	"errors"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/oszuidwest/zwfm-encoder/internal/srtfanout"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 // validStream returns a stream that reaches Start's state checks.
@@ -141,26 +147,6 @@ func TestMaybeEmitStableOnlyForSameRunningInstance(t *testing.T) {
 	}
 }
 
-func TestMaybeEmitStableSuppressesListener(t *testing.T) {
-	t.Parallel()
-
-	const id = "listener-1"
-	m := NewManager("ffmpeg")
-	var events []string
-	m.SetEventCallback(func(_, _, event, _, _ string, _, _ int) {
-		events = append(events, event)
-	}, nil)
-
-	started := &Stream{state: types.ProcessRunning, mode: types.StreamModeListener}
-	m.streams[id] = started
-
-	m.maybeEmitStable(id, started)
-
-	if slices.Contains(events, "stream_stable") {
-		t.Fatalf("maybeEmitStable emitted stream_stable for listener: events=%v", events)
-	}
-}
-
 func TestStatusesNeverMarksListenerStable(t *testing.T) {
 	t.Parallel()
 
@@ -189,100 +175,57 @@ func TestClassifyStreamExit(t *testing.T) {
 
 	errFailed := errors.New("ffmpeg failed")
 	tests := []struct {
-		name        string
-		mode        types.StreamMode
-		err         error
-		cause       error
-		runDuration time.Duration
-		want        streamExitClass
+		name  string
+		mode  types.StreamMode
+		err   error
+		cause error
+		want  streamExitClass
 	}{
 		{
-			name:        "caller failure uses retry path",
-			mode:        types.StreamModeCaller,
-			err:         errFailed,
-			runDuration: time.Second,
-			want:        streamExitFailure,
+			name: "caller failure uses retry path",
+			mode: types.StreamModeCaller,
+			err:  errFailed,
+			want: streamExitFailure,
 		},
 		{
-			name:        "listener failure inside start window uses retry path",
-			mode:        types.StreamModeListener,
-			err:         errFailed,
-			runDuration: types.ListenerStartFailureWindow - time.Millisecond,
-			want:        streamExitFailure,
+			name: "listener failure uses retry path",
+			mode: types.StreamModeListener,
+			err:  errFailed,
+			want: streamExitFailure,
 		},
 		{
-			name:        "listener exit after window relistens",
-			mode:        types.StreamModeListener,
-			err:         errFailed,
-			runDuration: types.ListenerStartFailureWindow,
-			want:        streamExitListenerRelisten,
+			name: "listener failure after old relisten window still uses retry path",
+			mode: types.StreamModeListener,
+			err:  errFailed,
+			want: streamExitFailure,
 		},
 		{
-			name:        "listener clean exit after window relistens",
-			mode:        types.StreamModeListener,
-			runDuration: types.ListenerStartFailureWindow + time.Second,
-			want:        streamExitListenerRelisten,
+			name: "listener clean exit is treated as encoder failure",
+			mode: types.StreamModeListener,
+			want: streamExitFailure,
 		},
 		{
-			name:        "intentional stop wins",
-			mode:        types.StreamModeListener,
-			err:         errFailed,
-			cause:       errStoppedByUser,
-			runDuration: types.ListenerStartFailureWindow + time.Second,
-			want:        streamExitIntentionalStop,
+			name:  "intentional stop wins",
+			mode:  types.StreamModeListener,
+			err:   errFailed,
+			cause: errStoppedByUser,
+			want:  streamExitIntentionalStop,
 		},
 		{
-			name:        "caller clean exit stops normally",
-			mode:        types.StreamModeCaller,
-			runDuration: time.Second,
-			want:        streamExitNormalStop,
+			name: "caller clean exit stops normally",
+			mode: types.StreamModeCaller,
+			want: streamExitNormalStop,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := classifyStreamExit(tt.mode, tt.err, tt.cause, tt.runDuration)
+			got := classifyStreamExit(tt.mode, tt.err, tt.cause)
 			if got != tt.want {
 				t.Fatalf("classifyStreamExit() = %v, want %v", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestListenerRelistenDelayWarnsOncePerWindow(t *testing.T) {
-	t.Parallel()
-
-	now := time.Unix(1000, 0)
-	var state listenerRelistenWarningState
-	for i := 1; i < types.ListenerRelistenWarningThreshold; i++ {
-		delay, nextState, warn := listenerRelistenDelay(now.Add(time.Duration(i)*time.Second), state)
-		if delay != types.ListenerRelistenDelay {
-			t.Fatalf("delay = %s, want %s", delay, types.ListenerRelistenDelay)
-		}
-		if warn {
-			t.Fatalf("iteration %d warned before threshold", i)
-		}
-		state = nextState
-	}
-
-	_, nextState, warn := listenerRelistenDelay(now.Add(10*time.Second), state)
-	if !warn {
-		t.Fatal("threshold iteration did not warn")
-	}
-	state = nextState
-
-	_, state, warn = listenerRelistenDelay(now.Add(11*time.Second), state)
-	if warn {
-		t.Fatal("post-threshold iteration warned again in the same window")
-	}
-
-	_, _, warn = listenerRelistenDelay(
-		state.windowStart.Add(types.ListenerRelistenWarningWindow+time.Nanosecond),
-		state,
-	)
-	if warn {
-		t.Fatal("first iteration in a new warning window warned")
 	}
 }
 
@@ -318,4 +261,360 @@ func TestStartReportsNotStartedWhenProcessLaunchFails(t *testing.T) {
 	if _, exists := m.streams[stream.ID]; exists {
 		t.Error("Start left a placeholder entry after a failed launch")
 	}
+}
+
+func TestListenerStartEncoderFailureReleasesFanoutPort(t *testing.T) {
+	port := freeUDPPort(t)
+	m := NewManager("/nonexistent/ffmpeg-binary-for-test")
+	stream := &types.Stream{
+		ID:      "listener-1",
+		Enabled: true,
+		Mode:    types.StreamModeListener,
+		Host:    "127.0.0.1",
+		Port:    port,
+		Codec:   types.CodecMP3,
+	}
+
+	started, err := m.Start(stream)
+	if err == nil {
+		t.Fatal("Start succeeded with a nonexistent ffmpeg binary")
+	}
+	if started {
+		t.Fatal("Start reported started=true when listener encoder launch failed")
+	}
+	if _, exists := m.streams[stream.ID]; exists {
+		t.Fatal("Start left a placeholder after listener encoder launch failed")
+	}
+	assertUDPPortAvailable(t, port)
+}
+
+func TestListenerFanoutStartFailureRemovesPlaceholder(t *testing.T) {
+	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		t.Fatalf("ListenUDP() error = %v", err)
+	}
+	defer func() {
+		if err := conn.Close(); err != nil {
+			t.Fatalf("UDP Close() error = %v", err)
+		}
+	}()
+
+	port := conn.LocalAddr().(*net.UDPAddr).Port
+	m := NewManager("unused-ffmpeg")
+	stream := &types.Stream{
+		ID:      "listener-bind-fail",
+		Enabled: true,
+		Mode:    types.StreamModeListener,
+		Host:    "127.0.0.1",
+		Port:    port,
+		Codec:   types.CodecMP3,
+	}
+
+	started, err := m.Start(stream)
+	if err == nil {
+		t.Fatal("Start(listener) succeeded while UDP port was already bound")
+	}
+	if started {
+		t.Fatal("Start(listener) reported started=true after fanout bind failure")
+	}
+	if _, exists := m.streams[stream.ID]; exists {
+		t.Fatal("Start left a placeholder after fanout bind failure")
+	}
+}
+
+func TestStartListenerWithFFmpegDoesNotRequireSRTProtocol(t *testing.T) {
+	ffmpegPath, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg not available")
+	}
+
+	port := freeUDPPort(t)
+	m := NewManager(ffmpegPath)
+	stream := &types.Stream{
+		ID:      "listener-1",
+		Enabled: true,
+		Mode:    types.StreamModeListener,
+		Host:    "127.0.0.1",
+		Port:    port,
+		Codec:   types.CodecMP3,
+	}
+
+	started, err := m.Start(stream)
+	if err != nil {
+		t.Fatalf("Start(listener) error = %v", err)
+	}
+	if !started {
+		t.Fatal("Start(listener) reported started=false")
+	}
+	if err := m.Stop(stream.ID); err != nil {
+		t.Fatalf("Stop(listener) error = %v", err)
+	}
+	assertUDPPortAvailable(t, port)
+}
+
+func TestStatusesIncludesListenerEncoderAndClientFields(t *testing.T) {
+	t.Parallel()
+
+	const id = "listener-1"
+	fanout, err := srtfanout.NewServer(srtfanout.Config{
+		Port: 9000,
+	})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	m := NewManager("ffmpeg")
+	stream := &Stream{
+		state:     types.ProcessRunning,
+		mode:      types.StreamModeListener,
+		startTime: time.Now().Add(-2 * types.StableThreshold),
+		fanout:    fanout,
+		encoder:   &encoderRun{},
+	}
+	m.streams[id] = stream
+
+	statuses := m.Statuses(func(string) *types.Stream {
+		return &types.Stream{ID: id, Mode: types.StreamModeListener, MaxRetries: 3}
+	})
+	status := statuses[id]
+	if status.Stable {
+		t.Fatal("listener status Stable = true, want false")
+	}
+	if !status.EncoderRunning {
+		t.Fatal("listener status EncoderRunning = false, want true")
+	}
+	if status.ClientCount != 0 {
+		t.Fatalf("listener status ClientCount = %d, want 0", status.ClientCount)
+	}
+}
+
+func TestWriteAudioListenerSkipsWhenNoEncoderRun(t *testing.T) {
+	t.Parallel()
+
+	m := NewManager("ffmpeg")
+	m.streams["listener-1"] = &Stream{
+		state: types.ProcessRunning,
+		mode:  types.StreamModeListener,
+	}
+
+	if err := m.WriteAudio("listener-1", []byte("pcm")); err != nil {
+		t.Fatalf("WriteAudio() error = %v", err)
+	}
+}
+
+func TestWriteAudioListenerUsesBoundedEncoderQueue(t *testing.T) {
+	t.Parallel()
+
+	m := NewManager("ffmpeg")
+	run := &encoderRun{audioCh: make(chan []byte, audioBufferSize)}
+	stream := &Stream{
+		state: types.ProcessRunning,
+		mode:  types.StreamModeListener,
+	}
+	stream.encoder = run
+	m.streams["listener-1"] = stream
+
+	for _, chunk := range [][]byte{
+		[]byte("one"),
+		[]byte("two"),
+		[]byte("three"),
+		[]byte("four"),
+		[]byte("five"),
+		[]byte("six"),
+	} {
+		if err := m.WriteAudio("listener-1", chunk); err != nil {
+			t.Fatalf("WriteAudio() error = %v", err)
+		}
+	}
+
+	if got := len(run.audioCh); got != audioBufferSize {
+		t.Fatalf("listener encoder queue len = %d, want %d", got, audioBufferSize)
+	}
+	if got := string(<-run.audioCh); got != "two" {
+		t.Fatalf("oldest queued chunk = %q, want two", got)
+	}
+	if got := stream.audioDrops.Load(); got != 1 {
+		t.Fatalf("audio drops = %d, want 1", got)
+	}
+}
+
+func TestMonitorListenerEncoderRetriesAndStopsFanoutOnExhaustion(t *testing.T) {
+	ffmpegPath := fakeLongRunningExecutable(t)
+	port := freeUDPPort(t)
+	m := NewManager(ffmpegPath)
+	stream := &types.Stream{
+		ID:         "listener-retry",
+		Enabled:    true,
+		Mode:       types.StreamModeListener,
+		Host:       "127.0.0.1",
+		Port:       port,
+		Codec:      types.CodecMP3,
+		MaxRetries: 1,
+	}
+
+	started, err := m.Start(stream)
+	if err != nil {
+		t.Fatalf("Start(listener) error = %v", err)
+	}
+	if !started {
+		t.Fatal("Start(listener) reported started=false")
+	}
+	assertUDPPortUnavailable(t, port)
+
+	m.mu.Lock()
+	managed := m.streams[stream.ID]
+	managed.backoff = util.NewBackoff(500*time.Millisecond, 500*time.Millisecond)
+	m.mu.Unlock()
+
+	stopChan := make(chan struct{})
+	t.Cleanup(func() {
+		close(stopChan)
+		if err := m.Stop(stream.ID); err != nil {
+			t.Fatalf("Stop(listener) cleanup error = %v", err)
+		}
+	})
+
+	ctx := staticStreamContext{stream: stream}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		m.MonitorAndRetry(stream.ID, ctx, stopChan)
+	}()
+
+	firstRun := waitListenerRun(t, m, stream.ID, nil)
+	if err := firstRun.result.Kill(); err != nil {
+		t.Fatalf("first encoder Kill() error = %v", err)
+	}
+
+	waitStatus(t, m, stream.ID, func(status types.ProcessStatus) bool {
+		return status.State == types.ProcessRunning && !status.EncoderRunning
+	}, "listener encoder to stop while fanout remains running")
+	assertUDPPortUnavailable(t, port)
+
+	secondRun := waitListenerRun(t, m, stream.ID, firstRun)
+	if err := secondRun.result.Kill(); err != nil {
+		t.Fatalf("second encoder Kill() error = %v", err)
+	}
+
+	waitStatus(t, m, stream.ID, func(status types.ProcessStatus) bool {
+		return status.State == types.ProcessError && !status.EncoderRunning
+	}, "listener retry exhaustion to mark the stream errored")
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("MonitorAndRetry did not return after listener retry exhaustion")
+	}
+	assertUDPPortAvailable(t, port)
+}
+
+func freeUDPPort(t *testing.T) int {
+	t.Helper()
+	addr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ResolveUDPAddr() error = %v", err)
+	}
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		t.Fatalf("ListenUDP() error = %v", err)
+	}
+	defer func() {
+		if err := conn.Close(); err != nil {
+			t.Fatalf("UDP Close() error = %v", err)
+		}
+	}()
+	return conn.LocalAddr().(*net.UDPAddr).Port
+}
+
+func fakeLongRunningExecutable(t *testing.T) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "fake-ffmpeg")
+	script := "#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n"
+	//nolint:gosec // Test helper must be executable and lives in t.TempDir().
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake ffmpeg) error = %v", err)
+	}
+	return path
+}
+
+func assertUDPPortAvailable(t *testing.T, port int) {
+	t.Helper()
+	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: port}
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		t.Fatalf("UDP port %d is not available after cleanup: %v", port, err)
+	}
+	_ = conn.Close()
+}
+
+func assertUDPPortUnavailable(t *testing.T, port int) {
+	t.Helper()
+	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: port}
+	conn, err := net.ListenUDP("udp", addr)
+	if err == nil {
+		if closeErr := conn.Close(); closeErr != nil {
+			t.Fatalf("UDP Close() error = %v", closeErr)
+		}
+		t.Fatalf("UDP port %d is available while fanout should own it", port)
+	}
+}
+
+func waitListenerRun(t *testing.T, m *Manager, streamID string, previous *encoderRun) *encoderRun {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		m.mu.RLock()
+		stream := m.streams[streamID]
+		m.mu.RUnlock()
+		if stream != nil {
+			stream.encoderMu.RLock()
+			run := stream.encoder
+			stream.encoderMu.RUnlock()
+			if run != nil && run != previous {
+				return run
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for listener encoder run after %p", previous)
+	return nil
+}
+
+func waitStatus(
+	t *testing.T,
+	m *Manager,
+	streamID string,
+	match func(types.ProcessStatus) bool,
+	desc string,
+) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		statuses := m.Statuses(func(string) *types.Stream {
+			return &types.Stream{ID: streamID, Mode: types.StreamModeListener, MaxRetries: 1}
+		})
+		status, ok := statuses[streamID]
+		if ok && match(status) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", desc)
+}
+
+type staticStreamContext struct {
+	stream *types.Stream
+}
+
+func (c staticStreamContext) Stream(streamID string) *types.Stream {
+	if c.stream != nil && c.stream.ID == streamID {
+		return c.stream
+	}
+	return nil
+}
+
+func (c staticStreamContext) IsRunning() bool {
+	return true
 }

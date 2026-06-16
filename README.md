@@ -1,12 +1,13 @@
 # ZuidWest FM Encoder
 
-Audio streaming software for [ZuidWest FM](https://www.zuidwestfm.nl/) (Linux), [Radio Rucphen](https://www.rucphenrtv.nl/) (Linux) and [BredaNu](https://www.bredanu.nl/) (Windows, also the sole user of the Zabbix integration). Stream audio from a Raspberry Pi to multiple SRT destinations simultaneously. Built for broadcast environments with real-time monitoring and web-based configuration.
+Audio streaming software for [ZuidWest FM](https://www.zuidwestfm.nl/) (Linux), [Radio Rucphen](https://www.rucphenrtv.nl/) (Linux) and [BredaNu](https://www.bredanu.nl/) (Windows, also the sole user of the Zabbix integration). Stream audio from a Raspberry Pi to remote SRT destinations, or expose local SRT pull listeners for multiple clients. Built for broadcast environments with real-time monitoring and web-based configuration.
 
 <img src="https://github.com/oszuidwest/rpi-audio-encoder/assets/6742496/9070cb82-23be-4a31-8342-6607545d50eb" alt="Raspberry Pi and SRT logo" width="50%">
 
 ## Features
 
-- **Multi-output streaming** - Send to multiple SRT servers with different codecs simultaneously
+- **Multi-output streaming** - Push to multiple SRT servers with different codecs simultaneously
+- **Multi-client SRT listeners** - Open local pull endpoints so multiple clients can receive the same encoded stream
 - **Real-time VU meters** - Configurable peak hold with peak/RMS toggle, clip detection, updated via WebSocket
 - **Silence detection** - Alerts via webhook, email, file log, or Zabbix when audio drops below threshold
 - **Channel imbalance detection** - Detects dead or mismatched L/R channels with live UI state, event log entries, and readiness status
@@ -35,7 +36,7 @@ Install via the curl script in [Installation](#installation) below. CI publishes
 - Raspberry Pi 4 or 5
 - [HiFiBerry Digi+ I/O](https://www.hifiberry.com/shop/boards/hifiberry-digi-io/) or [HiFiBerry DAC+ ADC](https://www.hifiberry.com/shop/boards/dacplus-adc/)
 - Raspberry Pi OS Trixie Lite (64-bit)
-- `ffmpeg` (for encoding)
+- `ffmpeg` (for encoding; SRT protocol support is only required for push/caller streams)
 - `alsa-utils` (for audio capture via `arecord`)
 
 ## Installation
@@ -176,11 +177,11 @@ The installer creates a minimal config file. All other settings are configured t
 Streams can run in two SRT modes:
 
 - **Push to server** (`mode: "caller"`): the encoder connects to a remote SRT listener. `host`, `port`, optional `stream_id`, codec, password, and retry settings behave as before.
-- **Local pull listener** (`mode: "listener"`): the encoder opens a local SRT UDP port and clients connect to the Raspberry Pi, for example `srt://<encoder-ip>:9000?mode=caller`.
+- **Local pull listener** (`mode: "listener"`): the encoder opens a local SRT UDP port and multiple clients can connect to the Raspberry Pi at the same time, for example `srt://<encoder-ip>:9000?mode=caller`.
 
-Listener streams bind to `0.0.0.0` when no bind address is entered. They use MP3 by default for broad client compatibility; PCM remains available for clients that support SMPTE 302M in MPEG-TS. The current local listener is a single-client socket: only one client can be connected to a listener stream at a time. After that client disconnects, the encoder starts a new listener process after a short fixed delay.
+Listener streams bind to `0.0.0.0` when no bind address is entered and do not use `stream_id`; use a separate port for each local listener stream. They use MP3 by default for broad client compatibility; Opus and PCM remain available in MPEG-TS for clients that support them. GoSRT owns the listener socket and fans out one FFmpeg encoder pipe to subscribers, so client disconnects do not restart the encoder. Each listener accepts up to 16 active clients; extra subscribers are rejected until a client disconnects. The stream status shows the listener state, FFmpeg encoder health, and active client count separately.
 
-SRT encryption is optional. Empty passwords leave `passphrase` and `pbkeylen` unset. Non-empty passwords must be 10-64 characters and are sent to FFmpeg with `pbkeylen=16`. The configured FFmpeg build must list the exact `srt` protocol in `ffmpeg -hide_banner -protocols`; `srtp` alone is not enough.
+SRT encryption is optional. Empty passwords allow unencrypted subscribers. Non-empty passwords must be 10-64 characters and use `pbkeylen=16`; password-protected listener streams reject unencrypted subscribers. The configured FFmpeg build must list the exact `srt` protocol in `ffmpeg -hide_banner -protocols` for caller streams; `srtp` alone is not enough. Listener streams do not require FFmpeg SRT support because FFmpeg writes encoded bytes to stdout and GoSRT handles SRT subscribers.
 
 ## Event Log
 
@@ -273,10 +274,11 @@ flowchart LR
 
     subgraph Outputs["Streaming Outputs"]
         OM[Stream Manager<br>Retry + Backoff]
-        F1[FFmpeg MP3]
-        F2[FFmpeg Opus]
-        S1[SRT 1]
-        S2[SRT 2]
+        F1[FFmpeg caller output]
+        F2[FFmpeg listener encoder]
+        FO[GoSRT fan-out]
+        S1[Remote SRT listener]
+        S2[Local SRT clients]
     end
 
     subgraph Recording["Recording"]
@@ -331,8 +333,8 @@ flowchart LR
 
     %% Streaming
     D ==>|PCM| OM
-    OM ==>|PCM| F1 -->|SRT| S1
-    OM ==>|PCM| F2 -->|SRT| S2
+    OM ==>|PCM| F1 -->|SRT caller| S1
+    OM ==>|PCM| F2 -->|pipe| FO -->|SRT listener| S2
     OM -->|events| EL
 
     %% Recording
@@ -351,7 +353,7 @@ flowchart LR
 4. **Silence Detection**: Hysteresis-based detection with configurable threshold/duration/recovery. Buffers 15s audio context before/after silence events
 5. **Channel Imbalance Detection**: Hysteresis-based L/R balance detection with configurable threshold/duration/recovery. Reuses the silence threshold as a presence floor and reports live balance/imbalance values.
 6. **Alerting**: Silence events trigger webhook, email (MS Graph), log (JSON Lines), and/or Zabbix. Each channel has per-event subscriptions for `silence_start`, `silence_end`, and `audio_dump`. `silence_end` fires immediately on recovery; the `audio_dump_ready` event fires separately once the MP3 is ready. Channel imbalance events are logged and surfaced in health/readiness. Abandoned S3 uploads also trigger notifications.
-7. **Streaming**: Per-output FFmpeg processes; caller streams use retry/backoff, listener streams relisten after client disconnect
+7. **Streaming**: Per-output FFmpeg encoders; caller streams use FFmpeg SRT with retry/backoff, listener streams use a GoSRT multi-client fan-out around one FFmpeg stdout pipe
 8. **Recording**: Hourly rotation or on-demand, with optional S3 upload
 9. **Event Log**: All stream, audio, and recording events written to a JSON Lines file; accessible via web UI and REST API with pagination
 
