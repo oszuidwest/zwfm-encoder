@@ -3,6 +3,7 @@ package streaming
 import (
 	"net/url"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
@@ -155,7 +156,7 @@ func TestBuildListenerPipeArgs(t *testing.T) {
 			if got := containsFlagValue(args, "-pat_period", "0.1"); got != tt.wantPAT {
 				t.Fatalf("contains -pat_period 0.1 = %v, want %v; args=%v", got, tt.wantPAT, args)
 			}
-			if stringsContainPrefix(args, "srt://") {
+			if slices.ContainsFunc(args, func(arg string) bool { return strings.HasPrefix(arg, "srt://") }) {
 				t.Fatalf("listener pipe args contain SRT URL: %v", args)
 			}
 		})
@@ -165,15 +166,6 @@ func TestBuildListenerPipeArgs(t *testing.T) {
 func containsFlagValue(args []string, flag, value string) bool {
 	for i := 0; i < len(args)-1; i++ {
 		if args[i] == flag && args[i+1] == value {
-			return true
-		}
-	}
-	return false
-}
-
-func stringsContainPrefix(values []string, prefix string) bool {
-	for _, value := range values {
-		if len(value) >= len(prefix) && value[:len(prefix)] == prefix {
 			return true
 		}
 	}

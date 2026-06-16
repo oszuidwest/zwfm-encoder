@@ -2,10 +2,13 @@
 package srtfanout
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -133,13 +136,9 @@ func (s *Server) serve() {
 // Shutdown stops accepting subscribers and closes all active subscriber connections.
 func (s *Server) Shutdown() {
 	s.stopOnce.Do(func() {
-		var subscribers []*subscriber
 		s.mu.Lock()
 		s.stopping = true
-		subscribers = make([]*subscriber, 0, len(s.subscribers))
-		for sub := range s.subscribers {
-			subscribers = append(subscribers, sub)
-		}
+		subscribers := slices.Collect(maps.Keys(s.subscribers))
 		s.mu.Unlock()
 
 		if s.server != nil {
@@ -179,8 +178,7 @@ func (s *Server) Write(chunk []byte) {
 		return
 	}
 
-	buf := make([]byte, len(chunk))
-	copy(buf, chunk)
+	buf := bytes.Clone(chunk)
 
 	for sub := range s.subscribers {
 		if dropped := sub.enqueue(buf); dropped {

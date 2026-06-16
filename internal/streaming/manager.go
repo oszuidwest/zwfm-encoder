@@ -1,6 +1,7 @@
 package streaming
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -671,9 +672,8 @@ func (m *Manager) WriteAudio(streamID string, data []byte) error {
 	}
 	ch := stream.audioCh
 
-	// Copy data - the caller reuses the buffer
-	buf := make([]byte, len(data))
-	copy(buf, data)
+	// Clone data - the caller reuses the buffer
+	buf := bytes.Clone(data)
 
 	stream.offerAudio(streamID, ch, buf, "audio buffer full, dropping chunk")
 
@@ -682,8 +682,7 @@ func (m *Manager) WriteAudio(streamID string, data []byte) error {
 }
 
 func (m *Manager) writeListenerAudio(streamID string, stream *Stream, data []byte) {
-	buf := make([]byte, len(data))
-	copy(buf, data)
+	buf := bytes.Clone(data)
 
 	stream.encoderMu.RLock()
 	run := stream.encoder
