@@ -182,6 +182,13 @@ func (s *Stream) ModeOrDefault() StreamMode {
 	return s.Mode.OrDefault()
 }
 
+// RequiresFFmpegSRT reports whether the stream depends on FFmpeg's SRT output.
+// Caller streams stream SRT through FFmpeg; listener streams serve SRT via the
+// gosrt fanout, so FFmpeg's SRT capability is irrelevant to them.
+func (s *Stream) RequiresFFmpegSRT() bool {
+	return s.ModeOrDefault() != StreamModeListener
+}
+
 // ListenerBindHost returns the bind host for listener streams.
 func (s *Stream) ListenerBindHost() string {
 	host := strings.TrimSpace(s.Host)

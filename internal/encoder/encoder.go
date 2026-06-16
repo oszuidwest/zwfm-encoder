@@ -357,9 +357,7 @@ func (e *Encoder) StreamStatuses(streams []types.Stream) map[string]types.Proces
 				State:      types.ProcessDisabled,
 				MaxRetries: stream.MaxRetriesOrDefault(),
 			}
-		// Listener streams serve SRT via the gosrt fanout, not FFmpeg's SRT
-		// output, so FFmpeg's caller SRT capability is irrelevant to them.
-		case stream.ModeOrDefault() != types.StreamModeListener && e.srtCapabilityError() != nil:
+		case stream.RequiresFFmpegSRT() && e.srtCapabilityError() != nil:
 			result[stream.ID] = types.ProcessStatus{
 				State:      types.ProcessError,
 				MaxRetries: stream.MaxRetriesOrDefault(),
@@ -530,7 +528,7 @@ func (e *Encoder) StartStream(streamID string) error {
 	if !stream.Enabled {
 		return ErrStreamDisabled
 	}
-	if stream.ModeOrDefault() != types.StreamModeListener && !e.srtAvailable {
+	if stream.RequiresFFmpegSRT() && !e.srtAvailable {
 		return e.srtSentinel()
 	}
 
