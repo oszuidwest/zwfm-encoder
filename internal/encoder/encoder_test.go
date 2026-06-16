@@ -3,15 +3,24 @@ package encoder
 import (
 	"errors"
 	"net"
+	"os"
+	"os/signal"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/notify"
+	"github.com/oszuidwest/zwfm-encoder/internal/recording"
+	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 	"github.com/oszuidwest/zwfm-encoder/internal/streaming"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
+
+const testStreamRestartDelay = 200 * time.Millisecond
 
 // TestStartRejectsStateStopping verifies that Start() returns ErrAlreadyRunning when the
 // encoder is in StateStopping. This guards against the regression where the MaxRetries
@@ -44,6 +53,97 @@ func TestStartRejectsStateStopping(t *testing.T) {
 
 	if err := e.Start(); !errors.Is(err, ErrAlreadyRunning) {
 		t.Errorf("Start() in StateStopping = %v, want ErrAlreadyRunning", err)
+	}
+}
+
+func TestDelayedStarterDoesNotStartManagersAfterQuickSourceExit(t *testing.T) {
+	e := newSourceLifecycleTestEncoder(t, "exit")
+
+	if err := e.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	waitForCondition(t, time.Second, "source retry after quick exit", func() bool {
+		e.mu.RLock()
+		defer e.mu.RUnlock()
+		return e.state == types.StateStarting && e.retryCount > 0
+	})
+	time.Sleep(3 * testStreamRestartDelay)
+
+	if e.recordingManager.IsRunning() {
+		t.Fatal("recording manager was started by a stale delayed source starter")
+	}
+	if e.silenceDumpManager.IsRunning() {
+		t.Fatal("silence dump manager was started by a stale delayed source starter")
+	}
+}
+
+func TestStopBeforeStreamDelayCancelsDelayedStarter(t *testing.T) {
+	readyPath := filepath.Join(t.TempDir(), "capture-ready")
+	e := newSourceLifecycleTestEncoder(t, "sleep", readyPath)
+
+	if err := e.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	waitForCondition(t, time.Second, "source running", func() bool {
+		e.mu.RLock()
+		defer e.mu.RUnlock()
+		return e.state == types.StateRunning && e.sourceCmd != nil && e.sourceRunID > 0
+	})
+	waitForCondition(t, testStreamRestartDelay/2, "capture helper signal readiness", func() bool {
+		_, err := os.Stat(readyPath)
+		return err == nil
+	})
+
+	if err := e.Stop(); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	time.Sleep(3 * testStreamRestartDelay)
+
+	if e.recordingManager.IsRunning() {
+		t.Fatal("recording manager was revived after Stop() canceled the delayed starter")
+	}
+	if e.silenceDumpManager.IsRunning() {
+		t.Fatal("silence dump manager was revived after Stop() canceled the delayed starter")
+	}
+}
+
+func TestSourceMaxRetryExhaustionStopsRecordingManager(t *testing.T) {
+	e := newSourceLifecycleTestEncoder(t, "exit")
+	if err := e.recordingManager.Start(); err != nil {
+		t.Fatalf("recordingManager.Start() error = %v", err)
+	}
+	e.silenceDumpManager.Start()
+
+	e.mu.Lock()
+	e.state = types.StateStarting
+	e.stopChan = make(chan struct{})
+	e.retryCount = types.MaxRetries - 1
+	e.backoff.Reset()
+	e.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		e.runSourceLoop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("runSourceLoop did not stop after source retries were exhausted")
+	}
+	time.Sleep(3 * testStreamRestartDelay)
+
+	if got := e.State(); got != types.StateStopped {
+		t.Fatalf("State() = %q, want %q", got, types.StateStopped)
+	}
+	if e.recordingManager.IsRunning() {
+		t.Fatal("recording manager is still running after source retries were exhausted")
+	}
+	if e.silenceDumpManager.IsRunning() {
+		t.Fatal("silence dump manager is still running after source retries were exhausted")
 	}
 }
 
@@ -224,4 +324,105 @@ func freeUDPPort(t *testing.T) int {
 		}
 	}()
 	return conn.LocalAddr().(*net.UDPAddr).Port
+}
+
+func newSourceLifecycleTestEncoder(t *testing.T, helperMode string, helperArgs ...string) *Encoder {
+	t.Helper()
+
+	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
+	cfg.Audio.Input = "test-device"
+	cfg.Streaming.Streams = []types.Stream{}
+	cfg.Recording.Recorders = []types.Recorder{}
+	cfg.Recording.MaxDurationMinutes = config.DefaultRecordingMaxDurationMinutes
+
+	recordingManager, err := recording.NewManager("", t.TempDir(), config.DefaultRecordingMaxDurationMinutes, nil)
+	if err != nil {
+		t.Fatalf("recording.NewManager() error = %v", err)
+	}
+
+	e := &Encoder{
+		config:              cfg,
+		buildCaptureCommand: helperCaptureCommand(helperMode, helperArgs...),
+		streamRestartDelay:  testStreamRestartDelay,
+		streamManager:       streaming.NewManager(""),
+		recordingManager:    recordingManager,
+		silenceDumpManager:  silencedump.NewManager("", 0, false, 0, nil),
+		state:               types.StateStopped,
+		backoff:             util.NewBackoff(types.InitialRetryDelay, types.MaxRetryDelay),
+		silenceDetect:       audio.NewSilenceDetector(),
+		imbalanceDetect:     audio.NewImbalanceDetector(),
+		alertOrchestrator:   notify.NewAlertOrchestrator(cfg, notify.NewDispatcher()),
+		peakHolder:          audio.NewPeakHolder(),
+	}
+
+	t.Cleanup(func() {
+		_ = e.Stop()
+		if e.recordingManager != nil {
+			_ = e.recordingManager.Stop()
+		}
+		if e.silenceDumpManager != nil {
+			e.silenceDumpManager.Stop()
+		}
+	})
+
+	return e
+}
+
+func helperCaptureCommand(mode string, extraArgs ...string) func(string, string) (string, []string, error) {
+	return func(_, _ string) (string, []string, error) {
+		args := []string{"-test.run=TestEncoderCaptureHelperProcess", "--", mode}
+		args = append(args, extraArgs...)
+		return os.Args[0], args, nil
+	}
+}
+
+func TestEncoderCaptureHelperProcess(t *testing.T) {
+	helperArgs := []string{}
+	for i, arg := range os.Args {
+		if arg == "--" && i+1 < len(os.Args) {
+			helperArgs = os.Args[i+1:]
+			break
+		}
+	}
+	if len(helperArgs) == 0 {
+		return
+	}
+
+	mode := helperArgs[0]
+	switch mode {
+	case "exit":
+		os.Exit(1)
+	case "sleep":
+		signals := make(chan os.Signal, 1)
+		signal.Notify(signals, util.ShutdownSignals()...)
+		if len(helperArgs) > 1 {
+			//nolint:gosec // G703: helperArgs[1] is a temp-file path created by this test process.
+			if err := os.WriteFile(helperArgs[1], []byte("ready"), 0o600); err != nil {
+				signal.Stop(signals)
+				os.Exit(2)
+			}
+		}
+
+		select {
+		case <-signals:
+		case <-time.After(time.Minute):
+		}
+		signal.Stop(signals)
+		os.Exit(0)
+	default:
+		os.Exit(2)
+	}
+}
+
+func waitForCondition(t *testing.T, timeout time.Duration, description string, condition func() bool) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", description)
 }

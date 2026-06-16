@@ -61,6 +61,8 @@ var ErrRecordingNotAvailable = errors.New("recording not available")
 type Encoder struct {
 	config              *config.Config
 	ffmpegPath          string
+	buildCaptureCommand func(device, ffmpegPath string) (string, []string, error)
+	streamRestartDelay  time.Duration
 	srtAvailable        bool
 	srtProbeError       error
 	streamManager       *streaming.Manager
@@ -70,6 +72,7 @@ type Encoder struct {
 	sourceCmd           *exec.Cmd
 	sourceCancel        context.CancelFunc
 	sourceStdout        io.ReadCloser
+	sourceRunID         uint64
 	state               types.EncoderState
 	stopChan            chan struct{}
 	mu                  sync.RWMutex
@@ -131,6 +134,8 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 	e := &Encoder{
 		config:              cfg,
 		ffmpegPath:          ffmpegPath,
+		buildCaptureCommand: audio.BuildCaptureCommand,
+		streamRestartDelay:  types.StreamRestartDelay,
 		srtAvailable:        srtAvailable,
 		srtProbeError:       srtProbeErr,
 		streamManager:       streamMgr,
@@ -511,10 +516,15 @@ func (e *Encoder) Close() error {
 
 // StartStream initiates a streaming process.
 func (e *Encoder) StartStream(streamID string) error {
+	return e.startStream(streamID, 0)
+}
+
+func (e *Encoder) startStream(streamID string, runID uint64) error {
 	var stopChan chan struct{}
 
 	e.mu.RLock()
-	if e.state != types.StateRunning {
+	activeRun := runID == 0 || e.sourceRunID == runID
+	if e.state != types.StateRunning || !activeRun {
 		e.mu.RUnlock()
 		return ErrNotRunning
 	}
@@ -634,6 +644,11 @@ func (e *Encoder) runSourceLoop() {
 		runDuration := time.Since(startTime)
 
 		e.mu.Lock()
+		if e.state == types.StateStopping || e.state == types.StateStopped {
+			e.mu.Unlock()
+			return
+		}
+
 		if err != nil {
 			errMsg := err.Error()
 			if stderrOutput != "" {
@@ -656,6 +671,11 @@ func (e *Encoder) runSourceLoop() {
 				e.mu.Unlock()
 				if err := e.streamManager.StopAll(); err != nil {
 					slog.Error("failed to stop streams during source failure", "error", err)
+				}
+				if e.recordingManager != nil {
+					if err := e.recordingManager.Stop(); err != nil {
+						slog.Error("failed to stop recording during source failure", "error", err)
+					}
 				}
 				e.silenceDetect.Reset()
 				e.imbalanceDetect.Reset()
@@ -698,7 +718,11 @@ func (e *Encoder) runSourceLoop() {
 // runSource starts the audio capture process and blocks until it exits.
 func (e *Encoder) runSource() (string, error) {
 	audioInput := e.config.Snapshot().AudioInput
-	cmdName, args, err := audio.BuildCaptureCommand(audioInput, e.ffmpegPath)
+	buildCaptureCommand := e.buildCaptureCommand
+	if buildCaptureCommand == nil {
+		buildCaptureCommand = audio.BuildCaptureCommand
+	}
+	cmdName, args, err := buildCaptureCommand(audioInput, e.ffmpegPath)
 	if err != nil {
 		return "", err
 	}
@@ -724,27 +748,46 @@ func (e *Encoder) runSource() (string, error) {
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf
 
+	if err := cmd.Start(); err != nil {
+		cancel()
+		return "", err
+	}
+
+	var (
+		published bool
+		runID     uint64
+		stopChan  <-chan struct{}
+	)
 	func() {
 		e.mu.Lock()
 		defer e.mu.Unlock()
+		if e.state == types.StateStopping || e.state == types.StateStopped {
+			return
+		}
+		e.sourceRunID++
+		runID = e.sourceRunID
+		stopChan = e.stopChan
 		e.sourceCmd = cmd
 		e.sourceCancel = cancel
 		e.sourceStdout = stdoutPipe
 		e.state = types.StateRunning
 		e.startTime = time.Now()
 		e.lastError = ""
+		published = true
 	}()
-	e.resetAudioLevels() // start each run silent until the first metered chunk
-
-	if err := cmd.Start(); err != nil {
-		return "", err
+	if !published {
+		cancel()
+		err := cmd.Wait()
+		return util.ExtractLastError(stderrBuf.String()), err
 	}
 
-	// Start distributor and streams after brief delay
-	go func() {
-		time.Sleep(types.StreamRestartDelay)
-		e.startEnabledStreams()
-	}()
+	e.resetAudioLevels() // start each run silent until the first metered chunk
+
+	delay := e.streamRestartDelay
+	if delay == 0 {
+		delay = types.StreamRestartDelay
+	}
+	go e.startEnabledStreamsAfterDelay(runID, stopChan, delay)
 
 	err = cmd.Wait()
 
@@ -760,24 +803,56 @@ func (e *Encoder) runSource() (string, error) {
 	return util.ExtractLastError(stderrBuf.String()), err
 }
 
-func (e *Encoder) startEnabledStreams() {
+func (e *Encoder) startEnabledStreamsAfterDelay(runID uint64, stopChan <-chan struct{}, delay time.Duration) {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-timer.C:
+		e.startEnabledStreams(runID)
+	case <-stopChan:
+	}
+}
+
+func (e *Encoder) sourceRunActive(runID uint64) bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.sourceRunID == runID && e.state == types.StateRunning && e.sourceStdout != nil
+}
+
+func (e *Encoder) startEnabledStreams(runID uint64) {
+	if !e.sourceRunActive(runID) {
+		return
+	}
+
 	// Start silence dump manager (cleanup scheduler)
 	if e.silenceDumpManager != nil {
 		e.silenceDumpManager.Start()
 	}
 
-	go e.runDistributor()
+	if !e.sourceRunActive(runID) {
+		return
+	}
+
+	go e.runDistributor(runID)
 
 	streams := e.config.ConfiguredStreams()
 	for i := range streams {
+		if !e.sourceRunActive(runID) {
+			return
+		}
 		stream := &streams[i]
 		if !stream.Enabled {
 			slog.Info("skipping disabled stream", "stream_id", stream.ID)
 			continue
 		}
-		if err := e.StartStream(stream.ID); err != nil {
+		if err := e.startStream(stream.ID, runID); err != nil {
 			slog.Error("failed to start stream", "stream_id", stream.ID, "error", err)
 		}
+	}
+
+	if !e.sourceRunActive(runID) {
+		return
 	}
 
 	// Start recording manager (starts auto-start recorders)
@@ -789,7 +864,7 @@ func (e *Encoder) startEnabledStreams() {
 }
 
 // runDistributor reads PCM audio and fans it out to meters, alerts, streams, and recorders.
-func (e *Encoder) runDistributor() {
+func (e *Encoder) runDistributor(runID uint64) {
 	buf := make([]byte, distributorBufferSize)
 
 	distributor := NewDistributor(DistributorConfig{
@@ -810,9 +885,10 @@ func (e *Encoder) runDistributor() {
 		state := e.state
 		reader := e.sourceStdout
 		stopChan := e.stopChan
+		activeRun := e.sourceRunID == runID
 		e.mu.RUnlock()
 
-		if state != types.StateRunning || reader == nil {
+		if !activeRun || state != types.StateRunning || reader == nil {
 			return
 		}
 
