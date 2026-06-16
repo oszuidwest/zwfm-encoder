@@ -1,6 +1,7 @@
 package streaming
 
 import (
+	"bytes"
 	"errors"
 	"net"
 	"os"
@@ -509,6 +510,96 @@ func TestMonitorListenerEncoderRetriesAndStopsFanoutOnExhaustion(t *testing.T) {
 	assertUDPPortAvailable(t, port)
 }
 
+func TestMonitorListenerEncoderReleasesBlockedWriterAfterStdoutEnds(t *testing.T) {
+	origSignalTimeout := encoderRunSignalTimeout
+	origKillTimeout := encoderRunKillTimeout
+	encoderRunSignalTimeout = 50 * time.Millisecond
+	encoderRunKillTimeout = 50 * time.Millisecond
+	t.Cleanup(func() {
+		encoderRunSignalTimeout = origSignalTimeout
+		encoderRunKillTimeout = origKillTimeout
+	})
+
+	ffmpegPath, closeStdoutPath := fakeBlockedListenerEncoderExecutable(t)
+	port := freeUDPPort(t)
+	m := NewManager(ffmpegPath)
+	stream := &types.Stream{
+		ID:         "listener-blocked-writer",
+		Enabled:    true,
+		Mode:       types.StreamModeListener,
+		Host:       "127.0.0.1",
+		Port:       port,
+		Codec:      types.CodecMP3,
+		MaxRetries: 1,
+	}
+
+	started, err := m.Start(stream)
+	if err != nil {
+		t.Fatalf("Start(listener) error = %v", err)
+	}
+	if !started {
+		t.Fatal("Start(listener) reported started=false")
+	}
+	assertUDPPortUnavailable(t, port)
+
+	m.mu.Lock()
+	managed := m.streams[stream.ID]
+	managed.backoff = util.NewBackoff(10*time.Millisecond, 10*time.Millisecond)
+	m.mu.Unlock()
+
+	stopChan := make(chan struct{})
+	t.Cleanup(func() {
+		close(stopChan)
+		if err := m.Stop(stream.ID); err != nil {
+			t.Fatalf("Stop(listener) cleanup error = %v", err)
+		}
+	})
+
+	ctx := staticStreamContext{stream: stream}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		m.MonitorAndRetry(stream.ID, ctx, stopChan)
+	}()
+
+	run := waitListenerRun(t, m, stream.ID, nil)
+	// Must exceed the OS pipe buffer so WriteStdin blocks while holding stdinMu.
+	if err := m.WriteAudio(stream.ID, bytes.Repeat([]byte{1}, 8*1024*1024)); err != nil {
+		t.Fatalf("WriteAudio() error = %v", err)
+	}
+	waitForListenerWriterToTakeAudio(t, run)
+
+	if err := os.WriteFile(closeStdoutPath, []byte("close"), 0o600); err != nil {
+		t.Fatalf("WriteFile(close stdout marker) error = %v", err)
+	}
+
+	secondRun := waitListenerRun(t, m, stream.ID, run)
+	if secondRun == run {
+		t.Fatal("listener retry reused the failed encoder run")
+	}
+
+	statuses := m.Statuses(func(string) *types.Stream {
+		return stream
+	})
+	status := statuses[stream.ID]
+	if status.State != types.ProcessRunning {
+		t.Fatalf("listener state = %q, want %q", status.State, types.ProcessRunning)
+	}
+	if !status.EncoderRunning {
+		t.Fatal("listener encoder is not running after retry")
+	}
+	if status.RetryCount != 1 {
+		t.Fatalf("listener retry count = %d, want 1", status.RetryCount)
+	}
+
+	select {
+	case <-done:
+		t.Fatal("MonitorAndRetry returned while listener retry should keep monitoring")
+	default:
+	}
+	assertUDPPortUnavailable(t, port)
+}
+
 func freeUDPPort(t *testing.T) int {
 	t.Helper()
 	addr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
@@ -537,6 +628,33 @@ func fakeLongRunningExecutable(t *testing.T) string {
 		t.Fatalf("WriteFile(fake ffmpeg) error = %v", err)
 	}
 	return path
+}
+
+func fakeBlockedListenerEncoderExecutable(t *testing.T) (path, closeStdoutPath string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	path = filepath.Join(dir, "fake-ffmpeg")
+	closeStdoutPath = filepath.Join(dir, "close-stdout")
+
+	t.Setenv("FAKE_FFMPEG_CLOSE_STDOUT", closeStdoutPath)
+
+	script := `#!/bin/sh
+trap 'exit 0' TERM INT
+while [ ! -f "$FAKE_FFMPEG_CLOSE_STDOUT" ]; do
+	sleep 0.01
+done
+rm -f "$FAKE_FFMPEG_CLOSE_STDOUT"
+exec 1>&-
+while :; do
+	sleep 1
+done
+`
+	//nolint:gosec // Test helper must be executable and lives in t.TempDir().
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake ffmpeg) error = %v", err)
+	}
+	return path, closeStdoutPath
 }
 
 func assertUDPPortAvailable(t *testing.T, port int) {
@@ -580,6 +698,18 @@ func waitListenerRun(t *testing.T, m *Manager, streamID string, previous *encode
 	}
 	t.Fatalf("timed out waiting for listener encoder run after %p", previous)
 	return nil
+}
+
+func waitForListenerWriterToTakeAudio(t *testing.T, run *encoderRun) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(run.audioCh) == 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for listener writer to take queued audio")
 }
 
 func waitStatus(

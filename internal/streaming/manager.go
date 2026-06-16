@@ -28,6 +28,12 @@ const audioBufferSize = 5
 
 const listenerStdoutBufferSize = 4 * 1024
 
+// Variables so lifecycle tests can shorten escalation without changing production defaults.
+var (
+	encoderRunSignalTimeout = 5 * time.Second
+	encoderRunKillTimeout   = 2 * time.Second
+)
+
 // StreamContext provides encoder state for monitoring and retry decisions.
 type StreamContext interface {
 	// Stream returns the stream configuration, or nil if removed.
@@ -519,7 +525,7 @@ func (m *Manager) waitEncoderRunGoroutines(streamID string, run *encoderRun) {
 	select {
 	case <-done:
 		return
-	case <-time.After(5 * time.Second):
+	case <-time.After(encoderRunSignalTimeout):
 		slog.Warn("listener encoder did not stop in time, sending signal", "stream_id", streamID)
 		_ = run.result.Signal()
 	}
@@ -527,7 +533,7 @@ func (m *Manager) waitEncoderRunGoroutines(streamID string, run *encoderRun) {
 	select {
 	case <-done:
 		return
-	case <-time.After(2 * time.Second):
+	case <-time.After(encoderRunKillTimeout):
 		slog.Error("listener encoder force killed", "stream_id", streamID)
 		_ = run.result.Kill()
 	}
@@ -1045,7 +1051,7 @@ func (m *Manager) monitorListenerEncoder(streamID string, ctx StreamContext, sto
 		if detached := stream.detachEncoderRun(run); detached == nil {
 			return
 		}
-		run.wg.Wait()
+		m.waitEncoderRunGoroutines(streamID, run)
 		run.result.CloseStdin()
 		err := run.result.Wait()
 		runDuration := time.Since(run.startedAt)
