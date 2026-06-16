@@ -48,14 +48,16 @@ const (
 
 // ProcessStatus holds runtime status for a stream or recorder.
 type ProcessStatus struct {
-	State      ProcessState `json:"state"`
-	Stable     bool         `json:"stable,omitempty"`
-	Exhausted  bool         `json:"exhausted,omitempty"`
-	RetryCount int          `json:"retry_count,omitempty"`
-	MaxRetries int          `json:"max_retries,omitempty"`
-	Error      string       `json:"error,omitempty"`
-	Uptime     string       `json:"uptime,omitempty"`
-	AudioDrops int64        `json:"audio_drops,omitempty"`
+	State          ProcessState `json:"state"`
+	Stable         bool         `json:"stable,omitempty"`
+	Exhausted      bool         `json:"exhausted,omitempty"`
+	RetryCount     int          `json:"retry_count,omitempty"`
+	MaxRetries     int          `json:"max_retries,omitempty"`
+	Error          string       `json:"error,omitempty"`
+	Uptime         string       `json:"uptime,omitempty"`
+	AudioDrops     int64        `json:"audio_drops,omitempty"`
+	EncoderRunning bool         `json:"encoder_running,omitempty"`
+	ClientCount    int64        `json:"client_count,omitempty"`
 }
 
 const (
@@ -69,18 +71,6 @@ const (
 	SuccessThreshold = 30000 * time.Millisecond
 	// StableThreshold is the duration after which a connection is considered stable.
 	StableThreshold = 10000 * time.Millisecond
-	// ListenerStartFailureWindow is the period in which an SRT listener exit is
-	// treated as a bind/start failure rather than a completed client session.
-	ListenerStartFailureWindow = 1000 * time.Millisecond
-	// ListenerRelistenDelay is the fixed delay before restarting a listener
-	// after a normal client session ends.
-	ListenerRelistenDelay = 500 * time.Millisecond
-	// ListenerRelistenWarningWindow is the rolling window used to detect
-	// abnormally frequent listener relistens.
-	ListenerRelistenWarningWindow = time.Minute
-	// ListenerRelistenWarningThreshold is the number of relistens in the
-	// warning window that emits one diagnostic warning.
-	ListenerRelistenWarningThreshold = 10
 )
 
 const (

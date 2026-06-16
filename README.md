@@ -176,11 +176,11 @@ The installer creates a minimal config file. All other settings are configured t
 Streams can run in two SRT modes:
 
 - **Push to server** (`mode: "caller"`): the encoder connects to a remote SRT listener. `host`, `port`, optional `stream_id`, codec, password, and retry settings behave as before.
-- **Local pull listener** (`mode: "listener"`): the encoder opens a local SRT UDP port and clients connect to the Raspberry Pi, for example `srt://<encoder-ip>:9000?mode=caller`.
+- **Local pull listener** (`mode: "listener"`): the encoder opens a local SRT UDP port and multiple clients can connect to the Raspberry Pi at the same time, for example `srt://<encoder-ip>:9000?mode=caller`.
 
-Listener streams bind to `0.0.0.0` when no bind address is entered. They use MP3 by default for broad client compatibility; PCM remains available for clients that support SMPTE 302M in MPEG-TS. The current local listener is a single-client socket: only one client can be connected to a listener stream at a time. After that client disconnects, the encoder starts a new listener process after a short fixed delay.
+Listener streams bind to `0.0.0.0` when no bind address is entered. They use MP3 by default for broad client compatibility; Opus and PCM remain available in MPEG-TS for clients that support them. GoSRT owns the listener socket and fans out one FFmpeg encoder pipe to subscribers, so client disconnects do not restart the encoder. The stream status shows the listener state, FFmpeg encoder health, and active client count separately.
 
-SRT encryption is optional. Empty passwords leave `passphrase` and `pbkeylen` unset. Non-empty passwords must be 10-64 characters and are sent to FFmpeg with `pbkeylen=16`. The configured FFmpeg build must list the exact `srt` protocol in `ffmpeg -hide_banner -protocols`; `srtp` alone is not enough.
+SRT encryption is optional. Empty passwords allow unencrypted subscribers. Non-empty passwords must be 10-64 characters and use `pbkeylen=16`; password-protected listener streams reject unencrypted subscribers. The configured FFmpeg build must list the exact `srt` protocol in `ffmpeg -hide_banner -protocols` for caller streams; `srtp` alone is not enough. Listener streams do not require FFmpeg SRT support because FFmpeg writes encoded bytes to stdout and GoSRT handles SRT subscribers.
 
 ## Event Log
 
@@ -351,7 +351,7 @@ flowchart LR
 4. **Silence Detection**: Hysteresis-based detection with configurable threshold/duration/recovery. Buffers 15s audio context before/after silence events
 5. **Channel Imbalance Detection**: Hysteresis-based L/R balance detection with configurable threshold/duration/recovery. Reuses the silence threshold as a presence floor and reports live balance/imbalance values.
 6. **Alerting**: Silence events trigger webhook, email (MS Graph), log (JSON Lines), and/or Zabbix. Each channel has per-event subscriptions for `silence_start`, `silence_end`, and `audio_dump`. `silence_end` fires immediately on recovery; the `audio_dump_ready` event fires separately once the MP3 is ready. Channel imbalance events are logged and surfaced in health/readiness. Abandoned S3 uploads also trigger notifications.
-7. **Streaming**: Per-output FFmpeg processes; caller streams use retry/backoff, listener streams relisten after client disconnect
+7. **Streaming**: Per-output FFmpeg encoders; caller streams use FFmpeg SRT with retry/backoff, listener streams use a GoSRT multi-client fan-out around one FFmpeg stdout pipe
 8. **Recording**: Hourly rotation or on-demand, with optional S3 upload
 9. **Event Log**: All stream, audio, and recording events written to a JSON Lines file; accessible via web UI and REST API with pagination
 

@@ -179,6 +179,13 @@ func (e *Encoder) srtCapabilityError() error {
 	return e.srtSentinel()
 }
 
+func (e *Encoder) srtCapabilityErrorForStream(stream *types.Stream) error {
+	if stream != nil && stream.ModeOrDefault() == types.StreamModeListener {
+		return nil
+	}
+	return e.srtCapabilityError()
+}
+
 // SRTErrorMessage returns the user-facing SRT capability error, if any.
 func (e *Encoder) SRTErrorMessage() string {
 	if err := e.srtCapabilityError(); err != nil {
@@ -357,7 +364,7 @@ func (e *Encoder) StreamStatuses(streams []types.Stream) map[string]types.Proces
 				State:      types.ProcessDisabled,
 				MaxRetries: stream.MaxRetriesOrDefault(),
 			}
-		case e.srtCapabilityError() != nil:
+		case e.srtCapabilityErrorForStream(stream) != nil:
 			result[stream.ID] = types.ProcessStatus{
 				State:      types.ProcessError,
 				MaxRetries: stream.MaxRetriesOrDefault(),
@@ -528,7 +535,7 @@ func (e *Encoder) StartStream(streamID string) error {
 	if !stream.Enabled {
 		return ErrStreamDisabled
 	}
-	if !e.srtAvailable {
+	if stream.ModeOrDefault() != types.StreamModeListener && !e.srtAvailable {
 		return e.srtSentinel()
 	}
 

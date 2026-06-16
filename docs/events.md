@@ -51,8 +51,9 @@ Events are categorized by severity for UI display:
 ## Stream Events
 
 Stream events track the lifecycle and health of audio output streams. Local SRT
-listener streams reuse the same event types: starting/relistening is logged as
-`stream_started` with "Listening on ..." text, but listeners do not emit
+listener streams reuse the same event types: fan-out startup is logged as
+`stream_started` with "Listening on ..." text, listener encoder failures are
+logged as `stream_error`/`stream_retry`, and listeners do not emit
 `stream_stable` because a running listener is waiting for clients rather than a
 confirmed remote output.
 
@@ -80,7 +81,7 @@ confirmed remote output.
 
 - **Severity:** `info`
 - **UI Label:** Started
-- **Triggered:** When a stream begins connecting to its destination, or when a local SRT listener starts/relistens.
+- **Triggered:** When a stream begins connecting to its destination, or when a local SRT listener fan-out starts.
 
 ```json
 {
@@ -118,7 +119,7 @@ confirmed remote output.
 
 - **Severity:** `error`
 - **UI Label:** Error
-- **Triggered:** When FFmpeg reports an error or the stream process exits unexpectedly. A normal local SRT listener client disconnect after startup is not logged as `stream_error`; the listener is started again.
+- **Triggered:** When FFmpeg reports an error or the stream process exits unexpectedly. For local SRT listeners, subscriber disconnects are not stream errors; listener encoder exits are errors and retry through the normal backoff path while the fan-out listener remains bound.
 
 ```json
 {
@@ -138,7 +139,7 @@ confirmed remote output.
 
 - **Severity:** `warning`
 - **UI Label:** Retry
-- **Triggered:** When a failed stream is about to retry connecting (after backoff delay).
+- **Triggered:** When a failed caller stream is about to reconnect, or when a local SRT listener encoder is about to restart after backoff.
 
 ```json
 {
@@ -635,10 +636,10 @@ GET /api/events?limit=50&offset=0&type=stream
 
 | Event Type | Category | Severity | UI Label | Trigger |
 |------------|----------|----------|----------|---------|
-| `stream_started` | Stream | info | Started | Stream begins connecting or listener starts |
+| `stream_started` | Stream | info | Started | Stream begins connecting or listener fan-out starts |
 | `stream_stable` | Stream | success | Connected | Caller stream stable for 10s |
 | `stream_error` | Stream | error | Error | Stream encounters error |
-| `stream_retry` | Stream | warning | Retry | Stream retrying after failure |
+| `stream_retry` | Stream | warning | Retry | Caller stream or listener encoder retrying after failure |
 | `stream_stopped` | Stream | info | Stopped | Stream intentionally stopped |
 | `silence_start` | Audio | warning | Silence | Audio below threshold |
 | `silence_end` | Audio | success | Recovered | Audio returns above threshold |

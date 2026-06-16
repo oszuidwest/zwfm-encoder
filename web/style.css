@@ -1158,6 +1158,12 @@
             color: var(--text-secondary);
         }
 
+        .listener-metric {
+            font-family: var(--font-mono);
+            color: var(--text-secondary);
+            white-space: nowrap;
+        }
+
         .status {
             margin-left: auto;
             padding: 0.125rem 0.5rem;

@@ -2,6 +2,7 @@ package encoder
 
 import (
 	"errors"
+	"net"
 	"path/filepath"
 	"testing"
 
@@ -122,6 +123,34 @@ func TestStreamStatusesReportsSRTProbeErrorSeparately(t *testing.T) {
 	}
 }
 
+func TestStreamStatusesDoesNotRequireSRTForListener(t *testing.T) {
+	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
+	stream := types.Stream{
+		ID:      "listener-1",
+		Enabled: true,
+		Mode:    types.StreamModeListener,
+		Host:    "127.0.0.1",
+		Port:    9000,
+		Codec:   types.CodecMP3,
+	}
+
+	e := &Encoder{
+		config:        cfg,
+		ffmpegPath:    "ffmpeg",
+		srtAvailable:  false,
+		streamManager: streaming.NewManager("ffmpeg"),
+	}
+
+	statuses := e.StreamStatuses([]types.Stream{stream})
+	status := statuses[stream.ID]
+	if status.State != types.ProcessStopped {
+		t.Fatalf("listener status state = %q, want stopped", status.State)
+	}
+	if status.Error != "" {
+		t.Fatalf("listener status error = %q, want empty", status.Error)
+	}
+}
+
 func TestStartStreamReportsSRTProbeErrorSeparately(t *testing.T) {
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	cfg.Streaming.Streams = []types.Stream{
@@ -146,4 +175,49 @@ func TestStartStreamReportsSRTProbeErrorSeparately(t *testing.T) {
 	if err := e.StartStream("stream-1"); !errors.Is(err, ErrSRTUnverified) {
 		t.Fatalf("StartStream() error = %v, want ErrSRTUnverified", err)
 	}
+}
+
+func TestStartStreamDoesNotRequireSRTForListener(t *testing.T) {
+	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
+	cfg.Streaming.Streams = []types.Stream{
+		{
+			ID:      "listener-1",
+			Enabled: true,
+			Mode:    types.StreamModeListener,
+			Host:    "127.0.0.1",
+			Port:    freeUDPPort(t),
+			Codec:   types.CodecMP3,
+		},
+	}
+
+	e := &Encoder{
+		config:        cfg,
+		state:         types.StateRunning,
+		stopChan:      make(chan struct{}),
+		srtAvailable:  false,
+		srtProbeError: errors.New("probe timed out"),
+		streamManager: streaming.NewManager("/nonexistent/ffmpeg-binary-for-test"),
+	}
+
+	err := e.StartStream("listener-1")
+	if err == nil {
+		t.Fatal("StartStream() unexpectedly succeeded with nonexistent ffmpeg")
+	}
+	if errors.Is(err, ErrSRTUnsupported) || errors.Is(err, ErrSRTUnverified) {
+		t.Fatalf("StartStream() error = %v, want real listener start error instead of SRT sentinel", err)
+	}
+}
+
+func freeUDPPort(t *testing.T) int {
+	t.Helper()
+	addr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ResolveUDPAddr() error = %v", err)
+	}
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		t.Fatalf("ListenUDP() error = %v", err)
+	}
+	defer conn.Close()
+	return conn.LocalAddr().(*net.UDPAddr).Port
 }

@@ -2,6 +2,7 @@ package streaming
 
 import (
 	"net/url"
+	"slices"
 	"testing"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
@@ -111,4 +112,102 @@ func TestBuildSRTURLModeAware(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBuildFFmpegArgsUsesCallerSRTOutput(t *testing.T) {
+	t.Parallel()
+
+	stream := &types.Stream{
+		Host:     "stream.example.com",
+		Port:     9000,
+		StreamID: "studio",
+		Codec:    types.CodecMP3,
+	}
+
+	args := BuildFFmpegArgs(stream)
+	if slices.Contains(args, "pipe:1") {
+		t.Fatalf("caller args contain pipe:1: %v", args)
+	}
+	if got := args[len(args)-1]; got != BuildSRTURL(stream) {
+		t.Fatalf("caller output = %q, want SRT URL %q", got, BuildSRTURL(stream))
+	}
+}
+
+func TestBuildListenerPipeArgs(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		codec     types.Codec
+		wantCodec string
+		wantFmt   string
+		wantPAT   bool
+	}{
+		{
+			name:      "mp3 writes raw mp3 pipe",
+			codec:     types.CodecMP3,
+			wantCodec: "libmp3lame",
+			wantFmt:   "mp3",
+			wantPAT:   false,
+		},
+		{
+			name:      "opus writes mpegts pipe with pat cadence",
+			codec:     types.CodecOpus,
+			wantCodec: "libopus",
+			wantFmt:   "mpegts",
+			wantPAT:   true,
+		},
+		{
+			name:      "pcm writes mpegts pipe with pat cadence",
+			codec:     types.CodecPCM,
+			wantCodec: "s302m",
+			wantFmt:   "mpegts",
+			wantPAT:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			args := BuildFFmpegArgs(&types.Stream{
+				Mode:  types.StreamModeListener,
+				Port:  9000,
+				Codec: tt.codec,
+			})
+			if !slices.Contains(args, tt.wantCodec) {
+				t.Fatalf("args %v do not contain codec %q", args, tt.wantCodec)
+			}
+			if got := args[len(args)-1]; got != "pipe:1" {
+				t.Fatalf("listener output = %q, want pipe:1; args=%v", got, args)
+			}
+			if !containsFlagValue(args, "-f", tt.wantFmt) {
+				t.Fatalf("args %v do not contain -f %s", args, tt.wantFmt)
+			}
+			if got := containsFlagValue(args, "-pat_period", "0.1"); got != tt.wantPAT {
+				t.Fatalf("contains -pat_period 0.1 = %v, want %v; args=%v", got, tt.wantPAT, args)
+			}
+			if stringsContainPrefix(args, "srt://") {
+				t.Fatalf("listener pipe args contain SRT URL: %v", args)
+			}
+		})
+	}
+}
+
+func containsFlagValue(args []string, flag, value string) bool {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == flag && args[i+1] == value {
+			return true
+		}
+	}
+	return false
+}
+
+func stringsContainPrefix(values []string, prefix string) bool {
+	for _, value := range values {
+		if len(value) >= len(prefix) && value[:len(prefix)] == prefix {
+			return true
+		}
+	}
+	return false
 }
