@@ -178,7 +178,7 @@ Streams can run in two SRT modes:
 - **Push to server** (`mode: "caller"`): the encoder connects to a remote SRT listener. `host`, `port`, optional `stream_id`, codec, password, and retry settings behave as before.
 - **Local pull listener** (`mode: "listener"`): the encoder opens a local SRT UDP port and clients connect to the Raspberry Pi, for example `srt://<encoder-ip>:9000?mode=caller`.
 
-Listener streams bind to `0.0.0.0` when no bind address is entered. They use MP3 by default for broad client compatibility; PCM remains available for clients that support SMPTE 302M in MPEG-TS. A listener handles one client session per FFmpeg process; after the client disconnects, the encoder starts a new listener process after a short fixed delay.
+Listener streams bind to `0.0.0.0` when no bind address is entered. They use MP3 by default for broad client compatibility; PCM remains available for clients that support SMPTE 302M in MPEG-TS. The current local listener is a single-client socket: only one client can be connected to a listener stream at a time. After that client disconnects, the encoder starts a new listener process after a short fixed delay.
 
 SRT encryption is optional. Empty passwords leave `passphrase` and `pbkeylen` unset. Non-empty passwords must be 10-64 characters and are sent to FFmpeg with `pbkeylen=16`. The configured FFmpeg build must list the exact `srt` protocol in `ffmpeg -hide_banner -protocols`; `srtp` alone is not enough.
 
