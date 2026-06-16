@@ -63,6 +63,8 @@ type subscriber struct {
 }
 
 // NewServer validates cfg and returns a stopped fan-out server.
+//
+//nolint:gocritic // Keep the public constructor value-based so callers can pass short-lived configs safely.
 func NewServer(cfg Config) (*Server, error) {
 	if cfg.BindHost == "" {
 		cfg.BindHost = "0.0.0.0"

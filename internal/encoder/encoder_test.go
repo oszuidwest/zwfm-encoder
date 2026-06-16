@@ -218,6 +218,10 @@ func freeUDPPort(t *testing.T) int {
 	if err != nil {
 		t.Fatalf("ListenUDP() error = %v", err)
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			t.Fatalf("UDP Close() error = %v", err)
+		}
+	}()
 	return conn.LocalAddr().(*net.UDPAddr).Port
 }

@@ -192,60 +192,53 @@ func TestClassifyStreamExit(t *testing.T) {
 
 	errFailed := errors.New("ffmpeg failed")
 	tests := []struct {
-		name        string
-		mode        types.StreamMode
-		err         error
-		cause       error
-		runDuration time.Duration
-		want        streamExitClass
+		name  string
+		mode  types.StreamMode
+		err   error
+		cause error
+		want  streamExitClass
 	}{
 		{
-			name:        "caller failure uses retry path",
-			mode:        types.StreamModeCaller,
-			err:         errFailed,
-			runDuration: time.Second,
-			want:        streamExitFailure,
+			name: "caller failure uses retry path",
+			mode: types.StreamModeCaller,
+			err:  errFailed,
+			want: streamExitFailure,
 		},
 		{
-			name:        "listener failure uses retry path",
-			mode:        types.StreamModeListener,
-			err:         errFailed,
-			runDuration: time.Second,
-			want:        streamExitFailure,
+			name: "listener failure uses retry path",
+			mode: types.StreamModeListener,
+			err:  errFailed,
+			want: streamExitFailure,
 		},
 		{
-			name:        "listener failure after old relisten window still uses retry path",
-			mode:        types.StreamModeListener,
-			err:         errFailed,
-			runDuration: 10 * time.Second,
-			want:        streamExitFailure,
+			name: "listener failure after old relisten window still uses retry path",
+			mode: types.StreamModeListener,
+			err:  errFailed,
+			want: streamExitFailure,
 		},
 		{
-			name:        "listener clean exit is treated as encoder failure",
-			mode:        types.StreamModeListener,
-			runDuration: 10 * time.Second,
-			want:        streamExitFailure,
+			name: "listener clean exit is treated as encoder failure",
+			mode: types.StreamModeListener,
+			want: streamExitFailure,
 		},
 		{
-			name:        "intentional stop wins",
-			mode:        types.StreamModeListener,
-			err:         errFailed,
-			cause:       errStoppedByUser,
-			runDuration: time.Second,
-			want:        streamExitIntentionalStop,
+			name:  "intentional stop wins",
+			mode:  types.StreamModeListener,
+			err:   errFailed,
+			cause: errStoppedByUser,
+			want:  streamExitIntentionalStop,
 		},
 		{
-			name:        "caller clean exit stops normally",
-			mode:        types.StreamModeCaller,
-			runDuration: time.Second,
-			want:        streamExitNormalStop,
+			name: "caller clean exit stops normally",
+			mode: types.StreamModeCaller,
+			want: streamExitNormalStop,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := classifyStreamExit(tt.mode, tt.err, tt.cause, tt.runDuration)
+			got := classifyStreamExit(tt.mode, tt.err, tt.cause)
 			if got != tt.want {
 				t.Fatalf("classifyStreamExit() = %v, want %v", got, tt.want)
 			}
@@ -439,7 +432,11 @@ func freeUDPPort(t *testing.T) int {
 	if err != nil {
 		t.Fatalf("ListenUDP() error = %v", err)
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			t.Fatalf("UDP Close() error = %v", err)
+		}
+	}()
 	return conn.LocalAddr().(*net.UDPAddr).Port
 }
 

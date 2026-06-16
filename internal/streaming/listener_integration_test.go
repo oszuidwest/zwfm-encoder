@@ -114,7 +114,11 @@ func TestListenerPipeFanoutLateSubscriberReceivesMPEGTSBytes(t *testing.T) {
 
 			time.Sleep(500 * time.Millisecond)
 			conn := dialTestSubscriber(t, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
-			defer conn.Close()
+			defer func() {
+				if err := conn.Close(); err != nil {
+					t.Fatalf("subscriber Close() error = %v", err)
+				}
+			}()
 
 			if n := readAtLeastOneSRTByte(t, conn); n == 0 {
 				t.Fatal("late subscriber received no bytes")

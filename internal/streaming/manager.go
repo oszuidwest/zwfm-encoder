@@ -361,7 +361,7 @@ func (m *Manager) startListenerFanout(stream *types.Stream) (bool, error) {
 		fanout:     fanout,
 	}
 
-	if _, err := m.startListenerEncoderRun(stream.ID, s, stream); err != nil {
+	if err := m.startListenerEncoderRun(stream.ID, s, stream); err != nil {
 		fanout.Shutdown()
 		if waitErr := fanout.Wait(); waitErr != nil {
 			slog.Warn("srt fanout shutdown after encoder start failure returned error",
@@ -394,20 +394,20 @@ func (m *Manager) removePlaceholder(streamID string, placeholder *Stream) {
 
 func (m *Manager) startListenerEncoderRun(
 	streamID string, s *Stream, cfg *types.Stream,
-) (*encoderRun, error) {
+) error {
 	args := BuildListenerPipeArgs(cfg)
 
 	slog.Info("starting listener encoder", "stream_id", streamID, "host", cfg.ListenerBindHost(), "port", cfg.Port)
 
 	result, err := ffmpeg.StartProcessWithStdout(m.ffmpegPath, args)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if result.Stdout() == nil {
 		result.Cancel(errStoppedByUser)
 		result.CloseStdin()
 		_ = result.Wait()
-		return nil, fmt.Errorf("listener encoder stdout pipe unavailable")
+		return fmt.Errorf("listener encoder stdout pipe unavailable")
 	}
 
 	run := &encoderRun{
@@ -426,7 +426,7 @@ func (m *Manager) startListenerEncoderRun(
 	go m.runListenerWriter(streamID, run)
 	go m.runListenerStdoutReader(streamID, s, run)
 
-	return run, nil
+	return nil
 }
 
 func (m *Manager) runListenerWriter(streamID string, run *encoderRun) {
@@ -889,7 +889,7 @@ const (
 )
 
 func classifyStreamExit(
-	mode types.StreamMode, err error, cause error, runDuration time.Duration,
+	mode types.StreamMode, err error, cause error,
 ) streamExitClass {
 	if errors.Is(cause, errStoppedByUser) {
 		return streamExitIntentionalStop
@@ -921,7 +921,7 @@ func (m *Manager) handleStreamExit(
 ) {
 	cause := context.Cause(result.Context())
 
-	switch classifyStreamExit(mode, err, cause, runDuration) {
+	switch classifyStreamExit(mode, err, cause) {
 	case streamExitIntentionalStop:
 		m.emitEvent(streamID, "stream_stopped", "Stream stopped by user", "", 0, 0)
 		return
@@ -1121,7 +1121,7 @@ func (m *Manager) monitorListenerEncoder(streamID string, ctx StreamContext, sto
 				m.stopListenerAfterRetryEnd(streamID, stream, "stream removed", errMsg)
 				return
 			}
-			if _, err := m.startListenerEncoderRun(streamID, stream, cfg); err != nil {
+			if err := m.startListenerEncoderRun(streamID, stream, cfg); err != nil {
 				errMsg = err.Error()
 				slog.Error("failed to restart listener encoder", "stream_id", streamID, "error", err)
 				m.recordListenerEncoderFailure(streamID, stream, backoff, errMsg, 0)

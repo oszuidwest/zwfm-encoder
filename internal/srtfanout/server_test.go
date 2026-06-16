@@ -247,9 +247,17 @@ func TestIntegrationTwoSubscribersReceiveBytes(t *testing.T) {
 
 	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 	conn1 := dialSubscriber(t, addr, "read:stream-1")
-	defer conn1.Close()
+	defer func() {
+		if err := conn1.Close(); err != nil {
+			t.Fatalf("conn1 Close() error = %v", err)
+		}
+	}()
 	conn2 := dialSubscriber(t, addr, "other-stream-id")
-	defer conn2.Close()
+	defer func() {
+		if err := conn2.Close(); err != nil {
+			t.Fatalf("conn2 Close() error = %v", err)
+		}
+	}()
 
 	eventually(t, func() bool {
 		return server.ClientCount() == 2
@@ -327,7 +335,11 @@ func freeUDPPort(t *testing.T) int {
 	if err != nil {
 		t.Fatalf("ListenUDP() error = %v", err)
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			t.Fatalf("UDP Close() error = %v", err)
+		}
+	}()
 	return conn.LocalAddr().(*net.UDPAddr).Port
 }
 
