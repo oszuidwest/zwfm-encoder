@@ -356,11 +356,20 @@
             <div class="panels">
                 <!-- Audio Panel: Silence Detection / Metering / Silence Dumps / Recording API -->
                 <div class="panel" role="tabpanel" id="panel-audio" aria-labelledby="tab-audio" x-show="settingsTab === 'audio'">
-                    <div class="section">
-                        <div class="section-header">
-                            <span class="icon-container" x-html="icons.silence"></span>
-                            <h3>Silence Detection</h3>
-                        </div>
+                    <div class="channel" :class="{ 'channel--open': cardsOpen.silence }">
+                        <button type="button" class="channel-head" @click="toggleCard('silence')" :aria-expanded="cardsOpen.silence" aria-controls="card-silence">
+                            <span class="channel-icon icon-container" x-html="icons.silence"></span>
+                            <span class="channel-titles">
+                                <span class="channel-name">Silence Detection</span>
+                                <span class="channel-summary" x-text="audioCardStatus('silence').summary"></span>
+                            </span>
+                            <span class="channel-status"
+                                  x-show="audioCardStatus('silence').pill"
+                                  :class="audioCardStatus('silence').pill?.cls"
+                                  x-text="audioCardStatus('silence').pill?.label"></span>
+                            <span class="channel-chevron icon-container" x-html="icons.chevronDown" aria-hidden="true"></span>
+                        </button>
+                        <div class="channel-body" id="card-silence" x-show="cardsOpen.silence" x-cloak x-transition:enter.duration.200ms x-transition:leave.duration.150ms>
                         <p class="section-desc">Alert when audio drops below threshold for extended periods.</p>
                         <div class="form">
                             <div class="group">
@@ -390,12 +399,22 @@
                                 </div>
                             </div>
                         </div>
-                    </div>
-                    <div class="section">
-                        <div class="section-header">
-                            <span class="icon-container" x-html="icons.balance"></span>
-                            <h3>Channel Imbalance</h3>
                         </div>
+                    </div>
+                    <div class="channel" :class="{ 'channel--open': cardsOpen.imbalance }">
+                        <button type="button" class="channel-head" @click="toggleCard('imbalance')" :aria-expanded="cardsOpen.imbalance" aria-controls="card-imbalance">
+                            <span class="channel-icon icon-container" x-html="icons.balance"></span>
+                            <span class="channel-titles">
+                                <span class="channel-name">Channel Imbalance</span>
+                                <span class="channel-summary" x-text="audioCardStatus('imbalance').summary"></span>
+                            </span>
+                            <span class="channel-status"
+                                  x-show="audioCardStatus('imbalance').pill"
+                                  :class="audioCardStatus('imbalance').pill?.cls"
+                                  x-text="audioCardStatus('imbalance').pill?.label"></span>
+                            <span class="channel-chevron icon-container" x-html="icons.chevronDown" aria-hidden="true"></span>
+                        </button>
+                        <div class="channel-body" id="card-imbalance" x-show="cardsOpen.imbalance" x-cloak x-transition:enter.duration.200ms x-transition:leave.duration.150ms>
                         <p class="section-desc">Alert when the left and right channels differ by too much for too long (e.g. a dead channel). Only evaluated while audio is above the silence threshold.</p>
                         <div class="form">
                             <div class="group">
@@ -425,12 +444,22 @@
                                 </div>
                             </div>
                         </div>
-                    </div>
-                    <div class="section">
-                        <div class="section-header">
-                            <span class="icon-container" x-html="icons.metering"></span>
-                            <h3>Metering</h3>
                         </div>
+                    </div>
+                    <div class="channel" :class="{ 'channel--open': cardsOpen.metering }">
+                        <button type="button" class="channel-head" @click="toggleCard('metering')" :aria-expanded="cardsOpen.metering" aria-controls="card-metering">
+                            <span class="channel-icon icon-container" x-html="icons.metering"></span>
+                            <span class="channel-titles">
+                                <span class="channel-name">Metering</span>
+                                <span class="channel-summary" x-text="audioCardStatus('metering').summary"></span>
+                            </span>
+                            <span class="channel-status"
+                                  x-show="audioCardStatus('metering').pill"
+                                  :class="audioCardStatus('metering').pill?.cls"
+                                  x-text="audioCardStatus('metering').pill?.label"></span>
+                            <span class="channel-chevron icon-container" x-html="icons.chevronDown" aria-hidden="true"></span>
+                        </button>
+                        <div class="channel-body" id="card-metering" x-show="cardsOpen.metering" x-cloak x-transition:enter.duration.200ms x-transition:leave.duration.150ms>
                         <p class="section-desc">Controls the VU meter display in the main view.</p>
                         <div class="form">
                             <div class="group">
@@ -445,12 +474,22 @@
                                 <span id="peak-hold-hint" class="input-hint">How long the peak marker holds before decaying (500–10000 ms).</span>
                             </div>
                         </div>
-                    </div>
-                    <div class="section">
-                        <div class="section-header">
-                            <span class="icon-container" x-html="icons.audioArchive"></span>
-                            <h3>Silence Dumps</h3>
                         </div>
+                    </div>
+                    <div class="channel" :class="{ 'channel--open': cardsOpen.dumps }">
+                        <button type="button" class="channel-head" @click="toggleCard('dumps')" :aria-expanded="cardsOpen.dumps" aria-controls="card-dumps">
+                            <span class="channel-icon icon-container" x-html="icons.audioArchive"></span>
+                            <span class="channel-titles">
+                                <span class="channel-name">Silence Dumps</span>
+                                <span class="channel-summary" x-text="audioCardStatus('dumps').summary"></span>
+                            </span>
+                            <span class="channel-status"
+                                  x-show="audioCardStatus('dumps').pill"
+                                  :class="audioCardStatus('dumps').pill?.cls"
+                                  x-text="audioCardStatus('dumps').pill?.label"></span>
+                            <span class="channel-chevron icon-container" x-html="icons.chevronDown" aria-hidden="true"></span>
+                        </button>
+                        <div class="channel-body" id="card-dumps" x-show="cardsOpen.dumps" x-cloak x-transition:enter.duration.200ms x-transition:leave.duration.150ms>
                         <p class="section-desc">Capture MP3 snippets around silence events. These are attached to email notifications and included in webhooks.</p>
                         <div class="form">
                             <div class="group">
@@ -469,12 +508,22 @@
                                 <span class="input-hint">Files older than this are automatically cleaned up daily. Use 0 to keep dumps forever.</span>
                             </div>
                         </div>
-                    </div>
-                    <div class="section">
-                        <div class="section-header">
-                            <span class="icon-container" x-html="icons.key"></span>
-                            <h3>Recording API</h3>
                         </div>
+                    </div>
+                    <div class="channel" :class="{ 'channel--open': cardsOpen.recording }">
+                        <button type="button" class="channel-head" @click="toggleCard('recording')" :aria-expanded="cardsOpen.recording" aria-controls="card-recording">
+                            <span class="channel-icon icon-container" x-html="icons.key"></span>
+                            <span class="channel-titles">
+                                <span class="channel-name">Recording API</span>
+                                <span class="channel-summary" x-text="audioCardStatus('recording').summary"></span>
+                            </span>
+                            <span class="channel-status"
+                                  x-show="audioCardStatus('recording').pill"
+                                  :class="audioCardStatus('recording').pill?.cls"
+                                  x-text="audioCardStatus('recording').pill?.label"></span>
+                            <span class="channel-chevron icon-container" x-html="icons.chevronDown" aria-hidden="true"></span>
+                        </button>
+                        <div class="channel-body" id="card-recording" x-show="cardsOpen.recording" x-cloak x-transition:enter.duration.200ms x-transition:leave.duration.150ms>
                         <p class="section-desc">Authentication key for external recording control (POST /api/recordings/start, /api/recordings/stop).</p>
                         <div class="form">
                             <div class="group">
@@ -505,6 +554,7 @@
                             <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0"
                                     @click="regenerateApiKey()">Regenerate</button>
                         </div>
+                        </div>
                     </div>
                 </div>
 
@@ -514,11 +564,20 @@
                      - File Log: Append JSON lines to local file
                      - Email: Microsoft Graph notifications -->
                 <div class="panel" role="tabpanel" id="panel-notifications" aria-labelledby="tab-notifications" x-show="settingsTab === 'notifications'">
-                    <div class="section">
-                        <div class="section-header">
-                            <span class="icon-container" x-html="icons.link"></span>
-                            <h3>Webhook</h3>
-                        </div>
+                    <div class="channel" :class="{ 'channel--open': cardsOpen.webhook }">
+                        <button type="button" class="channel-head" @click="toggleCard('webhook')" :aria-expanded="cardsOpen.webhook" aria-controls="channel-webhook">
+                            <span class="channel-icon icon-container" x-html="icons.link"></span>
+                            <span class="channel-titles">
+                                <span class="channel-name">Webhook</span>
+                                <span class="channel-summary" x-text="notifChannelStatus('webhook').summary"></span>
+                            </span>
+                            <span class="channel-status"
+                                  x-show="notifChannelStatus('webhook').pill"
+                                  :class="notifChannelStatus('webhook').pill?.cls"
+                                  x-text="notifChannelStatus('webhook').pill?.label"></span>
+                            <span class="channel-chevron icon-container" x-html="icons.chevronDown" aria-hidden="true"></span>
+                        </button>
+                        <div class="channel-body" id="channel-webhook" x-show="cardsOpen.webhook" x-cloak x-transition:enter.duration.200ms x-transition:leave.duration.150ms>
                         <p class="section-desc">POST request sent for silence events.</p>
                         <div class="form">
                             <div class="group">
@@ -543,12 +602,22 @@
                             <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('webhook')" :disabled="testStates.webhook.pending || settingsForm.clearWebhook" x-text="testStates.webhook.text">Test</button>
                             <span class="input-hint" x-show="settingsForm.clearWebhook">Save changes first to test with the cleared URL.</span>
                         </div>
-                    </div>
-                    <div class="section">
-                        <div class="section-header">
-                            <span class="icon-container" x-html="icons.email"></span>
-                            <h3>Microsoft 365 Email</h3>
                         </div>
+                    </div>
+                    <div class="channel" :class="{ 'channel--open': cardsOpen.email }">
+                        <button type="button" class="channel-head" @click="toggleCard('email')" :aria-expanded="cardsOpen.email" aria-controls="channel-email">
+                            <span class="channel-icon icon-container" x-html="icons.email"></span>
+                            <span class="channel-titles">
+                                <span class="channel-name">Microsoft 365 Email</span>
+                                <span class="channel-summary" x-text="notifChannelStatus('email').summary"></span>
+                            </span>
+                            <span class="channel-status"
+                                  x-show="notifChannelStatus('email').pill"
+                                  :class="notifChannelStatus('email').pill?.cls"
+                                  x-text="notifChannelStatus('email').pill?.label"></span>
+                            <span class="channel-chevron icon-container" x-html="icons.chevronDown" aria-hidden="true"></span>
+                        </button>
+                        <div class="channel-body" id="channel-email" x-show="cardsOpen.email" x-cloak x-transition:enter.duration.200ms x-transition:leave.duration.150ms>
                         <p class="section-desc">Email notifications via Microsoft Graph API for silence events.</p>
                         <template x-if="graphSecretExpiry.expires_soon">
                             <div class="warning-banner">
@@ -599,12 +668,22 @@
                             <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('email')" :disabled="testStates.email.pending || settingsForm.graph.clearSecret" x-text="testStates.email.text">Test</button>
                             <span class="input-hint" x-show="settingsForm.graph.clearSecret">Save changes first to test with the cleared secret.</span>
                         </div>
-                    </div>
-                    <div class="section">
-                        <div class="section-header">
-                            <span class="icon-container" x-html="icons.monitoring"></span>
-                            <h3>Zabbix</h3>
                         </div>
+                    </div>
+                    <div class="channel" :class="{ 'channel--open': cardsOpen.zabbix }">
+                        <button type="button" class="channel-head" @click="toggleCard('zabbix')" :aria-expanded="cardsOpen.zabbix" aria-controls="channel-zabbix">
+                            <span class="channel-icon icon-container" x-html="icons.monitoring"></span>
+                            <span class="channel-titles">
+                                <span class="channel-name">Zabbix</span>
+                                <span class="channel-summary" x-text="notifChannelStatus('zabbix').summary"></span>
+                            </span>
+                            <span class="channel-status"
+                                  x-show="notifChannelStatus('zabbix').pill"
+                                  :class="notifChannelStatus('zabbix').pill?.cls"
+                                  x-text="notifChannelStatus('zabbix').pill?.label"></span>
+                            <span class="channel-chevron icon-container" x-html="icons.chevronDown" aria-hidden="true"></span>
+                        </button>
+                        <div class="channel-body" id="channel-zabbix" x-show="cardsOpen.zabbix" x-cloak x-transition:enter.duration.200ms x-transition:leave.duration.150ms>
                         <p class="section-desc">Zabbix trapper items for silence and upload alerts.</p>
                         <div class="form">
                             <div class="group">
@@ -639,7 +718,10 @@
                                 </div>
                             </div>
                         </div>
-                        <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('zabbix')" :disabled="testStates.zabbix.pending" x-text="testStates.zabbix.text">Test</button>
+                        <div class="test-action">
+                            <button class="btn" data-variant="secondary" data-size="test" type="button" tabindex="0" @click="sendTest('zabbix')" :disabled="testStates.zabbix.pending" x-text="testStates.zabbix.text">Test</button>
+                        </div>
+                        </div>
                     </div>
                 </div>
 

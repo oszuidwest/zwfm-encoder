@@ -1482,6 +1482,106 @@
             line-height: 1.5;
             margin-bottom: var(--space-6);
         }
+
+        /* Notification channel cards: collapsible providers with an
+           at-a-glance status summary in the header. Prototype combining the
+           "channels list" + "collapsible sections" settings proposals. */
+        .channel {
+            background: var(--surface-card);
+            border-radius: var(--radius-lg);
+            margin-bottom: var(--space-6);
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+        }
+
+        .channel:last-child {
+            margin-bottom: 0;
+        }
+
+        .channel-head {
+            display: flex;
+            align-items: center;
+            gap: var(--space-4);
+            width: 100%;
+            padding: var(--space-6) var(--space-7);
+            background: none;
+            border: none;
+            cursor: pointer;
+            text-align: left;
+            color: inherit;
+            transition: background var(--transition-fast);
+        }
+
+        .channel-head:hover {
+            background: var(--surface-elevated);
+        }
+
+        .channel-icon svg {
+            width: 1.25rem;
+            height: 1.25rem;
+            color: var(--brand);
+            display: block;
+        }
+
+        .channel-titles {
+            display: flex;
+            flex-direction: column;
+            gap: 0.0625rem;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .channel-name {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .channel-summary {
+            font-size: var(--text-sm);
+            color: var(--text-secondary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            transition: opacity var(--transition-fast);
+        }
+
+        /* Hide the redundant summary once the card is open and the full
+           form (with its own labels) is on screen; keeps header height stable. */
+        .channel--open .channel-summary {
+            opacity: 0;
+        }
+
+        /* Status chip: the same soft treatment as the dashboard stream/recorder
+           .status chip (state-tinted background + text via the global .state-*
+           tokens, sentence case, no dot, no glow). Shown only to flag an
+           off/unconfigured or attention state - the normal case carries no chip. */
+        .channel-status {
+            padding: 0.125rem 0.5rem;
+            border-radius: var(--radius-full);
+            font-size: 0.75rem;
+            font-weight: 500;
+            white-space: nowrap;
+            background: var(--state-bg, var(--stopped-bg));
+            color: var(--state-color, var(--text-secondary));
+        }
+
+        .channel-chevron svg {
+            width: 1.125rem;
+            height: 1.125rem;
+            color: var(--text-secondary);
+            display: block;
+            transition: transform var(--transition-normal);
+        }
+
+        .channel--open .channel-chevron svg {
+            transform: rotate(180deg);
+        }
+
+        .channel-body {
+            padding: var(--space-6) var(--space-7) var(--space-7);
+            border-top: 1px solid var(--border-default);
+        }
     }
 
     /* =========================================================================
