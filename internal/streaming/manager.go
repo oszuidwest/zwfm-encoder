@@ -565,6 +565,18 @@ func listenerRelistenDelay(
 	return types.ListenerRelistenDelay, state, state.count == types.ListenerRelistenWarningThreshold
 }
 
+func resolveExitError(result *ffmpeg.StartResult, err error) string {
+	if err == nil {
+		return ""
+	}
+	if result != nil {
+		if errMsg := util.ExtractLastError(result.Stderr()); errMsg != "" {
+			return errMsg
+		}
+	}
+	return err.Error()
+}
+
 func (m *Manager) handleStreamExit(
 	streamID string, result *ffmpeg.StartResult, backoff *util.Backoff, mode types.StreamMode,
 	err error, runDuration time.Duration,
@@ -577,12 +589,8 @@ func (m *Manager) handleStreamExit(
 		return false
 	case streamExitListenerRelisten:
 		if err != nil {
-			errMsg := util.ExtractLastError(result.Stderr())
-			if errMsg == "" {
-				errMsg = err.Error()
-			}
 			slog.Info("srt listener session ended, relistening",
-				"stream_id", streamID, "duration", runDuration, "error", errMsg)
+				"stream_id", streamID, "duration", runDuration, "error", resolveExitError(result, err))
 		} else {
 			slog.Info("srt listener session ended, relistening",
 				"stream_id", streamID, "duration", runDuration)
@@ -598,10 +606,7 @@ func (m *Manager) handleStreamExit(
 	}
 
 	if err != nil {
-		errMsg := util.ExtractLastError(result.Stderr())
-		if errMsg == "" {
-			errMsg = err.Error()
-		}
+		errMsg := resolveExitError(result, err)
 		if cause != nil {
 			slog.Error("stream error", "stream_id", streamID, "error", errMsg, "cause", cause)
 		} else {
