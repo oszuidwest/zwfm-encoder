@@ -179,13 +179,6 @@ func (e *Encoder) srtCapabilityError() error {
 	return e.srtSentinel()
 }
 
-func (e *Encoder) srtCapabilityErrorForStream(stream *types.Stream) error {
-	if stream != nil && stream.ModeOrDefault() == types.StreamModeListener {
-		return nil
-	}
-	return e.srtCapabilityError()
-}
-
 // SRTErrorMessage returns the user-facing SRT capability error, if any.
 func (e *Encoder) SRTErrorMessage() string {
 	if err := e.srtCapabilityError(); err != nil {
@@ -364,7 +357,9 @@ func (e *Encoder) StreamStatuses(streams []types.Stream) map[string]types.Proces
 				State:      types.ProcessDisabled,
 				MaxRetries: stream.MaxRetriesOrDefault(),
 			}
-		case e.srtCapabilityErrorForStream(stream) != nil:
+		// Listener streams serve SRT via the gosrt fanout, not FFmpeg's SRT
+		// output, so FFmpeg's caller SRT capability is irrelevant to them.
+		case stream.ModeOrDefault() != types.StreamModeListener && e.srtCapabilityError() != nil:
 			result[stream.ID] = types.ProcessStatus{
 				State:      types.ProcessError,
 				MaxRetries: stream.MaxRetriesOrDefault(),

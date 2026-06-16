@@ -326,7 +326,6 @@ func (m *Manager) startListenerFanout(stream *types.Stream) (bool, error) {
 		BindHost: stream.ListenerBindHost(),
 		Port:     stream.Port,
 		Password: stream.Password,
-		Logger:   slog.Default(),
 	})
 	if err != nil {
 		m.removePlaceholder(stream.ID, placeholder)

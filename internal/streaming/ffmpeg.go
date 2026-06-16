@@ -9,33 +9,29 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-// BuildCallerArgs returns FFmpeg arguments for caller-mode SRT streaming.
-func BuildCallerArgs(stream *types.Stream) []string {
+// buildEncodeArgs returns the shared FFmpeg input and codec arguments used by
+// both caller and listener encoding modes.
+func buildEncodeArgs(stream *types.Stream) []string {
 	codecArgs := types.BuildCodecArgs(stream.Codec, stream.Bitrate)
-	format := stream.Codec.Format()
-	srtURL := BuildSRTURL(stream)
-
-	// Start with base input args, add stream-specific flags
 	args := ffmpeg.BaseInputArgs()
 	args = append(args, "-hide_banner", "-loglevel", "warning", "-codec:a")
-	args = append(args, codecArgs...)
-	args = append(args, "-f", format, srtURL)
-	return args
+	return append(args, codecArgs...)
+}
+
+// BuildCallerArgs returns FFmpeg arguments for caller-mode SRT streaming.
+func BuildCallerArgs(stream *types.Stream) []string {
+	args := buildEncodeArgs(stream)
+	return append(args, "-f", stream.Codec.Format(), BuildSRTURL(stream))
 }
 
 // BuildListenerPipeArgs returns FFmpeg arguments for listener-mode pipe encoding.
 func BuildListenerPipeArgs(stream *types.Stream) []string {
-	codecArgs := types.BuildCodecArgs(stream.Codec, stream.Bitrate)
+	args := buildEncodeArgs(stream)
 	format := stream.Codec.Format()
-
-	args := ffmpeg.BaseInputArgs()
-	args = append(args, "-hide_banner", "-loglevel", "warning", "-codec:a")
-	args = append(args, codecArgs...)
 	if format == "mpegts" {
 		args = append(args, "-pat_period", "0.1")
 	}
-	args = append(args, "-f", format, "pipe:1")
-	return args
+	return append(args, "-f", format, "pipe:1")
 }
 
 // BuildSRTURL constructs a caller-mode SRT streaming URL.

@@ -170,21 +170,19 @@ func (s *Server) Write(chunk []byte) {
 		return
 	}
 
+	// enqueue is non-blocking, so the RLock can span the fan-out loop instead
+	// of snapshotting subscribers into a per-chunk slice on the audio hot path.
 	s.mu.RLock()
-	subscribers := make([]*subscriber, 0, len(s.subscribers))
-	for sub := range s.subscribers {
-		subscribers = append(subscribers, sub)
-	}
-	s.mu.RUnlock()
+	defer s.mu.RUnlock()
 
-	if len(subscribers) == 0 {
+	if len(s.subscribers) == 0 {
 		return
 	}
 
 	buf := make([]byte, len(chunk))
 	copy(buf, chunk)
 
-	for _, sub := range subscribers {
+	for sub := range s.subscribers {
 		if dropped := sub.enqueue(buf); dropped {
 			s.logSlowSubscriberDrop(sub)
 		}
