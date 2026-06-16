@@ -23,6 +23,7 @@
  *   settings  - Cog icon for settings/preferences button (cog-6-tooth)
  *   plus      - Plus sign for add/create actions
  *   close     - X mark for close/cancel/dismiss (x-mark)
+ *   edit      - Pencil square for edit actions
  *   audio     - Speaker with sound waves for audio sections (speaker-wave)
  *   silence   - Speaker with X mark for silence detection (speaker-x-mark)
  *   balance   - Scale for channel imbalance detection
@@ -34,11 +35,14 @@
  *   email     - Envelope for email notifications (envelope)
  *   server    - Server stack for connection settings (server-stack)
  *   monitoring - Presentation chart for monitoring integrations (presentation-chart-line)
+ *   streamMode - Opposing arrows for push/pull stream mode selection (arrows-right-left)
+ *   listener  - Radio waves for local SRT listener settings (signal)
  *   encoding  - Sliders for encoding settings (adjustments-horizontal)
  *   power     - Power button for stream enable/disable toggle
  *   license   - Document with text for license section (document-text)
  *   heart     - Heart for acknowledgements section
  *   warning   - Triangle alert for error states (exclamation-triangle)
+ *   check     - Check mark for success states
  *   cloud     - Cloud with arrow for external services (cloud-arrow-up)
  *   download  - Arrow down for downloads (arrow-down-tray)
  *   bug       - Bug icon for issue reporting (bug-ant)
@@ -47,6 +51,12 @@
  *   eye       - Eye icon for showing password
  *   eyeSlash  - Slashed eye for hiding password (eye-slash)
  *   refresh   - Circular arrows for refresh actions (arrow-path)
+ *   key       - Key for recording API credentials
+ *   microphone - Microphone for recorder settings
+ *   folder    - Folder for local storage settings
+ *   list      - Bulleted list for event log tab
+ *   chevronDown - Down chevron for collapsible controls
+ *   chevronUp - Up chevron for collapsible controls
  */
 
 /**
@@ -87,6 +97,10 @@ window.icons = {
     server: `<svg fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M5.25 14.25h13.5m-13.5 0a3 3 0 0 1-3-3m3 3a3 3 0 1 0 0 6h13.5a3 3 0 1 0 0-6m-16.5-3a3 3 0 0 1 3-3h13.5a3 3 0 0 1 3 3m-19.5 0a4.5 4.5 0 0 1 .9-2.7L5.737 5.1a3.375 3.375 0 0 1 2.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 0 1 .9 2.7m0 0a3 3 0 0 1-3 3m0 3h.008v.008h-.008v-.008Zm0-6h.008v.008h-.008v-.008Zm-3 6h.008v.008h-.008v-.008Zm0-6h.008v.008h-.008v-.008Z"/></svg>`,
 
     monitoring: `<svg fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5m.75-9 3-3 2.148 2.148A12.061 12.061 0 0 1 16.5 7.605"/></svg>`,
+
+    streamMode: `<svg fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5M16.5 3 21 7.5m0 0L16.5 12M21 7.5H7.5"/></svg>`,
+
+    listener: `<svg fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M9.348 14.652a3.75 3.75 0 0 1 0-5.304M14.652 9.348a3.75 3.75 0 0 1 0 5.304M7.227 16.773a6.75 6.75 0 0 1 0-9.546M16.773 7.227a6.75 6.75 0 0 1 0 9.546M5.106 18.894a9.75 9.75 0 0 1 0-13.788M18.894 5.106a9.75 9.75 0 0 1 0 13.788M12 12h.008v.008H12V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/></svg>`,
 
     encoding: `<svg fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75"/></svg>`,
 
