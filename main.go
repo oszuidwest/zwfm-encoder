@@ -65,10 +65,6 @@ func main() {
 		slog.Error("failed to create encoder", "error", err)
 		os.Exit(1)
 	}
-	if ffmpegAvailable && !enc.SRTAvailable() && enc.SRTProbeError() == nil {
-		slog.Warn("FFmpeg found but SRT protocol is not available", "path", ffmpegPath)
-	}
-
 	srv := NewServer(cfg, enc, ffmpegAvailable)
 
 	// Initialize recording manager if configured

@@ -120,9 +120,12 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 	// Create stream manager and wire up event callback
 	streamMgr := streaming.NewManager(ffmpegPath)
 	srtAvailable, srtProbeErr := util.ProbeFFmpegProtocol(ffmpegPath, "srt")
-	if srtProbeErr != nil {
+	switch {
+	case srtProbeErr != nil:
 		slog.Warn("could not verify FFmpeg SRT protocol support",
 			"path", ffmpegPath, "error", srtProbeErr)
+	case ffmpegPath != "" && !srtAvailable:
+		slog.Warn("FFmpeg found but SRT protocol is not available", "path", ffmpegPath)
 	}
 
 	e := &Encoder{
@@ -154,14 +157,6 @@ func (e *Encoder) SRTAvailable() bool {
 		return false
 	}
 	return e.srtAvailable
-}
-
-// SRTProbeError returns the FFmpeg SRT capability probe error, if verification failed.
-func (e *Encoder) SRTProbeError() error {
-	if e == nil {
-		return nil
-	}
-	return e.srtProbeError
 }
 
 // srtSentinel returns the sentinel describing why SRT is unusable: unverified if

@@ -55,7 +55,7 @@ type Manager struct {
 type Stream struct {
 	result     *ffmpeg.StartResult
 	state      types.ProcessState
-	mode       types.StreamMode
+	mode       types.StreamMode // snapshot of the launch-time mode, already defaulted via ModeOrDefault
 	lastError  string
 	startTime  time.Time
 	retryCount int
@@ -116,7 +116,7 @@ func (m *Manager) maybeEmitStable(id string, started *Stream) {
 	m.mu.RLock()
 	cur, exists := m.streams[id]
 	stable := exists && cur == started && cur.state == types.ProcessRunning &&
-		cur.mode.OrDefault() != types.StreamModeListener
+		cur.mode != types.StreamModeListener
 	m.mu.RUnlock()
 	if stable {
 		m.emitEvent(id, "stream_stable", "Stream connected and stable", "", 0, 0)
@@ -140,7 +140,7 @@ func (m *Manager) runWriter(streamID string, s *Stream) {
 
 		m.mu.Lock()
 		if cur, exists := m.streams[streamID]; exists && cur == s && cur.state == types.ProcessRunning {
-			if cur.mode.OrDefault() == types.StreamModeListener {
+			if cur.mode == types.StreamModeListener {
 				slog.Debug("srt listener write ended", "stream_id", streamID, "error", err)
 				cur.result.CloseStdin()
 				m.mu.Unlock()
@@ -427,7 +427,7 @@ func (m *Manager) Statuses(getStreamConfig func(string) *types.Stream) map[strin
 		}
 		isRunning := stream.state == types.ProcessRunning
 		runDuration := time.Since(stream.startTime)
-		isListener := stream.mode.OrDefault() == types.StreamModeListener
+		isListener := stream.mode == types.StreamModeListener
 
 		var uptime string
 		if isRunning {
@@ -459,7 +459,7 @@ func (m *Manager) StreamInfo(
 	if !exists {
 		return nil, nil, types.StreamModeCaller, false
 	}
-	return stream.result, stream.backoff, stream.mode.OrDefault(), true
+	return stream.result, stream.backoff, stream.mode, true
 }
 
 // SetError records an error message and sets the stream state to error.
