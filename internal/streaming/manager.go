@@ -1063,18 +1063,12 @@ func (m *Manager) monitorListenerEncoder(streamID string, ctx StreamContext, sto
 		m.recordListenerEncoderFailure(streamID, stream, backoff, errMsg, runDuration)
 
 		for {
-			shouldRetry, reason := m.shouldContinueRetry(streamID, ctx)
-			if !shouldRetry {
-				m.stopListenerAfterRetryEnd(streamID, stream, reason, errMsg)
+			cfg, ok := m.prepareListenerRetry(streamID, stream, ctx, errMsg)
+			if !ok {
 				return
 			}
 
 			retryDelay := backoff.Current()
-			cfg := ctx.Stream(streamID)
-			if cfg == nil {
-				m.stopListenerAfterRetryEnd(streamID, stream, "stream removed", errMsg)
-				return
-			}
 			retryCount := m.RetryCount(streamID)
 			maxRetries := cfg.MaxRetriesOrDefault()
 			slog.Info("listener encoder stopped, waiting before retry",
@@ -1089,15 +1083,8 @@ func (m *Manager) monitorListenerEncoder(streamID string, ctx StreamContext, sto
 			case <-time.After(retryDelay):
 			}
 
-			shouldRetry, reason = m.shouldContinueRetry(streamID, ctx)
-			if !shouldRetry {
-				m.stopListenerAfterRetryEnd(streamID, stream, reason, errMsg)
-				return
-			}
-
-			cfg = ctx.Stream(streamID)
-			if cfg == nil {
-				m.stopListenerAfterRetryEnd(streamID, stream, "stream removed", errMsg)
+			cfg, ok = m.prepareListenerRetry(streamID, stream, ctx, errMsg)
+			if !ok {
 				return
 			}
 			if err := m.startListenerEncoderRun(streamID, stream, cfg); err != nil {
@@ -1109,6 +1096,26 @@ func (m *Manager) monitorListenerEncoder(streamID string, ctx StreamContext, sto
 			break
 		}
 	}
+}
+
+// prepareListenerRetry prepares the listener encoder to attempt another run.
+// When retry is no longer permitted it finalizes shutdown via
+// stopListenerAfterRetryEnd and returns ok=false; otherwise it returns the
+// current stream config.
+func (m *Manager) prepareListenerRetry(
+	streamID string, stream *Stream, ctx StreamContext, errMsg string,
+) (cfg *types.Stream, ok bool) {
+	shouldRetry, reason := m.shouldContinueRetry(streamID, ctx)
+	if !shouldRetry {
+		m.stopListenerAfterRetryEnd(streamID, stream, reason, errMsg)
+		return nil, false
+	}
+	cfg = ctx.Stream(streamID)
+	if cfg == nil {
+		m.stopListenerAfterRetryEnd(streamID, stream, "stream removed", errMsg)
+		return nil, false
+	}
+	return cfg, true
 }
 
 func (m *Manager) listenerEncoderInfo(
