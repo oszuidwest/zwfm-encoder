@@ -784,7 +784,8 @@
                             <span class="icon-container" x-html="icons.streamMode"></span>
                             <h3>Mode</h3>
                         </div>
-                        <div class="segmented segmented--neutral" role="group" aria-label="Stream mode">
+                        <p id="stream-mode-desc" class="section-desc">Push sends audio to a remote SRT server. Local pull listener opens this encoder as the SRT endpoint.</p>
+                        <div class="segmented segmented--neutral" role="group" aria-label="Stream mode" aria-describedby="stream-mode-desc">
                             <button type="button" class="segmented-btn"
                                     :aria-pressed="streamForm.mode !== 'listener'"
                                     :disabled="!config.srt_available && streamForm.mode === 'listener'"
@@ -808,22 +809,35 @@
                             <h3 x-text="streamForm.mode === 'listener' ? 'Local Listener' : 'Server Connection'">Server Connection</h3>
                         </div>
                         <div class="form">
-                            <div class="group">
-                                <label for="stream-host" x-text="streamForm.mode === 'listener' ? 'Bind address' : 'Host'">Host</label>
-                                <input id="stream-host" type="text"
-                                       :placeholder="streamForm.mode === 'listener' ? '0.0.0.0' : 'stream.example.com'"
-                                       x-model="streamForm.host" @input="markStreamFormDirty()">
-                            </div>
-                            <div class="row">
+                            <div x-show="streamForm.mode !== 'listener'">
                                 <div class="group">
-                                    <label for="stream-port">Port</label>
-                                    <input id="stream-port" type="number"
-                                           x-model.number="streamForm.port" @input="markStreamFormDirty()">
+                                    <label for="stream-host">Host</label>
+                                    <input id="stream-host" type="text" placeholder="stream.example.com"
+                                           x-model="streamForm.host" @input="markStreamFormDirty()">
                                 </div>
-                                <div class="group" x-show="streamForm.mode !== 'listener'">
-                                    <label for="stream-streamid">Stream ID</label>
-                                    <input id="stream-streamid" type="text" placeholder="studio"
-                                           x-model="streamForm.stream_id" @input="markStreamFormDirty()">
+                                <div class="row">
+                                    <div class="group">
+                                        <label for="stream-port">Port</label>
+                                        <input id="stream-port" type="number"
+                                               x-model.number="streamForm.port" @input="markStreamFormDirty()">
+                                    </div>
+                                    <div class="group">
+                                        <label for="stream-streamid">Stream ID</label>
+                                        <input id="stream-streamid" type="text" placeholder="studio"
+                                               x-model="streamForm.stream_id" @input="markStreamFormDirty()">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row" x-show="streamForm.mode === 'listener'" x-cloak>
+                                <div class="group">
+                                    <label for="stream-listener-host">Bind address</label>
+                                    <input id="stream-listener-host" type="text" placeholder="0.0.0.0"
+                                           x-model="streamForm.host" @input="markStreamFormDirty()">
+                                </div>
+                                <div class="group">
+                                    <label for="stream-listener-port">Port</label>
+                                    <input id="stream-listener-port" type="number"
+                                           x-model.number="streamForm.port" @input="markStreamFormDirty()">
                                 </div>
                             </div>
                             <div class="group" x-show="streamForm.mode === 'listener'">
