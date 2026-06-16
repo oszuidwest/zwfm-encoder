@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,8 +19,8 @@ const (
 	DefaultLatency = 300 * time.Millisecond
 	// DefaultMaxClients limits concurrent subscribers until this becomes configurable.
 	DefaultMaxClients = 16
-	// DefaultQueueChunks is the bounded chunk queue per subscriber.
-	DefaultQueueChunks = 2
+	// defaultQueueChunks is the bounded chunk queue per subscriber.
+	defaultQueueChunks = 2
 )
 
 // Config describes a fan-out SRT listener.
@@ -103,7 +104,7 @@ func (s *Server) Start() error {
 	config.TransmissionType = "live"
 
 	s.server = &srt.Server{
-		Addr:            net.JoinHostPort(s.cfg.BindHost, fmt.Sprintf("%d", s.cfg.Port)),
+		Addr:            net.JoinHostPort(s.cfg.BindHost, strconv.Itoa(s.cfg.Port)),
 		Config:          &config,
 		HandleConnect:   s.handleConnect,
 		HandleSubscribe: s.handleSubscribe,
@@ -192,9 +193,6 @@ func (s *Server) Write(chunk []byte) {
 
 // ClientCount returns the number of active subscriber connections.
 func (s *Server) ClientCount() int64 {
-	if s == nil {
-		return 0
-	}
 	return s.clientCount.Load()
 }
 
@@ -237,7 +235,7 @@ func (s *Server) handleConnect(req srt.ConnRequest) srt.ConnType {
 func (s *Server) handleSubscribe(conn srt.Conn) {
 	sub := &subscriber{
 		conn: conn,
-		ch:   make(chan []byte, DefaultQueueChunks),
+		ch:   make(chan []byte, defaultQueueChunks),
 		done: make(chan struct{}),
 	}
 	if !s.addSubscriber(sub) {
@@ -254,7 +252,7 @@ func (s *Server) handleSubscribe(conn srt.Conn) {
 			return
 		case chunk := <-sub.ch:
 			if _, err := conn.Write(chunk); err != nil {
-				s.cfg.Logger.Debug("srt subscriber write failed",
+				s.cfg.Logger.Warn("srt subscriber write failed",
 					"stream_id", s.cfg.StreamID,
 					"remote_addr", conn.RemoteAddr(),
 					"error", err)
@@ -313,12 +311,6 @@ func (s *Server) logSlowSubscriberDrop(sub *subscriber) {
 
 func (sub *subscriber) enqueue(chunk []byte) bool {
 	select {
-	case <-sub.done:
-		return false
-	default:
-	}
-
-	select {
 	case sub.ch <- chunk:
 		return false
 	case <-sub.done:
@@ -331,14 +323,11 @@ func (sub *subscriber) enqueue(chunk []byte) bool {
 	case <-sub.ch:
 		atomic.AddInt64(&sub.drops, 1)
 		dropped = true
-	case <-sub.done:
-		return false
 	default:
 	}
 
 	select {
 	case sub.ch <- chunk:
-	case <-sub.done:
 	default:
 	}
 	return dropped

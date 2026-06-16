@@ -67,16 +67,16 @@ type Stream struct {
 	fanout         *srtfanout.Server
 	encoderMu      sync.RWMutex
 	encoder        *encoderRun
-	encoderRunning atomic.Bool
 	encoderLastErr string
 }
 
 type encoderRun struct {
-	result    *ffmpeg.StartResult
-	audioCh   chan []byte
-	closeOnce sync.Once
-	wg        sync.WaitGroup
-	startedAt time.Time
+	result     *ffmpeg.StartResult
+	audioCh    chan []byte
+	closeOnce  sync.Once
+	wg         sync.WaitGroup
+	stdoutDone chan struct{}
+	startedAt  time.Time
 }
 
 // closeAudioCh safely closes the audio channel exactly once.
@@ -137,8 +137,7 @@ func (m *Manager) emitEvent(streamID, event, message, errMsg string, retryCount,
 func (m *Manager) maybeEmitStable(id string, started *Stream) {
 	m.mu.RLock()
 	cur, exists := m.streams[id]
-	stable := exists && cur == started && cur.state == types.ProcessRunning &&
-		cur.mode != types.StreamModeListener
+	stable := exists && cur == started && cur.state == types.ProcessRunning
 	m.mu.RUnlock()
 	if stable {
 		m.emitEvent(id, "stream_stable", "Stream connected and stable", "", 0, 0)
@@ -162,12 +161,6 @@ func (m *Manager) runWriter(streamID string, s *Stream) {
 
 		m.mu.Lock()
 		if cur, exists := m.streams[streamID]; exists && cur == s && cur.state == types.ProcessRunning {
-			if cur.mode == types.StreamModeListener {
-				slog.Debug("srt listener write ended", "stream_id", streamID, "error", err)
-				cur.result.CloseStdin()
-				m.mu.Unlock()
-				return
-			}
 			slog.Warn("stream write failed, marking as error",
 				"stream_id", streamID, "error", err)
 			cur.state = types.ProcessError
@@ -240,7 +233,7 @@ func (m *Manager) startCaller(stream *types.Stream) (bool, error) {
 		m.stopStreamResources(stream.ID, oldStream)
 	}
 
-	args := BuildFFmpegArgs(stream)
+	args := BuildCallerArgs(stream)
 
 	slog.Info("starting stream", "stream_id", stream.ID, "host", stream.Host, "port", stream.Port)
 
@@ -280,19 +273,13 @@ func (m *Manager) startCaller(stream *types.Stream) (bool, error) {
 
 	go m.runWriter(stream.ID, s)
 
-	prefix := "Connecting to"
-	if stream.ModeOrDefault() == types.StreamModeListener {
-		prefix = "Listening on"
-	}
-	m.emitEvent(stream.ID, "stream_started", fmt.Sprintf("%s %s", prefix, stream.Endpoint()), "", 0, 0)
+	m.emitEvent(stream.ID, "stream_started", fmt.Sprintf("Connecting to %s", stream.Endpoint()), "", 0, 0)
 
-	if stream.ModeOrDefault() != types.StreamModeListener {
-		// Guard the stable event against restarts during the stability window.
-		go func() {
-			time.Sleep(types.StableThreshold)
-			m.maybeEmitStable(stream.ID, s)
-		}()
-	}
+	// Guard the stable event against restarts during the stability window.
+	go func() {
+		time.Sleep(types.StableThreshold)
+		m.maybeEmitStable(stream.ID, s)
+	}()
 
 	return true, nil
 }
@@ -335,13 +322,11 @@ func (m *Manager) startListenerFanout(stream *types.Stream) (bool, error) {
 	}
 
 	fanout, err := srtfanout.NewServer(srtfanout.Config{
-		StreamID:   stream.ID,
-		BindHost:   stream.ListenerBindHost(),
-		Port:       stream.Port,
-		Password:   stream.Password,
-		Latency:    srtfanout.DefaultLatency,
-		MaxClients: srtfanout.DefaultMaxClients,
-		Logger:     slog.Default(),
+		StreamID: stream.ID,
+		BindHost: stream.ListenerBindHost(),
+		Port:     stream.Port,
+		Password: stream.Password,
+		Logger:   slog.Default(),
 	})
 	if err != nil {
 		m.removePlaceholder(stream.ID, placeholder)
@@ -411,16 +396,16 @@ func (m *Manager) startListenerEncoderRun(
 	}
 
 	run := &encoderRun{
-		result:    result,
-		audioCh:   make(chan []byte, audioBufferSize),
-		startedAt: time.Now(),
+		result:     result,
+		audioCh:    make(chan []byte, audioBufferSize),
+		stdoutDone: make(chan struct{}),
+		startedAt:  time.Now(),
 	}
 	run.wg.Add(2)
 
 	s.encoderMu.Lock()
 	s.encoder = run
 	s.encoderLastErr = ""
-	s.encoderRunning.Store(true)
 	s.encoderMu.Unlock()
 
 	go m.runListenerWriter(streamID, run)
@@ -440,7 +425,7 @@ func (m *Manager) runListenerWriter(streamID string, run *encoderRun) {
 		if errors.Is(err, ffmpeg.ErrStdinClosed) {
 			return
 		}
-		slog.Debug("listener encoder stdin write failed", "stream_id", streamID, "error", err)
+		slog.Warn("listener encoder stdin write failed", "stream_id", streamID, "error", err)
 		run.result.CloseStdin()
 		return
 	}
@@ -448,6 +433,7 @@ func (m *Manager) runListenerWriter(streamID string, run *encoderRun) {
 
 func (m *Manager) runListenerStdoutReader(streamID string, s *Stream, run *encoderRun) {
 	defer run.wg.Done()
+	defer close(run.stdoutDone)
 
 	stdout := run.result.Stdout()
 	if stdout == nil {
@@ -505,7 +491,6 @@ func (s *Stream) detachEncoderRun(expected *encoderRun) *encoderRun {
 		run.closeAudioCh()
 	}
 	s.encoder = nil
-	s.encoderRunning.Store(false)
 	return run
 }
 
@@ -691,26 +676,7 @@ func (m *Manager) WriteAudio(streamID string, data []byte) error {
 	buf := make([]byte, len(data))
 	copy(buf, data)
 
-	// Drop-oldest: if full, discard one stale chunk, then enqueue fresh.
-	// Both inner selects have default cases to handle races with the
-	// writer goroutine that may drain the channel concurrently.
-	select {
-	case ch <- buf:
-	default:
-		select {
-		case <-ch:
-			drops := stream.audioDrops.Add(1)
-			if drops == 1 || drops%100 == 0 {
-				slog.Warn("audio buffer full, dropping chunk",
-					"stream_id", streamID, "total_drops", drops)
-			}
-		default:
-		}
-		select {
-		case ch <- buf:
-		default:
-		}
-	}
+	stream.offerAudio(streamID, ch, buf, "audio buffer full, dropping chunk")
 
 	m.mu.RUnlock()
 	return nil
@@ -722,20 +688,27 @@ func (m *Manager) writeListenerAudio(streamID string, stream *Stream, data []byt
 
 	stream.encoderMu.RLock()
 	run := stream.encoder
-	if run == nil || run.audioCh == nil || !stream.encoderRunning.Load() {
+	if run == nil || run.audioCh == nil {
 		stream.encoderMu.RUnlock()
 		return
 	}
 	ch := run.audioCh
+	stream.offerAudio(streamID, ch, buf, "listener encoder audio buffer full, dropping chunk")
+	stream.encoderMu.RUnlock()
+}
 
+func (s *Stream) offerAudio(streamID string, ch chan []byte, buf []byte, logMessage string) {
+	// Drop-oldest: if full, discard one stale chunk, then enqueue fresh.
+	// Both inner selects have default cases to handle races with the
+	// writer goroutine that may drain the channel concurrently.
 	select {
 	case ch <- buf:
 	default:
 		select {
 		case <-ch:
-			drops := stream.audioDrops.Add(1)
+			drops := s.audioDrops.Add(1)
 			if drops == 1 || drops%100 == 0 {
-				slog.Warn("listener encoder audio buffer full, dropping chunk",
+				slog.Warn(logMessage,
 					"stream_id", streamID, "total_drops", drops)
 			}
 		default:
@@ -745,7 +718,6 @@ func (m *Manager) writeListenerAudio(streamID string, stream *Stream, data []byt
 		default:
 		}
 	}
-	stream.encoderMu.RUnlock()
 }
 
 // Statuses returns status information for all managed streams.
@@ -768,7 +740,7 @@ func (m *Manager) Statuses(getStreamConfig func(string) *types.Stream) map[strin
 		errMsg := stream.lastError
 		if isListener {
 			stream.encoderMu.RLock()
-			encoderRunning = stream.encoderRunning.Load()
+			encoderRunning = stream.encoder != nil
 			if stream.encoderLastErr != "" {
 				errMsg = stream.encoderLastErr
 			}
@@ -1063,15 +1035,20 @@ func (m *Manager) monitorListenerEncoder(streamID string, ctx StreamContext, sto
 			return
 		}
 
-		err := run.result.Wait()
-		runDuration := time.Since(run.startedAt)
-		cause := context.Cause(run.result.Context())
+		select {
+		case <-stopChan:
+			return
+		case <-run.stdoutDone:
+		}
 
 		if detached := stream.detachEncoderRun(run); detached == nil {
 			return
 		}
 		run.wg.Wait()
 		run.result.CloseStdin()
+		err := run.result.Wait()
+		runDuration := time.Since(run.startedAt)
+		cause := context.Cause(run.result.Context())
 
 		if errors.Is(cause, errStoppedByUser) {
 			return
@@ -1155,7 +1132,6 @@ func (m *Manager) recordListenerEncoderFailure(
 ) {
 	stream.encoderMu.Lock()
 	stream.encoderLastErr = errMsg
-	stream.encoderRunning.Store(false)
 	stream.encoderMu.Unlock()
 
 	slog.Error("listener encoder error", "stream_id", streamID, "error", errMsg)

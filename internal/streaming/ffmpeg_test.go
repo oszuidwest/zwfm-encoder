@@ -8,7 +8,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-func TestBuildSRTURLModeAware(t *testing.T) {
+func TestBuildSRTURLCaller(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -51,38 +51,6 @@ func TestBuildSRTURLModeAware(t *testing.T) {
 				"pbkeylen":   "16",
 			},
 		},
-		{
-			name: "listener empty host binds all interfaces",
-			stream: types.Stream{
-				Mode:  types.StreamModeListener,
-				Port:  9000,
-				Codec: types.CodecMP3,
-			},
-			wantHost: "0.0.0.0:9000",
-			wantParams: map[string]string{
-				"latency":        "300000",
-				"listen_timeout": "-1",
-				"mode":           "listener",
-				"transtype":      "live",
-			},
-			absent: []string{"streamid", "passphrase", "pbkeylen"},
-		},
-		{
-			name: "listener with explicit bind and password",
-			stream: types.Stream{
-				Mode:     types.StreamModeListener,
-				Host:     "192.0.2.10",
-				Port:     9000,
-				Password: "1234567890",
-				Codec:    types.CodecMP3,
-			},
-			wantHost: "192.0.2.10:9000",
-			wantParams: map[string]string{
-				"mode":       "listener",
-				"passphrase": "1234567890",
-				"pbkeylen":   "16",
-			},
-		},
 	}
 
 	for _, tt := range tests {
@@ -114,7 +82,7 @@ func TestBuildSRTURLModeAware(t *testing.T) {
 	}
 }
 
-func TestBuildFFmpegArgsUsesCallerSRTOutput(t *testing.T) {
+func TestBuildCallerArgsUsesSRTOutput(t *testing.T) {
 	t.Parallel()
 
 	stream := &types.Stream{
@@ -124,7 +92,7 @@ func TestBuildFFmpegArgsUsesCallerSRTOutput(t *testing.T) {
 		Codec:    types.CodecMP3,
 	}
 
-	args := BuildFFmpegArgs(stream)
+	args := BuildCallerArgs(stream)
 	if slices.Contains(args, "pipe:1") {
 		t.Fatalf("caller args contain pipe:1: %v", args)
 	}
@@ -170,7 +138,7 @@ func TestBuildListenerPipeArgs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			args := BuildFFmpegArgs(&types.Stream{
+			args := BuildListenerPipeArgs(&types.Stream{
 				Mode:  types.StreamModeListener,
 				Port:  9000,
 				Codec: tt.codec,

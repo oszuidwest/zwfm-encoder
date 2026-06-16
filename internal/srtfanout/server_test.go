@@ -138,8 +138,8 @@ func TestWriteDropsOldestAndKeepsNewest(t *testing.T) {
 	server.Write([]byte("two"))
 	server.Write([]byte("three"))
 
-	if got := len(sub.ch); got != DefaultQueueChunks {
-		t.Fatalf("queue len = %d, want %d", got, DefaultQueueChunks)
+	if got := len(sub.ch); got != defaultQueueChunks {
+		t.Fatalf("queue len = %d, want %d", got, defaultQueueChunks)
 	}
 	if got := string(<-sub.ch); got != "two" {
 		t.Fatalf("first queued chunk = %q, want two", got)
@@ -222,6 +222,37 @@ func TestHandleSubscribeIncrementsDecrementsAndShutdownWaits(t *testing.T) {
 	}
 }
 
+func TestHandleSubscribeDecrementsAfterClientWriteFailure(t *testing.T) {
+	t.Parallel()
+
+	server := newQueueTestServer(t)
+	conn := newFakeConn()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		server.handleSubscribe(conn)
+	}()
+
+	eventually(t, func() bool {
+		return server.ClientCount() == 1
+	}, "subscriber count to reach 1")
+
+	if err := conn.Close(); err != nil {
+		t.Fatalf("fake connection Close() error = %v", err)
+	}
+	server.Write([]byte("after-disconnect"))
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("handleSubscribe did not return after client write failure")
+	}
+	if got := server.ClientCount(); got != 0 {
+		t.Fatalf("ClientCount() = %d, want 0", got)
+	}
+}
+
 func TestIntegrationTwoSubscribersReceiveBytes(t *testing.T) {
 	port := freeUDPPort(t)
 	server, err := NewServer(Config{
@@ -273,6 +304,51 @@ func TestIntegrationTwoSubscribersReceiveBytes(t *testing.T) {
 	}
 }
 
+func TestIntegrationRejectsSubscriberOverMaxClients(t *testing.T) {
+	port := freeUDPPort(t)
+	server, err := NewServer(Config{
+		StreamID:   "stream-1",
+		BindHost:   "127.0.0.1",
+		Port:       port,
+		Latency:    50 * time.Millisecond,
+		MaxClients: 1,
+		Logger:     testLogger(),
+	})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	if err := server.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer func() {
+		server.Shutdown()
+		if err := server.Wait(); err != nil {
+			t.Fatalf("Wait() error = %v", err)
+		}
+	}()
+
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	conn1 := dialSubscriber(t, addr, "read:stream-1")
+	defer func() {
+		if err := conn1.Close(); err != nil {
+			t.Fatalf("conn1 Close() error = %v", err)
+		}
+	}()
+
+	eventually(t, func() bool {
+		return server.ClientCount() == 1
+	}, "subscriber count to reach 1")
+
+	if conn2, err := dialSubscriberErr(addr, "read:stream-1"); err == nil {
+		defer func() {
+			if closeErr := conn2.Close(); closeErr != nil {
+				t.Fatalf("conn2 Close() error = %v", closeErr)
+			}
+		}()
+		t.Fatal("second subscriber connected despite MaxClients=1")
+	}
+}
+
 func newQueueTestServer(t *testing.T) *Server {
 	t.Helper()
 	server, err := NewServer(Config{
@@ -289,7 +365,7 @@ func (s *Server) addQueueOnlySubscriber(t *testing.T) *subscriber {
 	t.Helper()
 	sub := &subscriber{
 		conn: newFakeConn(),
-		ch:   make(chan []byte, DefaultQueueChunks),
+		ch:   make(chan []byte, defaultQueueChunks),
 		done: make(chan struct{}),
 	}
 	s.mu.Lock()
@@ -300,16 +376,20 @@ func (s *Server) addQueueOnlySubscriber(t *testing.T) *subscriber {
 
 func dialSubscriber(t *testing.T, addr, streamID string) srt.Conn {
 	t.Helper()
+	conn, err := dialSubscriberErr(addr, streamID)
+	if err != nil {
+		t.Fatalf("Dial(%s) error = %v", addr, err)
+	}
+	return conn
+}
+
+func dialSubscriberErr(addr, streamID string) (srt.Conn, error) {
 	cfg := srt.DefaultConfig()
 	cfg.ConnectionTimeout = time.Second
 	cfg.Latency = 50 * time.Millisecond
 	cfg.StreamId = streamID
 
-	conn, err := srt.Dial("srt", addr, cfg)
-	if err != nil {
-		t.Fatalf("Dial(%s) error = %v", addr, err)
-	}
-	return conn
+	return srt.Dial("srt", addr, cfg)
 }
 
 func readSRT(t *testing.T, conn srt.Conn) string {

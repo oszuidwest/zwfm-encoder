@@ -9,14 +9,6 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-// BuildFFmpegArgs returns FFmpeg arguments for streaming.
-func BuildFFmpegArgs(stream *types.Stream) []string {
-	if stream.ModeOrDefault() == types.StreamModeListener {
-		return BuildListenerPipeArgs(stream)
-	}
-	return BuildCallerArgs(stream)
-}
-
 // BuildCallerArgs returns FFmpeg arguments for caller-mode SRT streaming.
 func BuildCallerArgs(stream *types.Stream) []string {
 	codecArgs := types.BuildCodecArgs(stream.Codec, stream.Bitrate)
@@ -46,30 +38,20 @@ func BuildListenerPipeArgs(stream *types.Stream) []string {
 	return args
 }
 
-// BuildSRTURL constructs an SRT streaming URL.
+// BuildSRTURL constructs a caller-mode SRT streaming URL.
 func BuildSRTURL(stream *types.Stream) string {
 	params := url.Values{}
 	params.Set("pkt_size", "1316")
 	params.Set("oheadbw", "100")
 	params.Set("maxbw", "-1")
 	params.Set("transtype", "live")
-
-	host := stream.Host
-	switch stream.ModeOrDefault() {
-	case types.StreamModeListener:
-		host = stream.ListenerBindHost()
-		params.Set("latency", "300000")
-		params.Set("listen_timeout", "-1")
-		params.Set("mode", string(types.StreamModeListener))
-	default:
-		params.Set("latency", "10000000")
-		params.Set("mode", string(types.StreamModeCaller))
-		params.Set("streamid", stream.StreamID)
-	}
+	params.Set("latency", "10000000")
+	params.Set("mode", string(types.StreamModeCaller))
+	params.Set("streamid", stream.StreamID)
 	if stream.Password != "" {
 		params.Set("passphrase", stream.Password)
 		params.Set("pbkeylen", "16")
 	}
 
-	return fmt.Sprintf("srt://%s:%d?%s", host, stream.Port, params.Encode())
+	return fmt.Sprintf("srt://%s:%d?%s", stream.Host, stream.Port, params.Encode())
 }
