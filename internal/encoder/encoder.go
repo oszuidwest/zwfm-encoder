@@ -159,8 +159,8 @@ func (e *Encoder) SRTAvailable() bool {
 	return e.srtAvailable
 }
 
-// srtSentinel returns the sentinel describing why SRT is unusable: unverified if
-// the capability probe failed, otherwise unsupported.
+// srtSentinel returns ErrSRTUnverified when the capability probe failed;
+// otherwise it returns ErrSRTUnsupported.
 func (e *Encoder) srtSentinel() error {
 	if e.srtProbeError != nil {
 		return ErrSRTUnverified

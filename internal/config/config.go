@@ -521,8 +521,8 @@ func (c *Config) validateStreams() error {
 		if !stream.Enabled || stream.ModeOrDefault() != types.StreamModeListener {
 			continue
 		}
-		// Exact-string dedupe only: wildcard-vs-specific address overlap is left
-		// to the OS bind error so v1 stays simple and visible.
+		// Only exact duplicate listener binds are rejected here. Wildcard-vs-specific
+		// overlaps are left to the OS bind error to avoid surprising validation rules.
 		bind := stream.Endpoint()
 		if first, ok := listenerBinds[bind]; ok {
 			return fmt.Errorf("invalid streaming.streams[%d]: duplicate listener bind %q also used by streaming.streams[%d]", i, bind, first)

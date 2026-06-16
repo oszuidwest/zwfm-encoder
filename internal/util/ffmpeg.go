@@ -26,7 +26,7 @@ func ResolveFFmpegPath(customPath string) string {
 	return path
 }
 
-// ProbeFFmpegProtocol checks whether ffmpeg -protocols lists protocol exactly.
+// ProbeFFmpegProtocol checks whether "ffmpeg -protocols" lists protocol exactly.
 // Probe errors are returned separately from a clean "protocol not listed"
 // result so callers do not mislabel transient probe failures as build support.
 func ProbeFFmpegProtocol(ffmpegPath, protocol string) (bool, error) {

@@ -183,7 +183,7 @@ func (s *Stream) ModeOrDefault() StreamMode {
 }
 
 // RequiresFFmpegSRT reports whether the stream depends on FFmpeg's SRT output.
-// Caller streams stream SRT through FFmpeg; listener streams serve SRT via the
+// Caller-mode streams send SRT through FFmpeg; listener-mode streams serve SRT via the
 // gosrt fanout, so FFmpeg's SRT capability is irrelevant to them.
 func (s *Stream) RequiresFFmpegSRT() bool {
 	return s.ModeOrDefault() != StreamModeListener

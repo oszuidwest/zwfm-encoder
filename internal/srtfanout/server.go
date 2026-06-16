@@ -1,4 +1,4 @@
-// Package srtfanout provides a bounded byte fan-out over SRT subscribers.
+// Package srtfanout distributes encoded bytes to bounded SRT subscriber queues.
 package srtfanout
 
 import (
@@ -20,24 +20,31 @@ import (
 const (
 	// DefaultLatency is the SRT latency used for listener subscribers.
 	DefaultLatency = 300 * time.Millisecond
-	// DefaultMaxClients limits concurrent subscribers until this becomes configurable.
+	// DefaultMaxClients limits concurrent subscribers when Config.MaxClients is not set.
 	DefaultMaxClients = 16
-	// defaultQueueChunks is the bounded chunk queue per subscriber.
+	// defaultQueueChunks limits the buffered chunks held per subscriber.
 	defaultQueueChunks = 2
 )
 
-// Config describes a fan-out SRT listener.
+// Config describes a fan-out SRT listener and the defaults applied at construction time.
 type Config struct {
-	StreamID   string
-	BindHost   string
-	Port       int
-	Password   string
-	Latency    time.Duration
+	// StreamID labels log entries for this listener.
+	StreamID string
+	// BindHost is the local interface to listen on; empty uses 0.0.0.0.
+	BindHost string
+	// Port is the local SRT listener port.
+	Port int
+	// Password is the optional SRT passphrase; empty accepts only unencrypted clients.
+	Password string
+	// Latency is the SRT latency; non-positive values use DefaultLatency.
+	Latency time.Duration
+	// MaxClients limits concurrent subscribers; non-positive values use DefaultMaxClients.
 	MaxClients int
-	Logger     *slog.Logger
+	// Logger receives connection, rejection, and drop events; nil uses slog.Default.
+	Logger *slog.Logger
 }
 
-// Server owns one GoSRT listener and fans encoded bytes to subscribers.
+// Server owns one GoSRT listener and distributes encoded bytes to subscribers.
 type Server struct {
 	cfg Config
 
@@ -66,7 +73,7 @@ type subscriber struct {
 	drops     int64
 }
 
-// NewServer validates cfg and returns a stopped fan-out server.
+// NewServer validates cfg, applies defaults, and returns a stopped fan-out server.
 //
 //nolint:gocritic // Keep the public constructor value-based so callers can pass short-lived configs safely.
 func NewServer(cfg Config) (*Server, error) {
@@ -163,7 +170,7 @@ func (s *Server) Wait() error {
 	return s.serveErr
 }
 
-// Write fans chunk out to every current subscriber without blocking on slow clients.
+// Write broadcasts chunk to current subscribers without blocking on slow clients.
 func (s *Server) Write(chunk []byte) {
 	if len(chunk) == 0 {
 		return

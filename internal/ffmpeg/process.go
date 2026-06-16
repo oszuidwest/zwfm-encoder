@@ -52,7 +52,7 @@ func StartProcess(ffmpegPath string, args []string) (*StartResult, error) {
 	return startProcess(ffmpegPath, args, false)
 }
 
-// StartProcessWithStdout launches an FFmpeg subprocess and captures stdout.
+// StartProcessWithStdout launches an FFmpeg subprocess with stdout available through [StartResult.Stdout].
 func StartProcessWithStdout(ffmpegPath string, args []string) (*StartResult, error) {
 	return startProcess(ffmpegPath, args, true)
 }
@@ -183,7 +183,7 @@ func (r *StartResult) Stderr() string {
 	return r.stderr.String()
 }
 
-// Stdout returns the process stdout pipe when StartProcessWithStdout was used.
+// Stdout returns the process stdout reader, or nil when stdout was not captured.
 func (r *StartResult) Stdout() io.Reader {
 	if r == nil {
 		return nil

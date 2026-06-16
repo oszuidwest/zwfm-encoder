@@ -282,7 +282,7 @@ func (s *Server) handleGetStream(w http.ResponseWriter, r *http.Request) {
 type StreamRequest struct {
 	// Enabled reports whether the stream is active.
 	Enabled bool `json:"enabled"`
-	// Mode selects caller push or local listener pull behavior.
+	// Mode selects whether the stream pushes to a remote listener or exposes a local listener.
 	Mode types.StreamMode `json:"mode"`
 	// Host is the SRT server hostname.
 	Host string `json:"host"`

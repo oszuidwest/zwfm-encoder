@@ -672,7 +672,7 @@ func (m *Manager) WriteAudio(streamID string, data []byte) error {
 	}
 	ch := stream.audioCh
 
-	// Clone data - the caller reuses the buffer
+	// Clone data because the caller reuses the buffer.
 	buf := bytes.Clone(data)
 
 	stream.offerAudio(streamID, ch, buf, "audio buffer full, dropping chunk")
@@ -772,7 +772,7 @@ func (m *Manager) Statuses(getStreamConfig func(string) *types.Stream) map[strin
 	return statuses
 }
 
-// StreamInfo returns the FFmpeg result, backoff state and mode for a stream.
+// StreamInfo returns the process result, retry backoff, and mode for streamID.
 // The exists return value is false if the stream is not found.
 func (m *Manager) StreamInfo(
 	streamID string,
@@ -1099,7 +1099,7 @@ func (m *Manager) monitorListenerEncoder(streamID string, ctx StreamContext, sto
 
 // prepareListenerRetry prepares the listener encoder to attempt another run.
 // When retry is no longer permitted it finalizes shutdown via
-// stopListenerAfterRetryEnd and returns ok=false; otherwise it returns the
+// stopListenerAfterRetryEnd and returns a false ok value; otherwise it returns the
 // current stream config.
 func (m *Manager) prepareListenerRetry(
 	streamID string, stream *Stream, ctx StreamContext, errMsg string,
