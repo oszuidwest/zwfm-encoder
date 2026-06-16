@@ -218,7 +218,7 @@
              Each stream shows:
              - Status dot (color-coded by state)
              - Host:port and stream ID
-             - Status text (Connected, Connecting, Retry N/M, Failed)
+             - Status text (Connected, Ready, Connecting, Retry N/M, Failed)
              - Error message when in failed state
              - Delete button (disabled while deletion in progress)
 
@@ -253,11 +253,6 @@
                             <div class="row">
                                 <span class="dot" :class="d.stateClass" :data-connected="connectingAnimations[stream.id] ? 'true' : null"></span>
                                 <span class="host" x-text="streamEndpoint(stream)"></span>
-                                <button class="icon-btn" data-variant="edit" type="button" tabindex="0" title="Copy client URL" aria-label="Copy listener client URL"
-                                        x-show="isListenerStream(stream)"
-                                        @click.stop="copyStreamClientURL(stream)">
-                                    <span class="icon-container" x-html="icons.link"></span>
-                                </button>
                                 <button class="icon-btn" data-variant="edit" type="button" tabindex="0" title="Edit" aria-label="Edit stream"
                                         @click="showStreamForm(stream.id)">
                                     <span class="icon-container" x-html="icons.edit"></span>
@@ -267,8 +262,6 @@
                                 <span class="mode-label" x-text="isListenerStream(stream) ? 'Pull' : 'Push'"></span>
                                 <span class="codec" x-text="formatCodecBitrate(stream.codec, stream.bitrate)"></span>
                                 <span class="streamid" x-show="!isListenerStream(stream)" x-text="`#${stream.stream_id}`"></span>
-                                <span class="listener-metric" x-show="isListenerStream(stream)" x-text="d.encoderText"></span>
-                                <span class="listener-metric" x-show="isListenerStream(stream)" x-text="d.clientText"></span>
                                 <span class="status" :class="d.stateClass" x-text="d.statusText"></span>
                             </div>
                             <div class="alert" role="alert" x-show="d.showError">

@@ -1422,8 +1422,6 @@ document.addEventListener('alpine:init', () => {
 
             let stateClass = 'state-stopped';
             let statusText = 'Offline';
-            let encoderText = '';
-            let clientText = '';
 
             if (isDeleting) {
                 stateClass = 'state-warning';
@@ -1442,13 +1440,13 @@ document.addEventListener('alpine:init', () => {
                         if (isListener) {
                             if (status.encoder_running) {
                                 stateClass = 'state-success';
-                                statusText = status.uptime ? `Listening (${status.uptime})` : 'Listening';
+                                statusText = status.uptime ? `Ready (${status.uptime})` : 'Ready';
                             } else if (status.retry_count > 0) {
                                 stateClass = 'state-warning';
-                                statusText = 'Listener open, encoder restarting';
+                                statusText = 'Restarting encoder';
                             } else {
                                 stateClass = 'state-warning';
-                                statusText = 'Listener open, encoder starting';
+                                statusText = 'Starting encoder';
                             }
                         } else if (status.stable) {
                             stateClass = 'state-success';
@@ -1483,29 +1481,12 @@ document.addEventListener('alpine:init', () => {
 
             // Compute error visibility
             const showError = !isDeleting && status.state === 'error' && status.error;
-            if (isListener) {
-                const clients = Number(status.client_count || 0);
-                clientText = `Clients: ${clients}`;
-                if (status.state === 'error' || status.exhausted) {
-                    encoderText = 'Encoder: Failed';
-                } else if (status.encoder_running) {
-                    encoderText = 'Encoder: Running';
-                } else if (status.retry_count > 0) {
-                    encoderText = 'Encoder: Restarting';
-                } else if (status.state === 'running' || status.state === 'starting') {
-                    encoderText = 'Encoder: Starting';
-                } else {
-                    encoderText = 'Encoder: Stopped';
-                }
-            }
 
             return {
                 stateClass,
                 statusText,
                 showError,
-                lastError: status.error || '',
-                encoderText,
-                clientText
+                lastError: status.error || ''
             };
         },
 
