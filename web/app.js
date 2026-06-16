@@ -104,6 +104,7 @@ const secondsToMs = (sec) => Math.round(sec * 1000);
 window.dbToPercent = (db) => Math.max(0, Math.min(100, (db - DB_MINIMUM) / DB_RANGE * 100));
 
 const DEFAULT_STREAM = {
+    mode: 'caller',
     host: '',
     port: 8080,
     stream_id: '',
@@ -136,6 +137,7 @@ const DEFAULT_RECORDER = {
 
 const storageNeedsLocal = (mode) => mode === 'local' || mode === 'both';
 const storageNeedsS3 = (mode) => mode === 's3' || mode === 'both';
+const streamMode = (stream) => stream?.mode || 'caller';
 const recorderHasS3Secret = (form) => Boolean(
     form.s3_secret_access_key || (form.has_s3_secret && !form.clear_s3_secret)
 );
@@ -281,6 +283,8 @@ document.addEventListener('alpine:init', () => {
             graph_recipients: '',
             graph_has_secret: false,
             recording_has_api_key: false,
+            srt_available: false,
+            srt_error: '',
             streams: [],
             recorders: []
         },
@@ -967,6 +971,7 @@ document.addEventListener('alpine:init', () => {
                 if (!stream) return;
                 this.streamForm = {
                     id: stream.id,
+                    mode: streamMode(stream),
                     host: stream.host,
                     port: stream.port,
                     stream_id: stream.stream_id || '',
@@ -983,6 +988,56 @@ document.addEventListener('alpine:init', () => {
             }
             this.streamFormDirty = false;
             this.view = 'stream-form';
+        },
+
+        isListenerStream(stream) {
+            return streamMode(stream) === 'listener';
+        },
+
+        setStreamMode(mode) {
+            const previousMode = streamMode(this.streamForm);
+            if (previousMode === mode) return;
+            this.streamForm.mode = mode;
+            if (mode === 'listener') {
+                this.streamForm.host = '';
+                this.streamForm.stream_id = '';
+                if (!this.isEditMode || previousMode !== 'listener') {
+                    this.streamForm.codec = 'mp3';
+                    this.streamForm.bitrate = 0;
+                }
+                if (!this.isEditMode) this.streamForm.port = 9000;
+            }
+            this.markStreamFormDirty();
+        },
+
+        canSaveStreamForm() {
+            if (this.isEditMode && !this.streamFormDirty) return false;
+            if (!this.streamForm.port || this.streamForm.port < 1 || this.streamForm.port > 65535) return false;
+            if (this.streamForm.mode === 'listener') return true;
+            return Boolean(this.streamForm.host?.trim());
+        },
+
+        srtUnavailableMessage() {
+            return this.config.srt_error || 'SRT unavailable in this FFmpeg build.';
+        },
+
+        streamEndpoint(stream) {
+            const host = this.isListenerStream(stream) && !stream.host ? '0.0.0.0' : stream.host;
+            return `${host}:${stream.port}`;
+        },
+
+        streamClientURL(stream = this.streamForm) {
+            const host = stream.host && stream.host !== '0.0.0.0' ? stream.host : location.hostname;
+            return `srt://${host}:${stream.port || ''}?mode=caller`;
+        },
+
+        async copyStreamClientURL(stream = this.streamForm) {
+            try {
+                await navigator.clipboard.writeText(this.streamClientURL(stream));
+                this.showToast('Copied to clipboard', 'success');
+            } catch {
+                this.showToast('Failed to copy to clipboard', 'error');
+            }
         },
 
         clearStreamPassword() {
@@ -1004,12 +1059,14 @@ document.addEventListener('alpine:init', () => {
          * Submits stream form via REST API.
          */
         async submitStreamForm() {
-            if (!this.streamForm.host?.trim()) return;
+            if (!this.canSaveStreamForm()) return;
+            const mode = streamMode(this.streamForm);
 
             const data = {
+                mode,
                 host: this.streamForm.host.trim(),
                 port: this.streamForm.port,
-                stream_id: this.streamForm.stream_id.trim() || 'studio',
+                stream_id: mode === 'listener' ? '' : (this.streamForm.stream_id.trim() || 'studio'),
                 codec: this.streamForm.codec,
                 bitrate: this.streamForm.codec === 'pcm' ? 0 : (this.streamForm.bitrate || 0),
                 max_retries: this.streamForm.max_retries
@@ -1355,6 +1412,7 @@ document.addEventListener('alpine:init', () => {
         getStreamDisplayData(stream) {
             const status = this.streamStatuses[stream.id] || {};
             const isDeleting = this.deletingStreams[stream.id] === stream.created_at;
+            const isListener = this.isListenerStream(stream);
 
             let stateClass = 'state-stopped';
             let statusText = 'Offline';
@@ -1370,10 +1428,13 @@ document.addEventListener('alpine:init', () => {
                         break;
                     case 'starting':
                         stateClass = 'state-warning';
-                        statusText = 'Connecting...';
+                        statusText = isListener ? 'Starting...' : 'Connecting...';
                         break;
                     case 'running':
-                        if (status.stable) {
+                        if (isListener) {
+                            stateClass = 'state-success';
+                            statusText = status.uptime ? `Listening (${status.uptime})` : 'Listening';
+                        } else if (status.stable) {
                             stateClass = 'state-success';
                             statusText = status.uptime ? `Connected (${status.uptime})` : 'Connected';
                         } else {

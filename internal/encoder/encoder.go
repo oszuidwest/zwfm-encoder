@@ -48,6 +48,12 @@ var ErrStreamDisabled = errors.New("stream is disabled")
 // ErrStreamNotFound is returned when the stream was not found.
 var ErrStreamNotFound = errors.New("stream not found")
 
+// ErrSRTUnsupported is returned when the FFmpeg build lacks SRT protocol support.
+var ErrSRTUnsupported = errors.New("ffmpeg does not support srt protocol")
+
+// ErrSRTUnverified is returned when FFmpeg SRT support could not be verified.
+var ErrSRTUnverified = errors.New("could not verify ffmpeg srt protocol support")
+
 // ErrRecordingNotAvailable is returned when the recording manager is not initialized.
 var ErrRecordingNotAvailable = errors.New("recording not available")
 
@@ -55,6 +61,8 @@ var ErrRecordingNotAvailable = errors.New("recording not available")
 type Encoder struct {
 	config              *config.Config
 	ffmpegPath          string
+	srtAvailable        bool
+	srtProbeError       error
 	streamManager       *streaming.Manager
 	recordingManager    *recording.Manager
 	silenceDumpManager  *silencedump.Manager
@@ -111,10 +119,20 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 
 	// Create stream manager and wire up event callback
 	streamMgr := streaming.NewManager(ffmpegPath)
+	srtAvailable, srtProbeErr := util.ProbeFFmpegProtocol(ffmpegPath, "srt")
+	switch {
+	case srtProbeErr != nil:
+		slog.Warn("could not verify FFmpeg SRT protocol support",
+			"path", ffmpegPath, "error", srtProbeErr)
+	case ffmpegPath != "" && !srtAvailable:
+		slog.Warn("FFmpeg found but SRT protocol is not available", "path", ffmpegPath)
+	}
 
 	e := &Encoder{
 		config:              cfg,
 		ffmpegPath:          ffmpegPath,
+		srtAvailable:        srtAvailable,
+		srtProbeError:       srtProbeErr,
 		streamManager:       streamMgr,
 		silenceDumpManager:  dumpManager,
 		eventLogger:         logger,
@@ -131,6 +149,42 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 	streamMgr.SetEventCallback(e.onStreamEvent, e.getStreamName)
 
 	return e, nil
+}
+
+// SRTAvailable reports whether the configured FFmpeg binary supports SRT.
+func (e *Encoder) SRTAvailable() bool {
+	if e == nil {
+		return false
+	}
+	return e.srtAvailable
+}
+
+// srtSentinel returns the sentinel describing why SRT is unusable: unverified if
+// the capability probe failed, otherwise unsupported.
+func (e *Encoder) srtSentinel() error {
+	if e.srtProbeError != nil {
+		return ErrSRTUnverified
+	}
+	return ErrSRTUnsupported
+}
+
+// srtCapabilityError reports why SRT streams cannot run, or nil when SRT is usable
+// or unconfigured. It returns nil in degraded mode (no FFmpeg path), where SRT is
+// not the relevant failure; callers that must report SRT state regardless of FFmpeg
+// availability use srtSentinel directly.
+func (e *Encoder) srtCapabilityError() error {
+	if e == nil || e.srtAvailable || e.ffmpegPath == "" {
+		return nil
+	}
+	return e.srtSentinel()
+}
+
+// SRTErrorMessage returns the user-facing SRT capability error, if any.
+func (e *Encoder) SRTErrorMessage() string {
+	if err := e.srtCapabilityError(); err != nil {
+		return err.Error()
+	}
+	return ""
 }
 
 func (e *Encoder) onStreamEvent(streamID, streamName, eventType, message, errMsg string, retryCount, maxRetries int) {
@@ -151,7 +205,7 @@ func (e *Encoder) getStreamName(streamID string) string {
 	if stream == nil {
 		return ""
 	}
-	return fmt.Sprintf("%s:%d", stream.Host, stream.Port)
+	return stream.Endpoint()
 }
 
 // EventLogPath returns the path to the event log file.
@@ -282,30 +336,34 @@ func (e *Encoder) Status() types.EncoderStatus {
 // StreamStatuses returns status for all configured streams.
 func (e *Encoder) StreamStatuses(streams []types.Stream) map[string]types.ProcessStatus {
 	// Get statuses for streams with active processes
-	processStatuses := e.streamManager.Statuses(func(id string) int {
-		if s := e.config.Stream(id); s != nil {
-			return s.MaxRetriesOrDefault()
-		}
-		return types.DefaultMaxRetries
-	})
+	processStatuses := e.streamManager.Statuses(e.config.Stream)
 
 	// Build complete status map for all configured streams
 	result := make(map[string]types.ProcessStatus, len(streams))
-	for _, stream := range streams {
-		if status, exists := processStatuses[stream.ID]; exists {
+	for i := range streams {
+		stream := &streams[i]
+		status, exists := processStatuses[stream.ID]
+		switch {
+		case exists:
 			// Stream has active process - use its status
 			// Also reflect disabled state if stream was disabled while running
 			if !stream.Enabled {
 				status.State = types.ProcessDisabled
 			}
 			result[stream.ID] = status
-		} else if !stream.Enabled {
+		case !stream.Enabled:
 			// Stream is disabled - mark explicitly
 			result[stream.ID] = types.ProcessStatus{
 				State:      types.ProcessDisabled,
 				MaxRetries: stream.MaxRetriesOrDefault(),
 			}
-		} else {
+		case e.srtCapabilityError() != nil:
+			result[stream.ID] = types.ProcessStatus{
+				State:      types.ProcessError,
+				MaxRetries: stream.MaxRetriesOrDefault(),
+				Error:      e.SRTErrorMessage(),
+			}
+		default:
 			// Stream is enabled but has no process (encoder not running)
 			result[stream.ID] = types.ProcessStatus{
 				State:      types.ProcessStopped,
@@ -469,6 +527,9 @@ func (e *Encoder) StartStream(streamID string) error {
 	}
 	if !stream.Enabled {
 		return ErrStreamDisabled
+	}
+	if !e.srtAvailable {
+		return e.srtSentinel()
 	}
 
 	// Start preserves existing retry state automatically
@@ -707,7 +768,9 @@ func (e *Encoder) startEnabledStreams() {
 
 	go e.runDistributor()
 
-	for _, stream := range e.config.ConfiguredStreams() {
+	streams := e.config.ConfiguredStreams()
+	for i := range streams {
+		stream := &streams[i]
 		if !stream.Enabled {
 			slog.Info("skipping disabled stream", "stream_id", stream.ID)
 			continue
@@ -774,7 +837,9 @@ func (e *Encoder) runDistributor() {
 
 		distributor.ProcessSamples(buf[:n])
 
-		for _, stream := range e.config.ConfiguredStreams() {
+		streams := e.config.ConfiguredStreams()
+		for i := range streams {
+			stream := &streams[i]
 			// WriteAudio logs errors internally and marks stream as stopped
 			_ = e.streamManager.WriteAudio(stream.ID, buf[:n]) //nolint:errcheck // Errors logged internally by WriteAudio
 		}

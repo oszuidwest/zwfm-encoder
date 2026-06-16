@@ -23,6 +23,11 @@ var errStoppedByUser = errors.New("stopped by user")
 // At ~100ms per chunk, 5 chunks provides ~500ms of buffer.
 const audioBufferSize = 5
 
+type listenerRelistenWarningState struct {
+	windowStart time.Time
+	count       int
+}
+
 // StreamContext provides encoder state for monitoring and retry decisions.
 type StreamContext interface {
 	// Stream returns the stream configuration, or nil if removed.
@@ -50,6 +55,7 @@ type Manager struct {
 type Stream struct {
 	result     *ffmpeg.StartResult
 	state      types.ProcessState
+	mode       types.StreamMode // snapshot of the launch-time mode, already defaulted via ModeOrDefault
 	lastError  string
 	startTime  time.Time
 	retryCount int
@@ -109,7 +115,8 @@ func (m *Manager) emitEvent(streamID, event, message, errMsg string, retryCount,
 func (m *Manager) maybeEmitStable(id string, started *Stream) {
 	m.mu.RLock()
 	cur, exists := m.streams[id]
-	stable := exists && cur == started && cur.state == types.ProcessRunning
+	stable := exists && cur == started && cur.state == types.ProcessRunning &&
+		cur.mode != types.StreamModeListener
 	m.mu.RUnlock()
 	if stable {
 		m.emitEvent(id, "stream_stable", "Stream connected and stable", "", 0, 0)
@@ -133,6 +140,12 @@ func (m *Manager) runWriter(streamID string, s *Stream) {
 
 		m.mu.Lock()
 		if cur, exists := m.streams[streamID]; exists && cur == s && cur.state == types.ProcessRunning {
+			if cur.mode == types.StreamModeListener {
+				slog.Debug("srt listener write ended", "stream_id", streamID, "error", err)
+				cur.result.CloseStdin()
+				m.mu.Unlock()
+				return
+			}
 			slog.Warn("stream write failed, marking as error",
 				"stream_id", streamID, "error", err)
 			cur.state = types.ProcessError
@@ -184,6 +197,7 @@ func (m *Manager) Start(stream *types.Stream) (bool, error) {
 	// audioCh, or writer - those are created after StartProcess succeeds.
 	placeholder := &Stream{
 		state:      types.ProcessStarting,
+		mode:       stream.ModeOrDefault(),
 		retryCount: retryCount,
 		backoff:    backoff,
 	}
@@ -215,6 +229,7 @@ func (m *Manager) Start(stream *types.Stream) (bool, error) {
 	s := &Stream{
 		result:     result,
 		state:      types.ProcessRunning,
+		mode:       stream.ModeOrDefault(),
 		startTime:  time.Now(),
 		retryCount: retryCount,
 		backoff:    backoff,
@@ -237,13 +252,19 @@ func (m *Manager) Start(stream *types.Stream) (bool, error) {
 
 	go m.runWriter(stream.ID, s)
 
-	m.emitEvent(stream.ID, "stream_started", fmt.Sprintf("Connecting to %s:%d", stream.Host, stream.Port), "", 0, 0)
+	prefix := "Connecting to"
+	if stream.ModeOrDefault() == types.StreamModeListener {
+		prefix = "Listening on"
+	}
+	m.emitEvent(stream.ID, "stream_started", fmt.Sprintf("%s %s", prefix, stream.Endpoint()), "", 0, 0)
 
-	// Guard the stable event against restarts during the stability window.
-	go func() {
-		time.Sleep(types.StableThreshold)
-		m.maybeEmitStable(stream.ID, s)
-	}()
+	if stream.ModeOrDefault() != types.StreamModeListener {
+		// Guard the stable event against restarts during the stability window.
+		go func() {
+			time.Sleep(types.StableThreshold)
+			m.maybeEmitStable(stream.ID, s)
+		}()
+	}
 
 	return true, nil
 }
@@ -393,15 +414,20 @@ func (m *Manager) WriteAudio(streamID string, data []byte) error {
 }
 
 // Statuses returns status information for all managed streams.
-func (m *Manager) Statuses(getMaxRetries func(string) int) map[string]types.ProcessStatus {
+func (m *Manager) Statuses(getStreamConfig func(string) *types.Stream) map[string]types.ProcessStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	statuses := make(map[string]types.ProcessStatus)
 	for id, stream := range m.streams {
-		maxRetries := getMaxRetries(id)
+		cfg := getStreamConfig(id)
+		maxRetries := types.DefaultMaxRetries
+		if cfg != nil {
+			maxRetries = cfg.MaxRetriesOrDefault()
+		}
 		isRunning := stream.state == types.ProcessRunning
 		runDuration := time.Since(stream.startTime)
+		isListener := stream.mode == types.StreamModeListener
 
 		var uptime string
 		if isRunning {
@@ -410,7 +436,7 @@ func (m *Manager) Statuses(getMaxRetries func(string) int) map[string]types.Proc
 
 		statuses[id] = types.ProcessStatus{
 			State:      stream.state,
-			Stable:     isRunning && runDuration >= types.StableThreshold,
+			Stable:     isRunning && !isListener && runDuration >= types.StableThreshold,
 			Exhausted:  stream.retryCount > maxRetries,
 			RetryCount: stream.retryCount,
 			MaxRetries: maxRetries,
@@ -422,16 +448,18 @@ func (m *Manager) Statuses(getMaxRetries func(string) int) map[string]types.Proc
 	return statuses
 }
 
-// StreamInfo returns the FFmpeg result and backoff state for a stream.
+// StreamInfo returns the FFmpeg result, backoff state and mode for a stream.
 // The exists return value is false if the stream is not found.
-func (m *Manager) StreamInfo(streamID string) (result *ffmpeg.StartResult, backoff *util.Backoff, exists bool) {
+func (m *Manager) StreamInfo(
+	streamID string,
+) (result *ffmpeg.StartResult, backoff *util.Backoff, mode types.StreamMode, exists bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	stream, exists := m.streams[streamID]
 	if !exists {
-		return nil, nil, false
+		return nil, nil, types.StreamModeCaller, false
 	}
-	return stream.result, stream.backoff, true
+	return stream.result, stream.backoff, stream.mode, true
 }
 
 // SetError records an error message and sets the stream state to error.
@@ -502,22 +530,78 @@ func (m *Manager) RetryCount(streamID string) int {
 	return 0
 }
 
-func (m *Manager) handleStreamExit(
-	streamID string, result *ffmpeg.StartResult, backoff *util.Backoff,
-	err error, runDuration time.Duration,
-) {
-	// Check if this was an intentional stop - don't treat as error
-	cause := context.Cause(result.Context())
+type streamExitClass int
+
+const (
+	streamExitNormalStop streamExitClass = iota
+	streamExitIntentionalStop
+	streamExitFailure
+	streamExitListenerRelisten
+)
+
+func classifyStreamExit(
+	mode types.StreamMode, err error, cause error, runDuration time.Duration,
+) streamExitClass {
 	if errors.Is(cause, errStoppedByUser) {
+		return streamExitIntentionalStop
+	}
+	if mode.OrDefault() == types.StreamModeListener && runDuration >= types.ListenerStartFailureWindow {
+		return streamExitListenerRelisten
+	}
+	if err != nil {
+		return streamExitFailure
+	}
+	return streamExitNormalStop
+}
+
+func listenerRelistenDelay(
+	now time.Time, state listenerRelistenWarningState,
+) (time.Duration, listenerRelistenWarningState, bool) {
+	if state.windowStart.IsZero() || now.Sub(state.windowStart) > types.ListenerRelistenWarningWindow {
+		state.windowStart = now
+		state.count = 0
+	}
+	state.count++
+	return types.ListenerRelistenDelay, state, state.count == types.ListenerRelistenWarningThreshold
+}
+
+func resolveExitError(result *ffmpeg.StartResult, err error) string {
+	if err == nil {
+		return ""
+	}
+	if result != nil {
+		if errMsg := util.ExtractLastError(result.Stderr()); errMsg != "" {
+			return errMsg
+		}
+	}
+	return err.Error()
+}
+
+func (m *Manager) handleStreamExit(
+	streamID string, result *ffmpeg.StartResult, backoff *util.Backoff, mode types.StreamMode,
+	err error, runDuration time.Duration,
+) bool {
+	cause := context.Cause(result.Context())
+
+	switch classifyStreamExit(mode, err, cause, runDuration) {
+	case streamExitIntentionalStop:
 		m.emitEvent(streamID, "stream_stopped", "Stream stopped by user", "", 0, 0)
-		return
+		return false
+	case streamExitListenerRelisten:
+		slog.Info("srt listener session ended, relistening",
+			"stream_id", streamID, "duration", runDuration, "error", resolveExitError(result, err))
+		m.ResetRetry(streamID)
+		return true
+	case streamExitNormalStop:
+		m.ResetRetry(streamID)
+		m.emitEvent(streamID, "stream_stopped", "Stream ended normally", "", 0, 0)
+		return false
+	case streamExitFailure:
+		// Handled by the shared error path below.
 	}
 
 	if err != nil {
-		errMsg := util.ExtractLastError(result.Stderr())
-		if errMsg == "" {
-			errMsg = err.Error()
-		}
+		errMsg := resolveExitError(result, err)
 		if cause != nil {
 			slog.Error("stream error", "stream_id", streamID, "error", errMsg, "cause", cause)
 		} else {
@@ -532,10 +616,8 @@ func (m *Manager) handleStreamExit(
 			m.IncrementRetry(streamID)
 			backoff.Next()
 		}
-	} else {
-		m.ResetRetry(streamID)
-		m.emitEvent(streamID, "stream_stopped", "Stream ended normally", "", 0, 0)
 	}
+	return false
 }
 
 func (m *Manager) shouldContinueRetry(streamID string, ctx StreamContext) (shouldRetry bool, reason string) {
@@ -560,6 +642,8 @@ func (m *Manager) shouldContinueRetry(streamID string, ctx StreamContext) (shoul
 // MonitorAndRetry watches a stream and restarts it on failure. This method
 // blocks until the stream is stopped or retry limits are exceeded.
 func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <-chan struct{}) {
+	var relistenWarning listenerRelistenWarningState
+
 	for {
 		select {
 		case <-stopChan:
@@ -567,7 +651,7 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 		default:
 		}
 
-		result, backoff, exists := m.StreamInfo(streamID)
+		result, backoff, mode, exists := m.StreamInfo(streamID)
 		if !exists || result == nil || backoff == nil {
 			return
 		}
@@ -577,7 +661,7 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 		runDuration := time.Since(startTime)
 
 		m.MarkStopped(streamID)
-		m.handleStreamExit(streamID, result, backoff, err, runDuration)
+		relisten := m.handleStreamExit(streamID, result, backoff, mode, err, runDuration)
 
 		shouldRetry, reason := m.shouldContinueRetry(streamID, ctx)
 		if !shouldRetry {
@@ -591,14 +675,25 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 		}
 
 		retryDelay := backoff.Current()
-		retryCount := m.RetryCount(streamID)
-		stream := ctx.Stream(streamID)
-		maxRetries := stream.MaxRetriesOrDefault()
-		slog.Info("stream stopped, waiting before retry",
-			"stream_id", streamID, "delay", retryDelay, "retry", retryCount, "max_retries", maxRetries)
-		m.emitEvent(streamID, "stream_retry",
-			fmt.Sprintf("Retrying in %s", retryDelay.Round(time.Second)),
-			"", retryCount, maxRetries)
+		if relisten {
+			var warn bool
+			retryDelay, relistenWarning, warn = listenerRelistenDelay(time.Now(), relistenWarning)
+			if warn {
+				slog.Warn("srt listener is relistening frequently",
+					"stream_id", streamID,
+					"count", relistenWarning.count,
+					"window", time.Since(relistenWarning.windowStart))
+			}
+		} else {
+			stream := ctx.Stream(streamID)
+			retryCount := m.RetryCount(streamID)
+			maxRetries := stream.MaxRetriesOrDefault()
+			slog.Info("stream stopped, waiting before retry",
+				"stream_id", streamID, "delay", retryDelay, "retry", retryCount, "max_retries", maxRetries)
+			m.emitEvent(streamID, "stream_retry",
+				fmt.Sprintf("Retrying in %s", retryDelay.Round(time.Second)),
+				"", retryCount, maxRetries)
+		}
 
 		select {
 		case <-stopChan:
@@ -616,7 +711,7 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 			return
 		}
 
-		stream = ctx.Stream(streamID)
+		stream := ctx.Stream(streamID)
 		started, err := m.Start(stream)
 		if err != nil {
 			slog.Error("failed to restart stream", "stream_id", streamID, "error", err)

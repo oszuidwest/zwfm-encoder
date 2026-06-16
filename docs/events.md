@@ -50,7 +50,11 @@ Events are categorized by severity for UI display:
 
 ## Stream Events
 
-Stream events track the lifecycle and health of audio output streams.
+Stream events track the lifecycle and health of audio output streams. Local SRT
+listener streams reuse the same event types: starting/relistening is logged as
+`stream_started` with "Listening on ..." text, but listeners do not emit
+`stream_stable` because a running listener is waiting for clients rather than a
+confirmed remote output.
 
 ### Details Structure
 
@@ -76,7 +80,7 @@ Stream events track the lifecycle and health of audio output streams.
 
 - **Severity:** `info`
 - **UI Label:** Started
-- **Triggered:** When a stream begins connecting to its destination.
+- **Triggered:** When a stream begins connecting to its destination, or when a local SRT listener starts/relistens.
 
 ```json
 {
@@ -95,7 +99,7 @@ Stream events track the lifecycle and health of audio output streams.
 
 - **Severity:** `success`
 - **UI Label:** Connected
-- **Triggered:** When a stream has been running successfully for the stability threshold (default: 10 seconds).
+- **Triggered:** When a caller stream has been running successfully for the stability threshold (default: 10 seconds). Local SRT listeners do not emit this event.
 
 ```json
 {
@@ -114,7 +118,7 @@ Stream events track the lifecycle and health of audio output streams.
 
 - **Severity:** `error`
 - **UI Label:** Error
-- **Triggered:** When FFmpeg reports an error or the stream process exits unexpectedly.
+- **Triggered:** When FFmpeg reports an error or the stream process exits unexpectedly. A normal local SRT listener client disconnect after startup is not logged as `stream_error`; the listener is started again.
 
 ```json
 {
@@ -631,8 +635,8 @@ GET /api/events?limit=50&offset=0&type=stream
 
 | Event Type | Category | Severity | UI Label | Trigger |
 |------------|----------|----------|----------|---------|
-| `stream_started` | Stream | info | Started | Stream begins connecting |
-| `stream_stable` | Stream | success | Connected | Stream stable for 10s |
+| `stream_started` | Stream | info | Started | Stream begins connecting or listener starts |
+| `stream_stable` | Stream | success | Connected | Caller stream stable for 10s |
 | `stream_error` | Stream | error | Error | Stream encounters error |
 | `stream_retry` | Stream | warning | Retry | Stream retrying after failure |
 | `stream_stopped` | Stream | info | Stopped | Stream intentionally stopped |

@@ -65,7 +65,6 @@ func main() {
 		slog.Error("failed to create encoder", "error", err)
 		os.Exit(1)
 	}
-
 	srv := NewServer(cfg, enc, ffmpegAvailable)
 
 	// Initialize recording manager if configured
