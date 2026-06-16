@@ -698,6 +698,9 @@ func (m *Manager) writeListenerAudio(streamID string, stream *Stream, data []byt
 }
 
 func (s *Stream) offerAudio(streamID string, ch chan []byte, buf []byte, logMessage string) {
+	// Each stream audio channel currently has one producer. Concurrent producers
+	// are memory-safe, but can race the final non-blocking send and skip their
+	// freshest chunk under contention.
 	// Drop-oldest: if full, discard one stale chunk, then enqueue fresh.
 	// Both inner selects have default cases to handle races with the
 	// writer goroutine that may drain the channel concurrently.

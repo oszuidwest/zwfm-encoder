@@ -310,6 +310,9 @@ func (s *Server) logSlowSubscriberDrop(sub *subscriber) {
 }
 
 func (sub *subscriber) enqueue(chunk []byte) bool {
+	// Server.Write currently has one active producer: the stdout reader for the
+	// current encoder run. Concurrent producers are memory-safe, but can race the
+	// final non-blocking send and skip their freshest chunk under contention.
 	select {
 	case sub.ch <- chunk:
 		return false
