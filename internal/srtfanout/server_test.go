@@ -1,6 +1,7 @@
 package srtfanout
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"log/slog"
@@ -488,8 +489,7 @@ func (c *fakeConn) Write(p []byte) (int, error) {
 	if c.closed.Load() {
 		return 0, io.EOF
 	}
-	buf := make([]byte, len(p))
-	copy(buf, p)
+	buf := bytes.Clone(p)
 	c.mu.Lock()
 	c.writes = append(c.writes, buf)
 	c.mu.Unlock()
