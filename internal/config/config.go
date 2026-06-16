@@ -542,7 +542,7 @@ func normalizeStreamDefaults(stream *types.Stream) {
 func listenerBindKey(stream *types.Stream) string {
 	// Exact-string dedupe only: wildcard-vs-specific address overlap is left
 	// to the OS bind error so v1 stays simple and visible.
-	return fmt.Sprintf("%s:%d", stream.ListenerBindHost(), stream.Port)
+	return stream.Endpoint()
 }
 
 func (c *Config) validateRecorders() error {

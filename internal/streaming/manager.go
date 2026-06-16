@@ -252,11 +252,11 @@ func (m *Manager) Start(stream *types.Stream) (bool, error) {
 
 	go m.runWriter(stream.ID, s)
 
-	message := fmt.Sprintf("Connecting to %s:%d", stream.Host, stream.Port)
+	prefix := "Connecting to"
 	if stream.ModeOrDefault() == types.StreamModeListener {
-		message = fmt.Sprintf("Listening on %s:%d", stream.ListenerBindHost(), stream.Port)
+		prefix = "Listening on"
 	}
-	m.emitEvent(stream.ID, "stream_started", message, "", 0, 0)
+	m.emitEvent(stream.ID, "stream_started", fmt.Sprintf("%s %s", prefix, stream.Endpoint()), "", 0, 0)
 
 	if stream.ModeOrDefault() != types.StreamModeListener {
 		// Guard the stable event against restarts during the stability window.
@@ -588,13 +588,8 @@ func (m *Manager) handleStreamExit(
 		m.emitEvent(streamID, "stream_stopped", "Stream stopped by user", "", 0, 0)
 		return false
 	case streamExitListenerRelisten:
-		if err != nil {
-			slog.Info("srt listener session ended, relistening",
-				"stream_id", streamID, "duration", runDuration, "error", resolveExitError(result, err))
-		} else {
-			slog.Info("srt listener session ended, relistening",
-				"stream_id", streamID, "duration", runDuration)
-		}
+		slog.Info("srt listener session ended, relistening",
+			"stream_id", streamID, "duration", runDuration, "error", resolveExitError(result, err))
 		m.ResetRetry(streamID)
 		return true
 	case streamExitNormalStop:

@@ -201,6 +201,15 @@ func (s *Stream) ListenerBindHost() string {
 	return host
 }
 
+// Endpoint returns the host:port a stream uses: the remote address for caller
+// streams, or the local bind address for listener streams.
+func (s *Stream) Endpoint() string {
+	if s.ModeOrDefault() == StreamModeListener {
+		return fmt.Sprintf("%s:%d", s.ListenerBindHost(), s.Port)
+	}
+	return fmt.Sprintf("%s:%d", s.Host, s.Port)
+}
+
 // MaxRetriesOrDefault returns MaxRetries, or [DefaultMaxRetries] if not set.
 func (s *Stream) MaxRetriesOrDefault() int {
 	if s.MaxRetries <= 0 {

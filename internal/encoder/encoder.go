@@ -193,10 +193,7 @@ func (e *Encoder) getStreamName(streamID string) string {
 	if stream == nil {
 		return ""
 	}
-	if stream.ModeOrDefault() == types.StreamModeListener {
-		return fmt.Sprintf("%s:%d", stream.ListenerBindHost(), stream.Port)
-	}
-	return fmt.Sprintf("%s:%d", stream.Host, stream.Port)
+	return stream.Endpoint()
 }
 
 // EventLogPath returns the path to the event log file.
