@@ -4,17 +4,13 @@ Audio streaming software for [ZuidWest FM](https://www.zuidwestfm.nl/) (Linux), 
 
 <img src="https://github.com/oszuidwest/rpi-audio-encoder/assets/6742496/9070cb82-23be-4a31-8342-6607545d50eb" alt="Raspberry Pi and SRT logo" width="50%">
 
-## Features
-
-- **Multi-output streaming** - Push to multiple SRT servers with different codecs simultaneously
-- **Multi-client SRT listeners** - Open local pull endpoints so multiple clients can receive the same encoded stream
-- **Real-time VU meters** - Configurable peak hold with peak/RMS toggle, clip detection, updated via WebSocket
+- **Multi-output streaming** - Push to multiple SRT servers or expose local SRT pull endpoints for monitoring
+- **Multi-recorder support** - Run multiple recording jobs with local and/or S3 storage, hourly rotation, retention cleanup, and on-demand control
+- **Configurable VU meters** - Peak/RMS metering with configurable peak hold, clip detection, and live WebSocket updates
 - **Silence detection** - Alerts via webhook, email, file log, or Zabbix when audio drops below threshold
+- **Silence audio dumps** - Capture audio around silence events for troubleshooting and recovery notifications
 - **Channel imbalance detection** - Detects dead or mismatched L/R channels with live UI state, event log entries, and readiness status
-- **Web interface** - Configure outputs, select audio input, monitor levels
-- **Auto-recovery** - Automatic reconnection with configurable retry limits per output
 - **Multiple codecs** - MP3, Opus, or uncompressed PCM per output
-- **Update notifications** - Alerts when new versions are available
 - **Single binary** - Web interface embedded, minimal runtime dependencies
 
 ## Platform Support
@@ -174,14 +170,12 @@ The installer creates a minimal config file. All other settings are configured t
 
 ## Streaming Modes
 
-Streams can run in two SRT modes:
+Streams support two SRT modes:
 
-- **Push to server** (`mode: "caller"`): the encoder connects to a remote SRT listener. `host`, `port`, optional `stream_id`, codec, password, and retry settings behave as before.
-- **Local pull listener** (`mode: "listener"`): the encoder opens a local SRT UDP port and multiple clients can connect to the Raspberry Pi at the same time, for example `srt://<encoder-ip>:9000?mode=caller`.
+- **Push to server** (`mode: "caller"`): the encoder connects to a remote SRT listener using the configured host, port, codec, password, stream ID, and retry settings.
+- **Local pull listener** (`mode: "listener"`): the encoder opens a local SRT port so clients can pull the stream, for example `srt://<encoder-ip>:9000?mode=caller`.
 
-Listener streams bind to `0.0.0.0` when no bind address is entered and do not use `stream_id`; use a separate port for each local listener stream. They use MP3 by default for broad client compatibility; Opus and PCM remain available in MPEG-TS for clients that support them. GoSRT owns the listener socket and fans out one FFmpeg encoder pipe to subscribers, so client disconnects do not restart the encoder. Each listener accepts up to 16 active clients; extra subscribers are rejected until a client disconnects. The stream status shows the listener state, FFmpeg encoder health, and active client count separately.
-
-SRT encryption is optional. Empty passwords allow unencrypted subscribers. Non-empty passwords must be 10-64 characters and use `pbkeylen=16`; password-protected listener streams reject unencrypted subscribers. The configured FFmpeg build must list the exact `srt` protocol in `ffmpeg -hide_banner -protocols` for caller streams; `srtp` alone is not enough. Listener streams do not require FFmpeg SRT support because FFmpeg writes encoded bytes to stdout and GoSRT handles SRT subscribers.
+istener streams bind to `0.0.0.0` by default, use a separate port per stream, and accept up to 16 clients. They do not use `stream_id`; MP3 is the default codec, with Opus and PCM available for compatible clients. Client disconnects do not restart the encoder. SRT encryption is optional. Empty passwords allow unencrypted connections; non-empty passwords must be 10-64 characters. Caller mode requires FFmpeg with `srt` protocol support, while listener mode uses GoSRT and does not.
 
 ## Event Log
 
