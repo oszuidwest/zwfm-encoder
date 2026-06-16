@@ -4,6 +4,8 @@ Audio streaming software for [ZuidWest FM](https://www.zuidwestfm.nl/) (Linux), 
 
 <img src="https://github.com/oszuidwest/rpi-audio-encoder/assets/6742496/9070cb82-23be-4a31-8342-6607545d50eb" alt="Raspberry Pi and SRT logo" width="50%">
 
+## Key features
+
 - **Multi-output streaming** - Push to multiple SRT servers or expose local SRT pull endpoints for monitoring
 - **Multi-recorder support** - Run multiple recording jobs with local and/or S3 storage, hourly rotation, retention cleanup, and on-demand control
 - **Configurable VU meters** - Peak/RMS metering with configurable peak hold, clip detection, and live WebSocket updates
