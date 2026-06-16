@@ -85,6 +85,50 @@ const requestJSON = async (url, { method = 'GET', body } = {}) => {
     return result;
 };
 
+const copyTextFallback = (text) => {
+    if (typeof document.execCommand !== 'function') {
+        throw new Error('Clipboard copy is not supported');
+    }
+
+    const activeElement = document.activeElement;
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.top = '0';
+    textarea.style.left = '0';
+    textarea.style.width = '1px';
+    textarea.style.height = '1px';
+    textarea.style.opacity = '0';
+    textarea.style.pointerEvents = 'none';
+
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    textarea.setSelectionRange(0, textarea.value.length);
+
+    try {
+        if (!document.execCommand('copy')) {
+            throw new Error('Clipboard copy failed');
+        }
+    } finally {
+        textarea.remove();
+        activeElement?.focus?.({ preventScroll: true });
+    }
+};
+
+const copyTextToClipboard = async (text) => {
+    if (window.isSecureContext && navigator.clipboard?.writeText) {
+        try {
+            await navigator.clipboard.writeText(text);
+            return;
+        } catch {
+            // Fall through to the legacy path for browsers that deny clipboard permissions.
+        }
+    }
+    copyTextFallback(text);
+};
+
 /** Formats milliseconds to human-readable smart units (ms/s/m). */
 const formatSmartDuration = (ms) => {
     if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -1039,7 +1083,7 @@ document.addEventListener('alpine:init', () => {
 
         async copyStreamClientURL(stream = this.streamForm) {
             try {
-                await navigator.clipboard.writeText(this.streamClientURL(stream));
+                await copyTextToClipboard(this.streamClientURL(stream));
                 this.showToast('Copied to clipboard', 'success');
             } catch {
                 this.showToast('Failed to copy to clipboard', 'error');
@@ -1857,7 +1901,7 @@ document.addEventListener('alpine:init', () => {
             const key = this.settingsForm?.recordingApiKey;
             if (!key) return;
             try {
-                await navigator.clipboard.writeText(key);
+                await copyTextToClipboard(key);
                 this.apiKeyCopied = true;
                 this.showToast('Copied to clipboard', 'success');
                 setTimeout(() => { this.apiKeyCopied = false; }, TEST_FEEDBACK_MS);
