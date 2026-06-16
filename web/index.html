@@ -125,7 +125,7 @@
             </header>
 
             <div class="banner" x-show="version.update_available && version.latest" x-cloak>
-            <span class="icon-container" x-html="icons.cloud"></span>
+            <span class="icon-container" x-html="icons.refresh"></span>
             <span>Update available: <strong x-text="version.latest"></strong></span>
             <a rel="noopener" href="https://github.com/oszuidwest/zwfm-encoder/releases" title="View release on GitHub" target="_blank">View release</a>
         </div>
@@ -357,7 +357,7 @@
                 <div class="panel" role="tabpanel" id="panel-audio" aria-labelledby="tab-audio" x-show="settingsTab === 'audio'">
                     <div class="section">
                         <div class="section-header">
-                            <span class="icon-container" x-html="icons.audio"></span>
+                            <span class="icon-container" x-html="icons.silence"></span>
                             <h3>Silence Detection</h3>
                         </div>
                         <p class="section-desc">Alert when audio drops below threshold for extended periods.</p>
@@ -392,7 +392,7 @@
                     </div>
                     <div class="section">
                         <div class="section-header">
-                            <span class="icon-container" x-html="icons.audio"></span>
+                            <span class="icon-container" x-html="icons.balance"></span>
                             <h3>Channel Imbalance</h3>
                         </div>
                         <p class="section-desc">Alert when the left and right channels differ by too much for too long (e.g. a dead channel). Only evaluated while audio is above the silence threshold.</p>
@@ -427,7 +427,7 @@
                     </div>
                     <div class="section">
                         <div class="section-header">
-                            <span class="icon-container" x-html="icons.microphone"></span>
+                            <span class="icon-container" x-html="icons.metering"></span>
                             <h3>Metering</h3>
                         </div>
                         <p class="section-desc">Controls the VU meter display in the main view.</p>
@@ -447,7 +447,7 @@
                     </div>
                     <div class="section">
                         <div class="section-header">
-                            <span class="icon-container" x-html="icons.file"></span>
+                            <span class="icon-container" x-html="icons.audioArchive"></span>
                             <h3>Silence Dumps</h3>
                         </div>
                         <p class="section-desc">Capture MP3 snippets around silence events. These are attached to email notifications and included in webhooks.</p>
@@ -601,7 +601,7 @@
                     </div>
                     <div class="section">
                         <div class="section-header">
-                            <span class="icon-container" x-html="icons.server"></span>
+                            <span class="icon-container" x-html="icons.monitoring"></span>
                             <h3>Zabbix</h3>
                         </div>
                         <p class="section-desc">Zabbix trapper items for silence and upload alerts.</p>
@@ -822,7 +822,7 @@
                     <!-- Encoding Section -->
                     <div class="section">
                         <div class="section-header">
-                            <span class="icon-container" x-html="icons.settings"></span>
+                            <span class="icon-container" x-html="icons.encoding"></span>
                             <h3>Encoding</h3>
                         </div>
                         <p class="section-desc">Audio encoding format and retry settings.</p>
