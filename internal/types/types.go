@@ -75,6 +75,12 @@ const (
 	// ListenerRelistenDelay is the fixed delay before restarting a listener
 	// after a normal client session ends.
 	ListenerRelistenDelay = 500 * time.Millisecond
+	// ListenerRelistenWarningWindow is the rolling window used to detect
+	// abnormally frequent listener relistens.
+	ListenerRelistenWarningWindow = time.Minute
+	// ListenerRelistenWarningThreshold is the number of relistens in the
+	// warning window that emits one diagnostic warning.
+	ListenerRelistenWarningThreshold = 10
 )
 
 const (
@@ -463,6 +469,7 @@ type WSRuntimeStatus struct {
 	Type               string                   `json:"type"` // Always "status"
 	FFmpegAvailable    bool                     `json:"ffmpeg_available"`
 	SRTAvailable       bool                     `json:"srt_available"`
+	SRTError           string                   `json:"srt_error,omitempty"`
 	RecordingAvailable bool                     `json:"recording_available"`
 	Encoder            EncoderStatus            `json:"encoder"`
 	StreamStatus       map[string]ProcessStatus `json:"stream_status"`
@@ -504,9 +511,10 @@ type APIConfigResponse struct {
 	GraphHasSecret   bool               `json:"graph_has_secret"`
 	EmailEvents      EventSubscriptions `json:"email_events"`
 
-	RecordingHasAPIKey          bool `json:"recording_has_api_key"`
-	RecordingMaxDurationMinutes int  `json:"recording_max_duration_minutes"`
-	SRTAvailable                bool `json:"srt_available"`
+	RecordingHasAPIKey          bool   `json:"recording_has_api_key"`
+	RecordingMaxDurationMinutes int    `json:"recording_max_duration_minutes"`
+	SRTAvailable                bool   `json:"srt_available"`
+	SRTError                    string `json:"srt_error,omitempty"`
 
 	Streams   []StreamResponse   `json:"streams"`
 	Recorders []RecorderResponse `json:"recorders"`

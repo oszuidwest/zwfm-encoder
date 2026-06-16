@@ -93,3 +93,57 @@ func TestStreamStatusesReportsSRTUnsupported(t *testing.T) {
 		t.Fatalf("status error = %q, want %q", status.Error, ErrSRTUnsupported.Error())
 	}
 }
+
+func TestStreamStatusesReportsSRTProbeErrorSeparately(t *testing.T) {
+	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
+	stream := types.Stream{
+		ID:      "stream-1",
+		Enabled: true,
+		Host:    "stream.example.com",
+		Port:    9000,
+		Codec:   types.CodecMP3,
+	}
+
+	e := &Encoder{
+		config:        cfg,
+		ffmpegPath:    "ffmpeg",
+		srtAvailable:  false,
+		srtProbeError: errors.New("probe timed out"),
+		streamManager: streaming.NewManager("ffmpeg"),
+	}
+
+	statuses := e.StreamStatuses([]types.Stream{stream})
+	status := statuses[stream.ID]
+	if status.State != types.ProcessError {
+		t.Fatalf("status state = %q, want error", status.State)
+	}
+	if status.Error != ErrSRTUnverified.Error() {
+		t.Fatalf("status error = %q, want %q", status.Error, ErrSRTUnverified.Error())
+	}
+}
+
+func TestStartStreamReportsSRTProbeErrorSeparately(t *testing.T) {
+	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
+	cfg.Streaming.Streams = []types.Stream{
+		{
+			ID:      "stream-1",
+			Enabled: true,
+			Host:    "stream.example.com",
+			Port:    9000,
+			Codec:   types.CodecMP3,
+		},
+	}
+
+	e := &Encoder{
+		config:        cfg,
+		state:         types.StateRunning,
+		stopChan:      make(chan struct{}),
+		srtAvailable:  false,
+		srtProbeError: errors.New("probe timed out"),
+		streamManager: streaming.NewManager("ffmpeg"),
+	}
+
+	if err := e.StartStream("stream-1"); !errors.Is(err, ErrSRTUnverified) {
+		t.Fatalf("StartStream() error = %v, want ErrSRTUnverified", err)
+	}
+}

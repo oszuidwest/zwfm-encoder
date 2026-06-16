@@ -283,6 +283,7 @@ document.addEventListener('alpine:init', () => {
             graph_has_secret: false,
             recording_has_api_key: false,
             srt_available: false,
+            srt_error: '',
             streams: [],
             recorders: []
         },
@@ -1013,6 +1014,10 @@ document.addEventListener('alpine:init', () => {
             if (!this.streamForm.port || this.streamForm.port < 1 || this.streamForm.port > 65535) return false;
             if (this.streamForm.mode === 'listener') return true;
             return Boolean(this.streamForm.host?.trim());
+        },
+
+        srtUnavailableMessage() {
+            return this.config.srt_error || 'SRT unavailable in this FFmpeg build.';
         },
 
         streamEndpoint(stream) {

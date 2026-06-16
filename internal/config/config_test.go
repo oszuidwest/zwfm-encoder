@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -389,6 +390,83 @@ func TestLoadNormalizesListenerHostAndAllowsCallerSharedRemote(t *testing.T) {
 	streams := cfg.ConfiguredStreams()
 	if got := streams[0].Host; got != types.DefaultListenerBindHost {
 		t.Fatalf("listener host = %q, want %q", got, types.DefaultListenerBindHost)
+	}
+}
+
+func TestAddStreamRollsBackDuplicateListenerBind(t *testing.T) {
+	t.Parallel()
+
+	cfg := New(filepath.Join(t.TempDir(), "config.json"))
+	cfg.Streaming.Streams = []types.Stream{
+		{
+			ID:      "listener-1",
+			Enabled: true,
+			Mode:    types.StreamModeListener,
+			Host:    types.DefaultListenerBindHost,
+			Port:    9000,
+			Codec:   types.CodecMP3,
+		},
+	}
+
+	err := cfg.AddStream(&types.Stream{
+		Enabled: true,
+		Mode:    types.StreamModeListener,
+		Host:    types.DefaultListenerBindHost,
+		Port:    9000,
+		Codec:   types.CodecMP3,
+	})
+	if !errors.Is(err, ErrInvalidStreamConfig) {
+		t.Fatalf("AddStream() error = %v, want ErrInvalidStreamConfig", err)
+	}
+	streams := cfg.ConfiguredStreams()
+	if len(streams) != 1 {
+		t.Fatalf("ConfiguredStreams len = %d, want 1 after rollback: %+v", len(streams), streams)
+	}
+	if streams[0].ID != "listener-1" {
+		t.Fatalf("remaining stream ID = %q, want listener-1", streams[0].ID)
+	}
+}
+
+func TestUpdateStreamRollsBackDuplicateListenerBind(t *testing.T) {
+	t.Parallel()
+
+	cfg := New(filepath.Join(t.TempDir(), "config.json"))
+	cfg.Streaming.Streams = []types.Stream{
+		{
+			ID:      "listener-1",
+			Enabled: true,
+			Mode:    types.StreamModeListener,
+			Host:    types.DefaultListenerBindHost,
+			Port:    9000,
+			Codec:   types.CodecMP3,
+		},
+		{
+			ID:      "listener-2",
+			Enabled: true,
+			Mode:    types.StreamModeListener,
+			Host:    types.DefaultListenerBindHost,
+			Port:    9001,
+			Codec:   types.CodecMP3,
+		},
+	}
+
+	err := cfg.UpdateStream(&types.Stream{
+		ID:      "listener-2",
+		Enabled: true,
+		Mode:    types.StreamModeListener,
+		Host:    types.DefaultListenerBindHost,
+		Port:    9000,
+		Codec:   types.CodecMP3,
+	})
+	if !errors.Is(err, ErrInvalidStreamConfig) {
+		t.Fatalf("UpdateStream() error = %v, want ErrInvalidStreamConfig", err)
+	}
+	stream := cfg.Stream("listener-2")
+	if stream == nil {
+		t.Fatal("listener-2 disappeared after failed update")
+	}
+	if stream.Port != 9001 {
+		t.Fatalf("listener-2 port = %d, want 9001 after rollback", stream.Port)
 	}
 }
 

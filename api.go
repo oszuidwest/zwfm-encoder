@@ -186,6 +186,7 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 		RecordingHasAPIKey:          cfg.RecordingAPIKey != "",
 		RecordingMaxDurationMinutes: cfg.RecordingMaxDurationMinutes,
 		SRTAvailable:                s.encoder.SRTAvailable(),
+		SRTError:                    s.encoder.SRTErrorMessage(),
 
 		// Entities
 		Streams:   redactSlice(cfg.Streams, redactStream),
@@ -301,6 +302,19 @@ type StreamRequest struct {
 	MaxRetries int `json:"max_retries"`
 }
 
+func streamRequestDefaults(req *StreamRequest) (types.StreamMode, types.Codec, string) {
+	mode := req.Mode.OrDefault()
+	codec := req.Codec
+	if mode == types.StreamModeListener && codec == "" {
+		codec = types.CodecMP3
+	}
+	host := strings.TrimSpace(req.Host)
+	if mode == types.StreamModeListener && host == "" {
+		host = types.DefaultListenerBindHost
+	}
+	return mode, codec, host
+}
+
 // handleCreateStream creates a new stream.
 func (s *Server) handleCreateStream(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[StreamRequest](s, w, r)
@@ -312,15 +326,7 @@ func (s *Server) handleCreateStream(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	mode := req.Mode.OrDefault()
-	codec := req.Codec
-	if mode == types.StreamModeListener && codec == "" {
-		codec = types.CodecMP3
-	}
-	host := strings.TrimSpace(req.Host)
-	if mode == types.StreamModeListener && host == "" {
-		host = types.DefaultListenerBindHost
-	}
+	mode, codec, host := streamRequestDefaults(&req)
 
 	stream := &types.Stream{
 		Enabled:    true,
@@ -374,15 +380,7 @@ func (s *Server) handleUpdateStream(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	mode := req.Mode.OrDefault()
-	codec := req.Codec
-	if mode == types.StreamModeListener && codec == "" {
-		codec = types.CodecMP3
-	}
-	host := strings.TrimSpace(req.Host)
-	if mode == types.StreamModeListener && host == "" {
-		host = types.DefaultListenerBindHost
-	}
+	mode, codec, host := streamRequestDefaults(&req)
 
 	// Full replacement - preserve only ID and CreatedAt.
 	// For password: empty string means keep existing unless clear_password is true.

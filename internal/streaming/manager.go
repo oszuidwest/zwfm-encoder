@@ -23,6 +23,11 @@ var errStoppedByUser = errors.New("stopped by user")
 // At ~100ms per chunk, 5 chunks provides ~500ms of buffer.
 const audioBufferSize = 5
 
+type listenerRelistenWarningState struct {
+	windowStart time.Time
+	count       int
+}
+
 // StreamContext provides encoder state for monitoring and retry decisions.
 type StreamContext interface {
 	// Stream returns the stream configuration, or nil if removed.
@@ -549,6 +554,17 @@ func classifyStreamExit(
 	return streamExitNormalStop
 }
 
+func listenerRelistenDelay(
+	now time.Time, state listenerRelistenWarningState,
+) (time.Duration, listenerRelistenWarningState, bool) {
+	if state.windowStart.IsZero() || now.Sub(state.windowStart) > types.ListenerRelistenWarningWindow {
+		state.windowStart = now
+		state.count = 0
+	}
+	state.count++
+	return types.ListenerRelistenDelay, state, state.count == types.ListenerRelistenWarningThreshold
+}
+
 func (m *Manager) handleStreamExit(
 	streamID string, result *ffmpeg.StartResult, backoff *util.Backoff, mode types.StreamMode,
 	err error, runDuration time.Duration,
@@ -561,8 +577,12 @@ func (m *Manager) handleStreamExit(
 		return false
 	case streamExitListenerRelisten:
 		if err != nil {
+			errMsg := util.ExtractLastError(result.Stderr())
+			if errMsg == "" {
+				errMsg = err.Error()
+			}
 			slog.Info("srt listener session ended, relistening",
-				"stream_id", streamID, "duration", runDuration, "error", err)
+				"stream_id", streamID, "duration", runDuration, "error", errMsg)
 		} else {
 			slog.Info("srt listener session ended, relistening",
 				"stream_id", streamID, "duration", runDuration)
@@ -573,6 +593,8 @@ func (m *Manager) handleStreamExit(
 		m.ResetRetry(streamID)
 		m.emitEvent(streamID, "stream_stopped", "Stream ended normally", "", 0, 0)
 		return false
+	case streamExitFailure:
+		// Handled by the shared error path below.
 	}
 
 	if err != nil {
@@ -620,8 +642,7 @@ func (m *Manager) shouldContinueRetry(streamID string, ctx StreamContext) (shoul
 // MonitorAndRetry watches a stream and restarts it on failure. This method
 // blocks until the stream is stopped or retry limits are exceeded.
 func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <-chan struct{}) {
-	var relistenWindowStart time.Time
-	relistenCount := 0
+	var relistenWarning listenerRelistenWarningState
 
 	for {
 		select {
@@ -656,16 +677,13 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 		stream := ctx.Stream(streamID)
 		retryDelay := backoff.Current()
 		if relisten {
-			retryDelay = types.ListenerRelistenDelay
-			now := time.Now()
-			if relistenWindowStart.IsZero() || now.Sub(relistenWindowStart) > time.Minute {
-				relistenWindowStart = now
-				relistenCount = 0
-			}
-			relistenCount++
-			if relistenCount >= 10 {
+			var warn bool
+			retryDelay, relistenWarning, warn = listenerRelistenDelay(time.Now(), relistenWarning)
+			if warn {
 				slog.Warn("srt listener is relistening frequently",
-					"stream_id", streamID, "count", relistenCount, "window", time.Since(relistenWindowStart))
+					"stream_id", streamID,
+					"count", relistenWarning.count,
+					"window", time.Since(relistenWarning.windowStart))
 			}
 		} else {
 			retryCount := m.RetryCount(streamID)

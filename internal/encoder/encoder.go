@@ -51,6 +51,9 @@ var ErrStreamNotFound = errors.New("stream not found")
 // ErrSRTUnsupported is returned when the FFmpeg build lacks SRT protocol support.
 var ErrSRTUnsupported = errors.New("ffmpeg does not support srt protocol")
 
+// ErrSRTUnverified is returned when FFmpeg SRT support could not be verified.
+var ErrSRTUnverified = errors.New("could not verify ffmpeg srt protocol support")
+
 // ErrRecordingNotAvailable is returned when the recording manager is not initialized.
 var ErrRecordingNotAvailable = errors.New("recording not available")
 
@@ -59,6 +62,7 @@ type Encoder struct {
 	config              *config.Config
 	ffmpegPath          string
 	srtAvailable        bool
+	srtProbeError       error
 	streamManager       *streaming.Manager
 	recordingManager    *recording.Manager
 	silenceDumpManager  *silencedump.Manager
@@ -115,11 +119,17 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 
 	// Create stream manager and wire up event callback
 	streamMgr := streaming.NewManager(ffmpegPath)
+	srtAvailable, srtProbeErr := util.ProbeFFmpegProtocol(ffmpegPath, "srt")
+	if srtProbeErr != nil {
+		slog.Warn("could not verify FFmpeg SRT protocol support",
+			"path", ffmpegPath, "error", srtProbeErr)
+	}
 
 	e := &Encoder{
 		config:              cfg,
 		ffmpegPath:          ffmpegPath,
-		srtAvailable:        util.FFmpegSupportsProtocol(ffmpegPath, "srt"),
+		srtAvailable:        srtAvailable,
+		srtProbeError:       srtProbeErr,
 		streamManager:       streamMgr,
 		silenceDumpManager:  dumpManager,
 		eventLogger:         logger,
@@ -144,6 +154,25 @@ func (e *Encoder) SRTAvailable() bool {
 		return false
 	}
 	return e.srtAvailable
+}
+
+// SRTProbeError returns the FFmpeg SRT capability probe error, if verification failed.
+func (e *Encoder) SRTProbeError() error {
+	if e == nil {
+		return nil
+	}
+	return e.srtProbeError
+}
+
+// SRTErrorMessage returns the user-facing SRT capability error, if any.
+func (e *Encoder) SRTErrorMessage() string {
+	if e == nil || e.srtAvailable || e.ffmpegPath == "" {
+		return ""
+	}
+	if e.srtProbeError != nil {
+		return ErrSRTUnverified.Error()
+	}
+	return ErrSRTUnsupported.Error()
 }
 
 func (e *Encoder) onStreamEvent(streamID, streamName, eventType, message, errMsg string, retryCount, maxRetries int) {
@@ -323,7 +352,7 @@ func (e *Encoder) StreamStatuses(streams []types.Stream) map[string]types.Proces
 			result[stream.ID] = types.ProcessStatus{
 				State:      types.ProcessError,
 				MaxRetries: stream.MaxRetriesOrDefault(),
-				Error:      ErrSRTUnsupported.Error(),
+				Error:      e.SRTErrorMessage(),
 			}
 		default:
 			// Stream is enabled but has no process (encoder not running)
@@ -491,6 +520,9 @@ func (e *Encoder) StartStream(streamID string) error {
 		return ErrStreamDisabled
 	}
 	if !e.srtAvailable {
+		if e.srtProbeError != nil {
+			return ErrSRTUnverified
+		}
 		return ErrSRTUnsupported
 	}
 

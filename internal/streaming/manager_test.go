@@ -250,6 +250,42 @@ func TestClassifyStreamExit(t *testing.T) {
 	}
 }
 
+func TestListenerRelistenDelayWarnsOncePerWindow(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1000, 0)
+	var state listenerRelistenWarningState
+	for i := 1; i < types.ListenerRelistenWarningThreshold; i++ {
+		delay, nextState, warn := listenerRelistenDelay(now.Add(time.Duration(i)*time.Second), state)
+		if delay != types.ListenerRelistenDelay {
+			t.Fatalf("delay = %s, want %s", delay, types.ListenerRelistenDelay)
+		}
+		if warn {
+			t.Fatalf("iteration %d warned before threshold", i)
+		}
+		state = nextState
+	}
+
+	_, nextState, warn := listenerRelistenDelay(now.Add(10*time.Second), state)
+	if !warn {
+		t.Fatal("threshold iteration did not warn")
+	}
+	state = nextState
+
+	_, state, warn = listenerRelistenDelay(now.Add(11*time.Second), state)
+	if warn {
+		t.Fatal("post-threshold iteration warned again in the same window")
+	}
+
+	_, _, warn = listenerRelistenDelay(
+		state.windowStart.Add(types.ListenerRelistenWarningWindow+time.Nanosecond),
+		state,
+	)
+	if warn {
+		t.Fatal("first iteration in a new warning window warned")
+	}
+}
+
 // TestStartReportsNotStartedOnValidationError verifies an invalid stream yields
 // started=false so the caller does not monitor a stream that never launched.
 func TestStartReportsNotStartedOnValidationError(t *testing.T) {

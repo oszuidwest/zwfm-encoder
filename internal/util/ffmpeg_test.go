@@ -1,6 +1,9 @@
 package util
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestFFmpegProtocolListContainsExactToken(t *testing.T) {
 	t.Parallel()
@@ -36,5 +39,18 @@ Output:
 `
 	if FFmpegProtocolListContains(output, "srt") {
 		t.Fatal("FFmpegProtocolListContains() = true, want false when only srtp is present")
+	}
+}
+
+func TestProbeFFmpegProtocolReturnsProbeError(t *testing.T) {
+	t.Parallel()
+
+	missing := filepath.Join(t.TempDir(), "missing-ffmpeg")
+	ok, err := ProbeFFmpegProtocol(missing, "srt")
+	if err == nil {
+		t.Fatal("ProbeFFmpegProtocol() error = nil, want probe error")
+	}
+	if ok {
+		t.Fatal("ProbeFFmpegProtocol() ok = true, want false on probe error")
 	}
 }

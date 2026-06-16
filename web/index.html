@@ -793,12 +793,12 @@
                             <button type="button" class="segmented-btn"
                                     :aria-pressed="streamForm.mode === 'listener'"
                                     :disabled="!config.srt_available && streamForm.mode !== 'listener'"
-                                    :title="!config.srt_available && streamForm.mode !== 'listener' ? 'SRT unavailable in this FFmpeg build' : ''"
+                                    :title="!config.srt_available && streamForm.mode !== 'listener' ? srtUnavailableMessage() : ''"
                                     @click="setStreamMode('listener')">
                                 Local pull listener
                             </button>
                         </div>
-                        <span class="input-hint" x-show="!config.srt_available">SRT unavailable in this FFmpeg build.</span>
+                        <span class="input-hint" x-show="!config.srt_available" x-text="srtUnavailableMessage()">SRT unavailable in this FFmpeg build.</span>
                     </div>
 
                     <!-- Server Connection Section -->
