@@ -164,15 +164,32 @@ func (e *Encoder) SRTProbeError() error {
 	return e.srtProbeError
 }
 
+// srtSentinel returns the sentinel describing why SRT is unusable: unverified if
+// the capability probe failed, otherwise unsupported.
+func (e *Encoder) srtSentinel() error {
+	if e.srtProbeError != nil {
+		return ErrSRTUnverified
+	}
+	return ErrSRTUnsupported
+}
+
+// srtCapabilityError reports why SRT streams cannot run, or nil when SRT is usable
+// or unconfigured. It returns nil in degraded mode (no FFmpeg path), where SRT is
+// not the relevant failure; callers that must report SRT state regardless of FFmpeg
+// availability use srtSentinel directly.
+func (e *Encoder) srtCapabilityError() error {
+	if e == nil || e.srtAvailable || e.ffmpegPath == "" {
+		return nil
+	}
+	return e.srtSentinel()
+}
+
 // SRTErrorMessage returns the user-facing SRT capability error, if any.
 func (e *Encoder) SRTErrorMessage() string {
-	if e == nil || e.srtAvailable || e.ffmpegPath == "" {
-		return ""
+	if err := e.srtCapabilityError(); err != nil {
+		return err.Error()
 	}
-	if e.srtProbeError != nil {
-		return ErrSRTUnverified.Error()
-	}
-	return ErrSRTUnsupported.Error()
+	return ""
 }
 
 func (e *Encoder) onStreamEvent(streamID, streamName, eventType, message, errMsg string, retryCount, maxRetries int) {
@@ -345,7 +362,7 @@ func (e *Encoder) StreamStatuses(streams []types.Stream) map[string]types.Proces
 				State:      types.ProcessDisabled,
 				MaxRetries: stream.MaxRetriesOrDefault(),
 			}
-		case e.ffmpegPath != "" && !e.srtAvailable:
+		case e.srtCapabilityError() != nil:
 			result[stream.ID] = types.ProcessStatus{
 				State:      types.ProcessError,
 				MaxRetries: stream.MaxRetriesOrDefault(),
@@ -517,10 +534,7 @@ func (e *Encoder) StartStream(streamID string) error {
 		return ErrStreamDisabled
 	}
 	if !e.srtAvailable {
-		if e.srtProbeError != nil {
-			return ErrSRTUnverified
-		}
-		return ErrSRTUnsupported
+		return e.srtSentinel()
 	}
 
 	// Start preserves existing retry state automatically

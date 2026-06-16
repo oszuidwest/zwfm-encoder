@@ -137,6 +137,7 @@ const DEFAULT_RECORDER = {
 
 const storageNeedsLocal = (mode) => mode === 'local' || mode === 'both';
 const storageNeedsS3 = (mode) => mode === 's3' || mode === 'both';
+const streamMode = (stream) => stream?.mode || 'caller';
 const recorderHasS3Secret = (form) => Boolean(
     form.s3_secret_access_key || (form.has_s3_secret && !form.clear_s3_secret)
 );
@@ -970,7 +971,7 @@ document.addEventListener('alpine:init', () => {
                 if (!stream) return;
                 this.streamForm = {
                     id: stream.id,
-                    mode: stream.mode || 'caller',
+                    mode: streamMode(stream),
                     host: stream.host,
                     port: stream.port,
                     stream_id: stream.stream_id || '',
@@ -990,11 +991,11 @@ document.addEventListener('alpine:init', () => {
         },
 
         isListenerStream(stream) {
-            return (stream?.mode || 'caller') === 'listener';
+            return streamMode(stream) === 'listener';
         },
 
         setStreamMode(mode) {
-            const previousMode = this.streamForm.mode || 'caller';
+            const previousMode = streamMode(this.streamForm);
             if (previousMode === mode) return;
             this.streamForm.mode = mode;
             if (mode === 'listener') {
@@ -1059,7 +1060,7 @@ document.addEventListener('alpine:init', () => {
          */
         async submitStreamForm() {
             if (!this.canSaveStreamForm()) return;
-            const mode = this.streamForm.mode || 'caller';
+            const mode = streamMode(this.streamForm);
 
             const data = {
                 mode,

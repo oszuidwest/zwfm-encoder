@@ -674,7 +674,6 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 			return
 		}
 
-		stream := ctx.Stream(streamID)
 		retryDelay := backoff.Current()
 		if relisten {
 			var warn bool
@@ -686,6 +685,7 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 					"window", time.Since(relistenWarning.windowStart))
 			}
 		} else {
+			stream := ctx.Stream(streamID)
 			retryCount := m.RetryCount(streamID)
 			maxRetries := stream.MaxRetriesOrDefault()
 			slog.Info("stream stopped, waiting before retry",
@@ -711,7 +711,7 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 			return
 		}
 
-		stream = ctx.Stream(streamID)
+		stream := ctx.Stream(streamID)
 		started, err := m.Start(stream)
 		if err != nil {
 			slog.Error("failed to restart stream", "stream_id", streamID, "error", err)

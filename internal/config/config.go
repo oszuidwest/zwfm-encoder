@@ -521,7 +521,9 @@ func (c *Config) validateStreams() error {
 		if !stream.Enabled || stream.ModeOrDefault() != types.StreamModeListener {
 			continue
 		}
-		bind := listenerBindKey(stream)
+		// Exact-string dedupe only: wildcard-vs-specific address overlap is left
+		// to the OS bind error so v1 stays simple and visible.
+		bind := stream.Endpoint()
 		if first, ok := listenerBinds[bind]; ok {
 			return fmt.Errorf("invalid streaming.streams[%d]: duplicate listener bind %q also used by streaming.streams[%d]", i, bind, first)
 		}
@@ -537,12 +539,6 @@ func normalizeStreamDefaults(stream *types.Stream) {
 	if strings.TrimSpace(stream.Host) == "" {
 		stream.Host = types.DefaultListenerBindHost
 	}
-}
-
-func listenerBindKey(stream *types.Stream) string {
-	// Exact-string dedupe only: wildcard-vs-specific address overlap is left
-	// to the OS bind error so v1 stays simple and visible.
-	return stream.Endpoint()
 }
 
 func (c *Config) validateRecorders() error {
