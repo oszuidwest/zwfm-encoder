@@ -2,6 +2,7 @@ package encoder
 
 import (
 	"errors"
+	"io"
 	"net"
 	"os"
 	"os/signal"
@@ -75,6 +76,69 @@ func TestDelayedStarterDoesNotStartManagersAfterQuickSourceExit(t *testing.T) {
 	}
 	if e.silenceDumpManager.IsRunning() {
 		t.Fatal("silence dump manager was started by a stale delayed source starter")
+	}
+}
+
+func TestStaleStarterDoesNotStartManagersForNewRun(t *testing.T) {
+	e := newSourceLifecycleTestEncoder(t, "exit")
+	pr, pw := io.Pipe()
+	t.Cleanup(func() {
+		_ = pr.Close()
+		_ = pw.Close()
+	})
+
+	e.mu.Lock()
+	e.state = types.StateRunning
+	e.stopChan = make(chan struct{})
+	e.sourceStdout = pr
+	e.sourceRunID = 2
+	e.mu.Unlock()
+
+	e.startEnabledStreams(1)
+
+	if e.recordingManager.IsRunning() {
+		t.Fatal("stale run-1 starter started recording manager while run 2 was active")
+	}
+	if e.silenceDumpManager.IsRunning() {
+		t.Fatal("stale run-1 starter started silence dump manager while run 2 was active")
+	}
+}
+
+func TestDelayedStarterReturnsWhenStopChanClosed(t *testing.T) {
+	e := newSourceLifecycleTestEncoder(t, "exit")
+	pr, pw := io.Pipe()
+	t.Cleanup(func() {
+		_ = pr.Close()
+		_ = pw.Close()
+	})
+
+	closedStopChan := make(chan struct{})
+	close(closedStopChan)
+
+	e.mu.Lock()
+	e.state = types.StateRunning
+	e.stopChan = make(chan struct{})
+	e.sourceStdout = pr
+	e.sourceRunID = 1
+	e.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		e.startEnabledStreamsAfterDelay(1, closedStopChan, 500*time.Millisecond)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("delayed starter did not return after stopChan closed")
+	}
+
+	if e.recordingManager.IsRunning() {
+		t.Fatal("closed stopChan delayed starter started recording manager")
+	}
+	if e.silenceDumpManager.IsRunning() {
+		t.Fatal("closed stopChan delayed starter started silence dump manager")
 	}
 }
 

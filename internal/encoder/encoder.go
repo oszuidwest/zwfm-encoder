@@ -718,11 +718,7 @@ func (e *Encoder) runSourceLoop() {
 // runSource starts the audio capture process and blocks until it exits.
 func (e *Encoder) runSource() (string, error) {
 	audioInput := e.config.Snapshot().AudioInput
-	buildCaptureCommand := e.buildCaptureCommand
-	if buildCaptureCommand == nil {
-		buildCaptureCommand = audio.BuildCaptureCommand
-	}
-	cmdName, args, err := buildCaptureCommand(audioInput, e.ffmpegPath)
+	cmdName, args, err := e.buildCaptureCommand(audioInput, e.ffmpegPath)
 	if err != nil {
 		return "", err
 	}
@@ -783,11 +779,7 @@ func (e *Encoder) runSource() (string, error) {
 
 	e.resetAudioLevels() // start each run silent until the first metered chunk
 
-	delay := e.streamRestartDelay
-	if delay == 0 {
-		delay = types.StreamRestartDelay
-	}
-	go e.startEnabledStreamsAfterDelay(runID, stopChan, delay)
+	go e.startEnabledStreamsAfterDelay(runID, stopChan, e.streamRestartDelay)
 
 	err = cmd.Wait()
 
