@@ -1,15 +1,12 @@
 package types
 
 import (
+	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 	"slices"
 	"testing"
-
-	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 )
 
 func TestZabbixConfigValidationIssues(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		name      string
 		cfg       ZabbixConfig
@@ -43,7 +40,6 @@ func TestZabbixConfigValidationIssues(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
 			got := zabbixCodes(tt.cfg.ValidationIssues())
 			if !slices.Equal(got, tt.wantCodes) {
 				t.Fatalf("ValidationIssues() codes = %v, want %v", got, tt.wantCodes)
@@ -51,10 +47,7 @@ func TestZabbixConfigValidationIssues(t *testing.T) {
 		})
 	}
 }
-
 func TestValidateZabbixConfigured(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		name                                string
 		server, host, silenceKey, uploadKey string
@@ -92,12 +85,10 @@ func TestValidateZabbixConfigured(t *testing.T) {
 			server:    "zabbix.example.com",
 			host:      "encoder-01",
 			uploadKey: "upload",
-			// no port arg; helper does not check port at all
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
 			got := zabbixCodes(ValidateZabbixConfigured(tt.server, tt.host, tt.silenceKey, tt.uploadKey))
 			if !slices.Equal(got, tt.wantCodes) {
 				t.Fatalf("ValidateZabbixConfigured codes = %v, want %v", got, tt.wantCodes)
@@ -105,10 +96,7 @@ func TestValidateZabbixConfigured(t *testing.T) {
 		})
 	}
 }
-
 func TestValidateZabbixTarget(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		name      string
 		server    string
@@ -142,7 +130,6 @@ func TestValidateZabbixTarget(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
 			got := zabbixCodes(ValidateZabbixTarget(tt.server, tt.port, tt.host, tt.key))
 			if !slices.Equal(got, tt.wantCodes) {
 				t.Fatalf("ValidateZabbixTarget codes = %v, want %v", got, tt.wantCodes)
@@ -150,7 +137,6 @@ func TestValidateZabbixTarget(t *testing.T) {
 		})
 	}
 }
-
 func zabbixCodes(issues validation.Issues) []string {
 	if len(issues) == 0 {
 		return nil

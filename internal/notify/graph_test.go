@@ -3,13 +3,12 @@ package notify
 import (
 	"context"
 	"errors"
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 	"testing/synctest"
-
-	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -17,7 +16,6 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
-
 func validGraphClientConstructorConfig() *types.GraphConfig {
 	return &types.GraphConfig{
 		TenantID:     "tenant.onmicrosoft.com",
@@ -26,7 +24,6 @@ func validGraphClientConstructorConfig() *types.GraphConfig {
 		FromAddress:  "sender@example.com",
 	}
 }
-
 func newStaticGraphHTTPClient(statusCode int, body string) *http.Client {
 	return &http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -39,10 +36,8 @@ func newStaticGraphHTTPClient(statusCode int, body string) *http.Client {
 		}),
 	}
 }
-
 func TestNewGraphClientWithHTTPClientBuildsClient(t *testing.T) {
 	t.Parallel()
-
 	client, err := newGraphClientWithHTTPClient(
 		validGraphClientConstructorConfig(),
 		newStaticGraphHTTPClient(http.StatusNoContent, ""),
@@ -53,16 +48,13 @@ func TestNewGraphClientWithHTTPClientBuildsClient(t *testing.T) {
 	if client.fromAddress != "sender@example.com" {
 		t.Fatalf("fromAddress = %q, want sender@example.com", client.fromAddress)
 	}
-
 	_, err = newGraphClientWithHTTPClient(validGraphClientConstructorConfig(), nil)
 	if err == nil || err.Error() != "http client is required" {
 		t.Fatalf("nil http client error = %v, want http client required error", err)
 	}
 }
-
 func TestNewGraphClientPreservesClientValidation(t *testing.T) {
 	t.Parallel()
-
 	_, err := NewGraphClient(&types.GraphConfig{
 		TenantID:     "tenant.onmicrosoft.com",
 		ClientID:     "client-id",
@@ -72,10 +64,8 @@ func TestNewGraphClientPreservesClientValidation(t *testing.T) {
 		t.Fatalf("missing from_address error = %v, want legacy from_address error", err)
 	}
 }
-
 func TestGraphClientSendMailUsesInjectedHTTPClient(t *testing.T) {
 	t.Parallel()
-
 	attempts := 0
 	client, err := newGraphClientWithHTTPClient(validGraphClientConstructorConfig(), &http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -97,7 +87,6 @@ func TestGraphClientSendMailUsesInjectedHTTPClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newGraphClientWithHTTPClient() error = %v, want nil", err)
 	}
-
 	err = client.SendMail(context.Background(), []string{"recipient@example.com"}, "subject", "body")
 	if err == nil || err.Error() != "graph API error 400: bad request" {
 		t.Fatalf("SendMail() error = %v, want Graph 400 error", err)
@@ -106,10 +95,8 @@ func TestGraphClientSendMailUsesInjectedHTTPClient(t *testing.T) {
 		t.Fatalf("attempts = %d, want 1", attempts)
 	}
 }
-
 func TestGraphClientValidateAuthUsesInjectedHTTPClient(t *testing.T) {
 	t.Parallel()
-
 	client, err := newGraphClientWithHTTPClient(
 		validGraphClientConstructorConfig(),
 		newStaticGraphHTTPClient(http.StatusNotFound, "mailbox missing"),
@@ -117,13 +104,11 @@ func TestGraphClientValidateAuthUsesInjectedHTTPClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newGraphClientWithHTTPClient() error = %v, want nil", err)
 	}
-
 	err = client.ValidateAuth()
 	if err == nil || err.Error() != "mailbox sender@example.com not found" {
 		t.Fatalf("ValidateAuth() error = %v, want mailbox not found error", err)
 	}
 }
-
 func TestDoWithRetryRespectsContextCancellation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -145,20 +130,16 @@ func TestDoWithRetryRespectsContextCancellation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("newGraphClientWithHTTPClient() error = %v, want nil", err)
 		}
-
 		done := make(chan error, 1)
 		go func() {
 			done <- client.doWithRetry(ctx, []byte(`{"message":{}}`))
 		}()
 		synctest.Wait()
-
 		if attempts != 1 {
 			t.Fatalf("attempts before cancellation = %d, want 1", attempts)
 		}
-
 		cancel()
 		synctest.Wait()
-
 		err = <-done
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("doWithRetry() error = %v, want context.Canceled", err)

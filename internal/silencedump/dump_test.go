@@ -2,13 +2,11 @@ package silencedump
 
 import (
 	"bytes"
+	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"testing"
 	"time"
-
-	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 )
 
-// refCopyFromRing is the byte-loop reference for copyFromRing.
 func refCopyFromRing(buf, dst []byte, startPos int64) {
 	capacity := int64(len(buf))
 	bufferStart := startPos % capacity
@@ -18,7 +16,6 @@ func refCopyFromRing(buf, dst []byte, startPos int64) {
 	}
 }
 
-// newPatternedCapturer returns a ring pattern that exposes wrap mistakes.
 func newPatternedCapturer() *Capturer {
 	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
 	for i := range c.buffer {
@@ -27,7 +24,6 @@ func newPatternedCapturer() *Capturer {
 	return c
 }
 
-// writePattern writes byte(p) at absolute position p for formula-based checks.
 func writePattern(c *Capturer, total int64) {
 	const chunk = 19200
 	var abs int64
@@ -45,10 +41,8 @@ func writePattern(c *Capturer, total int64) {
 	}
 }
 
-// TestCopyFromRingMatchesReference checks wrap boundaries and real snapshot sizes.
 func TestCopyFromRingMatchesReference(t *testing.T) {
 	c := newPatternedCapturer()
-
 	starts := []int64{
 		0, 1, 7,
 		bufferCapacity - 1, bufferCapacity, bufferCapacity + 1,
@@ -62,7 +56,6 @@ func TestCopyFromRingMatchesReference(t *testing.T) {
 		maxSilenceSeconds * audio.BytesPerSecond,
 		afterSeconds * audio.BytesPerSecond,
 	}
-
 	for _, start := range starts {
 		for _, l := range lens {
 			got := make([]byte, l)
@@ -76,16 +69,11 @@ func TestCopyFromRingMatchesReference(t *testing.T) {
 	}
 }
 
-// TestWriteAudioMatchesByteLoopReference verifies writeToRing matches byte-loop
-// behavior across mid-chunk wraps.
 func TestWriteAudioMatchesByteLoopReference(t *testing.T) {
 	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
-
 	refBuf := make([]byte, bufferCapacity)
 	refWritePos := 0
 	var refTotal int64
-
-	// Sizes chosen so the running total wraps the ring mid-chunk at least once.
 	chunkSizes := []int{19200, 19200, 4096, 1, bufferCapacity / 2, bufferCapacity/2 + 5000, 19200, 7}
 	var abs int64
 	for _, sz := range chunkSizes {
@@ -94,16 +82,13 @@ func TestWriteAudioMatchesByteLoopReference(t *testing.T) {
 			pcm[j] = byte((abs + int64(j)) & 0xff)
 		}
 		abs += int64(sz)
-
 		c.WriteAudio(pcm)
-
 		for _, b := range pcm {
 			refBuf[refWritePos] = b
 			refWritePos = (refWritePos + 1) % bufferCapacity
 		}
 		refTotal += int64(sz)
 	}
-
 	if c.writePos != refWritePos {
 		t.Fatalf("writePos mismatch: got %d want %d", c.writePos, refWritePos)
 	}
@@ -115,21 +100,15 @@ func TestWriteAudioMatchesByteLoopReference(t *testing.T) {
 	}
 }
 
-// TestOnSilenceStartSavedBeforeWrap verifies savedBefore keeps the newest
-// pre-silence audio after the ring wraps.
 func TestOnSilenceStartSavedBeforeWrap(t *testing.T) {
 	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
-
 	total := int64(bufferCapacity) + 500_000
 	writePattern(c, total)
-
 	c.OnSilenceStart()
-
 	wantLen := int(min(total, int64(beforeSeconds*audio.BytesPerSecond)))
 	if len(c.savedBefore) != wantLen {
 		t.Fatalf("savedBefore len: got %d want %d", len(c.savedBefore), wantLen)
 	}
-
 	start := total - int64(wantLen)
 	for i := range c.savedBefore {
 		want := byte((start + int64(i)) & 0xff)
@@ -139,11 +118,8 @@ func TestOnSilenceStartSavedBeforeWrap(t *testing.T) {
 	}
 }
 
-// TestOnSilenceRecoverClampsEndPos verifies recovery backdating cannot cross the
-// silence start.
 func TestOnSilenceRecoverClampsEndPos(t *testing.T) {
 	const sec = int64(audio.BytesPerSecond)
-
 	tests := []struct {
 		name            string
 		silenceStartPos int64
@@ -156,24 +132,23 @@ func TestOnSilenceRecoverClampsEndPos(t *testing.T) {
 			silenceStartPos: 1 * sec,
 			totalWritten:    10 * sec,
 			recovery:        2 * time.Second,
-			wantEndPos:      8 * sec, // 10s - 2s
+			wantEndPos:      8 * sec, // 10s minus 2s.
 		},
 		{
 			name:            "recovery exceeds bytes written clamps to start",
 			silenceStartPos: 1 * sec,
 			totalWritten:    2 * sec,
-			recovery:        100 * time.Second, // would yield a negative position
+			recovery:        100 * time.Second, // Would yield a negative position.
 			wantEndPos:      1 * sec,
 		},
 		{
 			name:            "recovery reaching past start clamps to start",
 			silenceStartPos: 5 * sec,
 			totalWritten:    6 * sec,
-			recovery:        3 * time.Second, // 6s - 3s = 3s < startPos
+			recovery:        3 * time.Second, // 6s minus 3s is before startPos.
 			wantEndPos:      5 * sec,
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c := &Capturer{
@@ -183,9 +158,7 @@ func TestOnSilenceRecoverClampsEndPos(t *testing.T) {
 				silenceStartPos: tt.silenceStartPos,
 				totalWritten:    tt.totalWritten,
 			}
-
 			c.OnSilenceRecover(0, tt.recovery)
-
 			if c.silenceEndPos != tt.wantEndPos {
 				t.Fatalf("silenceEndPos = %d, want %d", c.silenceEndPos, tt.wantEndPos)
 			}
@@ -196,42 +169,32 @@ func TestOnSilenceRecoverClampsEndPos(t *testing.T) {
 	}
 }
 
-// TestCheckAndFinalizeRecoversAtZeroStart verifies position 0 still finalizes
-// via the explicit recovered flag.
 func TestCheckAndFinalizeRecoversAtZeroStart(t *testing.T) {
-	// Empty ffmpeg/output paths make async encoding fail fast.
 	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
-
-	c.OnSilenceStart()                     // totalWritten==0 -> silenceStartPos==0
-	c.OnSilenceRecover(0, 100*time.Second) // wall-clock outruns bytes -> silenceEndPos clamps to 0
-
+	c.OnSilenceStart()                     // Keeps silenceStartPos at 0.
+	c.OnSilenceRecover(0, 100*time.Second) // Clamps wall-clock recovery to bytes written.
 	if !c.recovered {
 		t.Fatal("recovered not set after OnSilenceRecover")
 	}
 	if c.silenceEndPos != 0 {
 		t.Fatalf("silenceEndPos = %d, want 0 (clamped to start)", c.silenceEndPos)
 	}
-
-	// Feed enough post-recovery audio for checkAndFinalize.
 	writePattern(c, int64(afterSeconds*audio.BytesPerSecond))
-
 	if c.capturing {
 		t.Fatal("capturer stuck capturing; recovery at byte position 0 never finalized")
 	}
 }
-
 func BenchmarkCopyFromRing(b *testing.B) {
 	c := newPatternedCapturer()
-	dst := make([]byte, afterSeconds*audio.BytesPerSecond) // 15s, a real extract size
+	dst := make([]byte, afterSeconds*audio.BytesPerSecond) // Allocates a realistic 15s extract.
 	b.SetBytes(int64(len(dst)))
 	for i := 0; b.Loop(); i++ {
 		c.copyFromRing(dst, int64(i)*999983+7)
 	}
 }
-
 func BenchmarkWriteToRing(b *testing.B) {
 	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
-	src := make([]byte, audio.BytesPerSecond/10) // ~100ms distributor chunk
+	src := make([]byte, audio.BytesPerSecond/10) // Matches a 100ms distributor chunk.
 	b.SetBytes(int64(len(src)))
 	for b.Loop() {
 		c.writePos = c.writeToRing(src)

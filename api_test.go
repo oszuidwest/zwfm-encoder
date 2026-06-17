@@ -4,22 +4,20 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/oszuidwest/zwfm-encoder/internal/audio"
+	"github.com/oszuidwest/zwfm-encoder/internal/config"
+	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/oszuidwest/zwfm-encoder/internal/audio"
-	"github.com/oszuidwest/zwfm-encoder/internal/config"
-	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
-	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
 func TestDerefReturnsValueWhenPresentFallbackWhenNil(t *testing.T) {
 	t.Parallel()
-
 	empty := ""
 	value := "explicit"
 	if got := deref((*string)(nil), "saved"); got != "saved" {
@@ -32,16 +30,13 @@ func TestDerefReturnsValueWhenPresentFallbackWhenNil(t *testing.T) {
 		t.Fatalf("deref(&explicit, saved) = %q, want %q", got, "explicit")
 	}
 }
-
 func TestValidateRecorderLocalPathCreatesWritableDirectory(t *testing.T) {
 	t.Parallel()
-
 	path := filepath.Join(t.TempDir(), "archive")
 	recorder := &types.Recorder{
 		StorageMode: types.StorageLocal,
 		LocalPath:   path,
 	}
-
 	if err := validateRecorderLocalPath(recorder); err != nil {
 		t.Fatalf("validateRecorderLocalPath() error = %v", err)
 	}
@@ -49,26 +44,20 @@ func TestValidateRecorderLocalPathCreatesWritableDirectory(t *testing.T) {
 		t.Fatalf("local path stat = (%v, %v), want directory", info, err)
 	}
 }
-
 func TestValidateRecorderLocalPathRejectsTraversal(t *testing.T) {
 	t.Parallel()
-
 	recorder := &types.Recorder{
 		StorageMode: types.StorageBoth,
 		LocalPath:   t.TempDir() + "/../archive",
 	}
-
 	if err := validateRecorderLocalPath(recorder); err == nil {
 		t.Fatal("validateRecorderLocalPath() error = nil, want error")
 	}
 }
-
 func TestBuildReadyResponseReady(t *testing.T) {
 	t.Parallel()
-
 	input := readyFixture()
 	resp, status := buildReadyResponse(&input)
-
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want %d", status, http.StatusOK)
 	}
@@ -81,10 +70,8 @@ func TestBuildReadyResponseReady(t *testing.T) {
 		}
 	}
 }
-
 func TestBuildReadyResponseFailures(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
 		name      string
 		component string
@@ -144,14 +131,11 @@ func TestBuildReadyResponseFailures(t *testing.T) {
 			},
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-
 			input := readyFixture()
 			tt.mutate(&input)
-
 			resp, status := buildReadyResponse(&input)
 			if status != http.StatusServiceUnavailable {
 				t.Fatalf("status = %d, want %d", status, http.StatusServiceUnavailable)
@@ -165,10 +149,8 @@ func TestBuildReadyResponseFailures(t *testing.T) {
 		})
 	}
 }
-
 func TestBuildReadyResponseAllowsStoppedOnDemandRecorder(t *testing.T) {
 	t.Parallel()
-
 	input := readyFixture()
 	input.recorders = []types.Recorder{
 		{
@@ -180,7 +162,6 @@ func TestBuildReadyResponseAllowsStoppedOnDemandRecorder(t *testing.T) {
 	input.recorderStatuses = map[string]types.ProcessStatus{
 		"recorder-ondemand": {State: types.ProcessStopped},
 	}
-
 	resp, status := buildReadyResponse(&input)
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want %d; response = %+v", status, http.StatusOK, resp)
@@ -189,10 +170,8 @@ func TestBuildReadyResponseAllowsStoppedOnDemandRecorder(t *testing.T) {
 		t.Fatalf("recorders component = %+v, want OK", resp.Components["recorders"])
 	}
 }
-
 func TestBuildReadyResponseIgnoresListenerStreams(t *testing.T) {
 	t.Parallel()
-
 	input := readyFixture()
 	input.streams = []types.Stream{
 		{
@@ -207,7 +186,6 @@ func TestBuildReadyResponseIgnoresListenerStreams(t *testing.T) {
 			Stable: false,
 		},
 	}
-
 	resp, status := buildReadyResponse(&input)
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want %d; response = %+v", status, http.StatusOK, resp)
@@ -220,7 +198,6 @@ func TestBuildReadyResponseIgnoresListenerStreams(t *testing.T) {
 		t.Fatalf("production_monitored = %v, want 0", got)
 	}
 }
-
 func readyFixture() readyInputs {
 	return readyInputs{
 		ffmpegAvailable:    true,
@@ -256,7 +233,6 @@ func readyFixture() readyInputs {
 		pendingUploads: 0,
 	}
 }
-
 func healthFixture() healthInputs {
 	return healthInputs{
 		ffmpegAvailable: true,
@@ -265,17 +241,12 @@ func healthFixture() healthInputs {
 	}
 }
 
-// TestBuildHealthResponseAudioConditionsAreInformational verifies /health reports
-// audio conditions without failing the process health check.
 func TestBuildHealthResponseAudioConditionsAreInformational(t *testing.T) {
 	t.Parallel()
-
 	t.Run("active channel imbalance stays healthy", func(t *testing.T) {
 		t.Parallel()
-
 		in := healthFixture()
 		in.audioLevels.ChannelImbalanceLevel = audio.ImbalanceLevelActive
-
 		resp, status := buildHealthResponse(&in)
 		if status != http.StatusOK || resp.Status != "healthy" {
 			t.Fatalf("status = %d/%q, want 200/healthy", status, resp.Status)
@@ -284,13 +255,10 @@ func TestBuildHealthResponseAudioConditionsAreInformational(t *testing.T) {
 			t.Fatal("ChannelImbalanceDetected = false, want true (informational field must still be reported)")
 		}
 	})
-
 	t.Run("active silence stays healthy", func(t *testing.T) {
 		t.Parallel()
-
 		in := healthFixture()
 		in.audioLevels.SilenceLevel = audio.SilenceLevelActive
-
 		resp, status := buildHealthResponse(&in)
 		if status != http.StatusOK || resp.Status != "healthy" {
 			t.Fatalf("status = %d/%q, want 200/healthy", status, resp.Status)
@@ -301,10 +269,8 @@ func TestBuildHealthResponseAudioConditionsAreInformational(t *testing.T) {
 	})
 }
 
-// TestBuildHealthResponseUnhealthyConditions verifies only process gates fail /health.
 func TestBuildHealthResponseUnhealthyConditions(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
 		name   string
 		mutate func(*healthInputs)
@@ -315,10 +281,8 @@ func TestBuildHealthResponseUnhealthyConditions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-
 			in := healthFixture()
 			tt.mutate(&in)
-
 			resp, status := buildHealthResponse(&in)
 			if status != http.StatusServiceUnavailable || resp.Status != "unhealthy" {
 				t.Fatalf("status = %d/%q, want 503/unhealthy", status, resp.Status)
@@ -327,7 +291,6 @@ func TestBuildHealthResponseUnhealthyConditions(t *testing.T) {
 	}
 }
 
-// freshServer returns a Server with a default in-memory config for handler tests.
 func freshServer(t *testing.T) *Server {
 	t.Helper()
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
@@ -336,7 +299,6 @@ func freshServer(t *testing.T) *Server {
 	}
 	return &Server{config: cfg}
 }
-
 func decodeError(t *testing.T, body []byte) string {
 	t.Helper()
 	var payload map[string]string
@@ -345,7 +307,6 @@ func decodeError(t *testing.T, body []byte) string {
 	}
 	return payload["error"]
 }
-
 func assertNotContains(t *testing.T, body []byte, forbidden ...string) {
 	t.Helper()
 	text := string(body)
@@ -355,7 +316,6 @@ func assertNotContains(t *testing.T, body []byte, forbidden ...string) {
 		}
 	}
 }
-
 func assertContains(t *testing.T, body []byte, want ...string) {
 	t.Helper()
 	text := string(body)
@@ -365,90 +325,99 @@ func assertContains(t *testing.T, body []byte, want ...string) {
 		}
 	}
 }
-
-// TestHandleAPITestWebhookEmptyURLReturnsBadRequest pins the historical
-// preflight behavior: an empty webhook URL is rejected at the handler with
-// HTTP 400 and the user-visible message "No webhook URL configured".
-// Non-empty URLs (even malformed) fall through to the runtime layer and
-// surface as HTTP 502 - see TestHandleAPITestWebhookInvalidURLReachesRuntime.
-func TestHandleAPITestWebhookEmptyURLReturnsBadRequest(t *testing.T) {
-	t.Parallel()
-
-	s := freshServer(t)
-	req := httptest.NewRequest(http.MethodPost, "/api/notifications/test/webhook", bytes.NewBufferString(`{}`))
+func runJSONHandler(
+	t *testing.T,
+	handler func(http.ResponseWriter, *http.Request),
+	method, path, body string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
 	rec := httptest.NewRecorder()
-
-	s.handleAPITestWebhook(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	handler(rec, req)
+	return rec
+}
+func assertStatus(t *testing.T, rec *httptest.ResponseRecorder, want int) {
+	t.Helper()
+	if rec.Code != want {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, want, rec.Body.String())
 	}
-	if got := decodeError(t, rec.Body.Bytes()); got != "No webhook URL configured" {
-		t.Fatalf("error = %q, want %q", got, "No webhook URL configured")
+}
+func assertErrorEqual(t *testing.T, rec *httptest.ResponseRecorder, want string) {
+	t.Helper()
+	if got := decodeError(t, rec.Body.Bytes()); got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+func assertErrorContains(t *testing.T, rec *httptest.ResponseRecorder, want string) {
+	t.Helper()
+	if got := decodeError(t, rec.Body.Bytes()); !strings.Contains(got, want) {
+		t.Fatalf("error = %q, want substring %q", got, want)
+	}
+}
+func decodeJSON[T any](t *testing.T, body []byte) T {
+	t.Helper()
+	var got T
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("response JSON = %q, error = %v", string(body), err)
+	}
+	return got
+}
+func TestNotificationTestEndpointPreflights(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		path       string
+		body       string
+		wantStatus int
+		wantError  string
+		contains   bool
+		call       func(*Server, http.ResponseWriter, *http.Request)
+	}{
+		{
+			name:       "webhook empty url",
+			path:       "/api/notifications/test/webhook",
+			body:       `{}`,
+			wantStatus: http.StatusBadRequest,
+			wantError:  "No webhook URL configured",
+			call:       (*Server).handleAPITestWebhook,
+		},
+		{
+			name:       "email missing secret",
+			path:       "/api/notifications/test/email",
+			body:       `{"graph_tenant_id":"tenant","graph_client_id":"client"}`,
+			wantStatus: http.StatusBadRequest,
+			wantError:  "Email not fully configured",
+			call:       (*Server).handleAPITestEmail,
+		},
+		{
+			name:       "zabbix out-of-range port reaches runtime",
+			path:       "/api/notifications/test/zabbix",
+			body:       `{"zabbix_server":"zabbix.example.com","zabbix_port":70000,"zabbix_host":"encoder-01","zabbix_silence_key":"silence"}`,
+			wantStatus: http.StatusBadGateway,
+			wantError:  "not fully configured",
+			contains:   true,
+			call:       (*Server).handleAPITestZabbix,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			s := freshServer(t)
+			rec := runJSONHandler(t, func(w http.ResponseWriter, r *http.Request) {
+				tt.call(s, w, r)
+			}, http.MethodPost, tt.path, tt.body)
+			assertStatus(t, rec, tt.wantStatus)
+			if tt.contains {
+				assertErrorContains(t, rec, tt.wantError)
+			} else {
+				assertErrorEqual(t, rec, tt.wantError)
+			}
+		})
 	}
 }
 
-// TestHandleAPITestEmailMissingCredentialsReturnsBadRequest pins the
-// historical preflight: missing any of tenant_id/client_id/client_secret
-// is rejected at the handler with HTTP 400 and the generic message
-// "Email not fully configured" (per-field reporting only happens at
-// config-load and settings-save).
-func TestHandleAPITestEmailMissingCredentialsReturnsBadRequest(t *testing.T) {
-	t.Parallel()
-
-	s := freshServer(t)
-	req := httptest.NewRequest(http.MethodPost, "/api/notifications/test/email", bytes.NewBufferString(`{
-		"graph_tenant_id": "tenant",
-		"graph_client_id": "client"
-	}`))
-	rec := httptest.NewRecorder()
-
-	s.handleAPITestEmail(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
-	}
-	if got := decodeError(t, rec.Body.Bytes()); got != "Email not fully configured" {
-		t.Fatalf("error = %q, want %q", got, "Email not fully configured")
-	}
-}
-
-// TestHandleAPITestZabbixOutOfRangePortReachesRuntime pins the historical
-// status-code split: an incomplete Zabbix config is rejected by the handler
-// preflight (400), but a complete config with an out-of-range port falls
-// through to SendZabbixTest and surfaces as HTTP 502. The refactor preserves
-// this split intentionally - port-range checks at the handler would have
-// shifted port=70000 from 502 to 400 (a behavior change out of scope for #249).
-func TestHandleAPITestZabbixOutOfRangePortReachesRuntime(t *testing.T) {
-	t.Parallel()
-
-	s := freshServer(t)
-	req := httptest.NewRequest(http.MethodPost, "/api/notifications/test/zabbix", bytes.NewBufferString(`{
-		"zabbix_server": "zabbix.example.com",
-		"zabbix_port": 70000,
-		"zabbix_host": "encoder-01",
-		"zabbix_silence_key": "silence"
-	}`))
-	rec := httptest.NewRecorder()
-
-	s.handleAPITestZabbix(rec, req)
-
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadGateway, rec.Body.String())
-	}
-	if got := decodeError(t, rec.Body.Bytes()); !strings.Contains(got, "not fully configured") {
-		t.Fatalf("error = %q, want substring %q", got, "not fully configured")
-	}
-}
-
-// TestHandleTestS3MissingFieldReturnsBadRequest pins handler behavior: a
-// missing S3 credential field is rejected with HTTP 400 and the field-
-// specific message "<field> is required" (different format than
-// Recorder.Validate's "<field>: is required for s3/both storage mode").
-// First-error semantics: only the first missing field is reported.
 func TestHandleTestS3MissingFieldReturnsBadRequest(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
 		name    string
 		body    string
@@ -474,26 +443,15 @@ func TestHandleTestS3MissingFieldReturnsBadRequest(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			s := freshServer(t)
-			req := httptest.NewRequest(http.MethodPost, "/api/recorders/test-s3", bytes.NewBufferString(tt.body))
-			rec := httptest.NewRecorder()
-
-			s.handleTestS3(rec, req)
-
-			if rec.Code != http.StatusBadRequest {
-				t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
-			}
-			if got := decodeError(t, rec.Body.Bytes()); got != tt.wantErr {
-				t.Fatalf("error = %q, want %q", got, tt.wantErr)
-			}
+			rec := runJSONHandler(t, s.handleTestS3, http.MethodPost, "/api/recorders/test-s3", tt.body)
+			assertStatus(t, rec, http.StatusBadRequest)
+			assertErrorEqual(t, rec, tt.wantErr)
 		})
 	}
 }
-
 func TestResolveS3TestSecret(t *testing.T) {
 	t.Parallel()
-
 	fixture := seededSensitiveServer(t)
-
 	tests := []struct {
 		name      string
 		req       S3TestRequest
@@ -544,37 +502,16 @@ func TestResolveS3TestSecret(t *testing.T) {
 		})
 	}
 }
-
 func TestHandleTestS3MissingFallbackRecorderReturnsNotFound(t *testing.T) {
 	t.Parallel()
-
 	s := freshServer(t)
-	req := httptest.NewRequest(
-		http.MethodPost,
-		"/api/recorders/test-s3",
-		bytes.NewBufferString(`{
-			"recorder_id": "recorder-missing",
-			"s3_bucket": "b",
-			"s3_access_key_id": "k"
-		}`),
-	)
-	rec := httptest.NewRecorder()
-
-	s.handleTestS3(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusNotFound, rec.Body.String())
-	}
-	if got := decodeError(t, rec.Body.Bytes()); got != "Recorder not found" {
-		t.Fatalf("error = %q, want %q", got, "Recorder not found")
-	}
+	body := `{"recorder_id":"recorder-missing","s3_bucket":"b","s3_access_key_id":"k"}`
+	rec := runJSONHandler(t, s.handleTestS3, http.MethodPost, "/api/recorders/test-s3", body)
+	assertStatus(t, rec, http.StatusNotFound)
+	assertErrorEqual(t, rec, "Recorder not found")
 }
 
-// seededServer returns a Server with saved config loaded from the given
-// SettingsUpdate. Required range fields (silence threshold/durations/peak
-// hold) get sensible defaults so callers only need to specify domain-
-// specific values relevant to their test. Used by #243 regression tests
-// to set up saved snapshots that handlers will read from.
+// seededServer applies an update with valid defaults for unrelated required settings.
 func seededServer(t *testing.T, upd *config.SettingsUpdate) *Server {
 	t.Helper()
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
@@ -608,10 +545,7 @@ func seededServer(t *testing.T, upd *config.SettingsUpdate) *Server {
 	return &Server{config: cfg}
 }
 
-// seededGraphSettings returns a saved Graph config with non-GUID tenant/
-// client so any path through SendTestEmail's ValidateConfig fails
-// deterministically with a strict-GUID error (before any network call).
-// Config-load only checks email format, not GUID, so this seed loads cleanly.
+// seededGraphSettings returns a saved Graph config that reaches runtime validation.
 func seededGraphSettings() *config.SettingsUpdate {
 	return &config.SettingsUpdate{
 		GraphTenantID:     "tenant-not-a-guid",
@@ -622,9 +556,7 @@ func seededGraphSettings() *config.SettingsUpdate {
 	}
 }
 
-// seededZabbixSettings returns a complete saved Zabbix config that loads
-// cleanly. Tests override individual fields via the request body to
-// exercise the omitted-vs-explicit-empty distinction.
+// seededZabbixSettings returns a complete saved Zabbix config for preservation tests.
 func seededZabbixSettings() *config.SettingsUpdate {
 	return &config.SettingsUpdate{
 		ZabbixServer:     "zabbix.example.com",
@@ -646,16 +578,14 @@ type sensitiveFixture struct {
 
 func seededSensitiveServer(t *testing.T) sensitiveFixture {
 	t.Helper()
-
 	s := freshServer(t)
-	fixture := sensitiveFixture{ //nolint:gosec // G101: intentional secret-shaped test fixture values verify redaction.
+	fixture := sensitiveFixture{ //nolint:gosec // G101: Intentional secret-shaped test fixture values verify redaction.
 		server:          s,
 		streamPassword:  "srt-secret-269",
 		s3Secret:        "s3-secret-269",
 		webhookURL:      "https://hooks.example.com/services/token-269",
 		recordingAPIKey: "recording-key-269",
 	}
-
 	upd := validBaselineSettings(s.config)
 	upd.WebhookURL = fixture.webhookURL
 	if err := s.config.ApplySettings(upd); err != nil {
@@ -664,7 +594,6 @@ func seededSensitiveServer(t *testing.T) sensitiveFixture {
 	if err := s.config.SetRecordingAPIKey(fixture.recordingAPIKey); err != nil {
 		t.Fatalf("SetRecordingAPIKey() error = %v", err)
 	}
-
 	stream := &types.Stream{
 		Host:       "stream.example.com",
 		Port:       9000,
@@ -678,7 +607,6 @@ func seededSensitiveServer(t *testing.T) sensitiveFixture {
 		t.Fatalf("AddStream() error = %v", err)
 	}
 	fixture.streamID = stream.ID
-
 	recorder := &types.Recorder{
 		Name:              "S3 Recorder",
 		Codec:             types.CodecMP3,
@@ -693,25 +621,14 @@ func seededSensitiveServer(t *testing.T) sensitiveFixture {
 		t.Fatalf("AddRecorder() error = %v", err)
 	}
 	fixture.recorderID = recorder.ID
-
 	return fixture
 }
 
-// TestHandleAPIConfigRedactsStoredSecrets pins #269 for the full frontend
-// config snapshot. Sensitive stored values must never be serialized back to
-// the browser; only presence booleans are exposed.
 func TestHandleAPIConfigRedactsStoredSecrets(t *testing.T) {
 	t.Parallel()
-
 	fixture := seededSensitiveServer(t)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
-
-	fixture.server.handleAPIConfig(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
-	}
+	rec := runJSONHandler(t, fixture.server.handleAPIConfig, http.MethodGet, "/api/config", "")
+	assertStatus(t, rec, http.StatusOK)
 	body := rec.Body.Bytes()
 	assertNotContains(t, body,
 		fixture.streamPassword,
@@ -727,11 +644,7 @@ func TestHandleAPIConfigRedactsStoredSecrets(t *testing.T) {
 		`"has_password":true`,
 		`"has_s3_secret":true`,
 	)
-
-	var resp types.APIConfigResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		t.Fatalf("response JSON = %q, error = %v", string(body), err)
-	}
+	resp := decodeJSON[types.APIConfigResponse](t, body)
 	if !resp.WebhookHasURL {
 		t.Fatalf("WebhookHasURL = false, want true")
 	}
@@ -746,30 +659,17 @@ func TestHandleAPIConfigRedactsStoredSecrets(t *testing.T) {
 	}
 }
 
-// TestHandleAPIConfigIncludesChannelImbalance verifies channel imbalance defaults
-// reach the frontend config payload.
 func TestHandleAPIConfigIncludesChannelImbalance(t *testing.T) {
 	t.Parallel()
-
 	s := freshServer(t)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
-
-	s.handleAPIConfig(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
-	}
+	rec := runJSONHandler(t, s.handleAPIConfig, http.MethodGet, "/api/config", "")
+	assertStatus(t, rec, http.StatusOK)
 	assertContains(t, rec.Body.Bytes(),
 		`"channel_imbalance_threshold":`,
 		`"channel_imbalance_duration_ms":`,
 		`"channel_imbalance_recovery_ms":`,
 	)
-
-	var resp types.APIConfigResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("response JSON = %q, error = %v", rec.Body.String(), err)
-	}
+	resp := decodeJSON[types.APIConfigResponse](t, rec.Body.Bytes())
 	if resp.ChannelImbalanceThreshold != config.DefaultChannelImbalanceThreshold {
 		t.Fatalf("ChannelImbalanceThreshold = %v, want %v", resp.ChannelImbalanceThreshold, config.DefaultChannelImbalanceThreshold)
 	}
@@ -781,17 +681,13 @@ func TestHandleAPIConfigIncludesChannelImbalance(t *testing.T) {
 	}
 }
 
-// TestApplyWithPreserveRoundTripsChannelImbalance verifies settings updates persist
-// channel imbalance values.
 func TestApplyWithPreserveRoundTripsChannelImbalance(t *testing.T) {
 	t.Parallel()
-
 	s := freshServer(t)
 	upd := validBaselineSettings(s.config)
 	upd.ChannelImbalanceThreshold = 18
 	upd.ChannelImbalanceDurationMs = 20000
 	upd.ChannelImbalanceRecoveryMs = 4000
-
 	snap, err := applyWithPreserve(t, s.config, upd)
 	if err != nil {
 		t.Fatalf("applyWithPreserve() error = %v", err)
@@ -806,12 +702,9 @@ func TestApplyWithPreserveRoundTripsChannelImbalance(t *testing.T) {
 		t.Fatalf("ChannelImbalanceRecoveryMs = %d, want 4000", snap.ChannelImbalanceRecoveryMs)
 	}
 }
-
 func TestHandleStreamEndpointsRedactPassword(t *testing.T) {
 	t.Parallel()
-
 	fixture := seededSensitiveServer(t)
-
 	for _, tt := range []struct {
 		name string
 		run  func(http.ResponseWriter, *http.Request)
@@ -835,39 +728,24 @@ func TestHandleStreamEndpointsRedactPassword(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			tt.run(rec, tt.req)
-
-			if rec.Code != http.StatusOK {
-				t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
-			}
+			assertStatus(t, rec, http.StatusOK)
 			assertNotContains(t, rec.Body.Bytes(), fixture.streamPassword, `"password":"`)
 			assertContains(t, rec.Body.Bytes(), `"has_password":true`)
 		})
 	}
 }
-
 func TestHandleCreateStreamListenerDefaults(t *testing.T) {
 	t.Parallel()
-
 	s := freshServer(t)
 	s.encoder = &encoder.Encoder{}
-
-	req := httptest.NewRequest(http.MethodPost, "/api/streams", bytes.NewBufferString(`{
+	rec := runJSONHandler(t, s.handleCreateStream, http.MethodPost, "/api/streams", `{
 		"mode": "listener",
 		"host": "",
 		"port": 9000,
 		"max_retries": 3
-	}`))
-	rec := httptest.NewRecorder()
-
-	s.handleCreateStream(rec, req)
-
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusCreated, rec.Body.String())
-	}
-	var resp types.StreamResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("response JSON = %q, error = %v", rec.Body.String(), err)
-	}
+	}`)
+	assertStatus(t, rec, http.StatusCreated)
+	resp := decodeJSON[types.StreamResponse](t, rec.Body.Bytes())
 	if resp.Mode != types.StreamModeListener {
 		t.Fatalf("mode = %q, want listener", resp.Mode)
 	}
@@ -881,12 +759,9 @@ func TestHandleCreateStreamListenerDefaults(t *testing.T) {
 		t.Fatalf("stream_id = %q, want empty for listener", resp.StreamID)
 	}
 }
-
 func TestHandleRecorderEndpointsRedactS3Secret(t *testing.T) {
 	t.Parallel()
-
 	fixture := seededSensitiveServer(t)
-
 	for _, tt := range []struct {
 		name string
 		run  func(http.ResponseWriter, *http.Request)
@@ -910,19 +785,14 @@ func TestHandleRecorderEndpointsRedactS3Secret(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			tt.run(rec, tt.req)
-
-			if rec.Code != http.StatusOK {
-				t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
-			}
+			assertStatus(t, rec, http.StatusOK)
 			assertNotContains(t, rec.Body.Bytes(), fixture.s3Secret, `"s3_secret_access_key":"`)
 			assertContains(t, rec.Body.Bytes(), `"has_s3_secret":true`)
 		})
 	}
 }
-
 func TestRedactionHelpersOmitSecretFields(t *testing.T) {
 	t.Parallel()
-
 	streamBody, err := json.Marshal(redactStream(&types.Stream{
 		Password: "helper-stream-secret",
 		Mode:     types.StreamModeListener,
@@ -932,7 +802,6 @@ func TestRedactionHelpersOmitSecretFields(t *testing.T) {
 	}
 	assertNotContains(t, streamBody, "helper-stream-secret", `"password":"`)
 	assertContains(t, streamBody, `"has_password":true`, `"mode":"listener"`)
-
 	recorderBody, err := json.Marshal(redactRecorder(&types.Recorder{
 		S3SecretAccessKey: "helper-recorder-secret",
 	}))
@@ -942,10 +811,8 @@ func TestRedactionHelpersOmitSecretFields(t *testing.T) {
 	assertNotContains(t, recorderBody, "helper-recorder-secret", `"s3_secret_access_key":"`)
 	assertContains(t, recorderBody, `"has_s3_secret":true`)
 }
-
 func TestPreserveSecretKeepReplaceClearConflict(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
 		name      string
 		value     string
@@ -973,11 +840,9 @@ func TestPreserveSecretKeepReplaceClearConflict(t *testing.T) {
 			wantError: "clear_secret: conflicts with non-empty secret",
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-
 			got, err := preserveSecret(tt.value, "saved-secret", tt.clear, "clear_secret", "secret")
 			if tt.wantError != "" {
 				if err == nil || err.Error() != tt.wantError {
@@ -994,7 +859,6 @@ func TestPreserveSecretKeepReplaceClearConflict(t *testing.T) {
 		})
 	}
 }
-
 func streamUpdateBody(t *testing.T, password string, clearPassword bool) string {
 	t.Helper()
 	req := StreamRequest{
@@ -1008,13 +872,12 @@ func streamUpdateBody(t *testing.T, password string, clearPassword bool) string 
 		Bitrate:       128,
 		MaxRetries:    3,
 	}
-	body, err := json.Marshal(req) //nolint:gosec // G117: test marshals the SRT password field.
+	body, err := json.Marshal(req) //nolint:gosec // G117: Test marshals the SRT password field.
 	if err != nil {
 		t.Fatalf("marshal StreamRequest: %v", err)
 	}
 	return string(body)
 }
-
 func putStream(t *testing.T, s *Server, id, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPut, "/api/streams/"+id, bytes.NewBufferString(body))
@@ -1023,10 +886,16 @@ func putStream(t *testing.T, s *Server, id, body string) *httptest.ResponseRecor
 	s.handleUpdateStream(rec, req)
 	return rec
 }
-
+func putRecorder(t *testing.T, s *Server, id, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPut, "/api/recorders/"+id, bytes.NewBufferString(body))
+	req.SetPathValue("id", id)
+	rec := httptest.NewRecorder()
+	s.handleUpdateRecorder(rec, req)
+	return rec
+}
 func TestHandleUpdateStreamPasswordKeepReplaceClear(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
 		name        string
 		password    string
@@ -1034,12 +903,12 @@ func TestHandleUpdateStreamPasswordKeepReplaceClear(t *testing.T) {
 		wantSecret  string
 		wantHasFlag string
 	}{
-		{ //nolint:gosec // G101: test fixture, not a real credential.
+		{ //nolint:gosec // G101: Test fixture, not a real credential.
 			name:        "keep when empty",
 			wantSecret:  "srt-secret-269",
 			wantHasFlag: `"has_password":true`,
 		},
-		{ //nolint:gosec // G101: test fixture, not a real credential.
+		{ //nolint:gosec // G101: Test fixture, not a real credential.
 			name:        "replace when set",
 			password:    "new-srt-secret",
 			wantSecret:  "new-srt-secret",
@@ -1051,18 +920,13 @@ func TestHandleUpdateStreamPasswordKeepReplaceClear(t *testing.T) {
 			wantHasFlag: `"has_password":false`,
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-
 			fixture := seededSensitiveServer(t)
 			fixture.server.encoder = &encoder.Encoder{}
-
 			rec := putStream(t, fixture.server, fixture.streamID, streamUpdateBody(t, tt.password, tt.clear))
-			if rec.Code != http.StatusOK {
-				t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
-			}
+			assertStatus(t, rec, http.StatusOK)
 			stream := fixture.server.config.Stream(fixture.streamID)
 			if stream == nil {
 				t.Fatal("updated stream not found")
@@ -1079,20 +943,13 @@ func TestHandleUpdateStreamPasswordKeepReplaceClear(t *testing.T) {
 		})
 	}
 }
-
 func TestHandleUpdateStreamClearPasswordConflictsWithNewValue(t *testing.T) {
 	t.Parallel()
-
 	fixture := seededSensitiveServer(t)
 	fixture.server.encoder = &encoder.Encoder{}
-
 	rec := putStream(t, fixture.server, fixture.streamID, streamUpdateBody(t, "new-srt-secret", true))
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
-	}
-	if got := decodeError(t, rec.Body.Bytes()); got != "clear_password: conflicts with non-empty password" {
-		t.Fatalf("error = %q, want conflict error", got)
-	}
+	assertStatus(t, rec, http.StatusBadRequest)
+	assertErrorEqual(t, rec, "clear_password: conflicts with non-empty password")
 	stream := fixture.server.config.Stream(fixture.streamID)
 	if stream == nil {
 		t.Fatal("stream not found")
@@ -1101,7 +958,6 @@ func TestHandleUpdateStreamClearPasswordConflictsWithNewValue(t *testing.T) {
 		t.Fatalf("stream password = %q, want unchanged %q", stream.Password, fixture.streamPassword)
 	}
 }
-
 func recorderUpdateBody(t *testing.T, secret string, clearS3Secret bool) string {
 	t.Helper()
 	req := RecorderRequest{
@@ -1123,27 +979,12 @@ func recorderUpdateBody(t *testing.T, secret string, clearS3Secret bool) string 
 	}
 	return string(body)
 }
-
 func TestHandleUpdateRecorderClearS3SecretConflictsWithNewValue(t *testing.T) {
 	t.Parallel()
-
 	fixture := seededSensitiveServer(t)
-	req := httptest.NewRequest(
-		http.MethodPut,
-		"/api/recorders/"+fixture.recorderID,
-		bytes.NewBufferString(recorderUpdateBody(t, "new-s3-secret", true)),
-	)
-	req.SetPathValue("id", fixture.recorderID)
-	rec := httptest.NewRecorder()
-
-	fixture.server.handleUpdateRecorder(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
-	}
-	if got := decodeError(t, rec.Body.Bytes()); got != "clear_s3_secret: conflicts with non-empty s3_secret_access_key" {
-		t.Fatalf("error = %q, want conflict error", got)
-	}
+	rec := putRecorder(t, fixture.server, fixture.recorderID, recorderUpdateBody(t, "new-s3-secret", true))
+	assertStatus(t, rec, http.StatusBadRequest)
+	assertErrorEqual(t, rec, "clear_s3_secret: conflicts with non-empty s3_secret_access_key")
 	recorder := fixture.server.config.Recorder(fixture.recorderID)
 	if recorder == nil {
 		t.Fatal("recorder not found")
@@ -1152,105 +993,75 @@ func TestHandleUpdateRecorderClearS3SecretConflictsWithNewValue(t *testing.T) {
 		t.Fatalf("recorder S3 secret = %q, want unchanged %q", recorder.S3SecretAccessKey, fixture.s3Secret)
 	}
 }
-
-// TestHandleAPITestEmailOmittedSecretFallsBackToSaved (#243) pins that a
-// request omitting graph_client_secret falls back to the saved secret. If
-// the deref-based merge regressed (e.g. back to cmp.Or), the preflight
-// would not see the saved secret and would return 400 "Email not fully
-// configured". Instead we expect SendTestEmail's strict-GUID ValidateConfig
-// to surface the saved (non-GUID) tenant as a 502.
-func TestHandleAPITestEmailOmittedSecretFallsBackToSaved(t *testing.T) {
+func TestNotificationTestEndpointSavedFallbacks(t *testing.T) {
 	t.Parallel()
-
-	s := seededServer(t, seededGraphSettings())
-
-	// All fields omitted, so all fall back to saved snapshot.
-	req := httptest.NewRequest(http.MethodPost, "/api/notifications/test/email", bytes.NewBufferString(`{}`))
-	rec := httptest.NewRecorder()
-
-	s.handleAPITestEmail(rec, req)
-
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadGateway, rec.Body.String())
+	tests := []struct {
+		name       string
+		seed       func() *config.SettingsUpdate
+		path       string
+		body       string
+		wantStatus int
+		wantError  string
+		contains   bool
+		call       func(*Server, http.ResponseWriter, *http.Request)
+	}{
+		{
+			name:       "email omitted secret falls back",
+			seed:       seededGraphSettings,
+			path:       "/api/notifications/test/email",
+			body:       `{}`,
+			wantStatus: http.StatusBadGateway,
+			wantError:  "tenant ID must be a valid GUID",
+			contains:   true,
+			call:       (*Server).handleAPITestEmail,
+		},
+		{
+			name:       "email explicit empty secret overrides",
+			seed:       seededGraphSettings,
+			path:       "/api/notifications/test/email",
+			body:       `{"graph_client_secret":""}`,
+			wantStatus: http.StatusBadRequest,
+			wantError:  "Email not fully configured",
+			call:       (*Server).handleAPITestEmail,
+		},
+		{
+			name:       "zabbix omitted server falls back",
+			seed:       seededZabbixSettings,
+			path:       "/api/notifications/test/zabbix",
+			body:       `{"zabbix_port":70000}`,
+			wantStatus: http.StatusBadGateway,
+			wantError:  "not fully configured",
+			contains:   true,
+			call:       (*Server).handleAPITestZabbix,
+		},
+		{
+			name:       "zabbix explicit empty server overrides",
+			seed:       seededZabbixSettings,
+			path:       "/api/notifications/test/zabbix",
+			body:       `{"zabbix_server":""}`,
+			wantStatus: http.StatusBadRequest,
+			wantError:  "Zabbix not fully configured",
+			call:       (*Server).handleAPITestZabbix,
+		},
 	}
-	if got := decodeError(t, rec.Body.Bytes()); !strings.Contains(got, "tenant ID must be a valid GUID") {
-		t.Fatalf("error = %q, want strict-GUID validation error (proves preflight passed using saved secret)", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			s := seededServer(t, tt.seed())
+			rec := runJSONHandler(t, func(w http.ResponseWriter, r *http.Request) {
+				tt.call(s, w, r)
+			}, http.MethodPost, tt.path, tt.body)
+			assertStatus(t, rec, tt.wantStatus)
+			if tt.contains {
+				assertErrorContains(t, rec, tt.wantError)
+			} else {
+				assertErrorEqual(t, rec, tt.wantError)
+			}
+		})
 	}
 }
 
-// TestHandleAPITestEmailExplicitEmptySecretOverridesSaved (#243) pins that
-// an explicit empty graph_client_secret overrides the saved value, causing
-// preflight CredentialsIssues to reject with 400. This is the symmetric
-// half of the omitted-fallback test and proves the deref distinguishes
-// nil from *"".
-func TestHandleAPITestEmailExplicitEmptySecretOverridesSaved(t *testing.T) {
-	t.Parallel()
-
-	s := seededServer(t, seededGraphSettings())
-
-	req := httptest.NewRequest(http.MethodPost, "/api/notifications/test/email", bytes.NewBufferString(`{"graph_client_secret":""}`))
-	rec := httptest.NewRecorder()
-
-	s.handleAPITestEmail(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
-	}
-	if got := decodeError(t, rec.Body.Bytes()); got != "Email not fully configured" {
-		t.Fatalf("error = %q, want %q", got, "Email not fully configured")
-	}
-}
-
-// TestHandleAPITestZabbixOmittedServerFallsBackToSaved (#243) pins that a
-// request omitting zabbix_server falls back to the saved server. The
-// request overrides zabbix_port to 70000 so SendZabbixTest's
-// ValidateZabbixTarget rejects deterministically before any network call;
-// reaching that runtime path requires preflight to have seen the saved
-// server (otherwise we'd get 400 "Zabbix not fully configured").
-func TestHandleAPITestZabbixOmittedServerFallsBackToSaved(t *testing.T) {
-	t.Parallel()
-
-	s := seededServer(t, seededZabbixSettings())
-
-	req := httptest.NewRequest(http.MethodPost, "/api/notifications/test/zabbix", bytes.NewBufferString(`{"zabbix_port":70000}`))
-	rec := httptest.NewRecorder()
-
-	s.handleAPITestZabbix(rec, req)
-
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadGateway, rec.Body.String())
-	}
-	if got := decodeError(t, rec.Body.Bytes()); !strings.Contains(got, "not fully configured") {
-		t.Fatalf("error = %q, want runtime not-fully-configured (proves omitted server fell back)", got)
-	}
-}
-
-// TestHandleAPITestZabbixExplicitEmptyServerOverridesSaved (#243) pins
-// that an explicit empty zabbix_server overrides the saved value, causing
-// handler preflight ValidateZabbixConfigured to reject with 400.
-func TestHandleAPITestZabbixExplicitEmptyServerOverridesSaved(t *testing.T) {
-	t.Parallel()
-
-	s := seededServer(t, seededZabbixSettings())
-
-	req := httptest.NewRequest(http.MethodPost, "/api/notifications/test/zabbix", bytes.NewBufferString(`{"zabbix_server":""}`))
-	rec := httptest.NewRecorder()
-
-	s.handleAPITestZabbix(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
-	}
-	if got := decodeError(t, rec.Body.Bytes()); got != "Zabbix not fully configured" {
-		t.Fatalf("error = %q, want %q", got, "Zabbix not fully configured")
-	}
-}
-
-// validBaselineSettings returns a SettingsUpdate built from cfg.Snapshot()
-// with all required fields filled to current valid values. Callers override
-// only the fields under test (e.g. GraphClientSecret + ClearGraphClientSecret).
-// Without this, tests would fail with unrelated validator errors
-// ("silence_threshold must be between -60 and -1 dB", etc.).
+// validBaselineSettings builds an update that preserves all currently valid settings.
 func validBaselineSettings(cfg *config.Config) *config.SettingsUpdate {
 	snap := cfg.Snapshot()
 	return &config.SettingsUpdate{
@@ -1282,9 +1093,7 @@ func validBaselineSettings(cfg *config.Config) *config.SettingsUpdate {
 	}
 }
 
-// applyWithPreserve mirrors handleAPISettings preprocessing: preserve hidden
-// values, validate, and apply. Handler success paths need a real encoder, so
-// these tests exercise the same settings pipeline directly.
+// applyWithPreserve mirrors the settings API hidden-value preservation flow.
 func applyWithPreserve(t *testing.T, cfg *config.Config, upd *config.SettingsUpdate) (config.Snapshot, error) {
 	t.Helper()
 	snap := cfg.Snapshot()
@@ -1297,127 +1106,92 @@ func applyWithPreserve(t *testing.T, cfg *config.Config, upd *config.SettingsUpd
 	}
 	return cfg.Snapshot(), nil
 }
-
-// #269 - Webhook URL keep/replace/clear pipeline tests.
-
-func TestApplyWithPreserve_WebhookURL_KeepWhenEmpty(t *testing.T) {
+func TestApplyWithPreserveHiddenValues(t *testing.T) {
 	t.Parallel()
-
-	s := seededServer(t, &config.SettingsUpdate{WebhookURL: "https://hooks.example.com/saved-token"})
-	upd := validBaselineSettings(s.config)
-	upd.WebhookURL = ""
-	upd.ClearWebhookURL = false
-
-	snap, err := applyWithPreserve(t, s.config, upd)
-	if err != nil {
-		t.Fatalf("applyWithPreserve() error = %v", err)
+	const savedWebhookURL = "https://hooks.example.com/saved-token"
+	tests := []struct {
+		name   string
+		seed   func() *config.SettingsUpdate
+		mutate func(*config.SettingsUpdate)
+		read   func(config.Snapshot) string
+		want   string
+	}{
+		{
+			name: "webhook keep",
+			seed: func() *config.SettingsUpdate { return &config.SettingsUpdate{WebhookURL: savedWebhookURL} },
+			mutate: func(upd *config.SettingsUpdate) {
+				upd.WebhookURL = ""
+				upd.ClearWebhookURL = false
+			},
+			read: func(snap config.Snapshot) string { return snap.WebhookURL },
+			want: savedWebhookURL,
+		},
+		{
+			name: "webhook replace",
+			seed: func() *config.SettingsUpdate { return &config.SettingsUpdate{WebhookURL: savedWebhookURL} },
+			mutate: func(upd *config.SettingsUpdate) {
+				upd.WebhookURL = "https://hooks.example.com/new-token"
+				upd.ClearWebhookURL = false
+			},
+			read: func(snap config.Snapshot) string { return snap.WebhookURL },
+			want: "https://hooks.example.com/new-token",
+		},
+		{
+			name: "webhook clear",
+			seed: func() *config.SettingsUpdate { return &config.SettingsUpdate{WebhookURL: savedWebhookURL} },
+			mutate: func(upd *config.SettingsUpdate) {
+				upd.WebhookURL = ""
+				upd.ClearWebhookURL = true
+			},
+			read: func(snap config.Snapshot) string { return snap.WebhookURL },
+		},
+		{
+			name: "graph keep",
+			seed: seededGraphSettings,
+			mutate: func(upd *config.SettingsUpdate) {
+				upd.GraphClientSecret = ""
+				upd.ClearGraphClientSecret = false
+			},
+			read: func(snap config.Snapshot) string { return snap.GraphClientSecret },
+			want: "saved-secret",
+		},
+		{
+			name: "graph replace",
+			seed: seededGraphSettings,
+			mutate: func(upd *config.SettingsUpdate) {
+				upd.GraphClientSecret = "new-secret"
+				upd.ClearGraphClientSecret = false
+			},
+			read: func(snap config.Snapshot) string { return snap.GraphClientSecret },
+			want: "new-secret",
+		},
+		{
+			name: "graph clear",
+			seed: seededGraphSettings,
+			mutate: func(upd *config.SettingsUpdate) {
+				upd.GraphClientSecret = ""
+				upd.ClearGraphClientSecret = true
+			},
+			read: func(snap config.Snapshot) string { return snap.GraphClientSecret },
+		},
 	}
-	if snap.WebhookURL != "https://hooks.example.com/saved-token" {
-		t.Fatalf("WebhookURL = %q, want saved URL (keep path)", snap.WebhookURL)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			s := seededServer(t, tt.seed())
+			upd := validBaselineSettings(s.config)
+			tt.mutate(upd)
+			snap, err := applyWithPreserve(t, s.config, upd)
+			if err != nil {
+				t.Fatalf("applyWithPreserve() error = %v", err)
+			}
+			if got := tt.read(snap); got != tt.want {
+				t.Fatalf("hidden value = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
-func TestApplyWithPreserve_WebhookURL_ReplaceWhenSet(t *testing.T) {
-	t.Parallel()
-
-	s := seededServer(t, &config.SettingsUpdate{WebhookURL: "https://hooks.example.com/saved-token"})
-	upd := validBaselineSettings(s.config)
-	upd.WebhookURL = "https://hooks.example.com/new-token"
-	upd.ClearWebhookURL = false
-
-	snap, err := applyWithPreserve(t, s.config, upd)
-	if err != nil {
-		t.Fatalf("applyWithPreserve() error = %v", err)
-	}
-	if snap.WebhookURL != "https://hooks.example.com/new-token" {
-		t.Fatalf("WebhookURL = %q, want new URL (replace path)", snap.WebhookURL)
-	}
-}
-
-func TestApplyWithPreserve_WebhookURL_ClearWhenFlagSet(t *testing.T) {
-	t.Parallel()
-
-	s := seededServer(t, &config.SettingsUpdate{WebhookURL: "https://hooks.example.com/saved-token"})
-	upd := validBaselineSettings(s.config)
-	upd.WebhookURL = ""
-	upd.ClearWebhookURL = true
-
-	snap, err := applyWithPreserve(t, s.config, upd)
-	if err != nil {
-		t.Fatalf("applyWithPreserve() error = %v", err)
-	}
-	if snap.WebhookURL != "" {
-		t.Fatalf("WebhookURL = %q, want \"\" (clear path)", snap.WebhookURL)
-	}
-}
-
-// #247 - Graph secret keep/replace/clear pipeline tests.
-
-// TestApplyWithPreserve_GraphSecret_KeepWhenEmpty pins that an empty submitted
-// secret with ClearGraphClientSecret=false falls back to the saved secret via
-// the preserve helper.
-func TestApplyWithPreserve_GraphSecret_KeepWhenEmpty(t *testing.T) {
-	t.Parallel()
-
-	s := seededServer(t, seededGraphSettings())
-	upd := validBaselineSettings(s.config)
-	upd.GraphClientSecret = ""
-	upd.ClearGraphClientSecret = false
-
-	snap, err := applyWithPreserve(t, s.config, upd)
-	if err != nil {
-		t.Fatalf("applyWithPreserve() error = %v", err)
-	}
-	if snap.GraphClientSecret != "saved-secret" {
-		t.Fatalf("GraphClientSecret = %q, want %q (keep path)", snap.GraphClientSecret, "saved-secret")
-	}
-}
-
-// TestApplyWithPreserve_GraphSecret_ReplaceWhenSet pins that a non-empty
-// submitted secret replaces the saved secret regardless of preserve.
-func TestApplyWithPreserve_GraphSecret_ReplaceWhenSet(t *testing.T) {
-	t.Parallel()
-
-	s := seededServer(t, seededGraphSettings())
-	upd := validBaselineSettings(s.config)
-	upd.GraphClientSecret = "new-secret"
-	upd.ClearGraphClientSecret = false
-
-	snap, err := applyWithPreserve(t, s.config, upd)
-	if err != nil {
-		t.Fatalf("applyWithPreserve() error = %v", err)
-	}
-	if snap.GraphClientSecret != "new-secret" {
-		t.Fatalf("GraphClientSecret = %q, want %q (replace path)", snap.GraphClientSecret, "new-secret")
-	}
-}
-
-// TestApplyWithPreserve_GraphSecret_ClearWhenFlagSet pins that an empty
-// submitted secret with ClearGraphClientSecret=true removes the saved secret.
-// This is the supported "remove saved secret" path.
-func TestApplyWithPreserve_GraphSecret_ClearWhenFlagSet(t *testing.T) {
-	t.Parallel()
-
-	s := seededServer(t, seededGraphSettings())
-	upd := validBaselineSettings(s.config)
-	upd.GraphClientSecret = ""
-	upd.ClearGraphClientSecret = true
-
-	snap, err := applyWithPreserve(t, s.config, upd)
-	if err != nil {
-		t.Fatalf("applyWithPreserve() error = %v", err)
-	}
-	if snap.GraphClientSecret != "" {
-		t.Fatalf("GraphClientSecret = %q, want \"\" (clear path)", snap.GraphClientSecret)
-	}
-}
-
-// #247 - Handler validation paths.
-
-// postSettingsBody sends body to handleAPISettings and returns the response
-// recorder so callers can assert status and error body. Handler tests only cover
-// 400 paths, which return before encoder calls; success paths are covered by
-// applyWithPreserve.
 func postSettingsBody(t *testing.T, s *Server, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewBufferString(body))
@@ -1425,52 +1199,50 @@ func postSettingsBody(t *testing.T, s *Server, body string) *httptest.ResponseRe
 	s.handleAPISettings(rec, req)
 	return rec
 }
-
-// TestHandleAPISettingsClearGraphSecretConflictsWithNewValue pins #247:
-// submitting both clear_graph_client_secret=true and a non-empty
-// graph_client_secret returns 400 with the conflict error. Proves the
-// preserve helper does not silently blank the submitted value on clear=true
-// (which would let clear win without telling the user).
-func TestHandleAPISettingsClearGraphSecretConflictsWithNewValue(t *testing.T) {
+func TestHandleAPISettingsClearHiddenValueConflictsWithNewValue(t *testing.T) {
 	t.Parallel()
-
-	s := seededServer(t, seededGraphSettings())
-	upd := validBaselineSettings(s.config)
-	upd.GraphClientSecret = "new-secret"
-	upd.ClearGraphClientSecret = true
-
-	body, err := json.Marshal(upd)
-	if err != nil {
-		t.Fatalf("marshal SettingsUpdate: %v", err)
+	tests := []struct {
+		name   string
+		seed   func() *config.SettingsUpdate
+		mutate func(*config.SettingsUpdate)
+		want   string
+	}{
+		{
+			name: "graph secret",
+			seed: seededGraphSettings,
+			mutate: func(upd *config.SettingsUpdate) {
+				upd.GraphClientSecret = "new-secret"
+				upd.ClearGraphClientSecret = true
+			},
+			want: "clear_graph_client_secret: conflicts with non-empty graph_client_secret",
+		},
+		{
+			name: "webhook url",
+			seed: func() *config.SettingsUpdate {
+				return &config.SettingsUpdate{WebhookURL: "https://hooks.example.com/saved-token"}
+			},
+			mutate: func(upd *config.SettingsUpdate) {
+				upd.WebhookURL = "https://hooks.example.com/new-token"
+				upd.ClearWebhookURL = true
+			},
+			want: "clear_webhook_url: conflicts with non-empty webhook_url",
+		},
 	}
-	rec := postSettingsBody(t, s, string(body))
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "clear_graph_client_secret: conflicts with non-empty graph_client_secret") {
-		t.Fatalf("body = %s, want to contain conflict error", rec.Body.String())
-	}
-}
-
-func TestHandleAPISettingsClearWebhookURLConflictsWithNewValue(t *testing.T) {
-	t.Parallel()
-
-	s := seededServer(t, &config.SettingsUpdate{WebhookURL: "https://hooks.example.com/saved-token"})
-	upd := validBaselineSettings(s.config)
-	upd.WebhookURL = "https://hooks.example.com/new-token"
-	upd.ClearWebhookURL = true
-
-	body, err := json.Marshal(upd)
-	if err != nil {
-		t.Fatalf("marshal SettingsUpdate: %v", err)
-	}
-	rec := postSettingsBody(t, s, string(body))
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "clear_webhook_url: conflicts with non-empty webhook_url") {
-		t.Fatalf("body = %s, want to contain conflict error", rec.Body.String())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			s := seededServer(t, tt.seed())
+			upd := validBaselineSettings(s.config)
+			tt.mutate(upd)
+			body, err := json.Marshal(upd)
+			if err != nil {
+				t.Fatalf("marshal SettingsUpdate: %v", err)
+			}
+			rec := postSettingsBody(t, s, string(body))
+			assertStatus(t, rec, http.StatusBadRequest)
+			if !strings.Contains(rec.Body.String(), tt.want) {
+				t.Fatalf("body = %s, want to contain %q", rec.Body.String(), tt.want)
+			}
+		})
 	}
 }

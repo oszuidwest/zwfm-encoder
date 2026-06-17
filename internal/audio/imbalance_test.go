@@ -13,15 +13,11 @@ func testImbalanceConfig() ImbalanceConfig {
 		PresenceFloorDB: -40,
 	}
 }
-
 func TestImbalanceDetectorEntersAfterDuration(t *testing.T) {
 	t.Parallel()
-
 	d := NewImbalanceDetector()
 	cfg := testImbalanceConfig()
 	base := time.Now()
-
-	// Imbalanced (20 dB apart) but not yet long enough.
 	e := d.Update(-10, -30, cfg, base)
 	if e.JustEntered || e.InImbalance {
 		t.Fatalf("entered too early: %+v", e)
@@ -29,13 +25,9 @@ func TestImbalanceDetectorEntersAfterDuration(t *testing.T) {
 	if e.ImbalanceDB != 20 || e.BalanceDB != 20 {
 		t.Fatalf("ImbalanceDB/BalanceDB = %v/%v, want 20/20 (left louder)", e.ImbalanceDB, e.BalanceDB)
 	}
-
-	// One millisecond before the duration threshold: still not confirmed.
 	if e := d.Update(-10, -30, cfg, base.Add(14999*time.Millisecond)); e.JustEntered {
 		t.Fatalf("entered before duration elapsed: %+v", e)
 	}
-
-	// At the duration threshold: enter confirmed imbalance.
 	e = d.Update(-10, -30, cfg, base.Add(15000*time.Millisecond))
 	if !e.JustEntered || !e.InImbalance || e.Level != ImbalanceLevelActive {
 		t.Fatalf("did not enter at duration threshold: %+v", e)
@@ -44,23 +36,16 @@ func TestImbalanceDetectorEntersAfterDuration(t *testing.T) {
 		t.Fatalf("DurationMs = %d, want 15000", e.DurationMs)
 	}
 }
-
 func TestImbalanceDetectorRecoversAfterRecovery(t *testing.T) {
 	t.Parallel()
-
 	d := NewImbalanceDetector()
 	cfg := testImbalanceConfig()
 	base := time.Now()
-
 	d.Update(-10, -30, cfg, base)
-	d.Update(-10, -30, cfg, base.Add(15000*time.Millisecond)) // confirmed
-
-	// Channels balanced again, recovery window not yet elapsed.
+	d.Update(-10, -30, cfg, base.Add(15000*time.Millisecond)) // Enters confirmed imbalance.
 	if e := d.Update(-10, -11, cfg, base.Add(16000*time.Millisecond)); e.JustRecovered || !e.InImbalance {
 		t.Fatalf("recovered too early: %+v", e)
 	}
-
-	// Recovery window elapsed: imbalance clears.
 	e := d.Update(-10, -11, cfg, base.Add(21000*time.Millisecond))
 	if !e.JustRecovered {
 		t.Fatalf("did not recover after recovery window: %+v", e)
@@ -69,15 +54,11 @@ func TestImbalanceDetectorRecoversAfterRecovery(t *testing.T) {
 		t.Fatalf("TotalDurationMs = 0, want the confirmed imbalance duration")
 	}
 }
-
 func TestImbalanceDetectorDeadChannelTriggers(t *testing.T) {
 	t.Parallel()
-
 	d := NewImbalanceDetector()
 	cfg := testImbalanceConfig()
 	base := time.Now()
-
-	// Right channel dead (clamped to -60), left at -10: 50 dB apart.
 	if e := d.Update(-10, -60, cfg, base); e.ImbalanceDB != 50 {
 		t.Fatalf("ImbalanceDB = %v, want 50 for a dead right channel", e.ImbalanceDB)
 	}
@@ -86,82 +67,58 @@ func TestImbalanceDetectorDeadChannelTriggers(t *testing.T) {
 		t.Fatalf("dead channel did not trigger imbalance: %+v", e)
 	}
 }
-
 func TestImbalanceDetectorSignedBalanceReflectsLouderChannel(t *testing.T) {
 	t.Parallel()
-
 	d := NewImbalanceDetector()
 	cfg := testImbalanceConfig()
 	base := time.Now()
-
-	// Left louder -> positive balance.
 	if e := d.Update(-10, -30, cfg, base); e.BalanceDB != 20 || e.ImbalanceDB != 20 {
 		t.Fatalf("left louder: BalanceDB/ImbalanceDB = %v/%v, want 20/20", e.BalanceDB, e.ImbalanceDB)
 	}
-
-	// Right louder means negative balance with the same magnitude.
 	if e := d.Update(-30, -10, cfg, base); e.BalanceDB != -20 || e.ImbalanceDB != 20 {
 		t.Fatalf("right louder: BalanceDB/ImbalanceDB = %v/%v, want -20/20", e.BalanceDB, e.ImbalanceDB)
 	}
 }
-
 func TestImbalanceDetectorThresholdIsExclusive(t *testing.T) {
 	t.Parallel()
-
 	d := NewImbalanceDetector()
 	cfg := testImbalanceConfig()
 	base := time.Now()
-
-	// Threshold comparison is strict: equality does not trigger.
 	d.Update(-10, -22, cfg, base)
 	if e := d.Update(-10, -22, cfg, base.Add(20000*time.Millisecond)); e.JustEntered || e.InImbalance {
 		t.Fatalf("triggered at exactly threshold (must be exclusive): %+v", e)
 	}
 }
-
 func TestImbalanceDetectorBelowPresenceFloorDoesNotTrigger(t *testing.T) {
 	t.Parallel()
-
 	d := NewImbalanceDetector()
 	cfg := testImbalanceConfig()
 	base := time.Now()
-
-	// Below the presence floor, silence owns the condition.
 	d.Update(-45, -60, cfg, base)
 	if e := d.Update(-45, -60, cfg, base.Add(20000*time.Millisecond)); e.JustEntered || e.InImbalance {
 		t.Fatalf("triggered below presence floor: %+v", e)
 	}
 }
-
 func TestImbalanceDetectorDoubleSilenceNeverTriggers(t *testing.T) {
 	t.Parallel()
-
 	d := NewImbalanceDetector()
 	cfg := testImbalanceConfig()
 	base := time.Now()
-
-	// Double silence closes the presence gate.
 	d.Update(-60, -60, cfg, base)
 	if e := d.Update(-60, -60, cfg, base.Add(20000*time.Millisecond)); e.JustEntered || e.InImbalance {
 		t.Fatalf("double silence reported imbalance: %+v", e)
 	}
 }
 
-// TestImbalanceDetectorPresenceDropEndsCleanly verifies a presence drop recovers
-// cleanly instead of leaving an open imbalance event.
 func TestImbalanceDetectorPresenceDropEndsCleanly(t *testing.T) {
 	t.Parallel()
-
 	d := NewImbalanceDetector()
 	cfg := testImbalanceConfig()
 	base := time.Now()
-
 	d.Update(-10, -30, cfg, base)
 	if e := d.Update(-10, -30, cfg, base.Add(15000*time.Millisecond)); !e.JustEntered {
 		t.Fatalf("did not enter imbalance: %+v", e)
 	}
-
-	// Source dies; the presence gate closes.
 	if e := d.Update(-60, -60, cfg, base.Add(16000*time.Millisecond)); e.JustRecovered || !e.InImbalance {
 		t.Fatalf("ended before recovery window after presence drop: %+v", e)
 	}
@@ -170,20 +127,14 @@ func TestImbalanceDetectorPresenceDropEndsCleanly(t *testing.T) {
 		t.Fatalf("imbalance did not end after presence dropped away: %+v", e)
 	}
 }
-
 func TestImbalanceDetectorResetClearsState(t *testing.T) {
 	t.Parallel()
-
 	d := NewImbalanceDetector()
 	cfg := testImbalanceConfig()
 	base := time.Now()
-
 	d.Update(-10, -30, cfg, base)
-	d.Update(-10, -30, cfg, base.Add(15000*time.Millisecond)) // confirmed
-
+	d.Update(-10, -30, cfg, base.Add(15000*time.Millisecond)) // Enters confirmed imbalance.
 	d.Reset()
-
-	// After Reset, the duration counter restarts.
 	if e := d.Update(-10, -30, cfg, base.Add(16000*time.Millisecond)); e.InImbalance || e.JustEntered {
 		t.Fatalf("state leaked after Reset: %+v", e)
 	}

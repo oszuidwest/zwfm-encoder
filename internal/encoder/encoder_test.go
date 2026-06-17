@@ -2,14 +2,6 @@ package encoder
 
 import (
 	"errors"
-	"io"
-	"net"
-	"os"
-	"os/signal"
-	"path/filepath"
-	"testing"
-	"time"
-
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
@@ -19,20 +11,19 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/streaming"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
+	"io"
+	"net"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"testing"
+	"time"
 )
 
 const testStreamRestartDelay = 200 * time.Millisecond
 
-// TestStartRejectsStateStopping verifies that Start() returns ErrAlreadyRunning when the
-// encoder is in StateStopping. This guards against the regression where the MaxRetries
-// exit path set state = StateStopped before cleanup finished, allowing a concurrent
-// Start() to race the in-progress cleanup (StopAll, silenceDumpManager.Stop, DrainLogs).
-// The fix transitions through StateStopping during cleanup; Start() must block that state.
 func TestStartRejectsStateStopping(t *testing.T) {
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
-	// Set a non-empty AudioInput so Start() reaches the state guard rather than
-	// returning ErrNoAudioInput before it gets there. All required silence fields
-	// must be valid because ApplySettings now validates before applying.
 	if err := cfg.ApplySettings(&config.SettingsUpdate{
 		AudioInput:                  "test-device",
 		SilenceThreshold:            config.DefaultSilenceThreshold,
@@ -46,34 +37,27 @@ func TestStartRejectsStateStopping(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("ApplySettings: %v", err)
 	}
-
 	e := &Encoder{
 		config: cfg,
 		state:  types.StateStopping,
 	}
-
 	if err := e.Start(); !errors.Is(err, ErrAlreadyRunning) {
 		t.Errorf("Start() in StateStopping = %v, want ErrAlreadyRunning", err)
 	}
 }
-
 func TestDelayedStarterDoesNotStartManagersAfterQuickSourceExit(t *testing.T) {
 	e := newSourceLifecycleTestEncoder(t, "exit")
-
 	if err := e.Start(); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
-
 	waitForCondition(t, time.Second, "source retry after quick exit", func() bool {
 		e.mu.RLock()
 		defer e.mu.RUnlock()
 		return e.state == types.StateStarting && e.retryCount > 0
 	})
 	time.Sleep(3 * testStreamRestartDelay)
-
 	assertManagersStopped(t, e, "stale delayed source starter ran after a quick source exit")
 }
-
 func TestStaleStarterDoesNotStartManagersForNewRun(t *testing.T) {
 	e := newSourceLifecycleTestEncoder(t, "exit")
 	pr, pw := io.Pipe()
@@ -81,19 +65,15 @@ func TestStaleStarterDoesNotStartManagersForNewRun(t *testing.T) {
 		_ = pr.Close()
 		_ = pw.Close()
 	})
-
 	e.mu.Lock()
 	e.state = types.StateRunning
 	e.stopChan = make(chan struct{})
 	e.sourceStdout = pr
 	e.sourceRunID = 2
 	e.mu.Unlock()
-
 	e.startEnabledStreams(1)
-
 	assertManagersStopped(t, e, "stale run-1 starter ran while run 2 was active")
 }
-
 func TestDelayedStarterReturnsWhenStopChanClosed(t *testing.T) {
 	e := newSourceLifecycleTestEncoder(t, "exit")
 	pr, pw := io.Pipe()
@@ -101,40 +81,32 @@ func TestDelayedStarterReturnsWhenStopChanClosed(t *testing.T) {
 		_ = pr.Close()
 		_ = pw.Close()
 	})
-
 	closedStopChan := make(chan struct{})
 	close(closedStopChan)
-
 	e.mu.Lock()
 	e.state = types.StateRunning
 	e.stopChan = make(chan struct{})
 	e.sourceStdout = pr
 	e.sourceRunID = 1
 	e.mu.Unlock()
-
 	done := make(chan struct{})
 	go func() {
 		e.startEnabledStreamsAfterDelay(1, closedStopChan, 500*time.Millisecond)
 		close(done)
 	}()
-
 	select {
 	case <-done:
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("delayed starter did not return after stopChan closed")
 	}
-
 	assertManagersStopped(t, e, "closed stopChan delayed starter ran")
 }
-
 func TestStopBeforeStreamDelayCancelsDelayedStarter(t *testing.T) {
 	readyPath := filepath.Join(t.TempDir(), "capture-ready")
 	e := newSourceLifecycleTestEncoder(t, "sleep", readyPath)
-
 	if err := e.Start(); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
-
 	waitForCondition(t, time.Second, "source running", func() bool {
 		e.mu.RLock()
 		defer e.mu.RUnlock()
@@ -144,61 +116,50 @@ func TestStopBeforeStreamDelayCancelsDelayedStarter(t *testing.T) {
 		_, err := os.Stat(readyPath)
 		return err == nil
 	})
-
 	if err := e.Stop(); err != nil {
 		t.Fatalf("Stop() error = %v", err)
 	}
 	time.Sleep(3 * testStreamRestartDelay)
-
 	assertManagersStopped(t, e, "managers revived after Stop() canceled the delayed starter")
 }
-
 func TestSourceMaxRetryExhaustionStopsRecordingManager(t *testing.T) {
 	e := newSourceLifecycleTestEncoder(t, "exit")
 	if err := e.recordingManager.Start(); err != nil {
 		t.Fatalf("recordingManager.Start() error = %v", err)
 	}
 	e.silenceDumpManager.Start()
-
 	e.mu.Lock()
 	e.state = types.StateStarting
 	e.stopChan = make(chan struct{})
 	e.retryCount = types.MaxRetries - 1
 	e.backoff.Reset()
 	e.mu.Unlock()
-
 	done := make(chan struct{})
 	go func() {
 		e.runSourceLoop()
 		close(done)
 	}()
-
 	select {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("runSourceLoop did not stop after source retries were exhausted")
 	}
 	time.Sleep(3 * testStreamRestartDelay)
-
 	if got := e.State(); got != types.StateStopped {
 		t.Fatalf("State() = %q, want %q", got, types.StateStopped)
 	}
 	assertManagersStopped(t, e, "source retries were exhausted")
 }
-
 func TestCloseIdempotent(t *testing.T) {
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
-
 	logger, err := eventlog.NewLogger(filepath.Join(t.TempDir(), "encoder.jsonl"))
 	if err != nil {
 		t.Fatalf("create logger: %v", err)
 	}
-
 	e := &Encoder{
 		eventLogger:       logger,
 		alertOrchestrator: notify.NewAlertOrchestrator(cfg, notify.NewDispatcher()),
 	}
-
 	if err := e.Close(); err != nil {
 		t.Fatalf("first Close() failed: %v", err)
 	}
@@ -206,7 +167,6 @@ func TestCloseIdempotent(t *testing.T) {
 		t.Fatalf("second Close() failed: %v", err)
 	}
 }
-
 func TestStreamStatusesReportsSRTUnsupported(t *testing.T) {
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	stream := types.Stream{
@@ -216,14 +176,12 @@ func TestStreamStatusesReportsSRTUnsupported(t *testing.T) {
 		Port:    9000,
 		Codec:   types.CodecMP3,
 	}
-
 	e := &Encoder{
 		config:        cfg,
 		ffmpegPath:    "ffmpeg",
 		srtAvailable:  false,
 		streamManager: streaming.NewManager("ffmpeg"),
 	}
-
 	statuses := e.StreamStatuses([]types.Stream{stream})
 	status := statuses[stream.ID]
 	if status.State != types.ProcessError {
@@ -233,7 +191,6 @@ func TestStreamStatusesReportsSRTUnsupported(t *testing.T) {
 		t.Fatalf("status error = %q, want %q", status.Error, ErrSRTUnsupported.Error())
 	}
 }
-
 func TestStreamStatusesReportsSRTProbeErrorSeparately(t *testing.T) {
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	stream := types.Stream{
@@ -243,7 +200,6 @@ func TestStreamStatusesReportsSRTProbeErrorSeparately(t *testing.T) {
 		Port:    9000,
 		Codec:   types.CodecMP3,
 	}
-
 	e := &Encoder{
 		config:        cfg,
 		ffmpegPath:    "ffmpeg",
@@ -251,7 +207,6 @@ func TestStreamStatusesReportsSRTProbeErrorSeparately(t *testing.T) {
 		srtProbeError: errors.New("probe timed out"),
 		streamManager: streaming.NewManager("ffmpeg"),
 	}
-
 	statuses := e.StreamStatuses([]types.Stream{stream})
 	status := statuses[stream.ID]
 	if status.State != types.ProcessError {
@@ -261,7 +216,6 @@ func TestStreamStatusesReportsSRTProbeErrorSeparately(t *testing.T) {
 		t.Fatalf("status error = %q, want %q", status.Error, ErrSRTUnverified.Error())
 	}
 }
-
 func TestStreamStatusesDoesNotRequireSRTForListener(t *testing.T) {
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	stream := types.Stream{
@@ -272,14 +226,12 @@ func TestStreamStatusesDoesNotRequireSRTForListener(t *testing.T) {
 		Port:    9000,
 		Codec:   types.CodecMP3,
 	}
-
 	e := &Encoder{
 		config:        cfg,
 		ffmpegPath:    "ffmpeg",
 		srtAvailable:  false,
 		streamManager: streaming.NewManager("ffmpeg"),
 	}
-
 	statuses := e.StreamStatuses([]types.Stream{stream})
 	status := statuses[stream.ID]
 	if status.State != types.ProcessStopped {
@@ -289,7 +241,6 @@ func TestStreamStatusesDoesNotRequireSRTForListener(t *testing.T) {
 		t.Fatalf("listener status error = %q, want empty", status.Error)
 	}
 }
-
 func TestStartStreamReportsSRTProbeErrorSeparately(t *testing.T) {
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	cfg.Streaming.Streams = []types.Stream{
@@ -301,7 +252,6 @@ func TestStartStreamReportsSRTProbeErrorSeparately(t *testing.T) {
 			Codec:   types.CodecMP3,
 		},
 	}
-
 	e := &Encoder{
 		config:        cfg,
 		state:         types.StateRunning,
@@ -310,12 +260,10 @@ func TestStartStreamReportsSRTProbeErrorSeparately(t *testing.T) {
 		srtProbeError: errors.New("probe timed out"),
 		streamManager: streaming.NewManager("ffmpeg"),
 	}
-
 	if err := e.StartStream("stream-1"); !errors.Is(err, ErrSRTUnverified) {
 		t.Fatalf("StartStream() error = %v, want ErrSRTUnverified", err)
 	}
 }
-
 func TestStartStreamDoesNotRequireSRTForListener(t *testing.T) {
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	cfg.Streaming.Streams = []types.Stream{
@@ -328,7 +276,6 @@ func TestStartStreamDoesNotRequireSRTForListener(t *testing.T) {
 			Codec:   types.CodecMP3,
 		},
 	}
-
 	e := &Encoder{
 		config:        cfg,
 		state:         types.StateRunning,
@@ -337,7 +284,6 @@ func TestStartStreamDoesNotRequireSRTForListener(t *testing.T) {
 		srtProbeError: errors.New("probe timed out"),
 		streamManager: streaming.NewManager("/nonexistent/ffmpeg-binary-for-test"),
 	}
-
 	err := e.StartStream("listener-1")
 	if err == nil {
 		t.Fatal("StartStream() unexpectedly succeeded with nonexistent ffmpeg")
@@ -346,7 +292,6 @@ func TestStartStreamDoesNotRequireSRTForListener(t *testing.T) {
 		t.Fatalf("StartStream() error = %v, want real listener start error instead of SRT sentinel", err)
 	}
 }
-
 func freeUDPPort(t *testing.T) int {
 	t.Helper()
 	addr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
@@ -364,21 +309,17 @@ func freeUDPPort(t *testing.T) int {
 	}()
 	return conn.LocalAddr().(*net.UDPAddr).Port
 }
-
 func newSourceLifecycleTestEncoder(t *testing.T, helperMode string, helperArgs ...string) *Encoder {
 	t.Helper()
-
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	cfg.Audio.Input = "test-device"
 	cfg.Streaming.Streams = []types.Stream{}
 	cfg.Recording.Recorders = []types.Recorder{}
 	cfg.Recording.MaxDurationMinutes = config.DefaultRecordingMaxDurationMinutes
-
 	recordingManager, err := recording.NewManager("", t.TempDir(), config.DefaultRecordingMaxDurationMinutes, nil)
 	if err != nil {
 		t.Fatalf("recording.NewManager() error = %v", err)
 	}
-
 	e := &Encoder{
 		config:              cfg,
 		buildCaptureCommand: helperCaptureCommand(helperMode, helperArgs...),
@@ -393,7 +334,6 @@ func newSourceLifecycleTestEncoder(t *testing.T, helperMode string, helperArgs .
 		alertOrchestrator:   notify.NewAlertOrchestrator(cfg, notify.NewDispatcher()),
 		peakHolder:          audio.NewPeakHolder(),
 	}
-
 	t.Cleanup(func() {
 		_ = e.Stop()
 		if e.recordingManager != nil {
@@ -403,10 +343,8 @@ func newSourceLifecycleTestEncoder(t *testing.T, helperMode string, helperArgs .
 			e.silenceDumpManager.Stop()
 		}
 	})
-
 	return e
 }
-
 func helperCaptureCommand(mode string, extraArgs ...string) func(string, string) (string, []string, error) {
 	return func(_, _ string) (string, []string, error) {
 		args := []string{"-test.run=TestEncoderCaptureHelperProcess", "--", mode}
@@ -414,7 +352,6 @@ func helperCaptureCommand(mode string, extraArgs ...string) func(string, string)
 		return os.Args[0], args, nil
 	}
 }
-
 func TestEncoderCaptureHelperProcess(t *testing.T) {
 	helperArgs := []string{}
 	for i, arg := range os.Args {
@@ -426,7 +363,6 @@ func TestEncoderCaptureHelperProcess(t *testing.T) {
 	if len(helperArgs) == 0 {
 		return
 	}
-
 	mode := helperArgs[0]
 	switch mode {
 	case "exit":
@@ -441,7 +377,6 @@ func TestEncoderCaptureHelperProcess(t *testing.T) {
 				os.Exit(2)
 			}
 		}
-
 		select {
 		case <-signals:
 		case <-time.After(time.Minute):
@@ -452,10 +387,8 @@ func TestEncoderCaptureHelperProcess(t *testing.T) {
 		os.Exit(2)
 	}
 }
-
 func waitForCondition(t *testing.T, timeout time.Duration, description string, condition func() bool) {
 	t.Helper()
-
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if condition() {
@@ -465,10 +398,8 @@ func waitForCondition(t *testing.T, timeout time.Duration, description string, c
 	}
 	t.Fatalf("timed out waiting for %s", description)
 }
-
 func assertManagersStopped(t *testing.T, e *Encoder, reason string) {
 	t.Helper()
-
 	if e.recordingManager.IsRunning() {
 		t.Fatalf("recording manager is running: %s", reason)
 	}

@@ -1,10 +1,9 @@
 package types
 
 import (
+	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 	"slices"
 	"testing"
-
-	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 )
 
 const (
@@ -13,8 +12,6 @@ const (
 )
 
 func TestGraphCredentialsIssues(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		name      string
 		cfg       GraphConfig
@@ -43,7 +40,6 @@ func TestGraphCredentialsIssues(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
 			got := graphCodes(tt.cfg.CredentialsIssues())
 			if !slices.Equal(got, tt.wantCodes) {
 				t.Fatalf("CredentialsIssues() codes = %v, want %v", got, tt.wantCodes)
@@ -51,10 +47,7 @@ func TestGraphCredentialsIssues(t *testing.T) {
 		})
 	}
 }
-
 func TestGraphClientIssues(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		name      string
 		cfg       GraphConfig
@@ -78,7 +71,6 @@ func TestGraphClientIssues(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
 			got := graphCodes(tt.cfg.ClientIssues())
 			if !slices.Equal(got, tt.wantCodes) {
 				t.Fatalf("ClientIssues() codes = %v, want %v", got, tt.wantCodes)
@@ -86,10 +78,7 @@ func TestGraphClientIssues(t *testing.T) {
 		})
 	}
 }
-
 func TestGraphSendIssues(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		name      string
 		cfg       GraphConfig
@@ -123,7 +112,6 @@ func TestGraphSendIssues(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
 			got := graphCodes(tt.cfg.SendIssues())
 			if !slices.Equal(got, tt.wantCodes) {
 				t.Fatalf("SendIssues() codes = %v, want %v", got, tt.wantCodes)
@@ -131,7 +119,6 @@ func TestGraphSendIssues(t *testing.T) {
 		})
 	}
 }
-
 func graphCodes(issues validation.Issues) []string {
 	if len(issues) == 0 {
 		return nil
