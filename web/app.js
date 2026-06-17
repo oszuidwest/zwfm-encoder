@@ -253,6 +253,22 @@ document.addEventListener('alpine:init', () => {
         view: 'dashboard',
         settingsTab: 'audio',
 
+        // Expand/collapse state for collapsible settings cards (Notifications
+        // channels + Audio sections), persisted so a chosen layout survives
+        // reloads. Cards start collapsed; the header summary carries the
+        // at-a-glance state. Keys are pre-seeded so Alpine tracks them reactively.
+        cardsOpen: (() => {
+            const fallback = {
+                webhook: false, email: false, zabbix: false,
+                silence: false, imbalance: false, metering: false, dumps: false, recording: false
+            };
+            try {
+                return { ...fallback, ...JSON.parse(localStorage.getItem('settingsCardsOpen') || '{}') };
+            } catch {
+                return fallback;
+            }
+        })(),
+
         vuChannels: [
             { label: 'L', level: 'left', display: 'display_left', hold: 'hold_left' },
             { label: 'R', level: 'right', display: 'display_right', hold: 'hold_right' }
@@ -1101,6 +1117,80 @@ document.addEventListener('alpine:init', () => {
 
         showTab(tabId) {
             this.settingsTab = tabId;
+        },
+
+        // Toggles a collapsible settings card open/closed and persists the layout.
+        toggleCard(id) {
+            this.cardsOpen[id] = !this.cardsOpen[id];
+            try {
+                localStorage.setItem('settingsCardsOpen', JSON.stringify(this.cardsOpen));
+            } catch {
+                // Private-mode / quota errors are non-fatal for a UI preference.
+            }
+        },
+
+        // Derives the header digest for a notification channel from the current
+        // form + saved-config flags. Returns { summary, pill } where summary is
+        // the always-shown one-liner and pill is null for the normal case or
+        // { cls, label } to flag an off/attention state. Following the rest of
+        // the app, only the exceptional case gets a chip (cls is a global
+        // .state-* class); a configured channel stays chip-free.
+        notifChannelStatus(name) {
+            const f = this.settingsForm;
+            const off = { cls: 'state-stopped', label: 'Off' };
+            if (name === 'webhook') {
+                const configured = (this.config.webhook_has_url || !!f.silenceWebhook) && !f.clearWebhook;
+                if (!configured) return { summary: 'No URL set', pill: off };
+                const n = Object.values(f.webhookEvents || {}).filter(Boolean).length;
+                return { summary: `${n} event${n === 1 ? '' : 's'}`, pill: null };
+            }
+            if (name === 'email') {
+                const hasSecret = this.config.graph_has_secret || !!f.graph.clientSecret;
+                const configured = hasSecret && !f.graph.clearSecret &&
+                    !!f.graph.tenantId && !!f.graph.clientId && !!f.graph.fromAddress && !!f.graph.recipients;
+                if (!configured) return { summary: 'Not configured', pill: off };
+                if (this.graphSecretExpiry.expires_soon) {
+                    return { summary: `Secret expires in ${this.graphSecretExpiry.days_left} days`, pill: { cls: 'state-warning', label: 'Secret expiring' } };
+                }
+                const n = f.graph.recipients.split(',').map(s => s.trim()).filter(Boolean).length;
+                return { summary: `${n} recipient${n === 1 ? '' : 's'}`, pill: null };
+            }
+            if (name === 'zabbix') {
+                if (!f.zabbix.server) return { summary: 'No server set', pill: off };
+                return { summary: f.zabbix.server, pill: null };
+            }
+            return { summary: '', pill: null };
+        },
+
+        // Derives the header digest for an Audio settings card. Returns
+        // { summary, pill } (see notifChannelStatus). Always-on monitors
+        // (detection, imbalance, metering) carry no chip - their summary is the
+        // tuned value. Only the genuinely toggleable cards surface a chip, and
+        // only when off: silence dumps disabled, or the recording API has no key.
+        audioCardStatus(name) {
+            const f = this.settingsForm;
+            if (name === 'silence') {
+                return { summary: `${f.silenceThreshold} dB / ${f.silenceDuration} s`, pill: null };
+            }
+            if (name === 'imbalance') {
+                return { summary: `${f.channelImbalanceThreshold} dB / ${f.channelImbalanceDuration} s`, pill: null };
+            }
+            if (name === 'metering') {
+                return { summary: `Peak hold ${(f.peakHoldMs / 1000).toFixed(1)} s`, pill: null };
+            }
+            if (name === 'dumps') {
+                if (!f.silenceDump.enabled) return { summary: 'Not capturing', pill: { cls: 'state-stopped', label: 'Off' } };
+                const d = f.silenceDump.retentionDays;
+                return { summary: d > 0 ? `Kept ${d} days` : 'Kept forever', pill: null };
+            }
+            if (name === 'recording') {
+                const hasKey = this.config.recording_has_api_key || !!f.recordingApiKey;
+                const m = f.recordingMaxDurationMinutes;
+                return hasKey
+                    ? { summary: m > 0 ? `Max ${m} min` : 'No limit', pill: null }
+                    : { summary: 'External control off', pill: { cls: 'state-stopped', label: 'No key' } };
+            }
+            return { summary: '', pill: null };
         },
 
         // Stream management (REST API)

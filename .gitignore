@@ -2,6 +2,7 @@
 /encoder
 config.json
 /node_modules
+/screenshots
 *.exe
 
 # Markdown files (only README, LICENSE, and docs on GitHub)
