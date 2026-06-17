@@ -66,6 +66,13 @@ func (m *Manager) Start() {
 	slog.Info("silence dump manager started", "enabled", m.enabled)
 }
 
+// IsRunning reports whether automatic cleanup is active.
+func (m *Manager) IsRunning() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.running
+}
+
 // Stop stops automatic cleanup and releases resources.
 func (m *Manager) Stop() {
 	m.mu.Lock()

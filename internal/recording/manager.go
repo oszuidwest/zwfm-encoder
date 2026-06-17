@@ -241,6 +241,13 @@ func (m *Manager) Start() error {
 	return nil
 }
 
+// IsRunning reports whether recorder management is active.
+func (m *Manager) IsRunning() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.running
+}
+
 // Stop stops all recorders and background schedulers.
 func (m *Manager) Stop() error {
 	m.mu.Lock()
