@@ -633,11 +633,16 @@ func (e *Encoder) TriggerTestZabbix() error {
 	return notify.SendZabbixTest(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixSilenceKey)
 }
 
+// isStopping reports whether shutdown has begun. The caller must hold e.mu.
+func (e *Encoder) isStopping() bool {
+	return e.state == types.StateStopping || e.state == types.StateStopped
+}
+
 // runSourceLoop manages the audio capture lifecycle with automatic retry and backoff.
 func (e *Encoder) runSourceLoop() {
 	for {
 		e.mu.Lock()
-		if e.state == types.StateStopping || e.state == types.StateStopped {
+		if e.isStopping() {
 			e.mu.Unlock()
 			return
 		}
@@ -648,7 +653,7 @@ func (e *Encoder) runSourceLoop() {
 		runDuration := time.Since(startTime)
 
 		e.mu.Lock()
-		if e.state == types.StateStopping || e.state == types.StateStopped {
+		if e.isStopping() {
 			e.mu.Unlock()
 			return
 		}
@@ -700,7 +705,7 @@ func (e *Encoder) runSourceLoop() {
 			e.backoff.Reset()
 		}
 
-		if e.state == types.StateStopping || e.state == types.StateStopped {
+		if e.isStopping() {
 			e.mu.Unlock()
 			return
 		}
@@ -753,28 +758,7 @@ func (e *Encoder) runSource() (string, error) {
 		return "", err
 	}
 
-	var (
-		published bool
-		runID     uint64
-		stopChan  <-chan struct{}
-	)
-	func() {
-		e.mu.Lock()
-		defer e.mu.Unlock()
-		if e.state == types.StateStopping || e.state == types.StateStopped {
-			return
-		}
-		e.sourceRunID++
-		runID = e.sourceRunID
-		stopChan = e.stopChan
-		e.sourceCmd = cmd
-		e.sourceCancel = cancel
-		e.sourceStdout = stdoutPipe
-		e.state = types.StateRunning
-		e.startTime = time.Now()
-		e.lastError = ""
-		published = true
-	}()
+	runID, stopChan, published := e.publishSource(cmd, cancel, stdoutPipe)
 	if !published {
 		cancel()
 		err := cmd.Wait()
@@ -797,6 +781,30 @@ func (e *Encoder) runSource() (string, error) {
 	// runDistributor publishes final silence after its last live level.
 
 	return util.ExtractLastError(stderrBuf.String()), err
+}
+
+// publishSource records a freshly started capture process as the active source
+// run and returns its run ID and stop channel. It returns ok=false without
+// recording anything if shutdown began before the process could be published, so
+// the caller can tear the process back down.
+func (e *Encoder) publishSource(
+	cmd *exec.Cmd,
+	cancel context.CancelFunc,
+	stdout io.ReadCloser,
+) (runID uint64, stopChan <-chan struct{}, ok bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.isStopping() {
+		return 0, nil, false
+	}
+	e.sourceRunID++
+	e.sourceCmd = cmd
+	e.sourceCancel = cancel
+	e.sourceStdout = stdout
+	e.state = types.StateRunning
+	e.startTime = time.Now()
+	e.lastError = ""
+	return e.sourceRunID, e.stopChan, true
 }
 
 func (e *Encoder) startEnabledStreamsAfterDelay(runID uint64, stopChan <-chan struct{}, delay time.Duration) {
