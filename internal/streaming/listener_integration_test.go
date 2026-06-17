@@ -3,18 +3,17 @@ package streaming
 import (
 	"bytes"
 	"errors"
+	srt "github.com/datarhei/gosrt"
+	"github.com/oszuidwest/zwfm-encoder/internal/audio"
+	ffmpegproc "github.com/oszuidwest/zwfm-encoder/internal/ffmpeg"
+	"github.com/oszuidwest/zwfm-encoder/internal/srtfanout"
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"io"
 	"net"
 	"os/exec"
 	"strconv"
 	"testing"
 	"time"
-
-	srt "github.com/datarhei/gosrt"
-	"github.com/oszuidwest/zwfm-encoder/internal/audio"
-	ffmpegproc "github.com/oszuidwest/zwfm-encoder/internal/ffmpeg"
-	"github.com/oszuidwest/zwfm-encoder/internal/srtfanout"
-	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
 func TestListenerPipeFanoutLateSubscriberReceivesMPEGTSBytes(t *testing.T) {
@@ -22,7 +21,6 @@ func TestListenerPipeFanoutLateSubscriberReceivesMPEGTSBytes(t *testing.T) {
 	if err != nil {
 		t.Skip("ffmpeg not available")
 	}
-
 	tests := []struct {
 		name    string
 		codec   types.Codec
@@ -31,13 +29,11 @@ func TestListenerPipeFanoutLateSubscriberReceivesMPEGTSBytes(t *testing.T) {
 		{name: "opus", codec: types.CodecOpus, encoder: "libopus"},
 		{name: "pcm", codec: types.CodecPCM, encoder: "s302m"},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if !ffmpegHasEncoder(t, ffmpegPath, tt.encoder) {
 				t.Skipf("ffmpeg encoder %s not available", tt.encoder)
 			}
-
 			port := freeUDPPort(t)
 			fanout, err := srtfanout.NewServer(srtfanout.Config{
 				StreamID: "listener-" + tt.name,
@@ -57,7 +53,6 @@ func TestListenerPipeFanoutLateSubscriberReceivesMPEGTSBytes(t *testing.T) {
 					t.Fatalf("fanout Wait() error = %v", err)
 				}
 			}()
-
 			stream := &types.Stream{
 				ID:    "listener-" + tt.name,
 				Mode:  types.StreamModeListener,
@@ -69,7 +64,6 @@ func TestListenerPipeFanoutLateSubscriberReceivesMPEGTSBytes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("StartProcessWithStdout() error = %v", err)
 			}
-
 			stdoutDone := make(chan struct{})
 			go func() {
 				defer close(stdoutDone)
@@ -85,7 +79,6 @@ func TestListenerPipeFanoutLateSubscriberReceivesMPEGTSBytes(t *testing.T) {
 					}
 				}
 			}()
-
 			writerDone := make(chan struct{})
 			go func() {
 				defer close(writerDone)
@@ -111,7 +104,6 @@ func TestListenerPipeFanoutLateSubscriberReceivesMPEGTSBytes(t *testing.T) {
 				<-stdoutDone
 				_ = result.Wait()
 			}()
-
 			time.Sleep(500 * time.Millisecond)
 			conn := dialTestSubscriber(t, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 			defer func() {
@@ -119,14 +111,12 @@ func TestListenerPipeFanoutLateSubscriberReceivesMPEGTSBytes(t *testing.T) {
 					t.Fatalf("subscriber Close() error = %v", err)
 				}
 			}()
-
 			if n := readAtLeastOneSRTByte(t, conn); n == 0 {
 				t.Fatal("late subscriber received no bytes")
 			}
 		})
 	}
 }
-
 func ffmpegHasEncoder(t *testing.T, ffmpegPath, encoder string) bool {
 	t.Helper()
 	out, err := exec.Command(ffmpegPath, "-hide_banner", "-encoders").Output()
@@ -135,21 +125,18 @@ func ffmpegHasEncoder(t *testing.T, ffmpegPath, encoder string) bool {
 	}
 	return bytes.Contains(out, []byte(" "+encoder+" "))
 }
-
 func dialTestSubscriber(t *testing.T, addr string) srt.Conn {
 	t.Helper()
 	cfg := srt.DefaultConfig()
 	cfg.ConnectionTimeout = time.Second
 	cfg.Latency = 50 * time.Millisecond
 	cfg.StreamId = "read:test"
-
 	conn, err := srt.Dial("srt", addr, cfg)
 	if err != nil {
 		t.Fatalf("Dial(%s) error = %v", addr, err)
 	}
 	return conn
 }
-
 func readAtLeastOneSRTByte(t *testing.T, conn srt.Conn) int {
 	t.Helper()
 	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {

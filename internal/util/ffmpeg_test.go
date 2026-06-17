@@ -7,7 +7,6 @@ import (
 
 func TestFFmpegProtocolListContainsExactToken(t *testing.T) {
 	t.Parallel()
-
 	output := `
 Supported file protocols:
 Input:
@@ -26,10 +25,8 @@ Output:
 		t.Fatal("FFmpegProtocolListContains() = true, want false for partial token")
 	}
 }
-
 func TestFFmpegProtocolListContainsRejectsOnlySRTP(t *testing.T) {
 	t.Parallel()
-
 	output := `
 Supported file protocols:
 Input:
@@ -41,10 +38,8 @@ Output:
 		t.Fatal("FFmpegProtocolListContains() = true, want false when only srtp is present")
 	}
 }
-
 func TestProbeFFmpegProtocolReturnsProbeError(t *testing.T) {
 	t.Parallel()
-
 	missing := filepath.Join(t.TempDir(), "missing-ffmpeg")
 	ok, err := ProbeFFmpegProtocol(missing, "srt")
 	if err == nil {

@@ -1,15 +1,12 @@
 package types
 
 import (
+	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 	"slices"
 	"testing"
-
-	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 )
 
 func TestValidateS3Credentials(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		name                              string
 		bucket, accessKeyID, secretAccess string
@@ -42,7 +39,6 @@ func TestValidateS3Credentials(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
 			got := s3Codes(ValidateS3Credentials(tt.bucket, tt.accessKeyID, tt.secretAccess))
 			if !slices.Equal(got, tt.wantCodes) {
 				t.Fatalf("ValidateS3Credentials codes = %v, want %v", got, tt.wantCodes)
@@ -50,7 +46,6 @@ func TestValidateS3Credentials(t *testing.T) {
 		})
 	}
 }
-
 func s3Codes(issues validation.Issues) []string {
 	if len(issues) == 0 {
 		return nil
@@ -62,12 +57,7 @@ func s3Codes(issues validation.Issues) []string {
 	return codes
 }
 
-// TestRecorderValidateS3Conditional pins that S3-credential checks fire only
-// when storage_mode is s3 or both, and that the recorder-specific message
-// format ("<field>: is required for s3/both storage mode") is preserved.
 func TestRecorderValidateS3Conditional(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		name    string
 		mode    StorageMode
@@ -91,7 +81,6 @@ func TestRecorderValidateS3Conditional(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
 			r := &Recorder{
 				Name:          "rec",
 				Codec:         CodecPCM,
@@ -111,11 +100,7 @@ func TestRecorderValidateS3Conditional(t *testing.T) {
 	}
 }
 
-// TestRecorderValidateS3FirstErrorOrder pins the historical first-error
-// behavior: bucket is reported before access key before secret.
 func TestRecorderValidateS3FirstErrorOrder(t *testing.T) {
-	t.Parallel()
-
 	cases := []struct {
 		name    string
 		r       *Recorder
@@ -155,7 +140,6 @@ func TestRecorderValidateS3FirstErrorOrder(t *testing.T) {
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
 			err := tt.r.Validate()
 			gotErr := ""
 			if err != nil {

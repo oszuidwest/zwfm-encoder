@@ -3,6 +3,9 @@ package streaming
 import (
 	"bytes"
 	"errors"
+	"github.com/oszuidwest/zwfm-encoder/internal/srtfanout"
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 	"net"
 	"os"
 	"os/exec"
@@ -10,13 +13,8 @@ import (
 	"slices"
 	"testing"
 	"time"
-
-	"github.com/oszuidwest/zwfm-encoder/internal/srtfanout"
-	"github.com/oszuidwest/zwfm-encoder/internal/types"
-	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// validStream returns a stream that reaches Start's state checks.
 func validStream() *types.Stream {
 	return &types.Stream{
 		ID:      "s1",
@@ -27,8 +25,6 @@ func validStream() *types.Stream {
 	}
 }
 
-// TestStartReportsNotStartedWhenAlreadyActive verifies active streams do not
-// spawn duplicate monitors.
 func TestStartReportsNotStartedWhenAlreadyActive(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -42,7 +38,6 @@ func TestStartReportsNotStartedWhenAlreadyActive(t *testing.T) {
 			stream := validStream()
 			existing := &Stream{state: tc.state}
 			m.streams[stream.ID] = existing
-
 			started, err := m.Start(stream)
 			if err != nil {
 				t.Fatalf("Start returned error: %v", err)
@@ -51,7 +46,6 @@ func TestStartReportsNotStartedWhenAlreadyActive(t *testing.T) {
 				t.Errorf("Start reported started=true for an already-%s stream; "+
 					"the caller would spawn a duplicate monitor", tc.name)
 			}
-			// No placeholder swap: the existing process still owns the stream.
 			if m.streams[stream.ID] != existing {
 				t.Errorf("Start replaced the existing stream entry")
 			}
@@ -59,8 +53,6 @@ func TestStartReportsNotStartedWhenAlreadyActive(t *testing.T) {
 	}
 }
 
-// TestStartRelaunchesErroredOrStoppedEntry verifies retryable states attempt a
-// new process instead of taking the already-active shortcut.
 func TestStartRelaunchesErroredOrStoppedEntry(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -73,7 +65,6 @@ func TestStartRelaunchesErroredOrStoppedEntry(t *testing.T) {
 			m := NewManager("/nonexistent/ffmpeg-binary-for-test")
 			stream := validStream()
 			m.streams[stream.ID] = &Stream{state: tc.state}
-
 			started, err := m.Start(stream)
 			if started {
 				t.Fatalf("Start reported started=true despite a failed relaunch")
@@ -86,11 +77,8 @@ func TestStartRelaunchesErroredOrStoppedEntry(t *testing.T) {
 	}
 }
 
-// TestMaybeEmitStableOnlyForSameRunningInstance verifies fast restarts cannot
-// inherit another instance's stable event.
 func TestMaybeEmitStableOnlyForSameRunningInstance(t *testing.T) {
 	const id = "s1"
-
 	for _, tc := range []struct {
 		name     string
 		setup    func(m *Manager, started *Stream)
@@ -106,7 +94,6 @@ func TestMaybeEmitStableOnlyForSameRunningInstance(t *testing.T) {
 		{
 			name: "different running instance does not emit",
 			setup: func(m *Manager, _ *Stream) {
-				// Same ID, different owner.
 				m.streams[id] = &Stream{state: types.ProcessRunning}
 			},
 			wantEmit: false,
@@ -122,7 +109,6 @@ func TestMaybeEmitStableOnlyForSameRunningInstance(t *testing.T) {
 		{
 			name: "id removed does not emit",
 			setup: func(_ *Manager, _ *Stream) {
-				// Stopped/removed streams have no current owner.
 			},
 			wantEmit: false,
 		},
@@ -133,12 +119,9 @@ func TestMaybeEmitStableOnlyForSameRunningInstance(t *testing.T) {
 			m.SetEventCallback(func(_, _, event, _, _ string, _, _ int) {
 				events = append(events, event)
 			}, nil)
-
 			started := &Stream{state: types.ProcessRunning}
 			tc.setup(m, started)
-
 			m.maybeEmitStable(id, started)
-
 			emitted := slices.Contains(events, "stream_stable")
 			if emitted != tc.wantEmit {
 				t.Errorf("maybeEmitStable emitted=%v, want %v (events=%v)",
@@ -147,10 +130,8 @@ func TestMaybeEmitStableOnlyForSameRunningInstance(t *testing.T) {
 		})
 	}
 }
-
 func TestStatusesNeverMarksListenerStable(t *testing.T) {
 	t.Parallel()
-
 	const id = "listener-1"
 	m := NewManager("ffmpeg")
 	m.streams[id] = &Stream{
@@ -158,7 +139,6 @@ func TestStatusesNeverMarksListenerStable(t *testing.T) {
 		mode:      types.StreamModeListener,
 		startTime: time.Now().Add(-2 * types.StableThreshold),
 	}
-
 	statuses := m.Statuses(func(string) *types.Stream {
 		return &types.Stream{ID: id, Mode: types.StreamModeListener, MaxRetries: 3}
 	})
@@ -170,10 +150,8 @@ func TestStatusesNeverMarksListenerStable(t *testing.T) {
 		t.Fatal("listener status Stable = true, want false")
 	}
 }
-
 func TestClassifyStreamExit(t *testing.T) {
 	t.Parallel()
-
 	errFailed := errors.New("ffmpeg failed")
 	tests := []struct {
 		name  string
@@ -221,7 +199,6 @@ func TestClassifyStreamExit(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-
 			got := classifyStreamExit(tt.mode, tt.err, tt.cause)
 			if got != tt.want {
 				t.Fatalf("classifyStreamExit() = %v, want %v", got, tt.want)
@@ -230,12 +207,9 @@ func TestClassifyStreamExit(t *testing.T) {
 	}
 }
 
-// TestStartReportsNotStartedOnValidationError verifies an invalid stream yields
-// started=false so the caller does not monitor a stream that never launched.
 func TestStartReportsNotStartedOnValidationError(t *testing.T) {
 	m := NewManager("ffmpeg")
 	invalid := &types.Stream{ID: "s1"} // missing host, codec, and port
-
 	started, err := m.Start(invalid)
 	if err == nil {
 		t.Fatal("Start accepted an invalid stream")
@@ -245,13 +219,9 @@ func TestStartReportsNotStartedOnValidationError(t *testing.T) {
 	}
 }
 
-// TestStartReportsNotStartedWhenProcessLaunchFails verifies that when FFmpeg
-// cannot be launched, Start returns started=false and removes its placeholder
-// so no stale entry or orphaned monitor is left behind.
 func TestStartReportsNotStartedWhenProcessLaunchFails(t *testing.T) {
 	m := NewManager("/nonexistent/ffmpeg-binary-for-test")
 	stream := validStream()
-
 	started, err := m.Start(stream)
 	if err == nil {
 		t.Fatal("Start succeeded with a nonexistent ffmpeg binary")
@@ -263,7 +233,6 @@ func TestStartReportsNotStartedWhenProcessLaunchFails(t *testing.T) {
 		t.Error("Start left a placeholder entry after a failed launch")
 	}
 }
-
 func TestListenerStartEncoderFailureReleasesFanoutPort(t *testing.T) {
 	port := freeUDPPort(t)
 	m := NewManager("/nonexistent/ffmpeg-binary-for-test")
@@ -275,7 +244,6 @@ func TestListenerStartEncoderFailureReleasesFanoutPort(t *testing.T) {
 		Port:    port,
 		Codec:   types.CodecMP3,
 	}
-
 	started, err := m.Start(stream)
 	if err == nil {
 		t.Fatal("Start succeeded with a nonexistent ffmpeg binary")
@@ -288,7 +256,6 @@ func TestListenerStartEncoderFailureReleasesFanoutPort(t *testing.T) {
 	}
 	assertUDPPortAvailable(t, port)
 }
-
 func TestListenerFanoutStartFailureRemovesPlaceholder(t *testing.T) {
 	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}
 	conn, err := net.ListenUDP("udp", addr)
@@ -300,7 +267,6 @@ func TestListenerFanoutStartFailureRemovesPlaceholder(t *testing.T) {
 			t.Fatalf("UDP Close() error = %v", err)
 		}
 	}()
-
 	port := conn.LocalAddr().(*net.UDPAddr).Port
 	m := NewManager("unused-ffmpeg")
 	stream := &types.Stream{
@@ -311,7 +277,6 @@ func TestListenerFanoutStartFailureRemovesPlaceholder(t *testing.T) {
 		Port:    port,
 		Codec:   types.CodecMP3,
 	}
-
 	started, err := m.Start(stream)
 	if err == nil {
 		t.Fatal("Start(listener) succeeded while UDP port was already bound")
@@ -323,13 +288,11 @@ func TestListenerFanoutStartFailureRemovesPlaceholder(t *testing.T) {
 		t.Fatal("Start left a placeholder after fanout bind failure")
 	}
 }
-
 func TestStartListenerWithFFmpegDoesNotRequireSRTProtocol(t *testing.T) {
 	ffmpegPath, err := exec.LookPath("ffmpeg")
 	if err != nil {
 		t.Skip("ffmpeg not available")
 	}
-
 	port := freeUDPPort(t)
 	m := NewManager(ffmpegPath)
 	stream := &types.Stream{
@@ -340,7 +303,6 @@ func TestStartListenerWithFFmpegDoesNotRequireSRTProtocol(t *testing.T) {
 		Port:    port,
 		Codec:   types.CodecMP3,
 	}
-
 	started, err := m.Start(stream)
 	if err != nil {
 		t.Fatalf("Start(listener) error = %v", err)
@@ -353,10 +315,8 @@ func TestStartListenerWithFFmpegDoesNotRequireSRTProtocol(t *testing.T) {
 	}
 	assertUDPPortAvailable(t, port)
 }
-
 func TestStatusesIncludesListenerEncoderAndClientFields(t *testing.T) {
 	t.Parallel()
-
 	const id = "listener-1"
 	fanout, err := srtfanout.NewServer(srtfanout.Config{
 		Port: 9000,
@@ -364,7 +324,6 @@ func TestStatusesIncludesListenerEncoderAndClientFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewServer() error = %v", err)
 	}
-
 	m := NewManager("ffmpeg")
 	stream := &Stream{
 		state:     types.ProcessRunning,
@@ -374,7 +333,6 @@ func TestStatusesIncludesListenerEncoderAndClientFields(t *testing.T) {
 		encoder:   &encoderRun{},
 	}
 	m.streams[id] = stream
-
 	statuses := m.Statuses(func(string) *types.Stream {
 		return &types.Stream{ID: id, Mode: types.StreamModeListener, MaxRetries: 3}
 	})
@@ -389,24 +347,19 @@ func TestStatusesIncludesListenerEncoderAndClientFields(t *testing.T) {
 		t.Fatalf("listener status ClientCount = %d, want 0", status.ClientCount)
 	}
 }
-
 func TestWriteAudioListenerSkipsWhenNoEncoderRun(t *testing.T) {
 	t.Parallel()
-
 	m := NewManager("ffmpeg")
 	m.streams["listener-1"] = &Stream{
 		state: types.ProcessRunning,
 		mode:  types.StreamModeListener,
 	}
-
 	if err := m.WriteAudio("listener-1", []byte("pcm")); err != nil {
 		t.Fatalf("WriteAudio() error = %v", err)
 	}
 }
-
 func TestWriteAudioListenerUsesBoundedEncoderQueue(t *testing.T) {
 	t.Parallel()
-
 	m := NewManager("ffmpeg")
 	run := &encoderRun{audioCh: make(chan []byte, audioBufferSize)}
 	stream := &Stream{
@@ -415,7 +368,6 @@ func TestWriteAudioListenerUsesBoundedEncoderQueue(t *testing.T) {
 	}
 	stream.encoder = run
 	m.streams["listener-1"] = stream
-
 	for _, chunk := range [][]byte{
 		[]byte("one"),
 		[]byte("two"),
@@ -428,7 +380,6 @@ func TestWriteAudioListenerUsesBoundedEncoderQueue(t *testing.T) {
 			t.Fatalf("WriteAudio() error = %v", err)
 		}
 	}
-
 	if got := len(run.audioCh); got != audioBufferSize {
 		t.Fatalf("listener encoder queue len = %d, want %d", got, audioBufferSize)
 	}
@@ -439,7 +390,6 @@ func TestWriteAudioListenerUsesBoundedEncoderQueue(t *testing.T) {
 		t.Fatalf("audio drops = %d, want 1", got)
 	}
 }
-
 func TestMonitorListenerEncoderRetriesAndStopsFanoutOnExhaustion(t *testing.T) {
 	ffmpegPath := fakeLongRunningExecutable(t)
 	port := freeUDPPort(t)
@@ -453,7 +403,6 @@ func TestMonitorListenerEncoderRetriesAndStopsFanoutOnExhaustion(t *testing.T) {
 		Codec:      types.CodecMP3,
 		MaxRetries: 1,
 	}
-
 	started, err := m.Start(stream)
 	if err != nil {
 		t.Fatalf("Start(listener) error = %v", err)
@@ -462,12 +411,10 @@ func TestMonitorListenerEncoderRetriesAndStopsFanoutOnExhaustion(t *testing.T) {
 		t.Fatal("Start(listener) reported started=false")
 	}
 	assertUDPPortUnavailable(t, port)
-
 	m.mu.Lock()
 	managed := m.streams[stream.ID]
 	managed.backoff = util.NewBackoff(500*time.Millisecond, 500*time.Millisecond)
 	m.mu.Unlock()
-
 	stopChan := make(chan struct{})
 	t.Cleanup(func() {
 		close(stopChan)
@@ -475,33 +422,27 @@ func TestMonitorListenerEncoderRetriesAndStopsFanoutOnExhaustion(t *testing.T) {
 			t.Fatalf("Stop(listener) cleanup error = %v", err)
 		}
 	})
-
 	ctx := staticStreamContext{stream: stream}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		m.MonitorAndRetry(stream.ID, ctx, stopChan)
 	}()
-
 	firstRun := waitListenerRun(t, m, stream.ID, nil)
 	if err := firstRun.result.Kill(); err != nil {
 		t.Fatalf("first encoder Kill() error = %v", err)
 	}
-
 	waitStatus(t, m, stream.ID, func(status types.ProcessStatus) bool {
 		return status.State == types.ProcessRunning && !status.EncoderRunning
 	}, "listener encoder to stop while fanout remains running")
 	assertUDPPortUnavailable(t, port)
-
 	secondRun := waitListenerRun(t, m, stream.ID, firstRun)
 	if err := secondRun.result.Kill(); err != nil {
 		t.Fatalf("second encoder Kill() error = %v", err)
 	}
-
 	waitStatus(t, m, stream.ID, func(status types.ProcessStatus) bool {
 		return status.State == types.ProcessError && !status.EncoderRunning
 	}, "listener retry exhaustion to mark the stream errored")
-
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
@@ -509,7 +450,6 @@ func TestMonitorListenerEncoderRetriesAndStopsFanoutOnExhaustion(t *testing.T) {
 	}
 	assertUDPPortAvailable(t, port)
 }
-
 func TestMonitorListenerEncoderReleasesBlockedWriterAfterStdoutEnds(t *testing.T) {
 	origSignalTimeout := encoderRunSignalTimeout
 	origKillTimeout := encoderRunKillTimeout
@@ -519,7 +459,6 @@ func TestMonitorListenerEncoderReleasesBlockedWriterAfterStdoutEnds(t *testing.T
 		encoderRunSignalTimeout = origSignalTimeout
 		encoderRunKillTimeout = origKillTimeout
 	})
-
 	ffmpegPath, closeStdoutPath := fakeBlockedListenerEncoderExecutable(t)
 	port := freeUDPPort(t)
 	m := NewManager(ffmpegPath)
@@ -532,7 +471,6 @@ func TestMonitorListenerEncoderReleasesBlockedWriterAfterStdoutEnds(t *testing.T
 		Codec:      types.CodecMP3,
 		MaxRetries: 1,
 	}
-
 	started, err := m.Start(stream)
 	if err != nil {
 		t.Fatalf("Start(listener) error = %v", err)
@@ -541,12 +479,10 @@ func TestMonitorListenerEncoderReleasesBlockedWriterAfterStdoutEnds(t *testing.T
 		t.Fatal("Start(listener) reported started=false")
 	}
 	assertUDPPortUnavailable(t, port)
-
 	m.mu.Lock()
 	managed := m.streams[stream.ID]
 	managed.backoff = util.NewBackoff(10*time.Millisecond, 10*time.Millisecond)
 	m.mu.Unlock()
-
 	stopChan := make(chan struct{})
 	t.Cleanup(func() {
 		close(stopChan)
@@ -554,30 +490,24 @@ func TestMonitorListenerEncoderReleasesBlockedWriterAfterStdoutEnds(t *testing.T
 			t.Fatalf("Stop(listener) cleanup error = %v", err)
 		}
 	})
-
 	ctx := staticStreamContext{stream: stream}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		m.MonitorAndRetry(stream.ID, ctx, stopChan)
 	}()
-
 	run := waitListenerRun(t, m, stream.ID, nil)
-	// Must exceed the OS pipe buffer so WriteStdin blocks while holding stdinMu.
 	if err := m.WriteAudio(stream.ID, bytes.Repeat([]byte{1}, 8*1024*1024)); err != nil {
 		t.Fatalf("WriteAudio() error = %v", err)
 	}
 	waitForListenerWriterToTakeAudio(t, run)
-
 	if err := os.WriteFile(closeStdoutPath, []byte("close"), 0o600); err != nil {
 		t.Fatalf("WriteFile(close stdout marker) error = %v", err)
 	}
-
 	secondRun := waitListenerRun(t, m, stream.ID, run)
 	if secondRun == run {
 		t.Fatal("listener retry reused the failed encoder run")
 	}
-
 	statuses := m.Statuses(func(string) *types.Stream {
 		return stream
 	})
@@ -591,7 +521,6 @@ func TestMonitorListenerEncoderReleasesBlockedWriterAfterStdoutEnds(t *testing.T
 	if status.RetryCount != 1 {
 		t.Fatalf("listener retry count = %d, want 1", status.RetryCount)
 	}
-
 	select {
 	case <-done:
 		t.Fatal("MonitorAndRetry returned while listener retry should keep monitoring")
@@ -599,7 +528,6 @@ func TestMonitorListenerEncoderReleasesBlockedWriterAfterStdoutEnds(t *testing.T
 	}
 	assertUDPPortUnavailable(t, port)
 }
-
 func freeUDPPort(t *testing.T) int {
 	t.Helper()
 	addr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
@@ -617,10 +545,8 @@ func freeUDPPort(t *testing.T) int {
 	}()
 	return conn.LocalAddr().(*net.UDPAddr).Port
 }
-
 func fakeLongRunningExecutable(t *testing.T) string {
 	t.Helper()
-
 	path := filepath.Join(t.TempDir(), "fake-ffmpeg")
 	script := "#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n"
 	//nolint:gosec // Test helper must be executable and lives in t.TempDir().
@@ -629,16 +555,12 @@ func fakeLongRunningExecutable(t *testing.T) string {
 	}
 	return path
 }
-
 func fakeBlockedListenerEncoderExecutable(t *testing.T) (path, closeStdoutPath string) {
 	t.Helper()
-
 	dir := t.TempDir()
 	path = filepath.Join(dir, "fake-ffmpeg")
 	closeStdoutPath = filepath.Join(dir, "close-stdout")
-
 	t.Setenv("FAKE_FFMPEG_CLOSE_STDOUT", closeStdoutPath)
-
 	script := `#!/bin/sh
 trap 'exit 0' TERM INT
 while [ ! -f "$FAKE_FFMPEG_CLOSE_STDOUT" ]; do
@@ -656,7 +578,6 @@ done
 	}
 	return path, closeStdoutPath
 }
-
 func assertUDPPortAvailable(t *testing.T, port int) {
 	t.Helper()
 	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: port}
@@ -666,7 +587,6 @@ func assertUDPPortAvailable(t *testing.T, port int) {
 	}
 	_ = conn.Close()
 }
-
 func assertUDPPortUnavailable(t *testing.T, port int) {
 	t.Helper()
 	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: port}
@@ -678,7 +598,6 @@ func assertUDPPortUnavailable(t *testing.T, port int) {
 		t.Fatalf("UDP port %d is available while fanout should own it", port)
 	}
 }
-
 func waitListenerRun(t *testing.T, m *Manager, streamID string, previous *encoderRun) *encoderRun {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
@@ -699,7 +618,6 @@ func waitListenerRun(t *testing.T, m *Manager, streamID string, previous *encode
 	t.Fatalf("timed out waiting for listener encoder run after %p", previous)
 	return nil
 }
-
 func waitForListenerWriterToTakeAudio(t *testing.T, run *encoderRun) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -711,7 +629,6 @@ func waitForListenerWriterToTakeAudio(t *testing.T, run *encoderRun) {
 	}
 	t.Fatal("timed out waiting for listener writer to take queued audio")
 }
-
 func waitStatus(
 	t *testing.T,
 	m *Manager,
@@ -744,7 +661,6 @@ func (c staticStreamContext) Stream(streamID string) *types.Stream {
 	}
 	return nil
 }
-
 func (c staticStreamContext) IsRunning() bool {
 	return true
 }

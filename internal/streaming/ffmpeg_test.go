@@ -1,17 +1,15 @@
 package streaming
 
 import (
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"net/url"
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
 func TestBuildSRTURLCaller(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
 		name       string
 		stream     types.Stream
@@ -53,11 +51,9 @@ func TestBuildSRTURLCaller(t *testing.T) {
 			},
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-
 			u, err := url.Parse(BuildSRTURL(&tt.stream))
 			if err != nil {
 				t.Fatalf("Parse(BuildSRTURL()) error = %v", err)
@@ -82,17 +78,14 @@ func TestBuildSRTURLCaller(t *testing.T) {
 		})
 	}
 }
-
 func TestBuildCallerArgsUsesSRTOutput(t *testing.T) {
 	t.Parallel()
-
 	stream := &types.Stream{
 		Host:     "stream.example.com",
 		Port:     9000,
 		StreamID: "studio",
 		Codec:    types.CodecMP3,
 	}
-
 	args := BuildCallerArgs(stream)
 	if slices.Contains(args, "pipe:1") {
 		t.Fatalf("caller args contain pipe:1: %v", args)
@@ -101,10 +94,8 @@ func TestBuildCallerArgsUsesSRTOutput(t *testing.T) {
 		t.Fatalf("caller output = %q, want SRT URL %q", got, BuildSRTURL(stream))
 	}
 }
-
 func TestBuildListenerPipeArgs(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
 		name      string
 		codec     types.Codec
@@ -134,11 +125,9 @@ func TestBuildListenerPipeArgs(t *testing.T) {
 			wantPAT:   true,
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-
 			args := BuildListenerPipeArgs(&types.Stream{
 				Mode:  types.StreamModeListener,
 				Port:  9000,
@@ -162,7 +151,6 @@ func TestBuildListenerPipeArgs(t *testing.T) {
 		})
 	}
 }
-
 func containsFlagValue(args []string, flag, value string) bool {
 	for i := 0; i < len(args)-1; i++ {
 		if args[i] == flag && args[i+1] == value {

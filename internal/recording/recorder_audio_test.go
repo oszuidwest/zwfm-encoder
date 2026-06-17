@@ -1,20 +1,15 @@
 package recording
 
 import (
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-// TestWriteAudioNeverBlocksAndCountsDrops verifies overflow drops newest chunks and counts them.
 func TestWriteAudioNeverBlocksAndCountsDrops(t *testing.T) {
 	t.Parallel()
-
-	// With no writer draining, the third chunk onwards overflows.
 	r := &GenericRecorder{id: "r1", state: types.ProcessRunning, audioCh: make(chan []byte, 2)}
-
 	done := make(chan struct{})
 	go func() {
 		for i := range 5 {
@@ -22,21 +17,17 @@ func TestWriteAudioNeverBlocksAndCountsDrops(t *testing.T) {
 		}
 		close(done)
 	}()
-
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("WriteAudio blocked when the buffer was full")
 	}
-
 	if got := r.audioDrops.Load(); got != 3 {
 		t.Fatalf("audioDrops = %d, want 3", got)
 	}
 	if got := len(r.audioCh); got != 2 {
 		t.Fatalf("buffered chunks = %d, want 2", got)
 	}
-
-	// Drop-newest keeps the two oldest chunks (0 and 1), drops 2, 3, 4.
 	if first := <-r.audioCh; first[0] != 0 {
 		t.Fatalf("first buffered chunk = %d, want 0", first[0])
 	}
@@ -45,12 +36,9 @@ func TestWriteAudioNeverBlocksAndCountsDrops(t *testing.T) {
 	}
 }
 
-// TestWriteAudioConcurrentWithTeardownNoPanic pins send-vs-close teardown.
 func TestWriteAudioConcurrentWithTeardownNoPanic(t *testing.T) {
 	for range 50 {
 		r := &GenericRecorder{id: "r1", state: types.ProcessRunning, audioCh: make(chan []byte, 4)}
-
-		// Keep most writes on the successful send path.
 		ch := r.audioCh
 		drained := make(chan struct{})
 		go func() {
@@ -58,7 +46,6 @@ func TestWriteAudioConcurrentWithTeardownNoPanic(t *testing.T) {
 			}
 			close(drained)
 		}()
-
 		var wg sync.WaitGroup
 		for range 8 {
 			wg.Add(1)
@@ -69,8 +56,6 @@ func TestWriteAudioConcurrentWithTeardownNoPanic(t *testing.T) {
 				}
 			}()
 		}
-
-		// Mirror stopEncoderAndUpload: clear under lock, close outside it.
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -82,24 +67,18 @@ func TestWriteAudioConcurrentWithTeardownNoPanic(t *testing.T) {
 				close(audioCh)
 			}
 		}()
-
 		wg.Wait()
 		<-drained
 	}
 }
 
-// TestWriteAudioNoopWhenNotRecording verifies inactive writers never enqueue.
 func TestWriteAudioNoopWhenNotRecording(t *testing.T) {
 	t.Parallel()
-
-	// Running before startEncoderLocked has no writer channel.
 	noCh := &GenericRecorder{id: "r1", state: types.ProcessRunning}
 	noCh.WriteAudio([]byte{1})
 	if got := noCh.audioDrops.Load(); got != 0 {
 		t.Fatalf("audioDrops with nil channel = %d, want 0", got)
 	}
-
-	// Stopped recorder with a channel: must not enqueue.
 	stopped := &GenericRecorder{id: "r2", state: types.ProcessStopped, audioCh: make(chan []byte, 2)}
 	stopped.WriteAudio([]byte{1})
 	if got := len(stopped.audioCh); got != 0 {
@@ -107,17 +86,13 @@ func TestWriteAudioNoopWhenNotRecording(t *testing.T) {
 	}
 }
 
-// TestWriteAudioEnqueuesWhileRotating verifies rotation keeps a live writer fed.
 func TestWriteAudioEnqueuesWhileRotating(t *testing.T) {
 	t.Parallel()
-
 	r := &GenericRecorder{id: "r1", state: types.ProcessRotating, audioCh: make(chan []byte, 2)}
 	r.WriteAudio([]byte{1})
 	if got := len(r.audioCh); got != 1 {
 		t.Fatalf("rotating recorder with a live channel buffered %d chunks, want 1", got)
 	}
-
-	// Once teardown has nil'd the channel, a rotating recorder is skipped.
 	r.audioCh = nil
 	r.WriteAudio([]byte{2})
 	if got := r.audioDrops.Load(); got != 0 {
@@ -125,10 +100,8 @@ func TestWriteAudioEnqueuesWhileRotating(t *testing.T) {
 	}
 }
 
-// TestStatusReportsAudioDrops verifies dropped chunks surface in recorder status.
 func TestStatusReportsAudioDrops(t *testing.T) {
 	t.Parallel()
-
 	r := &GenericRecorder{id: "r1", state: types.ProcessRunning}
 	r.audioDrops.Store(7)
 	if got := r.Status().AudioDrops; got != 7 {
@@ -136,16 +109,12 @@ func TestStatusReportsAudioDrops(t *testing.T) {
 	}
 }
 
-// TestManagerWriteAudioSharesOneCopyAcrossRecorders verifies one defensive copy
-// serves all active recorders.
 func TestManagerWriteAudioSharesOneCopyAcrossRecorders(t *testing.T) {
 	t.Parallel()
-
 	m, err := NewManager("", t.TempDir(), 60, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	add := func(id string, state types.ProcessState) *GenericRecorder {
 		cfg := &types.Recorder{
 			ID:            id,
@@ -163,22 +132,17 @@ func TestManagerWriteAudioSharesOneCopyAcrossRecorders(t *testing.T) {
 		rec.audioCh = make(chan []byte, 4)
 		return rec
 	}
-
 	a := add("a", types.ProcessRunning)
 	b := add("b", types.ProcessRunning)
 	c := add("c", types.ProcessStopped)
-
-	// Distributor passes a reusable buffer; the manager must copy it.
 	src := []byte{1, 2, 3, 4}
 	m.WriteAudio(src)
 	src[0] = 99 // Simulate distributor buffer reuse.
-
 	ga := <-a.audioCh
 	gb := <-b.audioCh
 	if ga[0] != 1 || gb[0] != 1 {
 		t.Fatalf("recorders saw the mutated source buffer: a=%d b=%d, want 1", ga[0], gb[0])
 	}
-	// Active recorders share the copy.
 	if &ga[0] != &gb[0] {
 		t.Fatal("expected active recorders to share one copied slice")
 	}

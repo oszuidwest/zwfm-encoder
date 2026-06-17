@@ -1,15 +1,12 @@
 package types
 
 import (
+	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 	"slices"
 	"testing"
-
-	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 )
 
 func TestValidateWebhookURL(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		name      string
 		url       string
@@ -53,11 +50,8 @@ func TestValidateWebhookURL(t *testing.T) {
 			wantCodes: nil,
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
 			got := webhookCodes(ValidateWebhookURL(tt.url, tt.mode))
 			if !slices.Equal(got, tt.wantCodes) {
 				t.Fatalf("ValidateWebhookURL(%q, %v) codes = %v, want %v", tt.url, tt.mode, got, tt.wantCodes)
@@ -65,7 +59,6 @@ func TestValidateWebhookURL(t *testing.T) {
 		})
 	}
 }
-
 func webhookCodes(issues validation.Issues) []string {
 	if len(issues) == 0 {
 		return nil

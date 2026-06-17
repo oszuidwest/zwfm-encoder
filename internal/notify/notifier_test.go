@@ -3,6 +3,10 @@ package notify
 import (
 	"context"
 	"errors"
+	"github.com/oszuidwest/zwfm-encoder/internal/audio"
+	"github.com/oszuidwest/zwfm-encoder/internal/config"
+	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
+	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -10,73 +14,65 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/oszuidwest/zwfm-encoder/internal/audio"
-	"github.com/oszuidwest/zwfm-encoder/internal/config"
-	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
-	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 )
 
+type noopAlertChannel struct{}
+
+func (noopAlertChannel) Name() string                                   { return "noop" }
+func (noopAlertChannel) IsConfiguredForSilence(_ *config.Snapshot) bool { return false }
+func (noopAlertChannel) IsConfiguredForUpload(_ *config.Snapshot) bool  { return false }
+func (noopAlertChannel) SubscribesSilenceStart(_ *config.Snapshot) bool { return false }
+func (noopAlertChannel) SubscribesSilenceEnd(_ *config.Snapshot) bool   { return false }
+func (noopAlertChannel) SubscribesAudioDump(_ *config.Snapshot) bool    { return false }
+func (noopAlertChannel) SendSilenceStart(_ context.Context, _ *config.Snapshot, _, _ float64) error {
+	return nil
+}
+func (noopAlertChannel) SendSilenceEnd(_ context.Context, _ *config.Snapshot, _ int64, _, _ float64) error {
+	return nil
+}
+func (noopAlertChannel) SendAudioDump(
+	_ context.Context, _ *config.Snapshot, _ int64, _, _ float64, _ *silencedump.EncodeResult,
+) error {
+	return nil
+}
+func (noopAlertChannel) SendUploadAbandoned(_ context.Context, _ *config.Snapshot, _ UploadAbandonedData) error {
+	return nil
+}
+
+type silenceStartChannel struct{ noopAlertChannel }
+
+func (silenceStartChannel) IsConfiguredForSilence(_ *config.Snapshot) bool { return true }
+func (silenceStartChannel) SubscribesSilenceStart(_ *config.Snapshot) bool { return true }
+
 type snapshotMutatingChannel struct {
+	silenceStartChannel
 	mutated chan struct{}
 	release chan struct{}
 }
 
-func (c *snapshotMutatingChannel) Name() string                                   { return "mutator" }
-func (c *snapshotMutatingChannel) IsConfiguredForSilence(_ *config.Snapshot) bool { return true }
-func (c *snapshotMutatingChannel) IsConfiguredForUpload(_ *config.Snapshot) bool  { return false }
-func (c *snapshotMutatingChannel) SubscribesSilenceStart(_ *config.Snapshot) bool { return true }
-func (c *snapshotMutatingChannel) SubscribesSilenceEnd(_ *config.Snapshot) bool   { return false }
-func (c *snapshotMutatingChannel) SubscribesAudioDump(_ *config.Snapshot) bool    { return false }
 func (c *snapshotMutatingChannel) SendSilenceStart(_ context.Context, cfg *config.Snapshot, _, _ float64) error {
 	cfg.SilenceThreshold = -20
 	close(c.mutated)
 	<-c.release
 	return nil
 }
-func (c *snapshotMutatingChannel) SendSilenceEnd(_ context.Context, _ *config.Snapshot, _ int64, _, _ float64) error {
-	return nil
-}
-func (c *snapshotMutatingChannel) SendAudioDump(
-	_ context.Context, _ *config.Snapshot, _ int64, _, _ float64, _ *silencedump.EncodeResult,
-) error {
-	return nil
-}
-func (c *snapshotMutatingChannel) SendUploadAbandoned(_ context.Context, _ *config.Snapshot, _ UploadAbandonedData) error {
-	return nil
-}
 
 type snapshotObservingChannel struct {
+	silenceStartChannel
 	mutated   chan struct{}
 	observed  chan float64
 	releaseMu chan struct{}
 }
 
-func (c *snapshotObservingChannel) Name() string                                   { return "observer" }
-func (c *snapshotObservingChannel) IsConfiguredForSilence(_ *config.Snapshot) bool { return true }
-func (c *snapshotObservingChannel) IsConfiguredForUpload(_ *config.Snapshot) bool  { return false }
-func (c *snapshotObservingChannel) SubscribesSilenceStart(_ *config.Snapshot) bool { return true }
-func (c *snapshotObservingChannel) SubscribesSilenceEnd(_ *config.Snapshot) bool   { return false }
-func (c *snapshotObservingChannel) SubscribesAudioDump(_ *config.Snapshot) bool    { return false }
 func (c *snapshotObservingChannel) SendSilenceStart(_ context.Context, cfg *config.Snapshot, _, _ float64) error {
 	<-c.mutated
 	c.observed <- cfg.SilenceThreshold
 	close(c.releaseMu)
 	return nil
 }
-func (c *snapshotObservingChannel) SendSilenceEnd(_ context.Context, _ *config.Snapshot, _ int64, _, _ float64) error {
-	return nil
-}
-func (c *snapshotObservingChannel) SendAudioDump(
-	_ context.Context, _ *config.Snapshot, _ int64, _, _ float64, _ *silencedump.EncodeResult,
-) error {
-	return nil
-}
-func (c *snapshotObservingChannel) SendUploadAbandoned(_ context.Context, _ *config.Snapshot, _ UploadAbandonedData) error {
-	return nil
-}
 
 type contextCapturingChannel struct {
+	silenceStartChannel
 	ctx         chan context.Context
 	canceled    chan struct{}
 	done        chan struct{}
@@ -92,41 +88,14 @@ func newContextCapturingChannel() *contextCapturingChannel {
 		release:  make(chan struct{}),
 	}
 }
-
-func (c *contextCapturingChannel) Name() string { return "context-capturing" }
-func (c *contextCapturingChannel) IsConfiguredForSilence(_ *config.Snapshot) bool {
-	return true
-}
-func (c *contextCapturingChannel) IsConfiguredForUpload(_ *config.Snapshot) bool {
-	return false
-}
-func (c *contextCapturingChannel) SubscribesSilenceStart(_ *config.Snapshot) bool {
-	return true
-}
-func (c *contextCapturingChannel) SubscribesSilenceEnd(_ *config.Snapshot) bool { return false }
-func (c *contextCapturingChannel) SubscribesAudioDump(_ *config.Snapshot) bool  { return false }
 func (c *contextCapturingChannel) SendSilenceStart(ctx context.Context, _ *config.Snapshot, _, _ float64) error {
 	defer close(c.done)
-
 	c.ctx <- ctx
 	select {
 	case <-ctx.Done():
 		close(c.canceled)
 	case <-c.release:
 	}
-	return nil
-}
-func (c *contextCapturingChannel) SendSilenceEnd(
-	_ context.Context, _ *config.Snapshot, _ int64, _, _ float64,
-) error {
-	return nil
-}
-func (c *contextCapturingChannel) SendAudioDump(
-	_ context.Context, _ *config.Snapshot, _ int64, _, _ float64, _ *silencedump.EncodeResult,
-) error {
-	return nil
-}
-func (c *contextCapturingChannel) SendUploadAbandoned(_ context.Context, _ *config.Snapshot, _ UploadAbandonedData) error {
 	return nil
 }
 func (c *contextCapturingChannel) releaseSend() {
@@ -145,10 +114,8 @@ func (h *captureHandler) Handle(_ context.Context, r slog.Record) error {
 	if r.Level != slog.LevelWarn || r.Message != "log queue full, log entry dropped" {
 		return nil
 	}
-
 	h.mu.Lock()
 	defer h.mu.Unlock()
-
 	h.attrs = h.attrs[:0]
 	r.Attrs(func(attr slog.Attr) bool {
 		h.attrs = append(h.attrs, attr)
@@ -156,17 +123,13 @@ func (h *captureHandler) Handle(_ context.Context, r slog.Record) error {
 	})
 	return nil
 }
-
 func (h *captureHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	return &captureHandler{attrs: append([]slog.Attr(nil), attrs...)}
 }
-
 func (h *captureHandler) WithGroup(string) slog.Handler { return h }
-
 func (h *captureHandler) attrValue(key string) (string, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-
 	for _, attr := range h.attrs {
 		if attr.Key == key {
 			return attr.Value.String(), true
@@ -175,17 +138,14 @@ func (h *captureHandler) attrValue(key string) (string, bool) {
 	return "", false
 }
 
-// testChannel is a stub AlertChannel that records which Send methods were called.
-// Calls are signalled on buffered channels so tests can synchronise with dispatch goroutines.
 type testChannel struct {
-	name              string
-	configuredSilence bool
-	subscribesStart   bool
-	subscribesEnd     bool
-	subscribesDump    bool
-
-	isConfiguredCalls int // counts IsConfiguredForSilence calls, guarded by the test being single-threaded up to dispatch
-
+	noopAlertChannel
+	name               string
+	configuredSilence  bool
+	subscribesStart    bool
+	subscribesEnd      bool
+	subscribesDump     bool
+	isConfiguredCalls  int // counts IsConfiguredForSilence calls, guarded by the test being single-threaded up to dispatch
 	silenceStartCalled chan *config.Snapshot
 	silenceEndCalled   chan *config.Snapshot
 	audioDumpCalled    chan *config.Snapshot
@@ -203,31 +163,22 @@ func newTestChannel(subscribesDump bool) *testChannel {
 		audioDumpCalled:    make(chan *config.Snapshot, 1),
 	}
 }
-
 func (c *testChannel) Name() string                                   { return c.name }
-func (c *testChannel) IsConfiguredForUpload(_ *config.Snapshot) bool  { return false }
 func (c *testChannel) SubscribesSilenceStart(_ *config.Snapshot) bool { return c.subscribesStart }
 func (c *testChannel) SubscribesSilenceEnd(_ *config.Snapshot) bool   { return c.subscribesEnd }
 func (c *testChannel) SubscribesAudioDump(_ *config.Snapshot) bool    { return c.subscribesDump }
-func (c *testChannel) SendUploadAbandoned(_ context.Context, _ *config.Snapshot, _ UploadAbandonedData) error {
-	return nil
-}
-
 func (c *testChannel) IsConfiguredForSilence(_ *config.Snapshot) bool {
 	c.isConfiguredCalls++
 	return c.configuredSilence
 }
-
 func (c *testChannel) SendSilenceStart(_ context.Context, cfg *config.Snapshot, _, _ float64) error {
 	c.silenceStartCalled <- cfg
 	return nil
 }
-
 func (c *testChannel) SendSilenceEnd(_ context.Context, cfg *config.Snapshot, _ int64, _, _ float64) error {
 	c.silenceEndCalled <- cfg
 	return nil
 }
-
 func (c *testChannel) SendAudioDump(
 	_ context.Context, cfg *config.Snapshot, _ int64, _, _ float64, _ *silencedump.EncodeResult,
 ) error {
@@ -235,7 +186,6 @@ func (c *testChannel) SendAudioDump(
 	return nil
 }
 
-// awaitCall waits for a signal on ch or fails the test after a short timeout.
 func awaitCall(t *testing.T, ch <-chan *config.Snapshot, label string) *config.Snapshot {
 	t.Helper()
 	select {
@@ -247,7 +197,6 @@ func awaitCall(t *testing.T, ch <-chan *config.Snapshot, label string) *config.S
 	}
 }
 
-// assertNoCall asserts that no call arrives on ch within a brief window.
 func assertNoCall(t *testing.T, ch <-chan *config.Snapshot, label string) {
 	t.Helper()
 	select {
@@ -256,7 +205,6 @@ func assertNoCall(t *testing.T, ch <-chan *config.Snapshot, label string) {
 	case <-time.After(50 * time.Millisecond):
 	}
 }
-
 func awaitContext(t *testing.T, ch <-chan context.Context, label string) context.Context {
 	t.Helper()
 	select {
@@ -267,7 +215,6 @@ func awaitContext(t *testing.T, ch <-chan context.Context, label string) context
 		return nil
 	}
 }
-
 func awaitSignal(t *testing.T, ch <-chan struct{}, label string) {
 	t.Helper()
 	select {
@@ -277,8 +224,6 @@ func awaitSignal(t *testing.T, ch <-chan struct{}, label string) {
 	}
 }
 
-// newTestOrchestrator creates an AlertOrchestrator backed by ch and registers t.Cleanup
-// to drain and stop the log worker when the test ends, preventing goroutine leaks.
 func newTestOrchestrator(t *testing.T, ch AlertChannel) *AlertOrchestrator {
 	t.Helper()
 	cfg := config.New("") // in-memory defaults, no file I/O
@@ -287,129 +232,97 @@ func newTestOrchestrator(t *testing.T, ch AlertChannel) *AlertOrchestrator {
 	return o
 }
 
-// TestCloseIdempotent verifies that Close can be called multiple times without panicking.
-// The first call drains pending jobs and stops the worker; subsequent calls are no-ops.
 func TestCloseIdempotent(t *testing.T) {
 	t.Parallel()
 	ch := newTestChannel(false)
 	o := newTestOrchestrator(t, ch)
-
 	o.Close()
 	o.Close() // must not panic (t.Cleanup will call it a third time)
 }
-
 func TestDrainLogsAfterCloseIsNoOp(t *testing.T) {
 	t.Parallel()
-
 	o := newTestOrchestrator(t, newTestChannel(false))
 	o.Close()
-
 	done := make(chan struct{})
 	go func() {
 		o.DrainLogs()
 		close(done)
 	}()
-
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("DrainLogs blocked after Close")
 	}
 }
-
 func TestEnqueueLogAfterCloseIsNoOp(t *testing.T) {
 	t.Parallel()
-
 	logPath := filepath.Join(t.TempDir(), "encoder.jsonl")
 	logger, err := eventlog.NewLogger(logPath)
 	if err != nil {
 		t.Fatalf("create logger: %v", err)
 	}
 	defer logger.Close() //nolint:errcheck // test teardown
-
 	o := newTestOrchestrator(t, newTestChannel(false))
 	o.SetEventLogger(logger)
 	o.Close()
-
 	var ran atomic.Bool
 	o.enqueueLog("post_close", func() { ran.Store(true) })
-
 	if ran.Load() {
 		t.Fatal("enqueueLog executed after Close")
 	}
 }
-
 func TestDrainLogsConcurrentWithCloseDoesNotPanic(t *testing.T) {
 	t.Parallel()
-
 	o := newTestOrchestrator(t, newTestChannel(false))
-
 	block := make(chan struct{})
 	started := make(chan struct{})
 	o.logQueue <- logJob{fn: func() { close(started); <-block }}
 	<-started
-
 	for range logQueueDepth {
 		o.logQueue <- logJob{fn: func() {}}
 	}
-
 	drained := make(chan struct{})
 	go func() {
 		o.DrainLogs()
 		close(drained)
 	}()
-
 	closed := make(chan struct{})
 	go func() {
 		o.Close()
 		close(closed)
 	}()
-
 	close(block)
-
 	select {
 	case <-drained:
 	case <-time.After(2 * time.Second):
 		t.Fatal("DrainLogs blocked when racing with Close")
 	}
-
 	select {
 	case <-closed:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Close blocked when racing with DrainLogs")
 	}
 }
-
 func TestResetDoesNotCancelInFlightNotification(t *testing.T) {
 	t.Parallel()
-
 	ch := newContextCapturingChannel()
 	o := newTestOrchestrator(t, ch)
-
 	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
 	ctx := awaitContext(t, ch.ctx, "in-flight notification context")
-
 	o.Reset()
-
 	if err := ctx.Err(); err != nil {
 		t.Fatalf("ctx.Err() after Reset() = %v, want nil", err)
 	}
-
 	ch.releaseSend()
 	awaitSignal(t, ch.done, "blocked notification send to finish")
 }
-
 func TestCloseCancelsInFlightNotification(t *testing.T) {
 	t.Parallel()
-
 	ch := newContextCapturingChannel()
 	o := newTestOrchestrator(t, ch)
-
 	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
 	ctx := awaitContext(t, ch.ctx, "in-flight notification context")
-
 	o.Close()
-
 	awaitSignal(t, ch.canceled, "in-flight notification context cancellation")
 	if err := ctx.Err(); !errors.Is(err, context.Canceled) {
 		t.Fatalf("ctx.Err() after Close() = %v, want %v", err, context.Canceled)
@@ -417,102 +330,68 @@ func TestCloseCancelsInFlightNotification(t *testing.T) {
 	awaitSignal(t, ch.done, "blocked notification send to finish")
 }
 
-// TestOnDumpReadyNilPending verifies that OnDumpReady is a no-op when there is no
-// pending recovery (e.g. called after Reset, or before any silence event).
 func TestOnDumpReadyNilPending(t *testing.T) {
 	t.Parallel()
 	ch := newTestChannel(true)
 	o := newTestOrchestrator(t, ch)
-
 	o.OnDumpReady(nil)
-
 	assertNoCall(t, ch.audioDumpCalled, "SendAudioDump")
 }
 
-// TestOnDumpReadyNilPendingAfterReset verifies that a Reset between silence recovery and
-// the dump callback causes OnDumpReady to no-op rather than panic or dispatch stale state.
 func TestOnDumpReadyNilPendingAfterReset(t *testing.T) {
 	t.Parallel()
 	ch := newTestChannel(true)
 	o := newTestOrchestrator(t, ch)
-
 	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
-
 	o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 5000})
 	awaitCall(t, ch.silenceEndCalled, "SendSilenceEnd")
-
-	// Encoder stop clears pending state before dump callback fires.
 	o.Reset()
 	o.OnDumpReady(nil)
-
 	assertNoCall(t, ch.audioDumpCalled, "SendAudioDump after Reset")
 }
 
-// TestActiveChannelsClearedAfterRecovery verifies that after a silence period ends,
-// activeChannels is cleared so the next silence period rebuilds the channel set fresh.
 func TestActiveChannelsClearedAfterRecovery(t *testing.T) {
 	t.Parallel()
 	ch := newTestChannel(false)
 	o := newTestOrchestrator(t, ch)
-
-	// Period 1
 	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart period 1")
 	callsAfterPeriod1Start := ch.isConfiguredCalls
-
 	o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 3000})
 	awaitCall(t, ch.silenceEndCalled, "SendSilenceEnd period 1")
-
-	// Period 2: IsConfiguredForSilence must be called again to rebuild activeChannels.
 	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart period 2")
-
 	if ch.isConfiguredCalls <= callsAfterPeriod1Start {
 		t.Fatal("expected IsConfiguredForSilence to be called again for period 2, but it was not")
 	}
 }
 
-// TestActiveChannelsNotRebuiltWithinSilencePeriod verifies that duplicate JustEntered events
-// within the same silence period do not re-evaluate the channel set.
 func TestActiveChannelsNotRebuiltWithinSilencePeriod(t *testing.T) {
 	t.Parallel()
 	ch := newTestChannel(false)
 	o := newTestOrchestrator(t, ch)
-
 	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart first")
 	callsAfterFirst := ch.isConfiguredCalls
-
-	// Second JustEntered during same period (abnormal but must not re-evaluate channels).
 	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart second")
-
 	if ch.isConfiguredCalls != callsAfterFirst {
 		t.Fatalf("IsConfiguredForSilence called %d times after first entry, want %d (no rebuild within period)",
 			ch.isConfiguredCalls, callsAfterFirst)
 	}
 }
 
-// TestAudioDumpUsesSnapshotFromSilenceEnd verifies that the config snapshot passed to
-// SendAudioDump is the one captured at silence-end time, not a fresh snapshot taken later.
-// This guards against the regression where OnDumpReady called o.cfg.Snapshot() instead of
-// reusing pending.cfg.
 func TestAudioDumpUsesSnapshotFromSilenceEnd(t *testing.T) {
 	t.Parallel()
 	ch := newTestChannel(true)
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
 	t.Cleanup(o.Close)
-
 	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
-
 	o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 5000})
 	silenceEndSnap := awaitCall(t, ch.silenceEndCalled, "SendSilenceEnd")
-
-	// Change the threshold in config after silence-end. A fresh Snapshot() would reflect
-	// the new value; pending.cfg must not.
 	if err := cfg.ApplySettings(&config.SettingsUpdate{
 		SilenceThreshold:            -20,
 		SilenceDurationMs:           15000,
@@ -527,39 +406,29 @@ func TestAudioDumpUsesSnapshotFromSilenceEnd(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("ApplySettings failed: %v", err)
 	}
-
 	o.OnDumpReady(nil)
 	audioDumpSnap := awaitCall(t, ch.audioDumpCalled, "SendAudioDump")
-
 	if audioDumpSnap.SilenceThreshold != silenceEndSnap.SilenceThreshold {
 		t.Fatalf("SendAudioDump received threshold %.1f dB, want %.1f dB (from silence-end snapshot)",
 			audioDumpSnap.SilenceThreshold, silenceEndSnap.SilenceThreshold)
 	}
 }
 
-// TestHandleChannelImbalanceEventLogsWithoutMutatingSilenceState verifies
-// imbalance logging cannot disturb an active silence cycle.
 func TestHandleChannelImbalanceEventLogsWithoutMutatingSilenceState(t *testing.T) {
 	t.Parallel()
-
 	logPath := filepath.Join(t.TempDir(), "encoder.jsonl")
 	logger, err := eventlog.NewLogger(logPath)
 	if err != nil {
 		t.Fatalf("create logger: %v", err)
 	}
 	defer logger.Close() //nolint:errcheck // test teardown
-
 	ch := newTestChannel(false)
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
 	t.Cleanup(o.Close)
 	o.SetEventLogger(logger)
-
-	// Begin a silence cycle and build activeChannels.
 	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
-
-	// Imbalance events log only; they must not dispatch silence calls.
 	o.HandleChannelImbalanceEvent(&audio.ImbalanceEvent{
 		JustEntered: true, ImbalanceDB: 40, BalanceDB: 40, CurrentLevelL: -6, CurrentLevelR: -46,
 	})
@@ -568,13 +437,9 @@ func TestHandleChannelImbalanceEventLogsWithoutMutatingSilenceState(t *testing.T
 	})
 	assertNoCall(t, ch.silenceStartCalled, "SendSilenceStart from imbalance event")
 	assertNoCall(t, ch.silenceEndCalled, "SendSilenceEnd from imbalance event")
-
-	// Silence recovery must still reach the channel set captured at start.
 	o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 3000})
 	awaitCall(t, ch.silenceEndCalled, "SendSilenceEnd")
-
 	o.DrainLogs()
-
 	events, _, err := eventlog.ReadLast(logPath, 10, 0, eventlog.FilterAudio)
 	if err != nil {
 		t.Fatalf("read log: %v", err)
@@ -593,11 +458,8 @@ func TestHandleChannelImbalanceEventLogsWithoutMutatingSilenceState(t *testing.T
 	}
 }
 
-// TestZabbixChannelSendAudioDumpReturnsError verifies that a direct call to the
-// concrete Zabbix implementation fails explicitly instead of reporting success.
 func TestZabbixChannelSendAudioDumpReturnsError(t *testing.T) {
 	t.Parallel()
-
 	ch := &ZabbixChannel{}
 	err := ch.SendAudioDump(context.Background(), nil, 0, 0, 0, nil)
 	if err == nil {
@@ -607,15 +469,12 @@ func TestZabbixChannelSendAudioDumpReturnsError(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
-
 func TestDispatchSilenceStartGivesEachGoroutineItsOwnSnapshotCopy(t *testing.T) {
 	t.Parallel()
-
 	mutated := make(chan struct{})
 	releaseMutator := make(chan struct{})
 	observed := make(chan float64, 1)
 	releaseObserver := make(chan struct{})
-
 	mutator := &snapshotMutatingChannel{
 		mutated: mutated,
 		release: releaseMutator,
@@ -625,11 +484,9 @@ func TestDispatchSilenceStartGivesEachGoroutineItsOwnSnapshotCopy(t *testing.T) 
 		observed:  observed,
 		releaseMu: releaseObserver,
 	}
-
 	dispatcher := NewDispatcher(mutator, observer)
 	cfg := config.Snapshot{SilenceThreshold: -40}
 	dispatcher.DispatchSilenceStart(context.Background(), []AlertChannel{mutator, observer}, cfg, 0, 0)
-
 	select {
 	case got := <-observed:
 		if got != -40 {
@@ -638,41 +495,28 @@ func TestDispatchSilenceStartGivesEachGoroutineItsOwnSnapshotCopy(t *testing.T) 
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for observer channel")
 	}
-
 	<-releaseObserver
 	close(releaseMutator)
 }
 
-// TestLogWriteOrder verifies that silence_start is physically written before silence_end in
-// the JSONL file. Both events are enqueued back-to-back so the log worker receives them
-// together and must write them in FIFO order - the same condition that caused the original
-// out-of-order entries when two goroutines raced on Logger.mu.
 func TestLogWriteOrder(t *testing.T) {
 	t.Parallel()
-
 	logPath := filepath.Join(t.TempDir(), "encoder.jsonl")
 	logger, err := eventlog.NewLogger(logPath)
 	if err != nil {
 		t.Fatalf("create logger: %v", err)
 	}
 	defer logger.Close() //nolint:errcheck // test teardown
-
 	ch := newTestChannel(false)
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
 	t.Cleanup(o.Close)
 	o.SetEventLogger(logger)
-
-	// Fire both events without an intervening barrier. The log jobs are enqueued in call
-	// order; the worker writes them in FIFO order regardless of when it runs.
 	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
 	o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 5000})
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
 	awaitCall(t, ch.silenceEndCalled, "SendSilenceEnd")
-
-	// Wait for all queued log writes to complete before reading the file.
 	o.DrainLogs()
-
 	events, _, err := eventlog.ReadLast(logPath, 10, 0, eventlog.FilterAudio)
 	if err != nil {
 		t.Fatalf("read log: %v", err)
@@ -680,9 +524,6 @@ func TestLogWriteOrder(t *testing.T) {
 	if len(events) != 2 {
 		t.Fatalf("expected 2 events, got %d", len(events))
 	}
-
-	// ReadLast returns newest first (reverse file order).
-	// Correct physical order means silence_end is last in file → first returned.
 	if events[0].Type != eventlog.SilenceEnd {
 		t.Errorf("events[0]: got %s, want %s", events[0].Type, eventlog.SilenceEnd)
 	}
@@ -695,31 +536,22 @@ func TestLogWriteOrder(t *testing.T) {
 	}
 }
 
-// TestDrainLogs verifies that DrainLogs blocks until all pending log jobs have been
-// executed, so callers can rely on entries being flushed to the file after it returns.
 func TestDrainLogs(t *testing.T) {
 	t.Parallel()
-
 	logPath := filepath.Join(t.TempDir(), "encoder.jsonl")
 	logger, err := eventlog.NewLogger(logPath)
 	if err != nil {
 		t.Fatalf("create logger: %v", err)
 	}
 	defer logger.Close() //nolint:errcheck // test teardown
-
 	ch := newTestChannel(false)
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
 	t.Cleanup(o.Close)
 	o.SetEventLogger(logger)
-
 	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
-
-	// DrainLogs must block until all pending log writes complete.
 	o.DrainLogs()
-
-	// The entry must be visible in the file immediately after drain returns.
 	events, _, err := eventlog.ReadLast(logPath, 10, 0, eventlog.FilterAudio)
 	if err != nil {
 		t.Fatalf("read log: %v", err)
@@ -732,9 +564,6 @@ func TestDrainLogs(t *testing.T) {
 	}
 }
 
-// TestEnqueueLogDropsWhenFull verifies that enqueueLog drops entries without panicking
-// when the log queue is at capacity (logQueueDepth), and that entries already queued
-// before the overflow are not lost.
 func TestEnqueueLogDropsWhenFull(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "encoder.jsonl")
 	logger, err := eventlog.NewLogger(logPath)
@@ -742,35 +571,24 @@ func TestEnqueueLogDropsWhenFull(t *testing.T) {
 		t.Fatalf("create logger: %v", err)
 	}
 	defer logger.Close() //nolint:errcheck // test teardown
-
 	handler := &captureHandler{}
 	prev := slog.Default()
 	slog.SetDefault(slog.New(handler))
 	defer slog.SetDefault(prev)
-
 	ch := newTestChannel(false)
 	o := newTestOrchestrator(t, ch)
 	o.SetEventLogger(logger)
-
-	// Block the worker and wait until it has actually started executing the blocking job.
-	// Only then is the queue slot freed and all logQueueDepth buffer positions available.
 	block := make(chan struct{})
 	started := make(chan struct{})
 	o.enqueueLog("test_block", func() { close(started); <-block })
 	<-started // worker is now inside the blocking job; queue is empty
-
-	// Fill all logQueueDepth slots.
 	var wrote atomic.Int32
 	for range logQueueDepth {
 		o.enqueueLog("test_write", func() { wrote.Add(1) })
 	}
-
-	// Queue is at capacity; this entry must be dropped, not panic.
 	o.enqueueLog("test_overflow", func() { wrote.Add(1) })
-
 	close(block)
 	o.DrainLogs()
-
 	if got := wrote.Load(); got != int32(logQueueDepth) {
 		t.Errorf("expected %d writes (one dropped), got %d", logQueueDepth, got)
 	}
@@ -779,33 +597,26 @@ func TestEnqueueLogDropsWhenFull(t *testing.T) {
 	}
 }
 
-// TestLogWriteOrderWithDump verifies that a complete silence cycle writes all three
-// JSONL events - silence_start, silence_end, audio_dump_ready - in that physical order.
 func TestLogWriteOrderWithDump(t *testing.T) {
 	t.Parallel()
-
 	logPath := filepath.Join(t.TempDir(), "encoder.jsonl")
 	logger, err := eventlog.NewLogger(logPath)
 	if err != nil {
 		t.Fatalf("create logger: %v", err)
 	}
-	defer logger.Close() //nolint:errcheck // test teardown
-
+	defer logger.Close()       //nolint:errcheck // test teardown
 	ch := newTestChannel(true) // subscribes to audio dump
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
 	t.Cleanup(o.Close)
 	o.SetEventLogger(logger)
-
 	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
 	o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 5000})
 	o.OnDumpReady(nil)
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
 	awaitCall(t, ch.silenceEndCalled, "SendSilenceEnd")
 	awaitCall(t, ch.audioDumpCalled, "SendAudioDump")
-
 	o.DrainLogs()
-
 	events, _, err := eventlog.ReadLast(logPath, 10, 0, eventlog.FilterAudio)
 	if err != nil {
 		t.Fatalf("read log: %v", err)
@@ -813,8 +624,6 @@ func TestLogWriteOrderWithDump(t *testing.T) {
 	if len(events) != 3 {
 		t.Fatalf("expected 3 events, got %d", len(events))
 	}
-
-	// ReadLast returns newest first; correct physical order is start → end → dump.
 	if events[0].Type != eventlog.AudioDumpReady {
 		t.Errorf("events[0]: got %s, want %s", events[0].Type, eventlog.AudioDumpReady)
 	}
@@ -824,7 +633,6 @@ func TestLogWriteOrderWithDump(t *testing.T) {
 	if events[2].Type != eventlog.SilenceStart {
 		t.Errorf("events[2]: got %s, want %s", events[2].Type, eventlog.SilenceStart)
 	}
-	// Timestamps must be non-decreasing (start ≤ end ≤ dump).
 	if events[2].Timestamp.After(events[1].Timestamp) {
 		t.Errorf("silence_start (%v) after silence_end (%v)", events[2].Timestamp, events[1].Timestamp)
 	}

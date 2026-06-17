@@ -8,22 +8,18 @@ import (
 
 func TestStartProcessWithStdoutCapturesOutput(t *testing.T) {
 	t.Parallel()
-
 	catPath, err := exec.LookPath("cat")
 	if err != nil {
 		t.Skip("cat not available")
 	}
-
 	result, err := StartProcessWithStdout(catPath, nil)
 	if err != nil {
 		t.Fatalf("StartProcessWithStdout() error = %v", err)
 	}
-
 	if _, err := result.WriteStdin([]byte("encoded bytes")); err != nil {
 		t.Fatalf("WriteStdin() error = %v", err)
 	}
 	result.CloseStdin()
-
 	stdout := result.Stdout()
 	if stdout == nil {
 		t.Fatal("Stdout() = nil, want reader")

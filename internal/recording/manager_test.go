@@ -1,12 +1,11 @@
 package recording
 
 import (
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
 func TestSetMaxDurationMinutesPropagatesToExistingRecorders(t *testing.T) {
@@ -14,7 +13,6 @@ func TestSetMaxDurationMinutesPropagatesToExistingRecorders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	cfg := &types.Recorder{
 		ID:            "r1",
 		Name:          "Test",
@@ -26,23 +24,16 @@ func TestSetMaxDurationMinutesPropagatesToExistingRecorders(t *testing.T) {
 	if err := m.AddRecorder(cfg); err != nil {
 		t.Fatal(err)
 	}
-
-	// Recorder was constructed with the initial 60-minute limit.
 	if got := m.recorders["r1"].maxDurationMinutes; got != 60 {
 		t.Fatalf("initial maxDurationMinutes: got %d, want 60", got)
 	}
-
 	m.SetMaxDurationMinutes(90)
-
-	// The existing recorder must reflect the new limit without needing a restart.
 	if got := m.recorders["r1"].maxDurationMinutes; got != 90 {
 		t.Errorf("after SetMaxDurationMinutes(90): got %d, want 90", got)
 	}
 }
-
 func TestRecorderCodecMetadata(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
 		name            string
 		codec           types.Codec
@@ -54,11 +45,9 @@ func TestRecorderCodecMetadata(t *testing.T) {
 		{name: "pcm", codec: types.CodecPCM, wantExtension: "ts", wantContentType: "audio/mp2t"},
 		{name: "unknown falls back to mpeg ts", codec: types.Codec("aac"), wantExtension: "ts", wantContentType: "audio/mp2t"},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-
 			recorder := &GenericRecorder{
 				id:     "recorder-test",
 				config: types.Recorder{Codec: tt.codec},
@@ -72,10 +61,8 @@ func TestRecorderCodecMetadata(t *testing.T) {
 		})
 	}
 }
-
 func TestPrepareUploadRequestRejectsParentDirectoryReference(t *testing.T) {
 	t.Parallel()
-
 	cfg := testS3Recorder()
 	recorder, err := NewGenericRecorder(GenericRecorderConfig{
 		Recorder: cfg,
@@ -84,19 +71,15 @@ func TestPrepareUploadRequestRejectsParentDirectoryReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	path := filepath.FromSlash(t.TempDir() + "/../escape.mp3")
 	if _, ok := recorder.prepareUploadRequest(path); ok {
 		t.Fatal("prepareUploadRequest() ok = true, want false")
 	}
 }
-
 func TestPendingUploadsPersistAndReload(t *testing.T) {
 	t.Parallel()
-
 	spoolDir := t.TempDir()
 	cfg := testS3Recorder()
-
 	m, err := NewManager("", spoolDir, 60, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +87,6 @@ func TestPendingUploadsPersistAndReload(t *testing.T) {
 	if err := m.AddRecorder(cfg); err != nil {
 		t.Fatal(err)
 	}
-
 	recorder := m.recorders[cfg.ID]
 	filePath := writeSpoolFile(t, spoolDir, cfg.ID, "one.mp3", "audio")
 	req := uploadRequest{
@@ -114,7 +96,6 @@ func TestPendingUploadsPersistAndReload(t *testing.T) {
 		deleteAfterUpload: true,
 	}
 	recorder.addToRetryQueue(req, "s3 down")
-
 	if got := len(recorder.retryQueue); got != 1 {
 		t.Fatalf("retryQueue len = %d, want 1", got)
 	}
@@ -122,7 +103,6 @@ func TestPendingUploadsPersistAndReload(t *testing.T) {
 	if _, err := os.Stat(metadataPath); err != nil {
 		t.Fatalf("stat metadata: %v", err)
 	}
-
 	reloaded, err := NewManager("", spoolDir, 60, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -130,7 +110,6 @@ func TestPendingUploadsPersistAndReload(t *testing.T) {
 	if err := reloaded.AddRecorder(cfg); err != nil {
 		t.Fatal(err)
 	}
-
 	got := reloaded.recorders[cfg.ID].retryQueue
 	if len(got) != 1 {
 		t.Fatalf("reloaded retryQueue len = %d, want 1", len(got))
@@ -148,14 +127,11 @@ func TestPendingUploadsPersistAndReload(t *testing.T) {
 		t.Fatalf("metadataPath = %q, want %q", got[0].metadataPath, metadataPath)
 	}
 }
-
 func TestReconcilePendingUploadsRecoversS3OnlySpoolFilesWithoutMetadata(t *testing.T) {
 	t.Parallel()
-
 	spoolDir := t.TempDir()
 	cfg := testS3Recorder()
 	filePath := writeSpoolFile(t, spoolDir, cfg.ID, "orphan.mp3", "audio")
-
 	m, err := NewManager("", spoolDir, 60, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -163,7 +139,6 @@ func TestReconcilePendingUploadsRecoversS3OnlySpoolFilesWithoutMetadata(t *testi
 	if err := m.AddRecorder(cfg); err != nil {
 		t.Fatal(err)
 	}
-
 	got := m.recorders[cfg.ID].retryQueue
 	if len(got) != 1 {
 		t.Fatalf("retryQueue len = %d, want 1", len(got))
@@ -178,10 +153,8 @@ func TestReconcilePendingUploadsRecoversS3OnlySpoolFilesWithoutMetadata(t *testi
 		t.Fatalf("stat recovered metadata: %v", err)
 	}
 }
-
 func TestProcessRetryQueueAbandonsExpiredUploadAndRemovesMetadata(t *testing.T) {
 	t.Parallel()
-
 	spoolDir := t.TempDir()
 	cfg := testS3Recorder()
 	recorder, err := NewGenericRecorder(GenericRecorderConfig{
@@ -191,7 +164,6 @@ func TestProcessRetryQueueAbandonsExpiredUploadAndRemovesMetadata(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	filePath := writeSpoolFile(t, spoolDir, cfg.ID, "expired.mp3", "audio")
 	pending := pendingUpload{
 		request: uploadRequest{
@@ -209,9 +181,7 @@ func TestProcessRetryQueueAbandonsExpiredUploadAndRemovesMetadata(t *testing.T) 
 		t.Fatal(err)
 	}
 	recorder.retryQueue = []pendingUpload{pending}
-
 	recorder.processRetryQueue()
-
 	if got := len(recorder.retryQueue); got != 0 {
 		t.Fatalf("retryQueue len = %d, want 0", got)
 	}
@@ -222,10 +192,8 @@ func TestProcessRetryQueueAbandonsExpiredUploadAndRemovesMetadata(t *testing.T) 
 		t.Fatalf("file stat error = %v, want not exist", err)
 	}
 }
-
 func TestProcessRetryQueueKeepsLocalFileForExpiredBothUpload(t *testing.T) {
 	t.Parallel()
-
 	spoolDir := t.TempDir()
 	localDir := t.TempDir()
 	cfg := testS3Recorder()
@@ -238,7 +206,6 @@ func TestProcessRetryQueueKeepsLocalFileForExpiredBothUpload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	filePath := filepath.Join(localDir, "expired-both.mp3")
 	if err := os.WriteFile(filePath, []byte("audio"), 0o600); err != nil {
 		t.Fatalf("write local file: %v", err)
@@ -259,9 +226,7 @@ func TestProcessRetryQueueKeepsLocalFileForExpiredBothUpload(t *testing.T) {
 		t.Fatal(err)
 	}
 	recorder.retryQueue = []pendingUpload{pending}
-
 	recorder.processRetryQueue()
-
 	if got := len(recorder.retryQueue); got != 0 {
 		t.Fatalf("retryQueue len = %d, want 0", got)
 	}
@@ -272,10 +237,8 @@ func TestProcessRetryQueueKeepsLocalFileForExpiredBothUpload(t *testing.T) {
 		t.Fatalf("stat local file: %v", err)
 	}
 }
-
 func TestProcessRetryQueueRemovesMetadataForMissingFile(t *testing.T) {
 	t.Parallel()
-
 	spoolDir := t.TempDir()
 	cfg := testS3Recorder()
 	recorder, err := NewGenericRecorder(GenericRecorderConfig{
@@ -285,7 +248,6 @@ func TestProcessRetryQueueRemovesMetadataForMissingFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	pending := pendingUpload{
 		request: uploadRequest{
 			localPath: filepath.Join(spoolDir, "missing.mp3"),
@@ -300,9 +262,7 @@ func TestProcessRetryQueueRemovesMetadataForMissingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	recorder.retryQueue = []pendingUpload{pending}
-
 	recorder.processRetryQueue()
-
 	if got := len(recorder.retryQueue); got != 0 {
 		t.Fatalf("retryQueue len = %d, want 0", got)
 	}
@@ -310,10 +270,8 @@ func TestProcessRetryQueueRemovesMetadataForMissingFile(t *testing.T) {
 		t.Fatalf("metadata stat error = %v, want not exist", err)
 	}
 }
-
 func TestStopPreservesRetryQueue(t *testing.T) {
 	t.Parallel()
-
 	cfg := testS3Recorder()
 	recorder, err := NewGenericRecorder(GenericRecorderConfig{
 		Recorder: cfg,
@@ -332,16 +290,13 @@ func TestStopPreservesRetryQueue(t *testing.T) {
 			firstAttempt: time.Now(),
 		},
 	}
-
 	if err := recorder.Stop(); err != nil {
 		t.Fatal(err)
 	}
-
 	if got := len(recorder.retryQueue); got != 1 {
 		t.Fatalf("retryQueue len after Stop = %d, want 1", got)
 	}
 }
-
 func testS3Recorder() *types.Recorder {
 	return &types.Recorder{
 		ID:                "r1",
@@ -354,10 +309,8 @@ func testS3Recorder() *types.Recorder {
 		S3SecretAccessKey: "secret",
 	}
 }
-
 func writeSpoolFile(t *testing.T, spoolDir, recorderID, name, data string) string {
 	t.Helper()
-
 	path := filepath.Join(spoolDir, "recorders", recorderID, name)
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatalf("mkdir spool: %v", err)
