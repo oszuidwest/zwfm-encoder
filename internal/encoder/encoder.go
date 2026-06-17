@@ -519,6 +519,10 @@ func (e *Encoder) StartStream(streamID string) error {
 	return e.startStream(streamID, 0)
 }
 
+// startStream starts a stream, optionally bound to a specific source run.
+// A runID of 0 means "no ownership constraint" (manual API calls); a non-zero
+// runID only starts the stream while that source run is still active, so a stale
+// delayed starter cannot revive streams after the source has exited or restarted.
 func (e *Encoder) startStream(streamID string, runID uint64) error {
 	var stopChan chan struct{}
 

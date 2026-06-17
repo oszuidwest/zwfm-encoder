@@ -71,12 +71,7 @@ func TestDelayedStarterDoesNotStartManagersAfterQuickSourceExit(t *testing.T) {
 	})
 	time.Sleep(3 * testStreamRestartDelay)
 
-	if e.recordingManager.IsRunning() {
-		t.Fatal("recording manager was started by a stale delayed source starter")
-	}
-	if e.silenceDumpManager.IsRunning() {
-		t.Fatal("silence dump manager was started by a stale delayed source starter")
-	}
+	assertManagersStopped(t, e, "stale delayed source starter ran after a quick source exit")
 }
 
 func TestStaleStarterDoesNotStartManagersForNewRun(t *testing.T) {
@@ -96,12 +91,7 @@ func TestStaleStarterDoesNotStartManagersForNewRun(t *testing.T) {
 
 	e.startEnabledStreams(1)
 
-	if e.recordingManager.IsRunning() {
-		t.Fatal("stale run-1 starter started recording manager while run 2 was active")
-	}
-	if e.silenceDumpManager.IsRunning() {
-		t.Fatal("stale run-1 starter started silence dump manager while run 2 was active")
-	}
+	assertManagersStopped(t, e, "stale run-1 starter ran while run 2 was active")
 }
 
 func TestDelayedStarterReturnsWhenStopChanClosed(t *testing.T) {
@@ -134,12 +124,7 @@ func TestDelayedStarterReturnsWhenStopChanClosed(t *testing.T) {
 		t.Fatal("delayed starter did not return after stopChan closed")
 	}
 
-	if e.recordingManager.IsRunning() {
-		t.Fatal("closed stopChan delayed starter started recording manager")
-	}
-	if e.silenceDumpManager.IsRunning() {
-		t.Fatal("closed stopChan delayed starter started silence dump manager")
-	}
+	assertManagersStopped(t, e, "closed stopChan delayed starter ran")
 }
 
 func TestStopBeforeStreamDelayCancelsDelayedStarter(t *testing.T) {
@@ -165,12 +150,7 @@ func TestStopBeforeStreamDelayCancelsDelayedStarter(t *testing.T) {
 	}
 	time.Sleep(3 * testStreamRestartDelay)
 
-	if e.recordingManager.IsRunning() {
-		t.Fatal("recording manager was revived after Stop() canceled the delayed starter")
-	}
-	if e.silenceDumpManager.IsRunning() {
-		t.Fatal("silence dump manager was revived after Stop() canceled the delayed starter")
-	}
+	assertManagersStopped(t, e, "managers revived after Stop() canceled the delayed starter")
 }
 
 func TestSourceMaxRetryExhaustionStopsRecordingManager(t *testing.T) {
@@ -203,12 +183,7 @@ func TestSourceMaxRetryExhaustionStopsRecordingManager(t *testing.T) {
 	if got := e.State(); got != types.StateStopped {
 		t.Fatalf("State() = %q, want %q", got, types.StateStopped)
 	}
-	if e.recordingManager.IsRunning() {
-		t.Fatal("recording manager is still running after source retries were exhausted")
-	}
-	if e.silenceDumpManager.IsRunning() {
-		t.Fatal("silence dump manager is still running after source retries were exhausted")
-	}
+	assertManagersStopped(t, e, "source retries were exhausted")
 }
 
 func TestCloseIdempotent(t *testing.T) {
@@ -489,4 +464,15 @@ func waitForCondition(t *testing.T, timeout time.Duration, description string, c
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", description)
+}
+
+func assertManagersStopped(t *testing.T, e *Encoder, reason string) {
+	t.Helper()
+
+	if e.recordingManager.IsRunning() {
+		t.Fatalf("recording manager is running: %s", reason)
+	}
+	if e.silenceDumpManager.IsRunning() {
+		t.Fatalf("silence dump manager is running: %s", reason)
+	}
 }
