@@ -74,10 +74,14 @@ func TestStartStopCycle(t *testing.T) {
 		if err := m.Start(); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
-		_ = m.Start() // idempotent
+		if err := m.Start(); err != nil {
+			t.Fatalf("second Start: %v", err)
+		}
 		if err := m.Stop(); err != nil {
 			t.Fatalf("Stop: %v", err)
 		}
-		_ = m.Stop() // idempotent
+		if err := m.Stop(); err != nil {
+			t.Fatalf("second Stop: %v", err)
+		}
 	}
 }

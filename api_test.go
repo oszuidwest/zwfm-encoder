@@ -511,6 +511,7 @@ func TestHandleTestS3MissingFallbackRecorderReturnsNotFound(t *testing.T) {
 	assertErrorEqual(t, rec, "Recorder not found")
 }
 
+// seededServer applies an update with valid defaults for unrelated required settings.
 func seededServer(t *testing.T, upd *config.SettingsUpdate) *Server {
 	t.Helper()
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
@@ -544,6 +545,7 @@ func seededServer(t *testing.T, upd *config.SettingsUpdate) *Server {
 	return &Server{config: cfg}
 }
 
+// seededGraphSettings returns a saved Graph config that reaches runtime validation.
 func seededGraphSettings() *config.SettingsUpdate {
 	return &config.SettingsUpdate{
 		GraphTenantID:     "tenant-not-a-guid",
@@ -554,6 +556,7 @@ func seededGraphSettings() *config.SettingsUpdate {
 	}
 }
 
+// seededZabbixSettings returns a complete saved Zabbix config for preservation tests.
 func seededZabbixSettings() *config.SettingsUpdate {
 	return &config.SettingsUpdate{
 		ZabbixServer:     "zabbix.example.com",
@@ -576,7 +579,7 @@ type sensitiveFixture struct {
 func seededSensitiveServer(t *testing.T) sensitiveFixture {
 	t.Helper()
 	s := freshServer(t)
-	fixture := sensitiveFixture{ //nolint:gosec // G101: intentional secret-shaped test fixture values verify redaction.
+	fixture := sensitiveFixture{ //nolint:gosec // G101: Intentional secret-shaped test fixture values verify redaction.
 		server:          s,
 		streamPassword:  "srt-secret-269",
 		s3Secret:        "s3-secret-269",
@@ -869,7 +872,7 @@ func streamUpdateBody(t *testing.T, password string, clearPassword bool) string 
 		Bitrate:       128,
 		MaxRetries:    3,
 	}
-	body, err := json.Marshal(req) //nolint:gosec // G117: test marshals the SRT password field.
+	body, err := json.Marshal(req) //nolint:gosec // G117: Test marshals the SRT password field.
 	if err != nil {
 		t.Fatalf("marshal StreamRequest: %v", err)
 	}
@@ -900,12 +903,12 @@ func TestHandleUpdateStreamPasswordKeepReplaceClear(t *testing.T) {
 		wantSecret  string
 		wantHasFlag string
 	}{
-		{ //nolint:gosec // G101: test fixture, not a real credential.
+		{ //nolint:gosec // G101: Test fixture, not a real credential.
 			name:        "keep when empty",
 			wantSecret:  "srt-secret-269",
 			wantHasFlag: `"has_password":true`,
 		},
-		{ //nolint:gosec // G101: test fixture, not a real credential.
+		{ //nolint:gosec // G101: Test fixture, not a real credential.
 			name:        "replace when set",
 			password:    "new-srt-secret",
 			wantSecret:  "new-srt-secret",
@@ -1058,6 +1061,7 @@ func TestNotificationTestEndpointSavedFallbacks(t *testing.T) {
 	}
 }
 
+// validBaselineSettings builds an update that preserves all currently valid settings.
 func validBaselineSettings(cfg *config.Config) *config.SettingsUpdate {
 	snap := cfg.Snapshot()
 	return &config.SettingsUpdate{
@@ -1089,6 +1093,7 @@ func validBaselineSettings(cfg *config.Config) *config.SettingsUpdate {
 	}
 }
 
+// applyWithPreserve mirrors the settings API hidden-value preservation flow.
 func applyWithPreserve(t *testing.T, cfg *config.Config, upd *config.SettingsUpdate) (config.Snapshot, error) {
 	t.Helper()
 	snap := cfg.Snapshot()

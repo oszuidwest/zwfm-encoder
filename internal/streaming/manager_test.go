@@ -209,7 +209,7 @@ func TestClassifyStreamExit(t *testing.T) {
 
 func TestStartReportsNotStartedOnValidationError(t *testing.T) {
 	m := NewManager("ffmpeg")
-	invalid := &types.Stream{ID: "s1"} // missing host, codec, and port
+	invalid := &types.Stream{ID: "s1"} // Missing host, codec, and port.
 	started, err := m.Start(invalid)
 	if err == nil {
 		t.Fatal("Start accepted an invalid stream")

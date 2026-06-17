@@ -28,15 +28,15 @@ func TestStartStopConcurrent(t *testing.T) {
 
 func TestStopBeforeStartIsNoop(t *testing.T) {
 	m := NewManager("", 0, false, 0, nil)
-	m.Stop() // must not panic on the nil stop channel
+	m.Stop() // Must not panic on the nil stop channel.
 }
 
 func TestStartStopCycle(t *testing.T) {
 	m := NewManager("", 0, false, 0, nil)
 	for range 5 {
 		m.Start()
-		m.Start() // idempotent
+		m.Start() // Confirms Start is idempotent.
 		m.Stop()
-		m.Stop() // idempotent
+		m.Stop() // Confirms Stop is idempotent.
 	}
 }

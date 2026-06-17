@@ -40,7 +40,7 @@ func TestSilenceDetectorRecoversAfterRecovery(t *testing.T) {
 	cfg := testSilenceConfig()
 	base := time.Now()
 	d.Update(-50, -55, cfg, base)
-	d.Update(-50, -55, cfg, base.Add(15000*time.Millisecond)) // confirmed
+	d.Update(-50, -55, cfg, base.Add(15000*time.Millisecond)) // Enters confirmed silence.
 	if e := d.Update(-10, -12, cfg, base.Add(16000*time.Millisecond)); e.JustRecovered || !e.InSilence {
 		t.Fatalf("recovered too early: %+v", e)
 	}
@@ -58,7 +58,7 @@ func TestSilenceDetectorResetClearsState(t *testing.T) {
 	cfg := testSilenceConfig()
 	base := time.Now()
 	d.Update(-50, -55, cfg, base)
-	d.Update(-50, -55, cfg, base.Add(15000*time.Millisecond)) // confirmed
+	d.Update(-50, -55, cfg, base.Add(15000*time.Millisecond)) // Enters confirmed silence.
 	d.Reset()
 	if e := d.Update(-50, -55, cfg, base.Add(16000*time.Millisecond)); e.InSilence || e.JustEntered {
 		t.Fatalf("state leaked after Reset: %+v", e)

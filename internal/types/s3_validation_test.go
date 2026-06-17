@@ -86,7 +86,7 @@ func TestRecorderValidateS3Conditional(t *testing.T) {
 				Codec:         CodecPCM,
 				RecordingMode: RecordingHourly,
 				StorageMode:   tt.mode,
-				LocalPath:     "/tmp/rec", // satisfy local/both mode
+				LocalPath:     "/tmp/rec", // Satisfies local/both mode.
 			}
 			err := r.Validate()
 			gotErr := ""

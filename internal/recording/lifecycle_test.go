@@ -27,7 +27,7 @@ func TestManagerStopStopsRotatingRecorder(t *testing.T) {
 	}
 	rec := m.recorders["r1"]
 	rec.mu.Lock()
-	rec.state = types.ProcessRotating // rotateFile's transient state.
+	rec.state = types.ProcessRotating // Covers rotateFile's transient state.
 	rec.mu.Unlock()
 	if err := m.Stop(); err != nil {
 		t.Fatalf("Stop: %v", err)

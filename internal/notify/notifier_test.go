@@ -16,6 +16,7 @@ import (
 	"time"
 )
 
+// noopAlertChannel provides inert AlertChannel defaults for focused test doubles.
 type noopAlertChannel struct{}
 
 func (noopAlertChannel) Name() string                                   { return "noop" }
@@ -39,6 +40,7 @@ func (noopAlertChannel) SendUploadAbandoned(_ context.Context, _ *config.Snapsho
 	return nil
 }
 
+// silenceStartChannel opts a test double into silence-start dispatch.
 type silenceStartChannel struct{ noopAlertChannel }
 
 func (silenceStartChannel) IsConfiguredForSilence(_ *config.Snapshot) bool { return true }
@@ -102,6 +104,7 @@ func (c *contextCapturingChannel) releaseSend() {
 	c.releaseOnce.Do(func() { close(c.release) })
 }
 
+// captureHandler records warning attributes emitted by the async log queue.
 type captureHandler struct {
 	mu    sync.Mutex
 	attrs []slog.Attr
@@ -138,14 +141,16 @@ func (h *captureHandler) attrValue(key string) (string, bool) {
 	return "", false
 }
 
+// testChannel records alert dispatches through buffered channels.
 type testChannel struct {
 	noopAlertChannel
-	name               string
-	configuredSilence  bool
-	subscribesStart    bool
-	subscribesEnd      bool
-	subscribesDump     bool
-	isConfiguredCalls  int // counts IsConfiguredForSilence calls, guarded by the test being single-threaded up to dispatch
+	name              string
+	configuredSilence bool
+	subscribesStart   bool
+	subscribesEnd     bool
+	subscribesDump    bool
+	// isConfiguredCalls is mutated before dispatch and read after queued sends complete.
+	isConfiguredCalls  int
 	silenceStartCalled chan *config.Snapshot
 	silenceEndCalled   chan *config.Snapshot
 	audioDumpCalled    chan *config.Snapshot
@@ -226,7 +231,7 @@ func awaitSignal(t *testing.T, ch <-chan struct{}, label string) {
 
 func newTestOrchestrator(t *testing.T, ch AlertChannel) *AlertOrchestrator {
 	t.Helper()
-	cfg := config.New("") // in-memory defaults, no file I/O
+	cfg := config.New("") // Uses in-memory defaults without file I/O.
 	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
 	t.Cleanup(o.Close)
 	return o
@@ -237,7 +242,7 @@ func TestCloseIdempotent(t *testing.T) {
 	ch := newTestChannel(false)
 	o := newTestOrchestrator(t, ch)
 	o.Close()
-	o.Close() // must not panic (t.Cleanup will call it a third time)
+	o.Close() // Must not panic; t.Cleanup calls it a third time.
 }
 func TestDrainLogsAfterCloseIsNoOp(t *testing.T) {
 	t.Parallel()
@@ -261,7 +266,7 @@ func TestEnqueueLogAfterCloseIsNoOp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create logger: %v", err)
 	}
-	defer logger.Close() //nolint:errcheck // test teardown
+	defer logger.Close() //nolint:errcheck // Test teardown.
 	o := newTestOrchestrator(t, newTestChannel(false))
 	o.SetEventLogger(logger)
 	o.Close()
@@ -421,7 +426,7 @@ func TestHandleChannelImbalanceEventLogsWithoutMutatingSilenceState(t *testing.T
 	if err != nil {
 		t.Fatalf("create logger: %v", err)
 	}
-	defer logger.Close() //nolint:errcheck // test teardown
+	defer logger.Close() //nolint:errcheck // Test teardown.
 	ch := newTestChannel(false)
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
@@ -506,7 +511,7 @@ func TestLogWriteOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create logger: %v", err)
 	}
-	defer logger.Close() //nolint:errcheck // test teardown
+	defer logger.Close() //nolint:errcheck // Test teardown.
 	ch := newTestChannel(false)
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
@@ -543,7 +548,7 @@ func TestDrainLogs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create logger: %v", err)
 	}
-	defer logger.Close() //nolint:errcheck // test teardown
+	defer logger.Close() //nolint:errcheck // Test teardown.
 	ch := newTestChannel(false)
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
@@ -570,7 +575,7 @@ func TestEnqueueLogDropsWhenFull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create logger: %v", err)
 	}
-	defer logger.Close() //nolint:errcheck // test teardown
+	defer logger.Close() //nolint:errcheck // Test teardown.
 	handler := &captureHandler{}
 	prev := slog.Default()
 	slog.SetDefault(slog.New(handler))
@@ -581,7 +586,7 @@ func TestEnqueueLogDropsWhenFull(t *testing.T) {
 	block := make(chan struct{})
 	started := make(chan struct{})
 	o.enqueueLog("test_block", func() { close(started); <-block })
-	<-started // worker is now inside the blocking job; queue is empty
+	<-started // Worker is now inside the blocking job; the queue is empty.
 	var wrote atomic.Int32
 	for range logQueueDepth {
 		o.enqueueLog("test_write", func() { wrote.Add(1) })
@@ -604,8 +609,8 @@ func TestLogWriteOrderWithDump(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create logger: %v", err)
 	}
-	defer logger.Close()       //nolint:errcheck // test teardown
-	ch := newTestChannel(true) // subscribes to audio dump
+	defer logger.Close()       //nolint:errcheck // Test teardown.
+	ch := newTestChannel(true) // Subscribes to audio dumps.
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
 	t.Cleanup(o.Close)

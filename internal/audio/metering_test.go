@@ -10,7 +10,7 @@ func makeStereoPCM(frames int) []byte {
 	var b byte = 1
 	for i := range buf {
 		buf[i] = b
-		b += 7 // wraps mod 256; period 256 since gcd(7,256)==1
+		b += 7 // Wraps mod 256; period is 256 because gcd(7, 256) == 1.
 	}
 	return buf
 }
@@ -98,7 +98,7 @@ func TestProcessSamplesSplitFrameClipCounting(t *testing.T) {
 }
 
 func TestProcessSamplesCarriesTrailingPartialFrame(t *testing.T) {
-	buf := makeStereoPCM(6)[:22] // 5 full frames (20 bytes) + 2 trailing bytes
+	buf := makeStereoPCM(6)[:22] // Keeps 5 full frames and 2 trailing bytes.
 	var d LevelData
 	ProcessSamples(buf, &d)
 	if d.SampleCount != 5 {
@@ -110,9 +110,9 @@ func TestProcessSamplesCarriesTrailingPartialFrame(t *testing.T) {
 }
 
 func TestResetPreservesRemainder(t *testing.T) {
-	pcm := makeStereoPCM(3) // 12 bytes = 3 frames
+	pcm := makeStereoPCM(3) // Holds 12 bytes, or 3 frames.
 	var d LevelData
-	ProcessSamples(pcm[:10], &d) // 2 full frames + 2 trailing bytes
+	ProcessSamples(pcm[:10], &d) // Leaves 2 full frames plus 2 carried bytes.
 	if d.SampleCount != 2 {
 		t.Fatalf("expected 2 accumulated frames, got %d", d.SampleCount)
 	}
@@ -126,7 +126,7 @@ func TestResetPreservesRemainder(t *testing.T) {
 	if d.remainderLen != 2 {
 		t.Fatalf("Reset must preserve the partial-frame remainder, got %d", d.remainderLen)
 	}
-	ProcessSamples(pcm[10:], &d) // final 2 bytes complete the third frame
+	ProcessSamples(pcm[10:], &d) // Completes the third frame with the carried bytes.
 	if d.SampleCount != 1 {
 		t.Fatalf("expected the carried frame to complete, got %d", d.SampleCount)
 	}
@@ -134,7 +134,7 @@ func TestResetPreservesRemainder(t *testing.T) {
 		t.Fatalf("expected no leftover after completing the frame, got %d", d.remainderLen)
 	}
 	var ref LevelData
-	ProcessSamples(pcm[8:12], &ref) // frame 2 decoded in one aligned read
+	ProcessSamples(pcm[8:12], &ref) // Decodes frame 2 in one aligned read.
 	if got, want := CalculateLevels(&d), CalculateLevels(&ref); got != want {
 		t.Errorf("carried frame decoded incorrectly:\n got  %+v\n want %+v", got, want)
 	}
@@ -143,7 +143,7 @@ func TestResetPreservesRemainder(t *testing.T) {
 func TestProcessSamplesEmptyBufferKeepsRemainder(t *testing.T) {
 	pcm := makeStereoPCM(1)
 	var d LevelData
-	ProcessSamples(pcm[:2], &d) // 2 bytes carried, no frame yet
+	ProcessSamples(pcm[:2], &d) // Carries 2 bytes without a complete frame.
 	if d.SampleCount != 0 || d.remainderLen != 2 {
 		t.Fatalf("setup failed: SampleCount=%d remainderLen=%d", d.SampleCount, d.remainderLen)
 	}
@@ -151,7 +151,7 @@ func TestProcessSamplesEmptyBufferKeepsRemainder(t *testing.T) {
 	if d.SampleCount != 0 || d.remainderLen != 2 {
 		t.Fatalf("empty read disturbed state: SampleCount=%d remainderLen=%d", d.SampleCount, d.remainderLen)
 	}
-	ProcessSamples(pcm[2:], &d) // completes the frame
+	ProcessSamples(pcm[2:], &d) // Completes the frame.
 	if d.SampleCount != 1 || d.remainderLen != 0 {
 		t.Fatalf("frame did not complete: SampleCount=%d remainderLen=%d", d.SampleCount, d.remainderLen)
 	}

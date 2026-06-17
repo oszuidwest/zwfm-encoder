@@ -42,7 +42,7 @@ func TestImbalanceDetectorRecoversAfterRecovery(t *testing.T) {
 	cfg := testImbalanceConfig()
 	base := time.Now()
 	d.Update(-10, -30, cfg, base)
-	d.Update(-10, -30, cfg, base.Add(15000*time.Millisecond)) // confirmed
+	d.Update(-10, -30, cfg, base.Add(15000*time.Millisecond)) // Enters confirmed imbalance.
 	if e := d.Update(-10, -11, cfg, base.Add(16000*time.Millisecond)); e.JustRecovered || !e.InImbalance {
 		t.Fatalf("recovered too early: %+v", e)
 	}
@@ -133,7 +133,7 @@ func TestImbalanceDetectorResetClearsState(t *testing.T) {
 	cfg := testImbalanceConfig()
 	base := time.Now()
 	d.Update(-10, -30, cfg, base)
-	d.Update(-10, -30, cfg, base.Add(15000*time.Millisecond)) // confirmed
+	d.Update(-10, -30, cfg, base.Add(15000*time.Millisecond)) // Enters confirmed imbalance.
 	d.Reset()
 	if e := d.Update(-10, -30, cfg, base.Add(16000*time.Millisecond)); e.InImbalance || e.JustEntered {
 		t.Fatalf("state leaked after Reset: %+v", e)

@@ -35,8 +35,8 @@ func TestDebouncerNoEntryWhenConditionDropsBeforeDuration(t *testing.T) {
 	t.Parallel()
 	var d debouncer
 	base := time.Now()
-	d.update(true, 1000, 500, base)                            // start accumulating
-	d.update(false, 1000, 500, base.Add(500*time.Millisecond)) // drops before DurationMs
+	d.update(true, 1000, 500, base)                            // Starts accumulation.
+	d.update(false, 1000, 500, base.Add(500*time.Millisecond)) // Drops before DurationMs.
 	if r := d.update(true, 1000, 500, base.Add(900*time.Millisecond)); r.justEntered || r.active {
 		t.Fatalf("entered using a stale start time: %+v", r)
 	}
@@ -69,7 +69,7 @@ func TestDebouncerResetClearsState(t *testing.T) {
 	var d debouncer
 	base := time.Now()
 	d.update(true, 1000, 500, base)
-	d.update(true, 1000, 500, base.Add(1000*time.Millisecond)) // confirmed
+	d.update(true, 1000, 500, base.Add(1000*time.Millisecond)) // Enters active state.
 	d.reset()
 	if r := d.update(true, 1000, 500, base.Add(1100*time.Millisecond)); r.active || r.justEntered {
 		t.Fatalf("state leaked after reset: %+v", r)

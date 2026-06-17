@@ -132,20 +132,20 @@ func TestOnSilenceRecoverClampsEndPos(t *testing.T) {
 			silenceStartPos: 1 * sec,
 			totalWritten:    10 * sec,
 			recovery:        2 * time.Second,
-			wantEndPos:      8 * sec, // 10s - 2s
+			wantEndPos:      8 * sec, // 10s minus 2s.
 		},
 		{
 			name:            "recovery exceeds bytes written clamps to start",
 			silenceStartPos: 1 * sec,
 			totalWritten:    2 * sec,
-			recovery:        100 * time.Second, // would yield a negative position
+			recovery:        100 * time.Second, // Would yield a negative position.
 			wantEndPos:      1 * sec,
 		},
 		{
 			name:            "recovery reaching past start clamps to start",
 			silenceStartPos: 5 * sec,
 			totalWritten:    6 * sec,
-			recovery:        3 * time.Second, // 6s - 3s = 3s < startPos
+			recovery:        3 * time.Second, // 6s minus 3s is before startPos.
 			wantEndPos:      5 * sec,
 		},
 	}
@@ -171,8 +171,8 @@ func TestOnSilenceRecoverClampsEndPos(t *testing.T) {
 
 func TestCheckAndFinalizeRecoversAtZeroStart(t *testing.T) {
 	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
-	c.OnSilenceStart()                     // totalWritten==0 -> silenceStartPos==0
-	c.OnSilenceRecover(0, 100*time.Second) // wall-clock outruns bytes -> silenceEndPos clamps to 0
+	c.OnSilenceStart()                     // Keeps silenceStartPos at 0.
+	c.OnSilenceRecover(0, 100*time.Second) // Clamps wall-clock recovery to bytes written.
 	if !c.recovered {
 		t.Fatal("recovered not set after OnSilenceRecover")
 	}
@@ -186,7 +186,7 @@ func TestCheckAndFinalizeRecoversAtZeroStart(t *testing.T) {
 }
 func BenchmarkCopyFromRing(b *testing.B) {
 	c := newPatternedCapturer()
-	dst := make([]byte, afterSeconds*audio.BytesPerSecond) // 15s, a real extract size
+	dst := make([]byte, afterSeconds*audio.BytesPerSecond) // Allocates a realistic 15s extract.
 	b.SetBytes(int64(len(dst)))
 	for i := 0; b.Loop(); i++ {
 		c.copyFromRing(dst, int64(i)*999983+7)
@@ -194,7 +194,7 @@ func BenchmarkCopyFromRing(b *testing.B) {
 }
 func BenchmarkWriteToRing(b *testing.B) {
 	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
-	src := make([]byte, audio.BytesPerSecond/10) // ~100ms distributor chunk
+	src := make([]byte, audio.BytesPerSecond/10) // Matches a 100ms distributor chunk.
 	b.SetBytes(int64(len(src)))
 	for b.Loop() {
 		c.writePos = c.writeToRing(src)

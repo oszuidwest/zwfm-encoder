@@ -62,12 +62,14 @@ func hasValidationError(errs []string, want string) bool {
 	return false
 }
 
+// invalidLoadCase describes one invalid config load fixture.
 type invalidLoadCase struct {
 	name    string
 	data    string
 	wantErr string
 }
 
+// badConfig builds an invalid load fixture with its expected validation substring.
 func badConfig(name, data, wantErr string) invalidLoadCase {
 	return invalidLoadCase{name: name, data: data, wantErr: wantErr}
 }
@@ -724,7 +726,7 @@ func TestSaveLockedWritePath(t *testing.T) {
 	t.Run("config is valid JSON after save", func(t *testing.T) {
 		t.Parallel()
 		_, configPath := newLoadedConfig(t)
-		data, err := os.ReadFile(configPath) //nolint:gosec // G304: test reads a controlled temp path
+		data, err := os.ReadFile(configPath) //nolint:gosec // G304: Test reads a controlled temp path.
 		if err != nil {
 			t.Fatalf("ReadFile() error = %v", err)
 		}

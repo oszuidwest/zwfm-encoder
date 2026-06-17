@@ -7,6 +7,7 @@ import (
 	"testing"
 )
 
+// unmarshalCase describes one JSON enum decode case.
 type unmarshalCase[T comparable] struct {
 	name    string
 	input   string
@@ -14,6 +15,7 @@ type unmarshalCase[T comparable] struct {
 	wantErr string
 }
 
+// runUnmarshalCases checks valid and invalid JSON enum decodes.
 func runUnmarshalCases[T comparable](t *testing.T, tests []unmarshalCase[T]) {
 	t.Helper()
 	for _, tt := range tests {
@@ -36,12 +38,14 @@ func runUnmarshalCases[T comparable](t *testing.T, tests []unmarshalCase[T]) {
 	}
 }
 
+// streamValidateCase describes one stream validation fixture.
 type streamValidateCase struct {
 	name    string
 	stream  *Stream
 	wantErr string
 }
 
+// streamCase builds a stream validation fixture with an optional expected error.
 func streamCase(name string, stream *Stream, wantErr ...string) streamValidateCase {
 	tc := streamValidateCase{name: name, stream: stream}
 	if len(wantErr) > 0 {
