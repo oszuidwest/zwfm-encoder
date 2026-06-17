@@ -52,8 +52,8 @@
          role="alert"
          aria-live="assertive"
          x-show="banner.visible"
-         x-transition:enter.duration.200ms
-         x-transition:leave.duration.150ms
+         x-transition:enter="banner-enter"
+         x-transition:leave="banner-leave"
          :data-variant="banner.type"
          x-cloak>
         <span class="message" x-text="banner.message"></span>
@@ -65,8 +65,8 @@
          role="alert"
          aria-live="assertive"
          x-show="!ffmpegAvailable"
-         x-transition:enter.duration.200ms
-         x-transition:leave.duration.150ms
+         x-transition:enter="banner-enter"
+         x-transition:leave="banner-leave"
          x-cloak>
         <span class="message">FFmpeg not found. Install FFmpeg and restart the application.</span>
     </div>
@@ -77,8 +77,8 @@
          role="alert"
          aria-live="assertive"
          x-show="ffmpegAvailable && !recordingAvailable"
-         x-transition:enter.duration.200ms
-         x-transition:leave.duration.150ms
+         x-transition:enter="banner-enter"
+         x-transition:leave="banner-leave"
          x-cloak>
         <span class="message">Recording unavailable. Check logs for initialization errors.</span>
     </div>
@@ -108,7 +108,7 @@
              - VU meter with real-time levels
              - Source status alerts
              - Stream list with individual status indicators -->
-        <div id="dashboard-view" x-show="view === 'dashboard'" x-transition:enter.duration.200ms x-cloak>
+        <div id="dashboard-view" x-show="view === 'dashboard'" x-cloak>
             <header class="app-header">
                 <div class="brand">
                     <span class="logo" x-html="icons.appLogo"></span>
@@ -334,7 +334,7 @@
              - Cancel restores original values, Save persists all changes
              - Test buttons disabled when unsaved changes exist
              - Settings not overwritten by status updates while editing -->
-        <div id="settings-view" class="settings" x-show="view === 'settings'" x-transition:enter.duration.200ms x-cloak>
+        <div id="settings-view" class="settings" x-show="view === 'settings'" x-cloak>
             <header class="nav">
                 <button class="nav-btn" type="button" tabindex="0" @click="cancelSettings()" :disabled="saving">Cancel</button>
                 <h2>Settings</h2>
@@ -369,7 +369,7 @@
                                   x-text="audioCardStatus('silence').pill?.label"></span>
                             <span class="channel-chevron icon-container" x-html="icons.chevronDown" aria-hidden="true"></span>
                         </button>
-                        <div class="channel-body" id="card-silence" x-show="cardsOpen.silence" x-cloak x-transition:enter.duration.200ms x-transition:leave.duration.150ms>
+                        <div class="channel-body" id="card-silence" x-show="cardsOpen.silence" x-cloak x-transition:enter="channel-body-enter" x-transition:leave="channel-body-leave">
                         <p class="section-desc">Alert when audio drops below threshold for extended periods.</p>
                         <div class="form">
                             <div class="group">
@@ -414,7 +414,7 @@
                                   x-text="audioCardStatus('imbalance').pill?.label"></span>
                             <span class="channel-chevron icon-container" x-html="icons.chevronDown" aria-hidden="true"></span>
                         </button>
-                        <div class="channel-body" id="card-imbalance" x-show="cardsOpen.imbalance" x-cloak x-transition:enter.duration.200ms x-transition:leave.duration.150ms>
+                        <div class="channel-body" id="card-imbalance" x-show="cardsOpen.imbalance" x-cloak x-transition:enter="channel-body-enter" x-transition:leave="channel-body-leave">
                         <p class="section-desc">Alert when the left and right channels differ by too much for too long (e.g. a dead channel). Only evaluated while audio is above the silence threshold.</p>
                         <div class="form">
                             <div class="group">
@@ -459,7 +459,7 @@
                                   x-text="audioCardStatus('metering').pill?.label"></span>
                             <span class="channel-chevron icon-container" x-html="icons.chevronDown" aria-hidden="true"></span>
                         </button>
-                        <div class="channel-body" id="card-metering" x-show="cardsOpen.metering" x-cloak x-transition:enter.duration.200ms x-transition:leave.duration.150ms>
+                        <div class="channel-body" id="card-metering" x-show="cardsOpen.metering" x-cloak x-transition:enter="channel-body-enter" x-transition:leave="channel-body-leave">
                         <p class="section-desc">Controls the VU meter display in the main view.</p>
                         <div class="form">
                             <div class="group">
@@ -489,7 +489,7 @@
                                   x-text="audioCardStatus('dumps').pill?.label"></span>
                             <span class="channel-chevron icon-container" x-html="icons.chevronDown" aria-hidden="true"></span>
                         </button>
-                        <div class="channel-body" id="card-dumps" x-show="cardsOpen.dumps" x-cloak x-transition:enter.duration.200ms x-transition:leave.duration.150ms>
+                        <div class="channel-body" id="card-dumps" x-show="cardsOpen.dumps" x-cloak x-transition:enter="channel-body-enter" x-transition:leave="channel-body-leave">
                         <p class="section-desc">Capture MP3 snippets around silence events. These are attached to email notifications and included in webhooks.</p>
                         <div class="form">
                             <div class="group">
@@ -523,7 +523,7 @@
                                   x-text="audioCardStatus('recording').pill?.label"></span>
                             <span class="channel-chevron icon-container" x-html="icons.chevronDown" aria-hidden="true"></span>
                         </button>
-                        <div class="channel-body" id="card-recording" x-show="cardsOpen.recording" x-cloak x-transition:enter.duration.200ms x-transition:leave.duration.150ms>
+                        <div class="channel-body" id="card-recording" x-show="cardsOpen.recording" x-cloak x-transition:enter="channel-body-enter" x-transition:leave="channel-body-leave">
                         <p class="section-desc">Authentication key for external recording control (POST /api/recordings/start, /api/recordings/stop).</p>
                         <div class="form">
                             <div class="group">
@@ -577,7 +577,7 @@
                                   x-text="notifChannelStatus('webhook').pill?.label"></span>
                             <span class="channel-chevron icon-container" x-html="icons.chevronDown" aria-hidden="true"></span>
                         </button>
-                        <div class="channel-body" id="channel-webhook" x-show="cardsOpen.webhook" x-cloak x-transition:enter.duration.200ms x-transition:leave.duration.150ms>
+                        <div class="channel-body" id="channel-webhook" x-show="cardsOpen.webhook" x-cloak x-transition:enter="channel-body-enter" x-transition:leave="channel-body-leave">
                         <p class="section-desc">POST request sent for silence events.</p>
                         <div class="form">
                             <div class="group">
@@ -617,7 +617,7 @@
                                   x-text="notifChannelStatus('email').pill?.label"></span>
                             <span class="channel-chevron icon-container" x-html="icons.chevronDown" aria-hidden="true"></span>
                         </button>
-                        <div class="channel-body" id="channel-email" x-show="cardsOpen.email" x-cloak x-transition:enter.duration.200ms x-transition:leave.duration.150ms>
+                        <div class="channel-body" id="channel-email" x-show="cardsOpen.email" x-cloak x-transition:enter="channel-body-enter" x-transition:leave="channel-body-leave">
                         <p class="section-desc">Email notifications via Microsoft Graph API for silence events.</p>
                         <template x-if="graphSecretExpiry.expires_soon">
                             <div class="warning-banner">
@@ -683,7 +683,7 @@
                                   x-text="notifChannelStatus('zabbix').pill?.label"></span>
                             <span class="channel-chevron icon-container" x-html="icons.chevronDown" aria-hidden="true"></span>
                         </button>
-                        <div class="channel-body" id="channel-zabbix" x-show="cardsOpen.zabbix" x-cloak x-transition:enter.duration.200ms x-transition:leave.duration.150ms>
+                        <div class="channel-body" id="channel-zabbix" x-show="cardsOpen.zabbix" x-cloak x-transition:enter="channel-body-enter" x-transition:leave="channel-body-leave">
                         <p class="section-desc">Zabbix trapper items for silence and upload alerts.</p>
                         <div class="form">
                             <div class="group">
@@ -849,7 +849,7 @@
         <!-- === Stream Form View ===
              Unified form for creating and editing streams.
              Mode detection: isEditMode checks if streamForm.id is set -->
-        <div id="stream-form-view" class="settings" x-show="view === 'stream-form'" x-transition:enter.duration.200ms x-cloak>
+        <div id="stream-form-view" class="settings" x-show="view === 'stream-form'" x-cloak>
             <header class="nav">
                 <button class="nav-btn" type="button" tabindex="0" @click="showDashboard()">Cancel</button>
                 <h2 x-text="isEditMode ? 'Edit Stream' : 'New Stream'">Stream</h2>
@@ -1022,7 +1022,7 @@
         <!-- === Recorder Form View ===
              Unified form for creating and editing recorders.
              Mode detection: isRecorderEditMode checks if recorderForm.id is set -->
-        <div id="recorder-form-view" class="settings" x-show="view === 'recorder-form'" x-transition:enter.duration.200ms x-cloak>
+        <div id="recorder-form-view" class="settings" x-show="view === 'recorder-form'" x-cloak>
             <header class="nav">
                 <button class="nav-btn" type="button" tabindex="0" @click="showDashboard()">Cancel</button>
                 <h2 x-text="isRecorderEditMode ? 'Edit Recorder' : 'New Recorder'">Recorder</h2>

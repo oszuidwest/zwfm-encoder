@@ -1,57 +1,54 @@
 /**
- * ZuidWest FM Encoder - Alpine.js Web Application
- *
- * Real-time audio monitoring, encoder control, and multi-stream
- * management via WebSocket and REST API connection to Go backend.
- *
- * Architecture:
- *   - Single Alpine.js component (encoderApp) manages all UI state
- *   - REST API at /api/* for configuration (settings, streams, recorders)
- *   - WebSocket at /ws for real-time data (audio levels, status)
- *   - Views: dashboard, settings, stream-form, recorder-form
- *
- * REST API (configuration):
- *   - GET  /api/config: Full configuration snapshot
- *   - POST /api/settings: Update all settings atomically
- *   - POST/GET/PUT/DELETE /api/streams/*: Stream CRUD
- *   - POST/GET/PUT/DELETE /api/recorders/*: Recorder CRUD
- *   - POST /api/notifications/test/*: Test notifications
- *   - GET  /api/notifications/log: View silence log
- *
- * WebSocket (real-time):
- *   - levels: Audio RMS/peak levels for VU meters (10fps)
- *   - status: Encoder state, stream/recorder statuses (3s)
- *   - config_changed: Signal to refetch /api/config
- *
- * WebSocket Commands (outgoing):
- *   - start, stop: Encoder control
- *   - recorders/start, recorders/stop: Recorder control
- *
- * Dependencies:
- *   - Alpine.js 3.x (loaded before this script)
- *   - icons.js (window.icons object for SVG rendering)
- *
- * @see index.html for markup structure
- * @see icons.js for SVG icon definitions
+ * Alpine controller for the embedded web UI.
+ * REST handles configuration changes; WebSocket handles live levels/status.
  */
 
-// === Constants ===
-const DB_MINIMUM = -60;           // Minimum dB level for VU meter range
-const DB_RANGE = 60;              // dB range (0 to -60)
-const CLIP_TIMEOUT_MS = 1500;     // Peak hold / clip indicator timeout
-const WS_RECONNECT_MS = 1000;     // WebSocket reconnection delay
-const TEST_FEEDBACK_MS = 2000;    // Test result display duration
-const TOAST_DURATION_SUCCESS = 3000;  // Success toast auto-dismiss
-const TOAST_DURATION_ERROR = 5000;    // Error toast auto-dismiss
-const MAX_TOASTS = 3;             // Maximum visible toasts
+const DB_MINIMUM = -60;
+const DB_RANGE = 60;
+const MS_PER_SECOND = 1000;
+const MS_PER_MINUTE = 60 * MS_PER_SECOND;
+const MS_PER_DAY = 24 * 60 * MS_PER_MINUTE;
+const CLIP_TIMEOUT_MS = 1500;
+const WS_RECONNECT_MS = 1000;
+const TEST_FEEDBACK_MS = 2000;
+const TOAST_DURATION_SUCCESS = 3000;
+const TOAST_DURATION_ERROR = 5000;
+const BANNER_AUTO_HIDE_MS = 10000;
+const EVENT_PAGE_SIZE = 50;
+const MAX_TOASTS = 3;
+const CONNECT_CONFIRM_MS = readCSSDuration('--duration-attention', 400);
 
-// === PPM Ballistics ===
-// IEC 60268-10 Type I: 20dB fallback in 1.7 seconds
-const PPM_DECAY_DB_PER_SEC = 20 / 1.7;  // ~11.76 dB/sec
-const PPM_FRAME_INTERVAL_MS = 100;       // 10 fps from WebSocket
-const PPM_DECAY_PER_FRAME = PPM_DECAY_DB_PER_SEC * (PPM_FRAME_INTERVAL_MS / 1000);  // ~1.18 dB per frame
+const STORAGE_KEYS = {
+    SETTINGS_CARDS: 'settingsCardsOpen',
+    VU_MODE: 'vuMode',
+};
 
-// === API Endpoints ===
+const TIME_FORMATTER = new Intl.DateTimeFormat('nl-NL', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+});
+const DATE_FORMATTER = new Intl.DateTimeFormat('nl-NL', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+});
+
+// IEC 60268-10 Type I: 20 dB fallback in 1.7 seconds.
+const PPM_DECAY_DB_PER_SEC = 20 / 1.7;
+const PPM_FRAME_INTERVAL_MS = 100;
+const PPM_DECAY_PER_FRAME = PPM_DECAY_DB_PER_SEC * (PPM_FRAME_INTERVAL_MS / MS_PER_SECOND);
+
+function readCSSDuration(tokenName, fallbackMs) {
+    const value = getComputedStyle(document.documentElement).getPropertyValue(tokenName).trim();
+    const number = Number.parseFloat(value);
+    if (!Number.isFinite(number)) return fallbackMs;
+    if (value.endsWith('ms')) return number;
+    if (value.endsWith('s')) return number * MS_PER_SECOND;
+    return fallbackMs;
+}
+
 const API = {
     CONFIG: '/api/config',
     DEVICES: '/api/devices',
@@ -61,6 +58,59 @@ const API = {
     RECORDERS_TEST_S3: '/api/recorders/test-s3',
     NOTIFICATIONS_TEST: '/api/notifications/test',
     RECORDING_REGENERATE_KEY: '/api/recording/regenerate-key',
+};
+
+const EVENT_LABELS = {
+    stream_started: 'Started',
+    stream_stable: 'Connected',
+    stream_error: 'Error',
+    stream_retry: 'Retry',
+    stream_stopped: 'Stopped',
+    silence_start: 'Silence',
+    silence_end: 'Recovered',
+    audio_dump_ready: 'Audio Dump',
+    channel_imbalance_start: 'Imbalance',
+    channel_imbalance_end: 'Balanced',
+    recorder_started: 'Started',
+    recorder_stopped: 'Stopped',
+    recorder_error: 'Error',
+    recorder_file: 'New File',
+    upload_queued: 'Upload Queued',
+    upload_completed: 'Uploaded',
+    upload_failed: 'Upload Failed',
+    upload_retry: 'Retry',
+    upload_abandoned: 'Abandoned',
+    cleanup_completed: 'Cleanup',
+};
+
+const EVENT_SEVERITY = {
+    stream_error: 'error',
+    stream_retry: 'warning',
+    stream_stable: 'success',
+    silence_start: 'warning',
+    silence_end: 'success',
+    audio_dump_ready: 'info',
+    channel_imbalance_start: 'warning',
+    channel_imbalance_end: 'success',
+    recorder_error: 'error',
+    upload_failed: 'error',
+    upload_abandoned: 'error',
+    upload_completed: 'success',
+    cleanup_completed: 'success',
+    upload_retry: 'warning',
+};
+
+const EVENT_CATEGORY_BADGE = {
+    stream: 'S',
+    audio: 'A',
+    recorder: 'R',
+    system: '•',
+};
+
+const RECORDER_STORAGE_LABELS = {
+    both: 'Local + S3',
+    s3: 'S3',
+    local: 'Local',
 };
 
 /**
@@ -83,6 +133,33 @@ const requestJSON = async (url, { method = 'GET', body } = {}) => {
         throw error;
     }
     return result;
+};
+
+const readStorage = (key, fallback = '') => {
+    try {
+        return localStorage.getItem(key) ?? fallback;
+    } catch {
+        return fallback;
+    }
+};
+
+const readStorageObject = (key, fallback) => {
+    try {
+        const value = localStorage.getItem(key);
+        if (!value) return fallback;
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === 'object' ? { ...fallback, ...parsed } : fallback;
+    } catch {
+        return fallback;
+    }
+};
+
+const writeStorage = (key, value) => {
+    try {
+        localStorage.setItem(key, value);
+    } catch {
+        // Storage is a non-critical UI preference.
+    }
 };
 
 const copyTextFallback = (text) => {
@@ -131,21 +208,23 @@ const copyTextToClipboard = async (text) => {
 
 /** Formats milliseconds to human-readable smart units (ms/s/m). */
 const formatSmartDuration = (ms) => {
-    if (ms < 1000) return `${Math.round(ms)}ms`;
-    if (ms < 60000) {
-        const sec = ms / 1000;
+    if (ms < MS_PER_SECOND) return `${Math.round(ms)}ms`;
+    if (ms < MS_PER_MINUTE) {
+        const sec = ms / MS_PER_SECOND;
         return sec < 10 ? `${sec.toFixed(1)}s` : `${Math.round(sec)}s`;
     }
-    const mins = Math.floor(ms / 60000);
-    const secs = Math.round((ms % 60000) / 1000);
+    const mins = Math.floor(ms / MS_PER_MINUTE);
+    const secs = Math.round((ms % MS_PER_MINUTE) / MS_PER_SECOND);
     return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
 };
 
-const msToSeconds = (ms) => ms / 1000;
-const secondsToMs = (sec) => Math.round(sec * 1000);
+const msToSeconds = (ms) => ms / MS_PER_SECOND;
+const secondsToMs = (sec) => Math.round(sec * MS_PER_SECOND);
+
+const meterLevel = (db) => Number.isFinite(db) ? db : DB_MINIMUM;
 
 /** Converts dB (-60 to 0) to percentage (0-100) for VU meter display. */
-window.dbToPercent = (db) => Math.max(0, Math.min(100, (db - DB_MINIMUM) / DB_RANGE * 100));
+window.dbToPercent = (db) => Math.max(0, Math.min(100, (meterLevel(db) - DB_MINIMUM) / DB_RANGE * 100));
 
 const DEFAULT_STREAM = {
     mode: 'caller',
@@ -240,34 +319,38 @@ const DEFAULT_LEVELS = {
 
 /** Formats codec and bitrate for display (e.g. "MP3 128k", "PCM"). */
 window.formatCodecBitrate = (codec, bitrate) => {
-    const label = codec.toUpperCase();
-    if (codec === 'pcm') return label;
-    const br = bitrate || window.CODEC_DEFAULT_BITRATE[codec] || 0;
+    const normalized = codec || 'pcm';
+    const label = normalized.toUpperCase();
+    if (normalized === 'pcm') return label;
+    const br = bitrate || window.CODEC_DEFAULT_BITRATE[normalized] || 0;
     return `${label} ${br}k`;
 };
 
-const deepClone = (obj) => JSON.parse(JSON.stringify(obj));
+const deepClone = (obj) => typeof structuredClone === 'function'
+    ? structuredClone(obj)
+    : JSON.parse(JSON.stringify(obj));
+
+const isAudioEventType = (type = '') => (
+    type.startsWith('silence_') ||
+    type === 'audio_dump_ready' ||
+    type.startsWith('channel_imbalance_')
+);
+
+const isRecorderEventType = (type = '') => (
+    type.startsWith('recorder_') ||
+    type.startsWith('upload_') ||
+    type === 'cleanup_completed'
+);
 
 document.addEventListener('alpine:init', () => {
     Alpine.data('encoderApp', () => ({
         view: 'dashboard',
         settingsTab: 'audio',
 
-        // Expand/collapse state for collapsible settings cards (Notifications
-        // channels + Audio sections), persisted so a chosen layout survives
-        // reloads. Cards start collapsed; the header summary carries the
-        // at-a-glance state. Keys are pre-seeded so Alpine tracks them reactively.
-        cardsOpen: (() => {
-            const fallback = {
-                webhook: false, email: false, zabbix: false,
-                silence: false, imbalance: false, metering: false, dumps: false, recording: false
-            };
-            try {
-                return { ...fallback, ...JSON.parse(localStorage.getItem('settingsCardsOpen') || '{}') };
-            } catch {
-                return fallback;
-            }
-        })(),
+        cardsOpen: readStorageObject(STORAGE_KEYS.SETTINGS_CARDS, {
+            webhook: false, email: false, zabbix: false,
+            silence: false, imbalance: false, metering: false, dumps: false, recording: false
+        }),
 
         vuChannels: [
             { label: 'L', level: 'left', display: 'display_left', hold: 'hold_left' },
@@ -313,7 +396,7 @@ document.addEventListener('alpine:init', () => {
 
         devices: [],
         levels: { ...DEFAULT_LEVELS },
-        vuMode: localStorage.getItem('vuMode') || 'peak',
+        vuMode: readStorage(STORAGE_KEYS.VU_MODE, 'peak'),
         clipActive: false,
         clipTimeout: null,
 
@@ -389,6 +472,7 @@ document.addEventListener('alpine:init', () => {
             zabbix: { pending: false, text: 'Test' },
             recorderS3: { pending: false, text: 'Test Connection' }
         },
+        _testResetTimeouts: {},
 
         // API key copy feedback
         apiKeyCopied: false,
@@ -500,7 +584,7 @@ document.addEventListener('alpine:init', () => {
             // Don't handle if user is typing in an input field
             const isInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName);
 
-            // Escape: Close views/modals
+            // Escape: close secondary views.
             if (event.key === 'Escape') {
                 if (this.view === 'settings') {
                     this.cancelSettings();
@@ -603,6 +687,7 @@ document.addEventListener('alpine:init', () => {
          * @param {Object} levels - Audio levels (left, right, peak_left, peak_right, silence_level)
          */
         handleLevels(levels) {
+            levels = { ...DEFAULT_LEVELS, ...(levels || {}) };
             const prevSilenceState = this.getSilenceState();
 
             // Apply PPM ballistics to peak values: instant attack, slow decay
@@ -767,7 +852,7 @@ document.addEventListener('alpine:init', () => {
                     this.connectingAnimations[id] = true;
                     setTimeout(() => {
                         delete this.connectingAnimations[id];
-                    }, 400);
+                    }, CONNECT_CONFIRM_MS);
                 }
             }
 
@@ -952,14 +1037,7 @@ document.addEventListener('alpine:init', () => {
                 this.showToast('Audio input updated', 'success');
             } catch (err) {
                 this.config.audio_input = prev;
-                // Show each validation error as a separate toast
-                if (err.errors?.length) {
-                    for (const msg of err.errors) {
-                        this.showToast(msg, 'error');
-                    }
-                    return;
-                }
-                this.showToast(`Failed to update audio input: ${err.message}`, 'error');
+                this.showRequestError(err, 'Failed to update audio input');
             }
         },
 
@@ -1011,14 +1089,7 @@ document.addEventListener('alpine:init', () => {
                 this.showDashboard();
                 this.showToast('Settings saved', 'success');
             } catch (err) {
-                // Show each validation error as a separate toast
-                if (err.errors?.length) {
-                    for (const msg of err.errors) {
-                        this.showToast(msg, 'error');
-                    }
-                    return;
-                }
-                this.showToast(`Failed to save settings: ${err.message}`, 'error');
+                this.showRequestError(err, 'Failed to save settings');
             } finally {
                 this.saving = false;
             }
@@ -1122,11 +1193,7 @@ document.addEventListener('alpine:init', () => {
         // Toggles a collapsible settings card open/closed and persists the layout.
         toggleCard(id) {
             this.cardsOpen[id] = !this.cardsOpen[id];
-            try {
-                localStorage.setItem('settingsCardsOpen', JSON.stringify(this.cardsOpen));
-            } catch {
-                // Private-mode / quota errors are non-fatal for a UI preference.
-            }
+            writeStorage(STORAGE_KEYS.SETTINGS_CARDS, JSON.stringify(this.cardsOpen));
         },
 
         // Derives the header digest for a notification channel from the current
@@ -1245,7 +1312,7 @@ document.addEventListener('alpine:init', () => {
                 this.showDashboard();
                 this.showToast(toastMsg, 'success');
             } catch (err) {
-                this.showToast(`Failed to save stream: ${err.message}`, 'error');
+                this.showRequestError(err, 'Failed to save stream');
             }
         },
 
@@ -1415,7 +1482,7 @@ document.addEventListener('alpine:init', () => {
                 this.showDashboard();
                 this.showToast(toastMsg, 'success');
             } catch (err) {
-                this.showToast(`Failed to save recorder: ${err.message}`, 'error');
+                this.showRequestError(err, 'Failed to save recorder');
             }
         },
 
@@ -1461,7 +1528,7 @@ document.addEventListener('alpine:init', () => {
          * Tests S3 connection via REST API.
          */
         async testRecorderS3() {
-            this.testStates.recorderS3 = { pending: true, text: 'Testing...' };
+            this.startTestState('recorderS3');
 
             try {
                 const payload = {
@@ -1475,16 +1542,10 @@ document.addEventListener('alpine:init', () => {
                 }
 
                 await requestJSON(API.RECORDERS_TEST_S3, { method: 'POST', body: payload });
-                this.testStates.recorderS3.pending = false;
-                this.testStates.recorderS3.text = 'Connected!';
+                this.finishTestState('recorderS3', 'Connected!', 'Test Connection');
             } catch (err) {
-                this.testStates.recorderS3.pending = false;
-                this.testStates.recorderS3.text = 'Failed';
+                this.finishTestState('recorderS3', 'Failed', 'Test Connection');
                 this.showToast(`S3 test failed: ${err.message}`, 'error');
-            } finally {
-                setTimeout(() => {
-                    this.testStates.recorderS3.text = 'Test Connection';
-                }, TEST_FEEDBACK_MS);
             }
         },
 
@@ -1626,7 +1687,7 @@ document.addEventListener('alpine:init', () => {
 
         toggleVuMode() {
             this.vuMode = this.vuMode === 'peak' ? 'rms' : 'peak';
-            localStorage.setItem('vuMode', this.vuMode);
+            writeStorage(STORAGE_KEYS.VU_MODE, this.vuMode);
         },
 
         resetVuMeter() {
@@ -1644,12 +1705,15 @@ document.addEventListener('alpine:init', () => {
             }
             this.eventsLoading = true;
             try {
-                const params = new URLSearchParams({ limit: '50', offset: this.eventsOffset.toString() });
+                const params = new URLSearchParams({
+                    limit: String(EVENT_PAGE_SIZE),
+                    offset: String(this.eventsOffset),
+                });
                 if (this.eventFilter) {
                     params.set('type', this.eventFilter);
                 }
                 const data = await requestJSON(`/api/events?${params}`);
-                const newEvents = (data.events || []).map(e => ({ ...e, expanded: false }));
+                const newEvents = data.events || [];
                 if (reset) {
                     this.events = newEvents;
                 } else {
@@ -1667,7 +1731,7 @@ document.addEventListener('alpine:init', () => {
          * Loads more events (pagination).
          */
         async loadMoreEvents() {
-            this.eventsOffset += 50;
+            this.eventsOffset += EVENT_PAGE_SIZE;
             await this.loadEvents(false);
         },
 
@@ -1678,8 +1742,7 @@ document.addEventListener('alpine:init', () => {
          */
         formatEventTime(ts) {
             if (!ts) return '';
-            const date = new Date(ts);
-            return date.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            return TIME_FORMATTER.format(new Date(ts));
         },
 
         /**
@@ -1715,34 +1778,11 @@ document.addEventListener('alpine:init', () => {
             const now = new Date();
             const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
             const eventDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-            const diffDays = Math.round((today - eventDay) / 86400000);
+            const diffDays = Math.round((today - eventDay) / MS_PER_DAY);
 
             if (diffDays === 0) return 'Today';
             if (diffDays === 1) return 'Yesterday';
-            return date.toLocaleDateString('nl-NL', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
-        },
-
-        /**
-         * Formats a timestamp as relative time (e.g., "2m ago", "1h ago").
-         * @param {string} ts - ISO timestamp
-         * @returns {string} Relative time string
-         */
-        formatRelativeTime(ts) {
-            if (!ts) return '';
-            const now = Date.now();
-            const then = new Date(ts).getTime();
-            const diff = now - then;
-
-            const seconds = Math.floor(diff / 1000);
-            const minutes = Math.floor(seconds / 60);
-            const hours = Math.floor(minutes / 60);
-            const days = Math.floor(hours / 24);
-
-            if (seconds < 60) return 'just now';
-            if (minutes < 60) return `${minutes}m ago`;
-            if (hours < 24) return `${hours}h ago`;
-            if (days === 1) return 'yesterday';
-            return `${days}d ago`;
+            return DATE_FORMATTER.format(date);
         },
 
         /**
@@ -1751,18 +1791,7 @@ document.addEventListener('alpine:init', () => {
          * @returns {string} Severity: 'error', 'warning', 'success', or 'info'
          */
         getEventSeverity(type) {
-            if (type === 'stream_error') return 'error';
-            if (type === 'stream_retry') return 'warning';
-            if (type === 'stream_stable') return 'success';
-            if (type === 'silence_start') return 'warning';
-            if (type === 'silence_end') return 'success';
-            if (type === 'audio_dump_ready') return 'info';
-            if (type === 'channel_imbalance_start') return 'warning';
-            if (type === 'channel_imbalance_end') return 'success';
-            if (type === 'recorder_error' || type === 'upload_failed' || type === 'upload_abandoned') return 'error';
-            if (type === 'upload_completed' || type === 'cleanup_completed') return 'success';
-            if (type === 'upload_retry') return 'warning';
-            return 'info';
+            return EVENT_SEVERITY[type] || 'info';
         },
 
         /**
@@ -1771,29 +1800,7 @@ document.addEventListener('alpine:init', () => {
          * @returns {string} Short label
          */
         getEventLabel(type) {
-            const labels = {
-                'stream_started': 'Started',
-                'stream_stable': 'Connected',
-                'stream_error': 'Error',
-                'stream_retry': 'Retry',
-                'stream_stopped': 'Stopped',
-                'silence_start': 'Silence',
-                'silence_end': 'Recovered',
-                'audio_dump_ready': 'Audio Dump',
-                'channel_imbalance_start': 'Imbalance',
-                'channel_imbalance_end': 'Balanced',
-                'recorder_started': 'Started',
-                'recorder_stopped': 'Stopped',
-                'recorder_error': 'Error',
-                'recorder_file': 'New File',
-                'upload_queued': 'Upload Queued',
-                'upload_completed': 'Uploaded',
-                'upload_failed': 'Upload Failed',
-                'upload_retry': 'Retry',
-                'upload_abandoned': 'Abandoned',
-                'cleanup_completed': 'Cleanup'
-            };
-            return labels[type] || type;
+            return EVENT_LABELS[type] || type;
         },
 
         /**
@@ -1853,7 +1860,7 @@ document.addEventListener('alpine:init', () => {
             if (event.type === 'recorder_started' || event.type === 'recorder_stopped') {
                 const codec = details.codec ? details.codec.toUpperCase() : '';
                 const mode = details.storage_mode || '';
-                const modeLabel = mode === 'both' ? 'Local + S3' : mode === 's3' ? 'S3' : mode === 'local' ? 'Local' : '';
+                const modeLabel = RECORDER_STORAGE_LABELS[mode] || '';
                 return [codec, modeLabel].filter(Boolean).join(' - ');
             }
             // For started/stable/stopped, show stream name
@@ -1866,7 +1873,7 @@ document.addEventListener('alpine:init', () => {
          * @returns {string} Short stream identifier
          */
         isAudioEvent(event) {
-            return event.type?.startsWith('silence_') || event.type === 'audio_dump_ready' || event.type?.startsWith('channel_imbalance_');
+            return isAudioEventType(event.type);
         },
 
         getStreamBadgeText(event) {
@@ -1875,7 +1882,7 @@ document.addEventListener('alpine:init', () => {
                 return 'Audio';
             }
             // Recorder events show recorder name
-            if (event.type?.startsWith('recorder_') || event.type?.startsWith('upload_') || event.type === 'cleanup_completed') {
+            if (isRecorderEventType(event.type)) {
                 const details = event.details || {};
                 const name = details.recorder_name || 'Recorder';
                 return name.length > 8 ? name.slice(0, 8) : name;
@@ -1893,8 +1900,8 @@ document.addEventListener('alpine:init', () => {
          * @returns {string} Category: 'stream', 'audio', 'recorder', or 'system'
          */
         getEventCategory(event) {
-            if (this.isAudioEvent(event)) return 'audio';
-            if (event.type?.startsWith('recorder_') || event.type?.startsWith('upload_')) return 'recorder';
+            if (isAudioEventType(event.type)) return 'audio';
+            if (isRecorderEventType(event.type)) return 'recorder';
             if (event.type?.startsWith('stream_')) return 'stream';
             return 'system';
         },
@@ -1905,11 +1912,7 @@ document.addEventListener('alpine:init', () => {
          * @returns {string} Single letter: 'S', 'A', 'R', or '•'
          */
         getEventCategoryBadge(event) {
-            const category = this.getEventCategory(event);
-            if (category === 'stream') return 'S';
-            if (category === 'audio') return 'A';
-            if (category === 'recorder') return 'R';
-            return '•';
+            return EVENT_CATEGORY_BADGE[this.getEventCategory(event)] || EVENT_CATEGORY_BADGE.system;
         },
 
         /**
@@ -1920,8 +1923,7 @@ document.addEventListener('alpine:init', () => {
          */
         async sendTest(type) {
             if (!this.testStates[type]) return;
-            this.testStates[type].pending = true;
-            this.testStates[type].text = 'Testing...';
+            this.startTestState(type);
 
             // Build payload with current form values
             const payload = {};
@@ -1949,15 +1951,11 @@ document.addEventListener('alpine:init', () => {
 
             try {
                 await requestJSON(`${API.NOTIFICATIONS_TEST}/${type}`, { method: 'POST', body: payload });
-                this.testStates[type].pending = false;
-                this.testStates[type].text = 'Sent!';
+                this.finishTestState(type, 'Sent!');
             } catch (err) {
-                this.testStates[type].pending = false;
-                this.testStates[type].text = 'Failed';
+                this.finishTestState(type, 'Failed');
                 const typeName = type.charAt(0).toUpperCase() + type.slice(1);
                 this.showToast(`${typeName} test failed: ${err.message}`, 'error');
-            } finally {
-                setTimeout(() => { this.testStates[type].text = 'Test'; }, TEST_FEEDBACK_MS);
             }
         },
 
@@ -2015,7 +2013,7 @@ document.addEventListener('alpine:init', () => {
             }
             this.banner = { visible: true, message, type };
             if (!persistent) {
-                this._bannerTimeout = setTimeout(() => this.hideBanner(), 10000);
+                this._bannerTimeout = setTimeout(() => this.hideBanner(), BANNER_AUTO_HIDE_MS);
             }
         },
 
@@ -2025,6 +2023,34 @@ document.addEventListener('alpine:init', () => {
                 this._bannerTimeout = null;
             }
             this.banner.visible = false;
+        },
+
+        showRequestError(err, fallbackMessage) {
+            if (err.errors?.length) {
+                for (const msg of err.errors) {
+                    this.showToast(msg, 'error');
+                }
+                return;
+            }
+            this.showToast(`${fallbackMessage}: ${err.message}`, 'error');
+        },
+
+        startTestState(type) {
+            if (this._testResetTimeouts[type]) {
+                clearTimeout(this._testResetTimeouts[type]);
+                delete this._testResetTimeouts[type];
+            }
+            this.testStates[type].pending = true;
+            this.testStates[type].text = 'Testing...';
+        },
+
+        finishTestState(type, text, resetText = 'Test') {
+            this.testStates[type].pending = false;
+            this.testStates[type].text = text;
+            this._testResetTimeouts[type] = setTimeout(() => {
+                if (this.testStates[type]) this.testStates[type].text = resetText;
+                delete this._testResetTimeouts[type];
+            }, TEST_FEEDBACK_MS);
         },
 
         /**
