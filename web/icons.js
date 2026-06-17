@@ -1,68 +1,6 @@
 /**
- * SVG Icon Library - ZuidWest FM Encoder
- *
- * Centralized icon definitions for the web interface. Icons are stored as
- * complete SVG markup strings and rendered via Alpine.js x-html directive.
- *
- * Source: Heroicons v2 (https://heroicons.com) - Outline style, 24x24 viewBox
- * License: MIT (https://github.com/tailwindlabs/heroicons/blob/master/LICENSE)
- *
- * Usage in Alpine.js templates:
- *   <span x-html="icons.settings"></span>
- *
- * Usage in static HTML (login page):
- *   <span id="icon-id"></span>
- *   <script>document.getElementById('icon-id').innerHTML = window.icons.warning;</script>
- *
- * Styling:
- *   Icons use currentColor for stroke, inheriting color from parent CSS.
- *   Control size via width/height on the parent span element.
- *
- * Icon Reference:
- *   appLogo   - Audio plug illustration for branding (custom, 512x512 viewBox)
- *   settings  - Cog icon for settings/preferences button (cog-6-tooth)
- *   plus      - Plus sign for add/create actions
- *   close     - X mark for close/cancel/dismiss (x-mark)
- *   edit      - Pencil square for edit actions
- *   audio     - Speaker with sound waves for audio sections (speaker-wave)
- *   silence   - Speaker with X mark for silence detection (speaker-x-mark)
- *   balance   - Scale for channel imbalance detection
- *   metering  - Bar chart for audio level metering (chart-bar)
- *   audioArchive - Archive box for silence dump audio captures (archive-box-arrow-down)
- *   info      - Information circle for about section (information-circle)
- *   link      - Chain link for webhook configuration
- *   file      - Document icon for file logging (document)
- *   email     - Envelope for email notifications (envelope)
- *   server    - Server stack for connection settings (server-stack)
- *   monitoring - Presentation chart for monitoring integrations (presentation-chart-line)
- *   streamMode - Opposing arrows for push/pull stream mode selection (arrows-right-left)
- *   listener  - Radio waves for local SRT listener settings (signal)
- *   encoding  - Sliders for encoding settings (adjustments-horizontal)
- *   power     - Power button for stream enable/disable toggle
- *   license   - Document with text for license section (document-text)
- *   heart     - Heart for acknowledgements section
- *   warning   - Triangle alert for error states (exclamation-triangle)
- *   check     - Check mark for success states
- *   cloud     - Cloud with arrow for external services (cloud-arrow-up)
- *   download  - Arrow down for downloads (arrow-down-tray)
- *   bug       - Bug icon for issue reporting (bug-ant)
- *   github    - GitHub logo for repository link (brand icon, not Heroicons)
- *   logout    - Arrow exiting rectangle for sign out (arrow-right-on-rectangle)
- *   eye       - Eye icon for showing password
- *   eyeSlash  - Slashed eye for hiding password (eye-slash)
- *   refresh   - Circular arrows for refresh actions (arrow-path)
- *   key       - Key for recording API credentials
- *   microphone - Microphone for recorder settings
- *   folder    - Folder for local storage settings
- *   list      - Bulleted list for event log tab
- *   chevronDown - Down chevron for collapsible controls
- *   chevronUp - Up chevron for collapsible controls
- */
-
-/**
- * Global icons object containing SVG markup strings.
- * Access via window.icons.name or just icons.name in Alpine templates.
- * @type {Object<string, string>}
+ * Static SVG icon strings rendered via x-html.
+ * Source: Heroicons v2 (MIT), plus custom appLogo and GitHub mark.
  */
 window.icons = {
     appLogo: `<svg class="app-logo" viewBox="0 0 512 512" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M369.8,148.3h-35.5c-2.8,0-5-2.2-5-5v-94c0-1.4,0.6-2.7,1.6-3.7l17.8-16.5c1.9-1.8,4.9-1.8,6.8,0l17.8,16.5c1,0.9,1.6,2.3,1.6,3.7v94C374.8,146,372.6,148.3,369.8,148.3z M339.3,138.3h25.5V51.4l-12.8-11.9l-12.8,11.9V138.3z"/><path d="M369.8,79h-35.5c-2.8,0-5-2.2-5-5s2.2-5,5-5h35.5c2.8,0,5,2.2,5,5S372.6,79,369.8,79z"/><path d="M291.8,484.3h-1.2c-36,0-65.3-29.3-65.3-65.3V241c0-30.5-24.8-55.3-55.3-55.3c-14.8,0-28.6,5.7-39.1,16.2c-10.4,10.4-16.2,24.3-16.2,39.1v238.3c0,2.8-2.2,5-5,5s-5-2.2-5-5V241c0-17.4,6.8-33.8,19.1-46.1c12.3-12.3,28.7-19.1,46.1-19.1c36,0,65.3,29.3,65.3,65.3v178c0,30.5,24.8,55.3,55.3,55.3h1.2c30.5,0,55.3-24.8,55.3-55.3v-79.3c0-2.8,2.2-5,5-5s5,2.2,5,5V419C357.1,455,327.8,484.3,291.8,484.3z"/><path d="M378.4,344.8h-52.6c-2.8,0-5-2.2-5-5v-42c0-2.8,2.2-5,5-5h52.6c2.8,0,5,2.2,5,5v42C383.4,342.5,381.1,344.8,378.4,344.8z M330.8,334.8h42.6v-32h-42.6V334.8z"/><path d="M378.4,303.5c-0.8,0-1.7-0.2-2.4-0.6c0,0-0.1,0-0.1-0.1h-47.5c0,0-0.1,0-0.1,0.1c-1.6,0.9-3.5,0.8-5.1-0.1c-16.3-10.1-26.1-27.6-26.1-46.8V143.3c0-2.8,2.2-5,5-5h100c2.8,0,5,2.2,5,5v112.7c0,19.2-9.7,36.7-26.1,46.8C380.2,303.2,379.3,303.5,378.4,303.5z M326.2,292.8h51.7c12-8.4,19.1-22,19.1-36.8V148.3h-90v107.7C307.1,270.7,314.2,284.3,326.2,292.8z"/><path d="M378.4,303.5c-0.8,0-1.7-0.2-2.4-0.6c0,0-0.1,0-0.1-0.1h-47.5c0,0-0.1,0-0.1,0.1c-1.6,0.9-3.5,0.8-5.1-0.1c-16.3-10.1-26.1-27.6-26.1-46.8v-63.2c0-2.8,2.2-5,5-5h100c2.8,0,5,2.2,5,5v63.2c0,19.2-9.7,36.7-26.1,46.8C380.2,303.2,379.3,303.5,378.4,303.5z M326.2,292.8h51.7c12-8.4,19.1-22,19.1-36.8v-58.2h-90v58.2C307.1,270.7,314.2,284.3,326.2,292.8z"/></svg>`,
@@ -88,8 +26,6 @@ window.icons = {
     info: `<svg fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M11.25 11.25l.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z"/></svg>`,
 
     link: `<svg fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 1 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244"/></svg>`,
-
-    file: `<svg fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg>`,
 
     email: `<svg fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.917V6.75"/></svg>`,
 
@@ -138,7 +74,5 @@ window.icons = {
 
     list: `<svg fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/></svg>`,
 
-    chevronDown: `<svg fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="m19.5 8.25-7.5 7.5-7.5-7.5"/></svg>`,
-
-    chevronUp: `<svg fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="m4.5 15.75 7.5-7.5 7.5 7.5"/></svg>`
+    chevronDown: `<svg fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="m19.5 8.25-7.5 7.5-7.5-7.5"/></svg>`
 };
