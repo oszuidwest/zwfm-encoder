@@ -189,7 +189,7 @@ if [ "$KEEP_CONFIG" != "y" ]; then
   set_timezone "$TIMEZONE"
 fi
 
-# Keep host time sync and journald limits current on installs and updates
+# Configure time sync and journald storage limits on installs and updates
 set_time_sync
 set_journald_limits
 
