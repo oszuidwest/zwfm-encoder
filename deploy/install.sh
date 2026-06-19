@@ -9,27 +9,29 @@ CONFIG_DIR="/etc/encoder"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
 SERVICE_PATH="/etc/systemd/system/encoder.service"
 
-# Functions library (v2)
+# Functions library
+BASH_FUNCTIONS_REF="main"
 FUNCTIONS_LIB_PATH=$(mktemp)
-FUNCTIONS_LIB_URL="https://raw.githubusercontent.com/oszuidwest/bash-functions/main/common-functions.sh"
+FUNCTIONS_LIB_URL="https://raw.githubusercontent.com/oszuidwest/bash-functions/${BASH_FUNCTIONS_REF}/common-functions.sh"
 
-# Clean up temporary file on exit
 trap 'rm -f "$FUNCTIONS_LIB_PATH"' EXIT
 
 # General Raspberry Pi configuration
 CONFIG_TXT_PATHS=("/boot/firmware/config.txt" "/boot/config.txt")
 FIRST_IP=$(hostname -I | awk '{print $1}')
 
-# Start with a clean terminal
-clear
+clear || true
 
-# Download the functions library
-if ! curl -s -o "$FUNCTIONS_LIB_PATH" "$FUNCTIONS_LIB_URL"; then
-  echo -e "*** Failed to download functions library. Please check your network connection! ***"
+if ! command -v curl >/dev/null 2>&1; then
+  echo "*** curl is required to download the functions library. ***"
   exit 1
 fi
 
-# Source the functions file
+if ! curl -fsSL -o "$FUNCTIONS_LIB_PATH" "$FUNCTIONS_LIB_URL"; then
+  echo "*** Failed to download functions library. Please check your network connection. ***"
+  exit 1
+fi
+
 # shellcheck source=/dev/null
 source "$FUNCTIONS_LIB_PATH"
 
@@ -330,7 +332,7 @@ else
 fi
 
 # Download and install systemd service
-file_download "$ENCODER_SERVICE_URL" "$SERVICE_PATH" "systemd service"
+file_download "$ENCODER_SERVICE_URL" "$SERVICE_PATH" "systemd service" --backup
 
 # Reload systemd and enable service
 systemctl daemon-reload
@@ -345,8 +347,9 @@ sleep 2
 
 # Verify installation
 if ! systemctl is-active --quiet encoder; then
-  echo -e "${RED}Warning: Encoder service failed to start.${NC}"
+  echo -e "${RED}Error: Encoder service failed to start.${NC}"
   echo -e "Check logs with: ${BOLD}journalctl -u encoder -n 50${NC}"
+  exit 1
 else
   echo -e "${GREEN}✓ Encoder service is running${NC}"
 fi
