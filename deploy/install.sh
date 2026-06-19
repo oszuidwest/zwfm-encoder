@@ -184,13 +184,13 @@ fi
 
 echo -e "\n${BLUE}►► Starting installation...${NC}\n"
 
-# Set timezone (only on fresh install)
+# Configure host time settings
 if [ "$KEEP_CONFIG" != "y" ]; then
   set_timezone "$TIMEZONE"
 fi
-
-# Configure time sync and journald storage limits on installs and updates
 set_time_sync
+
+# Configure journald storage limits
 set_journald_limits
 
 # Run OS updates if requested
