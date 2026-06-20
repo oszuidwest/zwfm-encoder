@@ -23,6 +23,12 @@ const (
 	// listenerLatencyPCM raises the SRT latency for PCM so retransmission and jitter
 	// tolerance match its larger queue. Other codecs use srtfanout.DefaultLatency.
 	listenerLatencyPCM = time.Second
+	// pcmListenerBytesPerSecond is the encoded wire rate of the PCM listener path,
+	// which the fan-out actually buffers. SMPTE 302M (s302m) stores each 16-bit
+	// sample in 20 bits (4 AES3 framing bits), so the elementary rate is
+	// audio.BytesPerSecond * 20/16 = 240 kB/s (1.92 Mbit/s, per README), ~1.25x the
+	// raw capture rate. Sizing on the raw rate under-buffers PCM by ~25%.
+	pcmListenerBytesPerSecond = audio.BytesPerSecond * 20 / 16
 )
 
 // listenerFanoutConfig builds the fan-out configuration for a listener stream,
@@ -57,12 +63,12 @@ func listenerLatency(stream *types.Stream) time.Duration {
 	return 0
 }
 
-// listenerBytesPerSecond estimates the encoded byte rate of a listener stream.
-// PCM (s302m) is uncompressed, so it tracks the raw capture rate; compressed
-// codecs use their configured or default bitrate.
+// listenerBytesPerSecond estimates the encoded byte rate of a listener stream,
+// i.e. the bytes the fan-out buffers. PCM uses the s302m-in-MPEG-TS rate (not the
+// raw capture rate); compressed codecs use their configured or default bitrate.
 func listenerBytesPerSecond(stream *types.Stream) int {
 	if stream.Codec == types.CodecPCM {
-		return audio.BytesPerSecond
+		return pcmListenerBytesPerSecond
 	}
 	kbit := stream.Bitrate
 	if kbit <= 0 {

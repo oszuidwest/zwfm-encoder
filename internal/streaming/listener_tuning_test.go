@@ -16,8 +16,8 @@ func TestListenerQueueChunks(t *testing.T) {
 		bitrate int
 		want    int
 	}{
-		// PCM at 192000 B/s for 2s = 384000 B / 4096 = 93 chunks (~2s of headroom).
-		{name: "pcm fills ~2s", codec: types.CodecPCM, want: 93},
+		// PCM s302m at 240000 B/s for 2s = 480000 B / 4096 = 117 chunks (~2s of headroom).
+		{name: "pcm fills ~2s", codec: types.CodecPCM, want: 117},
 		// Opus default 128k = 16000 B/s -> 7 chunks, floored to the minimum.
 		{name: "opus default floored", codec: types.CodecOpus, want: minListenerQueueChunks},
 		// Opus 256k = 32000 B/s for 2s = 64000 B / 4096 = 15 chunks.
