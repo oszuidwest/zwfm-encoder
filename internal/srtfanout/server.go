@@ -40,7 +40,7 @@ type Config struct {
 	Latency time.Duration
 	// MaxClients limits concurrent subscribers; non-positive values use DefaultMaxClients.
 	MaxClients int
-	// QueueChunks is the per-subscriber buffered chunk count; non-positive values use defaultQueueChunks.
+	// QueueChunks sets each subscriber queue depth; non-positive values use the default.
 	QueueChunks int
 	// Logger receives connection, rejection, and drop events; nil uses slog.Default.
 	Logger *slog.Logger
@@ -177,9 +177,8 @@ func (s *Server) Wait() error {
 }
 
 // Write broadcasts chunk to current subscribers without blocking on slow clients.
-// Write is single-producer: call it from one goroutine at a time. Concurrent
-// callers remain memory-safe but can drop chunks without counting them (see
-// subscriber.enqueue).
+// Call Write from one goroutine at a time. Concurrent callers are memory-safe,
+// but drop accounting may be lossy under contention.
 func (s *Server) Write(chunk []byte) {
 	if len(chunk) == 0 {
 		return
@@ -209,7 +208,7 @@ func (s *Server) ClientCount() int64 {
 	return s.clientCount.Load()
 }
 
-// DropCount returns the cumulative number of chunks dropped from full subscriber queues.
+// DropCount returns the total chunks dropped from full subscriber queues.
 func (s *Server) DropCount() int64 {
 	return s.drops.Load()
 }
@@ -328,9 +327,8 @@ func (s *Server) logSlowSubscriberDrop(sub *subscriber) {
 }
 
 func (sub *subscriber) enqueue(chunk []byte) bool {
-	// Server.Write currently has one active producer: the stdout reader for the
-	// current encoder run. Concurrent producers are memory-safe, but can race the
-	// final non-blocking send and skip their freshest chunk under contention.
+	// Server.Write has one producer per encoder run. Concurrent producers are
+	// memory-safe, but drop accounting may be lossy under contention.
 	select {
 	case sub.ch <- chunk:
 		return false

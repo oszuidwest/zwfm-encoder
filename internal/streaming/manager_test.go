@@ -361,10 +361,7 @@ func TestStatusesSurfacesListenerDropsFromFanout(t *testing.T) {
 		fanout:  fanout,
 		encoder: &encoderRun{},
 	}
-	// audioDrops gets a distinct non-zero value so the assertion below proves
-	// ListenerDrops is not mis-wired to audioDrops. fanout.DropCount() is 0 here
-	// (no live subscriber), so this guards field sourcing only; positive drop
-	// counting is proven in srtfanout's TestWriteToleratesBurstWithinQueueDepth.
+	// A distinct audioDrops value catches ListenerDrops wired to the wrong counter.
 	stream.audioDrops.Store(7)
 	m.streams[id] = stream
 

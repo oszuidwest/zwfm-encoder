@@ -163,15 +163,14 @@ func TestWriteToleratesBurstWithinQueueDepth(t *testing.T) {
 		t.Fatalf("NewServer() error = %v", err)
 	}
 	sub := server.addQueueOnlySubscriber(t)
-	// A burst that exactly fills the queue must not drop: the larger codec-sized
-	// queue is what lets PCM absorb flush bursts the old 2-chunk queue could not.
+	// Filling the codec-sized queue must not drop.
 	for i := 0; i < depth; i++ {
 		server.Write([]byte{byte(i)})
 	}
 	if got := server.DropCount(); got != 0 {
 		t.Fatalf("DropCount() after burst of %d into depth %d = %d, want 0", depth, depth, got)
 	}
-	// One chunk past the depth drops exactly one.
+	// One chunk past depth drops exactly one.
 	server.Write([]byte{0xff})
 	if got := server.DropCount(); got != 1 {
 		t.Fatalf("DropCount() after overflow = %d, want 1", got)

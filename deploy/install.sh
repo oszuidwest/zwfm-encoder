@@ -9,7 +9,7 @@ CONFIG_DIR="/etc/encoder"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
 SERVICE_PATH="/etc/systemd/system/encoder.service"
 
-# Functions library
+# Shared installer functions
 BASH_FUNCTIONS_REF="main"
 FUNCTIONS_LIB_PATH=$(mktemp)
 FUNCTIONS_LIB_URL="https://raw.githubusercontent.com/oszuidwest/bash-functions/${BASH_FUNCTIONS_REF}/common-functions.sh"

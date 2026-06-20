@@ -9,32 +9,22 @@ import (
 )
 
 const (
-	// listenerBufferDuration is the audio each fan-out subscriber buffers before
-	// dropping. The queue is sized to hold this much audio at the codec byte rate
-	// (clamped by the min/max bounds), absorbing encoder flush bursts and scheduler
-	// jitter. It replaces the old fixed 2-chunk queue, which held only ~34 ms of
-	// high-bitrate PCM.
+	// listenerBufferDuration is the target buffered audio per subscriber.
+	// Queue depth is derived from codec byte rate so PCM absorbs encoder bursts.
 	listenerBufferDuration = 2 * time.Second
-	// minListenerQueueChunks floors the per-subscriber queue so low-bitrate codecs
-	// still absorb a flush burst.
+	// minListenerQueueChunks keeps low-bitrate queues deep enough for bursts.
 	minListenerQueueChunks = 8
-	// maxListenerQueueChunks caps per-subscriber memory at
-	// maxListenerQueueChunks * listenerStdoutBufferSize.
+	// maxListenerQueueChunks bounds memory per subscriber.
 	maxListenerQueueChunks = 256
-	// listenerLatencyPCM raises the SRT latency for PCM so retransmission and jitter
-	// tolerance match its larger queue. Other codecs use srtfanout.DefaultLatency.
+	// listenerLatencyPCM gives PCM retransmission time for its larger queue.
 	listenerLatencyPCM = time.Second
-	// pcmListenerBytesPerSecond approximates the s302m wire rate the fan-out buffers
-	// for PCM. SMPTE 302M frames each 16-bit sample in ~20 bits (AES3 framing), so
-	// the elementary rate is roughly audio.BytesPerSecond * 20/16 = 240 kB/s
-	// (~1.92 Mbit/s, matching the README), about 1.25x the raw capture rate. This is
-	// a sizing approximation, not an exact wire measurement (MPEG-TS adds further
-	// overhead); sizing on the raw rate would under-buffer PCM by ~25%.
+	// pcmListenerBytesPerSecond estimates PCM after s302m framing.
+	// SMPTE 302M carries each 16-bit sample in roughly 20 bits before MPEG-TS
+	// overhead, so sizing on raw capture bytes would under-buffer PCM.
 	pcmListenerBytesPerSecond = audio.BytesPerSecond * 20 / 16
 )
 
-// listenerFanoutConfig builds the fan-out configuration for a listener stream,
-// sizing the per-subscriber queue and SRT latency from the codec byte rate.
+// listenerFanoutConfig returns an SRT fan-out config tuned for a listener stream.
 func listenerFanoutConfig(stream *types.Stream) srtfanout.Config {
 	return srtfanout.Config{
 		StreamID:    stream.ID,
@@ -46,9 +36,8 @@ func listenerFanoutConfig(stream *types.Stream) srtfanout.Config {
 	}
 }
 
-// listenerQueueChunks sizes the per-subscriber queue to hold at least
-// listenerBufferDuration of audio at the codec byte rate, using the stdout read
-// size as the chunk granularity, clamped to the min/max bounds.
+// listenerQueueChunks returns the queue depth for listenerBufferDuration at the
+// stream's encoded byte rate, clamped to min/max bounds.
 func listenerQueueChunks(stream *types.Stream) int {
 	bytesPerSec := listenerBytesPerSecond(stream)
 	targetBytes := bytesPerSec * int(listenerBufferDuration.Milliseconds()) / 1000
@@ -56,8 +45,7 @@ func listenerQueueChunks(stream *types.Stream) int {
 	return min(max(chunks, minListenerQueueChunks), maxListenerQueueChunks)
 }
 
-// listenerLatency returns the SRT latency for a listener stream. PCM uses a longer
-// latency to match its larger queue; other codecs use the fan-out default.
+// listenerLatency returns PCM-specific SRT latency or the fan-out default.
 func listenerLatency(stream *types.Stream) time.Duration {
 	if stream.Codec == types.CodecPCM {
 		return listenerLatencyPCM
@@ -65,9 +53,8 @@ func listenerLatency(stream *types.Stream) time.Duration {
 	return srtfanout.DefaultLatency
 }
 
-// listenerBytesPerSecond estimates the encoded byte rate of a listener stream,
-// i.e. the bytes the fan-out buffers. PCM uses the s302m-in-MPEG-TS rate (not the
-// raw capture rate); compressed codecs use their configured or default bitrate.
+// listenerBytesPerSecond returns the byte rate used to size listener queues.
+// PCM uses s302m framing; compressed codecs use configured or default bitrate.
 func listenerBytesPerSecond(stream *types.Stream) int {
 	if stream.Codec == types.CodecPCM {
 		return pcmListenerBytesPerSecond
