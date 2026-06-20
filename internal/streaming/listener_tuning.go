@@ -10,9 +10,10 @@ import (
 
 const (
 	// listenerBufferDuration is the audio each fan-out subscriber buffers before
-	// dropping. It absorbs encoder flush bursts and scheduler jitter so high-bitrate
-	// PCM keeps the same headroom that low-bitrate codecs already get from the same
-	// chunk count.
+	// dropping. The queue is sized to hold this much audio at the codec byte rate
+	// (clamped by the min/max bounds), absorbing encoder flush bursts and scheduler
+	// jitter. It replaces the old fixed 2-chunk queue, which held only ~34 ms of
+	// high-bitrate PCM.
 	listenerBufferDuration = 2 * time.Second
 	// minListenerQueueChunks floors the per-subscriber queue so low-bitrate codecs
 	// still absorb a flush burst.
@@ -23,11 +24,12 @@ const (
 	// listenerLatencyPCM raises the SRT latency for PCM so retransmission and jitter
 	// tolerance match its larger queue. Other codecs use srtfanout.DefaultLatency.
 	listenerLatencyPCM = time.Second
-	// pcmListenerBytesPerSecond is the encoded wire rate of the PCM listener path,
-	// which the fan-out actually buffers. SMPTE 302M (s302m) stores each 16-bit
-	// sample in 20 bits (4 AES3 framing bits), so the elementary rate is
-	// audio.BytesPerSecond * 20/16 = 240 kB/s (1.92 Mbit/s, per README), ~1.25x the
-	// raw capture rate. Sizing on the raw rate under-buffers PCM by ~25%.
+	// pcmListenerBytesPerSecond approximates the s302m wire rate the fan-out buffers
+	// for PCM. SMPTE 302M frames each 16-bit sample in ~20 bits (AES3 framing), so
+	// the elementary rate is roughly audio.BytesPerSecond * 20/16 = 240 kB/s
+	// (~1.92 Mbit/s, matching the README), about 1.25x the raw capture rate. This is
+	// a sizing approximation, not an exact wire measurement (MPEG-TS adds further
+	// overhead); sizing on the raw rate would under-buffer PCM by ~25%.
 	pcmListenerBytesPerSecond = audio.BytesPerSecond * 20 / 16
 )
 
@@ -55,12 +57,12 @@ func listenerQueueChunks(stream *types.Stream) int {
 }
 
 // listenerLatency returns the SRT latency for a listener stream. PCM uses a longer
-// latency to match its larger queue; other codecs fall back to the fan-out default.
+// latency to match its larger queue; other codecs use the fan-out default.
 func listenerLatency(stream *types.Stream) time.Duration {
 	if stream.Codec == types.CodecPCM {
 		return listenerLatencyPCM
 	}
-	return 0
+	return srtfanout.DefaultLatency
 }
 
 // listenerBytesPerSecond estimates the encoded byte rate of a listener stream,

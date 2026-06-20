@@ -1636,6 +1636,10 @@ document.addEventListener('alpine:init', () => {
                             if (status.encoder_running) {
                                 stateClass = 'state-success';
                                 statusText = status.uptime ? `Ready (${status.uptime})` : 'Ready';
+                                if (status.listener_drops > 0) {
+                                    stateClass = 'state-warning';
+                                    statusText = `${statusText}, ${status.listener_drops} dropped`;
+                                }
                             } else if (status.retry_count > 0) {
                                 stateClass = 'state-warning';
                                 statusText = 'Restarting encoder';

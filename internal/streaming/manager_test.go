@@ -347,6 +347,52 @@ func TestStatusesIncludesListenerEncoderAndClientFields(t *testing.T) {
 		t.Fatalf("listener status ClientCount = %d, want 0", status.ClientCount)
 	}
 }
+func TestStatusesSurfacesListenerDropsFromFanout(t *testing.T) {
+	t.Parallel()
+	const id = "listener-1"
+	fanout, err := srtfanout.NewServer(srtfanout.Config{Port: 9000})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	m := NewManager("ffmpeg")
+	stream := &Stream{
+		state:   types.ProcessRunning,
+		mode:    types.StreamModeListener,
+		fanout:  fanout,
+		encoder: &encoderRun{},
+	}
+	// audioDrops gets a distinct non-zero value so the assertion below proves
+	// ListenerDrops is not mis-wired to audioDrops. fanout.DropCount() is 0 here
+	// (no live subscriber), so this guards field sourcing only; positive drop
+	// counting is proven in srtfanout's TestWriteToleratesBurstWithinQueueDepth.
+	stream.audioDrops.Store(7)
+	m.streams[id] = stream
+
+	status := m.Statuses(func(string) *types.Stream {
+		return &types.Stream{ID: id, Mode: types.StreamModeListener, MaxRetries: 3}
+	})[id]
+
+	if got, want := status.ListenerDrops, fanout.DropCount(); got != want {
+		t.Fatalf("ListenerDrops = %d, want %d (from fanout.DropCount())", got, want)
+	}
+	if status.AudioDrops != 7 {
+		t.Fatalf("AudioDrops = %d, want 7 (must stay distinct from ListenerDrops)", status.AudioDrops)
+	}
+}
+func TestStatusesListenerWithoutFanoutReportsNoDrops(t *testing.T) {
+	t.Parallel()
+	const id = "listener-1"
+	m := NewManager("ffmpeg")
+	m.streams[id] = &Stream{state: types.ProcessRunning, mode: types.StreamModeListener}
+
+	status := m.Statuses(func(string) *types.Stream {
+		return &types.Stream{ID: id, Mode: types.StreamModeListener, MaxRetries: 3}
+	})[id]
+
+	if status.ListenerDrops != 0 {
+		t.Fatalf("ListenerDrops = %d, want 0 when fanout is nil", status.ListenerDrops)
+	}
+}
 func TestWriteAudioListenerSkipsWhenNoEncoderRun(t *testing.T) {
 	t.Parallel()
 	m := NewManager("ffmpeg")

@@ -155,6 +155,31 @@ func TestWriteDropsOldestAndKeepsNewest(t *testing.T) {
 		t.Fatalf("DropCount() = %d, want 1", got)
 	}
 }
+func TestWriteToleratesBurstWithinQueueDepth(t *testing.T) {
+	t.Parallel()
+	const depth = 32
+	server, err := NewServer(Config{Port: 9000, QueueChunks: depth, Logger: testLogger()})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	sub := server.addQueueOnlySubscriber(t)
+	// A burst that exactly fills the queue must not drop: the larger codec-sized
+	// queue is what lets PCM absorb flush bursts the old 2-chunk queue could not.
+	for i := 0; i < depth; i++ {
+		server.Write([]byte{byte(i)})
+	}
+	if got := server.DropCount(); got != 0 {
+		t.Fatalf("DropCount() after burst of %d into depth %d = %d, want 0", depth, depth, got)
+	}
+	// One chunk past the depth drops exactly one.
+	server.Write([]byte{0xff})
+	if got := server.DropCount(); got != 1 {
+		t.Fatalf("DropCount() after overflow = %d, want 1", got)
+	}
+	if got := len(sub.ch); got != depth {
+		t.Fatalf("queue len = %d, want %d", got, depth)
+	}
+}
 func TestWriteCopiesChunkBeforeEnqueue(t *testing.T) {
 	t.Parallel()
 	server := newQueueTestServer(t)

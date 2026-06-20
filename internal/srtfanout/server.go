@@ -177,6 +177,9 @@ func (s *Server) Wait() error {
 }
 
 // Write broadcasts chunk to current subscribers without blocking on slow clients.
+// Write is single-producer: call it from one goroutine at a time. Concurrent
+// callers remain memory-safe but can drop chunks without counting them (see
+// subscriber.enqueue).
 func (s *Server) Write(chunk []byte) {
 	if len(chunk) == 0 {
 		return
