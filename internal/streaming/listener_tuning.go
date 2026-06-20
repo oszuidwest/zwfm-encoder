@@ -44,13 +44,13 @@ func listenerFanoutConfig(stream *types.Stream) srtfanout.Config {
 	}
 }
 
-// listenerQueueChunks sizes the per-subscriber queue to hold roughly
+// listenerQueueChunks sizes the per-subscriber queue to hold at least
 // listenerBufferDuration of audio at the codec byte rate, using the stdout read
 // size as the chunk granularity, clamped to the min/max bounds.
 func listenerQueueChunks(stream *types.Stream) int {
 	bytesPerSec := listenerBytesPerSecond(stream)
 	targetBytes := bytesPerSec * int(listenerBufferDuration.Milliseconds()) / 1000
-	chunks := targetBytes / listenerStdoutBufferSize
+	chunks := (targetBytes + listenerStdoutBufferSize - 1) / listenerStdoutBufferSize
 	return min(max(chunks, minListenerQueueChunks), maxListenerQueueChunks)
 }
 

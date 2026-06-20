@@ -16,14 +16,14 @@ func TestListenerQueueChunks(t *testing.T) {
 		bitrate int
 		want    int
 	}{
-		// PCM s302m at 240000 B/s for 2s = 480000 B / 4096 = 117 chunks (~2s of headroom).
-		{name: "pcm fills ~2s", codec: types.CodecPCM, want: 117},
+		// PCM s302m at 240000 B/s for 2s = 480000 B / 4096 = 118 chunks.
+		{name: "pcm fills 2s", codec: types.CodecPCM, want: 118},
 		// Opus default 128k = 16000 B/s -> 7 chunks, floored to the minimum.
 		{name: "opus default floored", codec: types.CodecOpus, want: minListenerQueueChunks},
-		// Opus 256k = 32000 B/s for 2s = 64000 B / 4096 = 15 chunks.
-		{name: "opus 256k", codec: types.CodecOpus, bitrate: 256, want: 15},
-		// MP3 default 320k = 40000 B/s for 2s = 80000 B / 4096 = 19 chunks.
-		{name: "mp3 default", codec: types.CodecMP3, want: 19},
+		// Opus 256k = 32000 B/s for 2s = 64000 B / 4096 = 16 chunks.
+		{name: "opus 256k", codec: types.CodecOpus, bitrate: 256, want: 16},
+		// MP3 default 320k = 40000 B/s for 2s = 80000 B / 4096 = 20 chunks.
+		{name: "mp3 default", codec: types.CodecMP3, want: 20},
 		// MP3 64k = 8000 B/s -> 3 chunks, floored to the minimum.
 		{name: "mp3 low floored", codec: types.CodecMP3, bitrate: 64, want: minListenerQueueChunks},
 	}
