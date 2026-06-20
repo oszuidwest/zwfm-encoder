@@ -58,6 +58,7 @@ type ProcessStatus struct {
 	AudioDrops     int64        `json:"audio_drops,omitempty"`
 	EncoderRunning bool         `json:"encoder_running,omitempty"`
 	ClientCount    int64        `json:"client_count,omitempty"`
+	ListenerDrops  int64        `json:"listener_drops,omitempty"` // chunks dropped from full fan-out subscriber queues
 }
 
 const (
@@ -240,6 +241,20 @@ func (c Codec) Format() string {
 	}
 	slog.Error("unknown codec format requested, falling back to PCM format", "codec", c)
 	return codecPresets[CodecPCM].format
+}
+
+// DefaultBitrate returns the codec's default bitrate in kbit/s, or 0 for
+// uncompressed codecs (PCM) that emit no -b:a flag.
+func (c Codec) DefaultBitrate() int {
+	preset, ok := codecPresets[c]
+	if !ok || preset.defaultBitrate == "" {
+		return 0
+	}
+	kbit, err := strconv.Atoi(strings.TrimSuffix(preset.defaultBitrate, "k"))
+	if err != nil {
+		return 0
+	}
+	return kbit
 }
 
 // BuildCodecArgs returns FFmpeg encoder arguments for the given codec and bitrate.

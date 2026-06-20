@@ -152,6 +152,24 @@ func TestCodecFormat(t *testing.T) {
 		})
 	}
 }
+func TestCodecDefaultBitrate(t *testing.T) {
+	tests := []struct {
+		codec Codec
+		want  int
+	}{
+		{codec: CodecMP3, want: 320},
+		{codec: CodecOpus, want: 128},
+		{codec: CodecPCM, want: 0},
+		{codec: Codec("aac"), want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.codec), func(t *testing.T) {
+			if got := tt.codec.DefaultBitrate(); got != tt.want {
+				t.Fatalf("DefaultBitrate() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
 func TestStreamModeOrDefault(t *testing.T) {
 	tests := []struct {
 		name string

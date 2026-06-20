@@ -36,6 +36,27 @@ func TestNewServerDefaults(t *testing.T) {
 	if server.cfg.MaxClients != DefaultMaxClients {
 		t.Fatalf("MaxClients = %d, want %d", server.cfg.MaxClients, DefaultMaxClients)
 	}
+	if server.cfg.QueueChunks != defaultQueueChunks {
+		t.Fatalf("QueueChunks = %d, want %d", server.cfg.QueueChunks, defaultQueueChunks)
+	}
+}
+func TestNewServerHonorsQueueChunks(t *testing.T) {
+	t.Parallel()
+	server, err := NewServer(Config{
+		Port:        9000,
+		QueueChunks: 64,
+		Logger:      testLogger(),
+	})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	if server.cfg.QueueChunks != 64 {
+		t.Fatalf("QueueChunks = %d, want 64", server.cfg.QueueChunks)
+	}
+	sub := server.addQueueOnlySubscriber(t)
+	if got := cap(sub.ch); got != 64 {
+		t.Fatalf("subscriber queue cap = %d, want 64", got)
+	}
 }
 func TestHandleConnectTreatsEveryStreamIDAsSubscriber(t *testing.T) {
 	t.Parallel()
@@ -129,6 +150,9 @@ func TestWriteDropsOldestAndKeepsNewest(t *testing.T) {
 	}
 	if got := atomic.LoadInt64(&sub.drops); got != 1 {
 		t.Fatalf("drops = %d, want 1", got)
+	}
+	if got := server.DropCount(); got != 1 {
+		t.Fatalf("DropCount() = %d, want 1", got)
 	}
 }
 func TestWriteCopiesChunkBeforeEnqueue(t *testing.T) {
@@ -314,7 +338,7 @@ func (s *Server) addQueueOnlySubscriber(t *testing.T) *subscriber {
 	t.Helper()
 	sub := &subscriber{
 		conn: newFakeConn(),
-		ch:   make(chan []byte, defaultQueueChunks),
+		ch:   make(chan []byte, s.cfg.QueueChunks),
 		done: make(chan struct{}),
 	}
 	s.mu.Lock()
