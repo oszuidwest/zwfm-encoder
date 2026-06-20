@@ -40,6 +40,8 @@ type Config struct {
 	Latency time.Duration
 	// MaxClients limits concurrent subscribers; non-positive values use DefaultMaxClients.
 	MaxClients int
+	// QueueChunks is the per-subscriber buffered chunk count; non-positive values use defaultQueueChunks.
+	QueueChunks int
 	// Logger receives connection, rejection, and drop events; nil uses slog.Default.
 	Logger *slog.Logger
 }
@@ -62,6 +64,7 @@ type Server struct {
 	subscriberWg sync.WaitGroup
 	stopOnce     sync.Once
 	clientCount  atomic.Int64
+	drops        atomic.Int64
 }
 
 type subscriber struct {
@@ -88,6 +91,9 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	if cfg.MaxClients <= 0 {
 		cfg.MaxClients = DefaultMaxClients
+	}
+	if cfg.QueueChunks <= 0 {
+		cfg.QueueChunks = defaultQueueChunks
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -171,6 +177,9 @@ func (s *Server) Wait() error {
 }
 
 // Write broadcasts chunk to current subscribers without blocking on slow clients.
+// Write is single-producer: call it from one goroutine at a time. Concurrent
+// callers remain memory-safe but can drop chunks without counting them (see
+// subscriber.enqueue).
 func (s *Server) Write(chunk []byte) {
 	if len(chunk) == 0 {
 		return
@@ -189,6 +198,7 @@ func (s *Server) Write(chunk []byte) {
 
 	for sub := range s.subscribers {
 		if dropped := sub.enqueue(buf); dropped {
+			s.drops.Add(1)
 			s.logSlowSubscriberDrop(sub)
 		}
 	}
@@ -197,6 +207,11 @@ func (s *Server) Write(chunk []byte) {
 // ClientCount returns the number of active subscriber connections.
 func (s *Server) ClientCount() int64 {
 	return s.clientCount.Load()
+}
+
+// DropCount returns the cumulative number of chunks dropped from full subscriber queues.
+func (s *Server) DropCount() int64 {
+	return s.drops.Load()
 }
 
 func (s *Server) handleConnect(req srt.ConnRequest) srt.ConnType {
@@ -238,7 +253,7 @@ func (s *Server) handleConnect(req srt.ConnRequest) srt.ConnType {
 func (s *Server) handleSubscribe(conn srt.Conn) {
 	sub := &subscriber{
 		conn: conn,
-		ch:   make(chan []byte, defaultQueueChunks),
+		ch:   make(chan []byte, s.cfg.QueueChunks),
 		done: make(chan struct{}),
 	}
 	if !s.addSubscriber(sub) {

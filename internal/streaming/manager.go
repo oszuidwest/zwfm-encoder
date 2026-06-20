@@ -328,12 +328,7 @@ func (m *Manager) startListenerFanout(stream *types.Stream) (bool, error) {
 		m.stopStreamResources(stream.ID, oldStream)
 	}
 
-	fanout, err := srtfanout.NewServer(srtfanout.Config{
-		StreamID: stream.ID,
-		BindHost: stream.ListenerBindHost(),
-		Port:     stream.Port,
-		Password: stream.Password,
-	})
+	fanout, err := srtfanout.NewServer(listenerFanoutConfig(stream))
 	if err != nil {
 		m.removePlaceholder(stream.ID, placeholder)
 		return false, err
@@ -744,6 +739,7 @@ func (m *Manager) Statuses(getStreamConfig func(string) *types.Stream) map[strin
 		isListener := stream.mode == types.StreamModeListener
 		encoderRunning := false
 		clientCount := int64(0)
+		listenerDrops := int64(0)
 		errMsg := stream.lastError
 		if isListener {
 			stream.encoderMu.RLock()
@@ -754,6 +750,7 @@ func (m *Manager) Statuses(getStreamConfig func(string) *types.Stream) map[strin
 			stream.encoderMu.RUnlock()
 			if stream.fanout != nil {
 				clientCount = stream.fanout.ClientCount()
+				listenerDrops = stream.fanout.DropCount()
 			}
 		}
 
@@ -773,6 +770,7 @@ func (m *Manager) Statuses(getStreamConfig func(string) *types.Stream) map[strin
 			AudioDrops:     stream.audioDrops.Load(),
 			EncoderRunning: isListener && encoderRunning,
 			ClientCount:    clientCount,
+			ListenerDrops:  listenerDrops,
 		}
 	}
 	return statuses

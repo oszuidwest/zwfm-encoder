@@ -58,6 +58,9 @@ type ProcessStatus struct {
 	AudioDrops     int64        `json:"audio_drops,omitempty"`
 	EncoderRunning bool         `json:"encoder_running,omitempty"`
 	ClientCount    int64        `json:"client_count,omitempty"`
+	// ListenerDrops counts chunks dropped from full fan-out subscriber queues. It
+	// is always emitted (no omitempty) so a healthy 0 is distinguishable from absent.
+	ListenerDrops int64 `json:"listener_drops"`
 }
 
 const (
@@ -216,18 +219,18 @@ func (s *Stream) MaxRetriesOrDefault() int {
 }
 
 // codecPreset defines encoding parameters for a codec.
-// If defaultBitrate is empty, no -b:a flag is emitted (used for PCM).
+// A defaultBitrate of 0 emits no -b:a flag (used for uncompressed PCM).
 type codecPreset struct {
 	encoder        string
 	format         string
-	defaultBitrate string
+	defaultBitrate int // kbit/s; 0 = uncompressed (no -b:a flag)
 	extraArgs      []string
 }
 
 // codecPresets is the single source of truth for codec encoding parameters.
 var codecPresets = map[Codec]codecPreset{
-	CodecMP3:  {encoder: "libmp3lame", format: "mp3", defaultBitrate: "320k"},
-	CodecOpus: {encoder: "libopus", format: "mpegts", defaultBitrate: "128k", extraArgs: []string{"-frame_duration", "10"}},
+	CodecMP3:  {encoder: "libmp3lame", format: "mp3", defaultBitrate: 320},
+	CodecOpus: {encoder: "libopus", format: "mpegts", defaultBitrate: 128, extraArgs: []string{"-frame_duration", "10"}},
 	// SMPTE 302M is the only PCM-in-MPEG-TS encoder Liquidsoap can decode.
 	// FFmpeg marks s302m as experimental, so -strict -2 is required.
 	CodecPCM: {encoder: "s302m", format: "mpegts", extraArgs: []string{"-strict", "-2"}},
@@ -242,6 +245,12 @@ func (c Codec) Format() string {
 	return codecPresets[CodecPCM].format
 }
 
+// DefaultBitrate returns the codec's default bitrate in kbit/s, or 0 for
+// uncompressed codecs (PCM) that emit no -b:a flag. Unknown codecs return 0.
+func (c Codec) DefaultBitrate() int {
+	return codecPresets[c].defaultBitrate
+}
+
 // BuildCodecArgs returns FFmpeg encoder arguments for the given codec and bitrate.
 // A bitrate of 0 uses the codec's default settings.
 func BuildCodecArgs(codec Codec, bitrate int) []string {
@@ -251,12 +260,12 @@ func BuildCodecArgs(codec Codec, bitrate int) []string {
 		preset = codecPresets[CodecPCM]
 	}
 	args := []string{preset.encoder}
-	if preset.defaultBitrate != "" {
-		br := preset.defaultBitrate
+	if preset.defaultBitrate > 0 {
+		kbit := preset.defaultBitrate
 		if bitrate > 0 {
-			br = strconv.Itoa(bitrate) + "k"
+			kbit = bitrate
 		}
-		args = append(args, "-b:a", br)
+		args = append(args, "-b:a", strconv.Itoa(kbit)+"k")
 	}
 	args = append(args, preset.extraArgs...)
 	return args
