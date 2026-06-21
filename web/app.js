@@ -1925,6 +1925,7 @@ document.addEventListener('alpine:init', () => {
 
             return {
                 key: `live:stream:${stream.id}`,
+                // Keep live source keys byte-identical to backend dedupe keys in internal/eventlog/groups.go.
                 sourceKey: `stream:${stream.id}`,
                 category: 'stream',
                 severity,
@@ -1962,6 +1963,7 @@ document.addEventListener('alpine:init', () => {
             const latest = this.events.find(event => event.type === 'silence_start');
             return {
                 key: 'live:audio:silence',
+                // Keep live source keys byte-identical to backend dedupe keys in internal/eventlog/groups.go.
                 sourceKey: 'audio:silence',
                 category: 'audio',
                 severity: 'warning',
@@ -1983,6 +1985,7 @@ document.addEventListener('alpine:init', () => {
             const latest = this.events.find(event => event.type === 'channel_imbalance_start');
             return {
                 key: 'live:audio:imbalance',
+                // Keep live source keys byte-identical to backend dedupe keys in internal/eventlog/groups.go.
                 sourceKey: 'audio:imbalance',
                 category: 'audio',
                 severity: 'warning',
@@ -2028,10 +2031,12 @@ document.addEventListener('alpine:init', () => {
         },
 
         recorderStatusSourceKey(recorderName) {
+            // Keep live recorder keys byte-identical to backend dedupe keys in internal/eventlog/groups.go.
             return recorderName ? `recorder:${recorderName}:` : '';
         },
 
         recorderUploadSourceKey(recorderName) {
+            // Upload keys are intentionally recorder-wide so live retry state hides per-file history.
             return recorderName ? `recorder-upload:${recorderName}` : '';
         },
 

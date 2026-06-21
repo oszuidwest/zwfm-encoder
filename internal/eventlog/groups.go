@@ -50,6 +50,8 @@ type groupedEvent struct {
 	details map[string]any
 }
 
+// groupingState walks events oldest-first, opening problem incidents and closing
+// them when the matching recovery event arrives.
 type groupingState struct {
 	openByKey map[string]*historicalIncident
 	closed    []*historicalIncident
@@ -464,6 +466,7 @@ func eventSourceKey(event groupedEvent) string {
 }
 
 func eventDedupeKey(event groupedEvent) string {
+	// Keep these historical dedupe keys byte-identical to live issue keys in web/app.js.
 	if event.view.Category == CategoryRecorder && isUploadEvent(event.view.Type) {
 		if name := detailString(event.details, "recorder_name"); name != "" {
 			return recorderUploadSourceKey(name)
