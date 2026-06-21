@@ -22,8 +22,6 @@ type EventGroups struct {
 // EventGroupItem is one rendered row in a historical event group.
 type EventGroupItem struct {
 	Key        string      `json:"key"`
-	SourceKey  string      `json:"sourceKey,omitempty"`
-	DedupeKey  string      `json:"dedupeKey,omitempty"`
 	Category   Category    `json:"category"`
 	Severity   Severity    `json:"severity"`
 	Title      string      `json:"title"`
@@ -107,6 +105,7 @@ func EmptyEventGroups() EventGroups {
 }
 
 // GroupEvents folds historical events into attention, resolved, activity, and routine rows.
+// It groups only the supplied event window, so pagination can split incidents.
 func GroupEvents(events []EventView) EventGroups {
 	grouped := make([]groupedEvent, len(events))
 	for i := range events {
@@ -174,7 +173,19 @@ func GroupEvents(events []EventView) EventGroups {
 
 func (s *groupingState) process(event groupedEvent) {
 	key := eventSourceKey(event)
-	if open := s.openByKey[key]; open != nil && open.closeType == event.view.Type {
+	if event.view.Type == UploadAbandoned {
+		incident := s.openByKey[key]
+		if incident == nil {
+			incident = newHistoricalIncident(event, key, "")
+		} else {
+			delete(s.openByKey, key)
+		}
+		incident.add(event)
+		s.failed = append(s.failed, incident)
+		return
+	}
+
+	if open := s.openByKey[key]; open != nil && eventClosesIncident(open, event) {
 		open.add(event)
 		s.closed = append(s.closed, open)
 		delete(s.openByKey, key)
@@ -198,19 +209,22 @@ func (s *groupingState) process(event groupedEvent) {
 		return
 	}
 
-	if event.view.Type == UploadAbandoned {
-		incident := newHistoricalIncident(event, key, "")
-		incident.add(event)
-		s.failed = append(s.failed, incident)
-		return
-	}
-
 	incident := s.openByKey[key]
 	if incident == nil {
 		incident = newHistoricalIncident(event, key, eventCloses[event.view.Type])
 		s.openByKey[key] = incident
 	}
 	incident.add(event)
+}
+
+func eventClosesIncident(open *historicalIncident, event groupedEvent) bool {
+	if open.closeType == event.view.Type {
+		return true
+	}
+	// Listener starts close stream incidents by mode; prefix fallback supports legacy logs.
+	return open.closeType == StreamStable &&
+		event.view.Type == StreamStarted &&
+		isListenerStreamEvent(event)
 }
 
 func consumedEventIDs(eventCount int, groups ...[]*historicalIncident) []bool {
@@ -264,7 +278,7 @@ func latestSilenceIncident(incidents []*historicalIncident) *historicalIncident 
 
 func incidentItem(incident *historicalIncident, status string) EventGroupItem {
 	events := incidentEventViews(incident.events)
-	first := incident.first
+	display := incidentDisplayEvent(incident, status)
 	duration := incident.durationMs
 	if duration == 0 {
 		duration = max(0, incident.endTs-incident.startTs)
@@ -281,7 +295,7 @@ func incidentItem(incident *historicalIncident, status string) EventGroupItem {
 		chips = append(chips, "audio dump")
 	}
 	if status == "failed" {
-		if retry := detailInt64(first.details, "retry"); retry > 0 {
+		if retry := incidentLastDetailInt64(incident.events, "retry"); retry > 0 {
 			chips = append(chips, fmt.Sprintf("gave up after %d", retry))
 		}
 	}
@@ -291,27 +305,36 @@ func incidentItem(incident *historicalIncident, status string) EventGroupItem {
 		severity = SeveritySuccess
 	}
 
+	sortTs := incident.startTs
+	if status == "resolved" || status == "failed" {
+		// Open incidents sort by start; terminal incidents sort by recent outcome.
+		sortTs = incident.endTs
+	}
+
 	return EventGroupItem{
 		Key:        fmt.Sprintf("incident:%s:%s:%d", status, incident.key, incident.startTs),
-		SourceKey:  incident.key,
-		DedupeKey:  eventDedupeKey(first),
-		Category:   first.view.Category,
+		Category:   display.view.Category,
 		Severity:   severity,
-		Title:      incidentTitle(first.view.Type),
-		Source:     eventSource(first),
+		Title:      incidentTitle(display.view.Type),
+		Source:     eventSource(display),
 		StatusText: statusText(status),
 		Chips:      chips,
-		Detail:     firstEventError(incident.events),
+		Detail:     incidentDetail(incident, status),
 		Events:     events,
-		SortTs:     incident.startTs,
+		SortTs:     sortTs,
 	}
+}
+
+func incidentDisplayEvent(incident *historicalIncident, status string) groupedEvent {
+	if status == "failed" && len(incident.events) > 0 {
+		return incident.events[len(incident.events)-1]
+	}
+	return incident.first
 }
 
 func activityEventItem(event groupedEvent) EventGroupItem {
 	return EventGroupItem{
 		Key:        eventRowKey(event),
-		SourceKey:  eventSourceKey(event),
-		DedupeKey:  eventDedupeKey(event),
 		Category:   event.view.Category,
 		Severity:   event.view.Severity,
 		Title:      activityTitle(event),
@@ -417,16 +440,6 @@ func eventSourceKey(event groupedEvent) string {
 	}
 }
 
-func eventDedupeKey(event groupedEvent) string {
-	// Keep these historical dedupe keys byte-identical to live issue keys in web/app.js.
-	if event.view.Category == CategoryRecorder && isUploadEvent(event.view.Type) {
-		if name := detailString(event.details, "recorder_name"); name != "" {
-			return "recorder-upload:" + name
-		}
-	}
-	return eventSourceKey(event)
-}
-
 func eventSource(event groupedEvent) string {
 	switch event.view.Category {
 	case CategoryAudio:
@@ -469,7 +482,15 @@ func incidentTitle(t EventType) string {
 }
 
 func isListenerStreamStart(event groupedEvent) bool {
-	return event.view.Type == StreamStarted && strings.HasPrefix(event.view.Message, "Listening on")
+	return event.view.Type == StreamStarted && isListenerStreamEvent(event)
+}
+
+func isListenerStreamEvent(event groupedEvent) bool {
+	mode := detailString(event.details, "mode")
+	if mode != "" {
+		return mode == "listener"
+	}
+	return strings.HasPrefix(event.view.Message, "Listening on")
 }
 
 func activityTitle(event groupedEvent) string {
@@ -535,8 +556,11 @@ func eventLabel(t EventType) string {
 }
 
 func eventDetail(event groupedEvent) string {
-	details := event.details
-	switch event.view.Type {
+	return eventDetailFor(event.view.Type, event.details)
+}
+
+func eventDetailFor(t EventType, details map[string]any) string {
+	switch t {
 	case StreamError:
 		return cmp.Or(detailString(details, "error"), "Unknown error")
 	case StreamRetry:
@@ -592,6 +616,33 @@ func firstEventError(events []groupedEvent) string {
 		return cmp.Or(eventDetail(events[0]), events[0].view.Message)
 	}
 	return ""
+}
+
+func lastEventError(events []groupedEvent) string {
+	for i := len(events) - 1; i >= 0; i-- {
+		if errMsg := detailString(events[i].details, "error"); errMsg != "" {
+			return errMsg
+		}
+	}
+	return ""
+}
+
+func incidentDetail(incident *historicalIncident, status string) string {
+	if status == "failed" {
+		if errMsg := lastEventError(incident.events); errMsg != "" {
+			return errMsg
+		}
+	}
+	return firstEventError(incident.events)
+}
+
+func incidentLastDetailInt64(events []groupedEvent, key string) int64 {
+	for i := len(events) - 1; i >= 0; i-- {
+		if value := detailInt64(events[i].details, key); value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func retryErrorDetail(details map[string]any, fallback string) string {

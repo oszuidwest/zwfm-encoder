@@ -28,6 +28,7 @@ const TIME_FORMATTER = new Intl.DateTimeFormat('nl-NL', {
     minute: '2-digit',
     second: '2-digit',
 });
+const RELATIVE_TIME_FORMATTER = new Intl.RelativeTimeFormat('en', { numeric: 'always', style: 'narrow' });
 
 // IEC 60268-10 Type I: 20 dB fallback in 1.7 seconds.
 const PPM_DECAY_DB_PER_SEC = 20 / 1.7;
@@ -54,37 +55,7 @@ const API = {
     RECORDING_REGENERATE_KEY: '/api/recording/regenerate-key',
 };
 
-const EVENT_KEYS = window.eventKeyBuilders;
-
-const EVENT_LABELS = {
-    stream_started: 'Started',
-    stream_stable: 'Connected',
-    stream_error: 'Error',
-    stream_retry: 'Retry',
-    stream_stopped: 'Stopped',
-    silence_start: 'Silence',
-    silence_end: 'Recovered',
-    audio_dump_ready: 'Audio Dump',
-    channel_imbalance_start: 'Imbalance',
-    channel_imbalance_end: 'Balanced',
-    recorder_started: 'Started',
-    recorder_stopped: 'Stopped',
-    recorder_error: 'Error',
-    recorder_file: 'New File',
-    upload_queued: 'Upload Queued',
-    upload_completed: 'Uploaded',
-    upload_failed: 'Upload Failed',
-    upload_retry: 'Retry',
-    upload_abandoned: 'Abandoned',
-    cleanup_completed: 'Cleanup',
-};
-
-const EVENT_CATEGORY_LABELS = {
-    stream: 'Streams',
-    audio: 'Audio',
-    recorder: 'Recording',
-    unknown: 'System',
-};
+const EVENT_HELPERS = window.eventUIHelpers;
 
 // Status sections the event dashboard groups into, used for the filter pills.
 // The key matches the keys produced by eventGroups(); label/dot drive the pill rendering.
@@ -95,12 +66,6 @@ const EVENT_GROUP_FILTERS = [
     { key: 'routine', label: 'Routine' },
 ];
 const EVENT_GROUP_FILTER_KEYS = EVENT_GROUP_FILTERS.map(filter => filter.key);
-
-const RECORDER_STORAGE_LABELS = {
-    both: 'Local + S3',
-    s3: 'S3',
-    local: 'Local',
-};
 
 /**
  * Performs an API request with an optional JSON body. Returns the parsed
@@ -193,18 +158,6 @@ const copyTextToClipboard = async (text) => {
         }
     }
     copyTextFallback(text);
-};
-
-/** Formats milliseconds to human-readable smart units (ms/s/m). */
-const formatSmartDuration = (ms) => {
-    if (ms < MS_PER_SECOND) return `${Math.round(ms)}ms`;
-    if (ms < MS_PER_MINUTE) {
-        const sec = ms / MS_PER_SECOND;
-        return sec < 10 ? `${sec.toFixed(1)}s` : `${Math.round(sec)}s`;
-    }
-    const mins = Math.floor(ms / MS_PER_MINUTE);
-    const secs = Math.round((ms % MS_PER_MINUTE) / MS_PER_SECOND);
-    return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
 };
 
 const msToSeconds = (ms) => ms / MS_PER_SECOND;
@@ -319,18 +272,6 @@ const deepClone = (obj) => typeof structuredClone === 'function'
     ? structuredClone(obj)
     : JSON.parse(JSON.stringify(obj));
 
-const normalizeEventSeverity = (severity) => (
-    ['error', 'warning', 'success', 'info'].includes(severity) ? severity : 'info'
-);
-
-const normalizeEventCategory = (category) => (
-    ['stream', 'audio', 'recorder'].includes(category) ? category : 'unknown'
-);
-
-const normalizeEventReason = (reason) => (
-    ['problem', 'recovery', 'lifecycle', 'routine'].includes(reason) ? reason : 'unknown'
-);
-
 const emptyEventGroups = () => ({
     attention: [],
     resolved: [],
@@ -393,19 +334,18 @@ document.addEventListener('alpine:init', () => {
         recorderFormDirty: false,
 
         // Event history includes stream, audio, and recorder events.
-        events: [],
         eventHistoryGroups: emptyEventGroups(),
         eventFilter: '', // '' = all sections, or a group key: attention | resolved | activity | routine
         eventGroupFilters: EVENT_GROUP_FILTERS,
         eventsError: '',
         eventsLoading: false,
         eventsHasMore: false,
+        eventsLimitReached: false,
         eventsWindowSize: EVENT_PAGE_SIZE,
         eventOpenRows: {},
 
         devices: [],
         levels: { ...DEFAULT_LEVELS },
-        liveAudioIssues: { silence: false, imbalance: false },
         vuMode: readStorage(STORAGE_KEYS.VU_MODE, 'peak'),
         clipActive: false,
         clipTimeout: null,
@@ -742,16 +682,6 @@ document.addEventListener('alpine:init', () => {
             updateHold(levels.display_right, this.levels.hold_right ?? -60, this.levels.hold_right_time ?? 0, 'right');
 
             this.levels = levels;
-            const liveAudioIssues = {
-                silence: levels.silence_level === 'active',
-                imbalance: levels.channel_imbalance_level === 'active',
-            };
-            if (
-                liveAudioIssues.silence !== this.liveAudioIssues.silence ||
-                liveAudioIssues.imbalance !== this.liveAudioIssues.imbalance
-            ) {
-                this.liveAudioIssues = liveAudioIssues;
-            }
             const newSilenceState = this.getSilenceState();
 
             if (newSilenceState !== prevSilenceState) {
@@ -760,7 +690,7 @@ document.addEventListener('alpine:init', () => {
 
             // Update banner message with current duration if silence banner is showing
             if (this.banner.visible && this.banner.type !== 'info' && levels.silence_duration_ms) {
-                const duration = formatSmartDuration(levels.silence_duration_ms);
+                const duration = EVENT_HELPERS.formatSmartDuration(levels.silence_duration_ms);
                 if (newSilenceState === 'critical') {
                     this.banner.message = `Critical silence: ${duration}`;
                 } else if (newSilenceState === 'warning') {
@@ -782,7 +712,7 @@ document.addEventListener('alpine:init', () => {
          * @param {string} next - New silence state
          */
         handleSilenceTransition(prev, next) {
-            const duration = formatSmartDuration(this.levels.silence_duration_ms || 0);
+            const duration = EVENT_HELPERS.formatSmartDuration(this.levels.silence_duration_ms || 0);
             if (next === 'warning' && prev === 'active') {
                 this.showBanner(`Silence detected: ${duration}`, 'warning', false);
             } else if (next === 'critical') {
@@ -881,6 +811,10 @@ document.addEventListener('alpine:init', () => {
 
             // Recorder statuses
             this.recorderStatuses = msg.recorder_statuses || {};
+
+            if (this.settingsTab === 'events' && !this.eventsLoading) {
+                void this.loadEvents(false);
+            }
 
             // Graph secret expiry (runtime info, not config)
             this.graphSecretExpiry = msg.graph_secret_expiry ?? { expires_soon: false, days_left: 0 };
@@ -1729,9 +1663,9 @@ document.addEventListener('alpine:init', () => {
         async loadEvents(reset = true) {
             if (reset) {
                 this.eventsWindowSize = EVENT_PAGE_SIZE;
-                this.events = [];
                 this.eventHistoryGroups = emptyEventGroups();
                 this.eventOpenRows = {};
+                this.eventsLimitReached = false;
             }
             this.eventsError = '';
             this.eventsLoading = true;
@@ -1743,10 +1677,9 @@ document.addEventListener('alpine:init', () => {
                     offset: '0',
                 });
                 const data = await requestJSON(`/api/events?${params}`);
-                const newEvents = data.events || [];
-                this.events = newEvents;
                 this.eventHistoryGroups = normalizeEventGroups(data.groups);
-                this.eventsHasMore = data.has_more || false;
+                this.eventsHasMore = Boolean(data.has_more) && this.eventsWindowSize < EVENT_HELPERS.EVENT_MAX_READ_LIMIT;
+                this.eventsLimitReached = Boolean(data.has_more) && this.eventsWindowSize >= EVENT_HELPERS.EVENT_MAX_READ_LIMIT;
                 return true;
             } catch (error) {
                 console.error('Failed to load events:', error);
@@ -1762,7 +1695,12 @@ document.addEventListener('alpine:init', () => {
          */
         async loadMoreEvents() {
             const previousWindowSize = this.eventsWindowSize;
-            this.eventsWindowSize += EVENT_PAGE_SIZE;
+            if (previousWindowSize >= EVENT_HELPERS.EVENT_MAX_READ_LIMIT) {
+                this.eventsHasMore = false;
+                this.eventsLimitReached = true;
+                return;
+            }
+            this.eventsWindowSize = EVENT_HELPERS.nextEventWindowSize(previousWindowSize, EVENT_PAGE_SIZE);
             const loaded = await this.loadEvents(false);
             if (!loaded) this.eventsWindowSize = previousWindowSize;
         },
@@ -1778,9 +1716,9 @@ document.addEventListener('alpine:init', () => {
 
             const diff = Math.max(0, Date.now() - time);
             if (diff < MS_PER_MINUTE) return 'just now';
-            if (diff < 60 * MS_PER_MINUTE) return `${Math.floor(diff / MS_PER_MINUTE)}m ago`;
-            if (diff < MS_PER_DAY) return `${Math.floor(diff / (60 * MS_PER_MINUTE))}h ago`;
-            return `${Math.floor(diff / MS_PER_DAY)}d ago`;
+            if (diff < 60 * MS_PER_MINUTE) return RELATIVE_TIME_FORMATTER.format(-Math.floor(diff / MS_PER_MINUTE), 'minute');
+            if (diff < MS_PER_DAY) return RELATIVE_TIME_FORMATTER.format(-Math.floor(diff / (60 * MS_PER_MINUTE)), 'hour');
+            return RELATIVE_TIME_FORMATTER.format(-Math.floor(diff / MS_PER_DAY), 'day');
         },
 
         eventTimeValue(event) {
@@ -1788,118 +1726,12 @@ document.addEventListener('alpine:init', () => {
             return Number.isFinite(time) ? time : 0;
         },
 
-        getEventSeverity(event) {
-            return normalizeEventSeverity(event?.severity);
-        },
-
-        getEventCategory(event) {
-            return normalizeEventCategory(event?.category);
-        },
-
-        getEventReason(event) {
-            return normalizeEventReason(event?.reason);
-        },
-
-        getEventLabel(type) {
-            return EVENT_LABELS[type] || type;
-        },
-
-        getEventDetail(event) {
-            const details = event.details || {};
-            const streamName = details.stream_name || '';
-
-            if (event.type === 'stream_error') {
-                return details.error || 'Unknown error';
-            }
-            if (event.type === 'stream_retry') {
-                const retryNum = details.retry ? `Retry #${details.retry}` : '';
-                const error = details.error || '';
-                return [retryNum, error].filter(Boolean).join(' - ');
-            }
-            if (event.type === 'silence_start') {
-                if (details.level_left_db !== undefined) {
-                    return `L: ${details.level_left_db.toFixed(1)}dB  R: ${details.level_right_db.toFixed(1)}dB`;
-                }
-                return '';
-            }
-            if (event.type === 'silence_end') {
-                return details.duration_ms ? `Duration: ${formatSmartDuration(details.duration_ms)}` : '';
-            }
-            if (event.type === 'channel_imbalance_start') {
-                if (details.imbalance_db !== undefined) {
-                    return `L: ${details.level_left_db.toFixed(1)}dB  R: ${details.level_right_db.toFixed(1)}dB (${details.imbalance_db.toFixed(1)}dB diff)`;
-                }
-                return '';
-            }
-            if (event.type === 'channel_imbalance_end') {
-                return details.duration_ms ? `Duration: ${formatSmartDuration(details.duration_ms)}` : '';
-            }
-            if (event.type === 'audio_dump_ready') {
-                if (details.dump_error) return `Error: ${details.dump_error}`;
-                if (details.dump_filename) return details.dump_filename;
-                return '';
-            }
-            // Recorder events
-            if (event.type === 'recorder_error' || event.type === 'upload_failed') {
-                return details.error || 'Unknown error';
-            }
-            if (event.type === 'upload_retry' || event.type === 'upload_abandoned') {
-                const retryNum = details.retry ? `Retry #${details.retry}` : '';
-                const error = details.error || '';
-                return [retryNum, error].filter(Boolean).join(' - ') || 'Unknown error';
-            }
-            if (event.type === 'recorder_file' || event.type === 'upload_queued' || event.type === 'upload_completed') {
-                const filename = details.filename || '';
-                const codec = details.codec || '';
-                return [filename, codec.toUpperCase()].filter(Boolean).join(' - ');
-            }
-            if (event.type === 'cleanup_completed') {
-                const count = details.files_deleted || 0;
-                const storage = details.storage_type || '';
-                return `${count} files deleted (${storage})`;
-            }
-            if (event.type === 'recorder_started' || event.type === 'recorder_stopped') {
-                const codec = details.codec ? details.codec.toUpperCase() : '';
-                const mode = details.storage_mode || '';
-                const modeLabel = RECORDER_STORAGE_LABELS[mode] || '';
-                return [codec, modeLabel].filter(Boolean).join(' - ');
-            }
-            // For started/stable/stopped, show stream name
-            return streamName;
-        },
-
-        getEventSource(event) {
-            const details = event.details || {};
-            switch (this.getEventCategory(event)) {
-                case 'audio':
-                    return 'Audio';
-                case 'recorder':
-                    return details.recorder_name || 'Recorder';
-                case 'stream':
-                    return details.stream_name || event.stream_id || 'Stream';
-                default:
-                    return EVENT_CATEGORY_LABELS.unknown;
-            }
+        eventWindowLimitMessage() {
+            return `Showing the ${EVENT_HELPERS.EVENT_MAX_READ_LIMIT} most recent events`;
         },
 
         eventGroups() {
-            const history = this.eventHistoryGroups || emptyEventGroups();
-            const liveAttention = this.buildLiveAttentionItems();
-            const liveDedupeKeys = new Set(
-                liveAttention.flatMap(item => this.eventItemDedupeKeys(item)),
-            );
-            return {
-                attention: [
-                    ...liveAttention,
-                    ...history.attention.filter(item => (
-                        !this.eventItemDedupeKeys(item).some(key => liveDedupeKeys.has(key))
-                    )),
-                ],
-                resolved: history.resolved,
-                activity: history.activity,
-                routine: history.routine,
-                routineCount: history.routineCount,
-            };
+            return this.eventHistoryGroups || emptyEventGroups();
         },
 
         // eventGroupCount returns how many items the named section contributes.
@@ -1968,165 +1800,6 @@ document.addEventListener('alpine:init', () => {
             return this.eventTimeValue(events[0]);
         },
 
-        buildLiveAttentionItems() {
-            const items = [];
-            for (const stream of this.streams) {
-                const item = this.buildLiveStreamIssue(stream);
-                if (item) items.push(item);
-            }
-            const silence = this.buildLiveSilenceIssue();
-            const imbalance = this.buildLiveImbalanceIssue();
-            if (silence) items.push(silence);
-            if (imbalance) items.push(imbalance);
-            for (const recorder of this.recorders) {
-                const item = this.buildLiveRecorderIssue(recorder);
-                if (item) items.push(item);
-            }
-            return items;
-        },
-
-        buildLiveStreamIssue(stream) {
-            if (!stream.enabled) return null;
-            const status = this.streamStatuses[stream.id];
-            if (!status?.state) return null;
-
-            const isListener = this.isListenerStream(stream);
-            const problem = isListener
-                ? status.exhausted || status.state === 'error' || (status.state === 'running' && !status.encoder_running)
-                : !(status.state === 'running' && status.stable && !status.exhausted);
-            if (!problem) return null;
-
-            const latest = this.latestStreamProblemEvent(stream.id);
-            const severity = status.exhausted || status.state === 'error' ? 'error' : 'warning';
-            const tries = status.retry_count ? `${status.retry_count} ${status.retry_count === 1 ? 'try' : 'tries'}` : '';
-            const title = isListener ? 'Listener encoder issue' : 'Stream disconnected';
-            const detail = status.error || (latest ? this.getEventDetail(latest) : '') || this.streamIssueDetail(status, isListener);
-
-            return {
-                key: `live:stream:${stream.id}`,
-                // Keep live source keys byte-identical to backend dedupe keys in internal/eventlog/groups.go.
-                sourceKey: EVENT_KEYS.streamSourceKey(stream.id),
-                category: 'stream',
-                severity,
-                title,
-                source: this.streamEndpoint(stream),
-                statusText: status.exhausted ? 'Failed' : 'Ongoing',
-                chips: tries ? [tries] : [],
-                detail,
-                when: latest ? `since ${this.formatRelativeEventTime(latest.ts)}` : 'now',
-                events: latest ? [latest] : [],
-            };
-        },
-
-        streamIssueDetail(status, isListener) {
-            if (status.state === 'running' && isListener && !status.encoder_running) return 'Encoder process is not running';
-            if (status.state === 'running') return 'Waiting for stable output';
-            if (status.state === 'starting') return isListener ? 'Starting listener' : 'Connecting';
-            if (status.state === 'stopping') return 'Stopping';
-            return status.state || 'Unavailable';
-        },
-
-        latestStreamProblemEvent(streamID) {
-            return this.events.find(event => (
-                this.getEventCategory(event) === 'stream' &&
-                this.getEventReason(event) === 'problem' &&
-                event.stream_id === streamID
-            ));
-        },
-
-        buildLiveSilenceIssue() {
-            if (!this.liveAudioIssues.silence) return null;
-            const latest = this.events.find(event => event.type === 'silence_start');
-            return {
-                key: 'live:audio:silence',
-                // Keep live source keys byte-identical to backend dedupe keys in internal/eventlog/groups.go.
-                sourceKey: EVENT_KEYS.audioSilenceSourceKey(),
-                category: 'audio',
-                severity: 'warning',
-                title: 'Silence on input',
-                source: 'Audio',
-                statusText: 'Ongoing',
-                chips: [],
-                detail: latest ? this.getEventDetail(latest) : 'Silence active',
-                when: latest ? `since ${this.formatRelativeEventTime(latest.ts)}` : 'now',
-                events: latest ? [latest] : [],
-            };
-        },
-
-        buildLiveImbalanceIssue() {
-            if (!this.liveAudioIssues.imbalance) return null;
-            const latest = this.events.find(event => event.type === 'channel_imbalance_start');
-            return {
-                key: 'live:audio:imbalance',
-                // Keep live source keys byte-identical to backend dedupe keys in internal/eventlog/groups.go.
-                sourceKey: EVENT_KEYS.audioImbalanceSourceKey(),
-                category: 'audio',
-                severity: 'warning',
-                title: 'Channel imbalance',
-                source: 'Audio',
-                statusText: 'Ongoing',
-                chips: [],
-                detail: latest ? this.getEventDetail(latest) : 'Channel imbalance active',
-                when: latest ? `since ${this.formatRelativeEventTime(latest.ts)}` : 'now',
-                events: latest ? [latest] : [],
-            };
-        },
-
-        buildLiveRecorderIssue(recorder) {
-            if (!recorder.enabled) return null;
-            const status = this.recorderStatuses[recorder.id];
-            if (!status?.state) return null;
-
-            const pending = status.pending_uploads || 0;
-            const errored = status.state === 'error';
-            if (!errored && pending === 0) return null;
-
-            const chips = [];
-            if (pending > 0) chips.push(`${pending} retry upload${pending === 1 ? '' : 's'}`);
-            if (recorder.recording_mode) chips.push(recorder.recording_mode);
-            const sourceKey = errored
-                ? this.recorderStatusSourceKey(recorder.name)
-                : this.recorderUploadSourceKey(recorder.name);
-
-            return {
-                key: `live:recorder:${recorder.id}`,
-                sourceKey,
-                category: 'recorder',
-                severity: errored ? 'error' : 'warning',
-                title: errored ? 'Recorder error' : 'Upload retry pending',
-                source: recorder.name || 'Recorder',
-                statusText: errored ? 'Unresolved' : 'Ongoing',
-                chips,
-                detail: status.error || '',
-                when: 'now',
-                events: this.latestRecorderProblemEvents(recorder.name),
-            };
-        },
-
-        recorderStatusSourceKey(recorderName) {
-            // Keep live recorder keys byte-identical to backend dedupe keys in internal/eventlog/groups.go.
-            return EVENT_KEYS.recorderStatusSourceKey(recorderName);
-        },
-
-        recorderUploadSourceKey(recorderName) {
-            // Upload keys are intentionally recorder-wide so live retry state hides per-file history.
-            return EVENT_KEYS.recorderUploadSourceKey(recorderName);
-        },
-
-        latestRecorderProblemEvents(recorderName) {
-            return this.events.filter(event => {
-                const details = event.details || {};
-                return this.getEventCategory(event) === 'recorder' &&
-                    this.getEventReason(event) === 'problem' &&
-                    details.recorder_name === recorderName;
-            }).slice(0, 3);
-        },
-
-        eventItemDedupeKeys(item) {
-            // Keep these keys aligned with live issue keys so live state suppresses matching history.
-            return [item.sourceKey, item.dedupeKey].filter(Boolean);
-        },
-
         eventRowKey(event, index) {
             return `event:${event.type}:${event.ts}:${event.stream_id || ''}:${index}`;
         },
@@ -2146,6 +1819,16 @@ document.addEventListener('alpine:init', () => {
 
         eventItemHasTrail(item) {
             return (item.events || []).length > 1;
+        },
+
+        eventTrailId(item) {
+            return `event-trail-${String(item.key || 'row').replace(/[^A-Za-z0-9_-]/g, '-')}`;
+        },
+
+        eventToggleLabel(item) {
+            const action = this.isEventRowOpen(item.key) ? 'Hide' : 'Show';
+            const target = [item.title, item.source].filter(Boolean).join(' from ');
+            return `${action} event details${target ? ` for ${target}` : ''}`;
         },
 
         visibleEventTrail(item) {

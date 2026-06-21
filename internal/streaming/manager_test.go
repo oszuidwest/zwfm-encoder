@@ -3,16 +3,18 @@ package streaming
 import (
 	"bytes"
 	"errors"
-	"github.com/oszuidwest/zwfm-encoder/internal/srtfanout"
-	"github.com/oszuidwest/zwfm-encoder/internal/types"
-	"github.com/oszuidwest/zwfm-encoder/internal/util"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/oszuidwest/zwfm-encoder/internal/srtfanout"
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 func validStream() *types.Stream {
@@ -146,7 +148,7 @@ func TestEmitEventIncludesRuntimeStreamMode(t *testing.T) {
 		gotMode = mode
 	}, nil)
 
-	m.emitEvent(id, "stream_error", "Listener encoder failed", "boom")
+	m.emitEventWithMode(id, "", "stream_error", "Listener encoder failed", "boom", 0, 0)
 	if gotMode != string(types.StreamModeListener) {
 		t.Fatalf("mode = %q, want %q", gotMode, types.StreamModeListener)
 	}
@@ -544,6 +546,17 @@ func TestMonitorListenerEncoderReleasesBlockedWriterAfterStdoutEnds(t *testing.T
 	ffmpegPath, closeStdoutPath := fakeBlockedListenerEncoderExecutable(t)
 	port := freeUDPPort(t)
 	m := NewManager(ffmpegPath)
+	var eventMu sync.Mutex
+	var events []streamEventForTest
+	m.SetEventCallback(func(_, _, mode, event, message, _ string, _, _ int) {
+		eventMu.Lock()
+		defer eventMu.Unlock()
+		events = append(events, streamEventForTest{
+			mode:    mode,
+			event:   event,
+			message: message,
+		})
+	}, nil)
 	stream := &types.Stream{
 		ID:         "listener-blocked-writer",
 		Enabled:    true,
@@ -590,6 +603,16 @@ func TestMonitorListenerEncoderReleasesBlockedWriterAfterStdoutEnds(t *testing.T
 	if secondRun == run {
 		t.Fatal("listener retry reused the failed encoder run")
 	}
+	waitForStreamEventCount(t, &eventMu, &events, "stream_started", 2)
+	eventMu.Lock()
+	lastStarted := lastStreamEvent(events, "stream_started")
+	eventMu.Unlock()
+	if lastStarted.mode != string(types.StreamModeListener) {
+		t.Fatalf("restart event mode = %q, want %q", lastStarted.mode, types.StreamModeListener)
+	}
+	if lastStarted.message != "Listening on "+stream.Endpoint() {
+		t.Fatalf("restart event message = %q, want listener endpoint", lastStarted.message)
+	}
 	statuses := m.Statuses(func(string) *types.Stream {
 		return stream
 	})
@@ -610,6 +633,48 @@ func TestMonitorListenerEncoderReleasesBlockedWriterAfterStdoutEnds(t *testing.T
 	}
 	assertUDPPortUnavailable(t, port)
 }
+
+type streamEventForTest struct {
+	mode    string
+	event   string
+	message string
+}
+
+func waitForStreamEventCount(
+	t *testing.T,
+	mu *sync.Mutex,
+	events *[]streamEventForTest,
+	eventName string,
+	want int,
+) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		count := 0
+		for i := range *events {
+			if (*events)[i].event == eventName {
+				count++
+			}
+		}
+		mu.Unlock()
+		if count >= want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d %q events", want, eventName)
+}
+
+func lastStreamEvent(events []streamEventForTest, eventName string) streamEventForTest {
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].event == eventName {
+			return events[i]
+		}
+	}
+	return streamEventForTest{}
+}
+
 func freeUDPPort(t *testing.T) int {
 	t.Helper()
 	addr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")

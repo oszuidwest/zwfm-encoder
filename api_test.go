@@ -215,10 +215,17 @@ func TestHandleAPIEventsDecoratesClassificationAndKeepsPagination(t *testing.T) 
 		{
 			Timestamp: time.Date(2026, 6, 21, 10, 1, 0, 0, time.UTC),
 			Type:      eventlog.UploadFailed,
+			Details: map[string]any{
+				"error": "s3 unavailable",
+			},
 		},
 		{
 			Timestamp: time.Date(2026, 6, 21, 10, 2, 0, 0, time.UTC),
 			Type:      eventlog.UploadCompleted,
+			Details: map[string]any{
+				"filename": "hourly.mp3",
+				"codec":    "mp3",
+			},
 		},
 	})
 
@@ -242,11 +249,13 @@ func TestHandleAPIEventsDecoratesClassificationAndKeepsPagination(t *testing.T) 
 	}
 	assertEventView(
 		t,
-		firstPage.Events[0],
+		&firstPage.Events[0],
 		eventlog.UploadCompleted,
 		eventlog.SeveritySuccess,
 		eventlog.CategoryRecorder,
 		eventlog.ReasonRoutine,
+		"Uploaded",
+		"hourly.mp3 - MP3",
 	)
 	if firstPage.Groups.RoutineCount != 1 {
 		t.Fatalf("routine count = %d, want 1", firstPage.Groups.RoutineCount)
@@ -273,11 +282,13 @@ func TestHandleAPIEventsDecoratesClassificationAndKeepsPagination(t *testing.T) 
 	}
 	assertEventView(
 		t,
-		secondPage.Events[0],
+		&secondPage.Events[0],
 		eventlog.UploadFailed,
 		eventlog.SeverityError,
 		eventlog.CategoryRecorder,
 		eventlog.ReasonProblem,
+		"Upload Failed",
+		"s3 unavailable",
 	)
 	if len(secondPage.Groups.Attention) != 1 {
 		t.Fatalf("attention groups = %d, want 1", len(secondPage.Groups.Attention))
@@ -344,6 +355,8 @@ type eventViewForTest struct {
 	Severity eventlog.Severity  `json:"severity"`
 	Category eventlog.Category  `json:"category"`
 	Reason   eventlog.Reason    `json:"reason"`
+	Label    string             `json:"label"`
+	Detail   string             `json:"detail"`
 }
 
 type eventsResponseForTest struct {
@@ -372,11 +385,13 @@ func writeAPIEvents(t *testing.T, path string, events []eventlog.Event) {
 
 func assertEventView(
 	t *testing.T,
-	got eventViewForTest,
+	got *eventViewForTest,
 	wantType eventlog.EventType,
 	wantSeverity eventlog.Severity,
 	wantCategory eventlog.Category,
 	wantReason eventlog.Reason,
+	wantLabel string,
+	wantDetail string,
 ) {
 	t.Helper()
 	if got.Type != wantType {
@@ -390,6 +405,12 @@ func assertEventView(
 	}
 	if got.Reason != wantReason {
 		t.Fatalf("reason = %q, want %q", got.Reason, wantReason)
+	}
+	if got.Label != wantLabel {
+		t.Fatalf("label = %q, want %q", got.Label, wantLabel)
+	}
+	if got.Detail != wantDetail {
+		t.Fatalf("detail = %q, want %q", got.Detail, wantDetail)
 	}
 }
 

@@ -482,10 +482,9 @@ func (r *GenericRecorder) Status() types.ProcessStatus {
 	defer r.mu.RUnlock()
 
 	return types.ProcessStatus{
-		State:          r.state,
-		Error:          r.lastError,
-		AudioDrops:     r.audioDrops.Load(),
-		PendingUploads: len(r.retryQueue),
+		State:      r.state,
+		Error:      r.lastError,
+		AudioDrops: r.audioDrops.Load(),
 	}
 }
 

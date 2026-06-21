@@ -3,7 +3,6 @@ package eventlog
 import (
 	"encoding/json"
 	"fmt"
-	"maps"
 	"testing"
 	"time"
 )
@@ -85,11 +84,11 @@ func TestGroupEventsTreatsCallerAndListenerStreamProblemsAsIncidents(t *testing.
 	if len(groups.Attention) != 2 {
 		t.Fatalf("attention len = %d, want 2", len(groups.Attention))
 	}
-	items := itemsBySourceKey(groups.Attention)
-	if _, ok := items["stream:caller"]; !ok {
+	items := itemsByStreamID(groups.Attention)
+	if _, ok := items["caller"]; !ok {
 		t.Fatal("caller stream problem missing from attention")
 	}
-	if _, ok := items["stream:listener"]; !ok {
+	if _, ok := items["listener"]; !ok {
 		t.Fatal("listener stream problem missing from attention")
 	}
 	if len(groups.Activity) != 0 {
@@ -98,7 +97,46 @@ func TestGroupEventsTreatsCallerAndListenerStreamProblemsAsIncidents(t *testing.
 	assertPartition(t, events, &groups)
 }
 
-func TestGroupEventsUploadDedupeKeyDoesNotCollapseHistoricalFiles(t *testing.T) {
+func TestGroupEventsResolvesListenerProblemOnRestart(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
+	events := decorateNewestFirst(
+		testEvent(base, 3, StreamStarted, map[string]any{
+			"stream_name": "Listener",
+			"mode":        "listener",
+		}),
+		testEvent(base, 2, StreamRetry, map[string]any{
+			"stream_name": "Listener",
+			"mode":        "listener",
+		}),
+		testEvent(base, 1, StreamError, map[string]any{
+			"stream_name": "Listener",
+			"mode":        "listener",
+			"error":       "encoder exited",
+		}),
+	)
+	for i := range events {
+		events[i].StreamID = "listener"
+	}
+
+	groups := GroupEvents(events)
+	if len(groups.Attention) != 0 {
+		t.Fatalf("attention len = %d, want 0", len(groups.Attention))
+	}
+	if len(groups.Resolved) != 1 {
+		t.Fatalf("resolved len = %d, want 1", len(groups.Resolved))
+	}
+	if got := groups.Resolved[0].Events[len(groups.Resolved[0].Events)-1].Type; got != StreamStarted {
+		t.Fatalf("resolved last event = %q, want %q", got, StreamStarted)
+	}
+	if groups.Resolved[0].StatusText != "Resolved" {
+		t.Fatalf("status = %q, want Resolved", groups.Resolved[0].StatusText)
+	}
+	assertPartition(t, events, &groups)
+}
+
+func TestGroupEventsDoesNotCollapseHistoricalUploadFiles(t *testing.T) {
 	t.Parallel()
 
 	base := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
@@ -117,12 +155,13 @@ func TestGroupEventsUploadDedupeKeyDoesNotCollapseHistoricalFiles(t *testing.T) 
 	if len(groups.Attention) != 2 {
 		t.Fatalf("attention len = %d, want 2", len(groups.Attention))
 	}
-	if groups.Attention[0].SourceKey == groups.Attention[1].SourceKey {
-		t.Fatalf("source keys collided: %q", groups.Attention[0].SourceKey)
+	gotFiles := map[string]bool{}
+	for _, item := range groups.Attention {
+		gotFiles[detailString(eventDetails(item.Events[0].Details), "filename")] = true
 	}
-	for i := range groups.Attention {
-		if groups.Attention[i].DedupeKey != "recorder-upload:hourly" {
-			t.Fatalf("dedupe key = %q, want recorder-upload:hourly", groups.Attention[i].DedupeKey)
+	for _, filename := range []string{"a.mp3", "b.mp3"} {
+		if !gotFiles[filename] {
+			t.Fatalf("attention files = %v, missing %s", gotFiles, filename)
 		}
 	}
 	assertPartition(t, events, &groups)
@@ -145,16 +184,13 @@ func TestGroupEventsAvoidsEmptyRecorderNameUploadCollision(t *testing.T) {
 	if len(groups.Attention) != 2 {
 		t.Fatalf("attention len = %d, want 2", len(groups.Attention))
 	}
-	if groups.Attention[0].SourceKey == groups.Attention[1].SourceKey {
-		t.Fatalf("empty-name source keys collided: %q", groups.Attention[0].SourceKey)
+	gotFiles := map[string]bool{}
+	for _, item := range groups.Attention {
+		gotFiles[detailString(eventDetails(item.Events[0].Details), "filename")] = true
 	}
-	for i := range groups.Attention {
-		if groups.Attention[i].DedupeKey != groups.Attention[i].SourceKey {
-			t.Fatalf(
-				"empty-name dedupe key = %q, want source key %q",
-				groups.Attention[i].DedupeKey,
-				groups.Attention[i].SourceKey,
-			)
+	for _, filename := range []string{"a.mp3", "b.mp3"} {
+		if !gotFiles[filename] {
+			t.Fatalf("attention files = %v, missing %s", gotFiles, filename)
 		}
 	}
 	assertPartition(t, events, &groups)
@@ -206,6 +242,34 @@ func TestGroupEventsKeepsOrphanAudioDumpInActivity(t *testing.T) {
 	assertPartition(t, events, &groups)
 }
 
+func TestGroupEventsSortsResolvedIncidentsByResolutionTime(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
+	events := decorateNewestFirst(
+		testEvent(base, 10, SilenceEnd, map[string]any{
+			"duration_ms": 9000,
+		}),
+		testEvent(base, 6, ChannelImbalanceEnd, map[string]any{
+			"duration_ms": 1000,
+		}),
+		testEvent(base, 5, ChannelImbalanceStart, nil),
+		testEvent(base, 1, SilenceStart, nil),
+	)
+
+	groups := GroupEvents(events)
+	if len(groups.Resolved) != 2 {
+		t.Fatalf("resolved len = %d, want 2", len(groups.Resolved))
+	}
+	if got := groups.Resolved[0].Events[len(groups.Resolved[0].Events)-1].Type; got != SilenceEnd {
+		t.Fatalf("newest resolved incident last event = %q, want %q", got, SilenceEnd)
+	}
+	if got := groups.Resolved[1].Events[len(groups.Resolved[1].Events)-1].Type; got != ChannelImbalanceEnd {
+		t.Fatalf("older resolved incident last event = %q, want %q", got, ChannelImbalanceEnd)
+	}
+	assertPartition(t, events, &groups)
+}
+
 func TestGroupEventsHandlesZeroTimestamp(t *testing.T) {
 	t.Parallel()
 
@@ -241,7 +305,7 @@ func TestGroupEventsLabelsListenerStartActivity(t *testing.T) {
 			Timestamp: base.Add(2 * time.Second),
 			Type:      StreamStarted,
 			StreamID:  "listener",
-			Message:   "Listening on 0.0.0.0:9000",
+			Message:   "Listener encoder restarted",
 			Details: map[string]any{
 				"stream_name": "Listener",
 				"mode":        "listener",
@@ -264,90 +328,20 @@ func TestGroupEventsLabelsListenerStartActivity(t *testing.T) {
 		t.Fatalf("activity len = %d, want 2", len(groups.Activity))
 	}
 
-	items := map[string]EventGroupItem{}
-	for i := range groups.Activity {
-		items[groups.Activity[i].SourceKey] = groups.Activity[i]
-	}
-	if got := items["stream:listener"].Title; got != "Listener started" {
+	items := itemsByStreamID(groups.Activity)
+	if got := items["listener"].Title; got != "Listener started" {
 		t.Fatalf("listener title = %q, want Listener started", got)
 	}
-	if got := items["stream:listener"].StatusText; got != "Listening" {
+	if got := items["listener"].StatusText; got != "Listening" {
 		t.Fatalf("listener status = %q, want Listening", got)
 	}
-	if got := items["stream:caller"].Title; got != "Stream started" {
+	if got := items["caller"].Title; got != "Stream started" {
 		t.Fatalf("caller title = %q, want Stream started", got)
 	}
-	if got := items["stream:caller"].StatusText; got != "Started" {
+	if got := items["caller"].StatusText; got != "Started" {
 		t.Fatalf("caller status = %q, want Started", got)
 	}
 	assertPartition(t, events, &groups)
-}
-
-func TestGroupEventsLiveDedupeKeyContract(t *testing.T) {
-	t.Parallel()
-
-	base := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
-	events := DecorateEvents([]Event{
-		{
-			Timestamp: base.Add(time.Second),
-			Type:      StreamRetry,
-			StreamID:  "s1",
-			Details: map[string]any{
-				"mode": "caller",
-			},
-		},
-		{
-			Timestamp: base.Add(2 * time.Second),
-			Type:      SilenceStart,
-		},
-		{
-			Timestamp: base.Add(3 * time.Second),
-			Type:      ChannelImbalanceStart,
-		},
-		{
-			Timestamp: base.Add(4 * time.Second),
-			Type:      RecorderError,
-			Details: map[string]any{
-				"recorder_name": "hourly",
-			},
-		},
-		{
-			Timestamp: base.Add(5 * time.Second),
-			Type:      UploadFailed,
-			Details: map[string]any{
-				"recorder_name": "hourly",
-				"filename":      "hourly.mp3",
-			},
-		},
-	})
-
-	groups := GroupEvents(events)
-	got := map[string]string{}
-	for _, item := range groups.Attention {
-		switch item.Events[0].Type {
-		case StreamRetry:
-			got["stream"] = item.DedupeKey
-		case SilenceStart:
-			got["silence"] = item.DedupeKey
-		case ChannelImbalanceStart:
-			got["imbalance"] = item.DedupeKey
-		case RecorderError:
-			got["recorder"] = item.DedupeKey
-		case UploadFailed:
-			got["upload"] = item.DedupeKey
-		}
-	}
-
-	want := map[string]string{
-		"stream":    "stream:s1",
-		"silence":   "audio:silence",
-		"imbalance": "audio:imbalance",
-		"recorder":  "recorder:hourly:",
-		"upload":    "recorder-upload:hourly",
-	}
-	if !maps.Equal(got, want) {
-		t.Fatalf("dedupe keys = %v, want %v", got, want)
-	}
 }
 
 func TestGroupEventsRecorderErrorIsUnresolved(t *testing.T) {
@@ -398,6 +392,54 @@ func TestGroupEventsUploadAbandonedIsFailed(t *testing.T) {
 	}
 	if !containsString(item.Chips, "gave up after 4") {
 		t.Fatalf("chips = %v, want gave up after 4", item.Chips)
+	}
+	assertPartition(t, events, &groups)
+}
+
+func TestGroupEventsUploadAbandonedClosesOpenUploadIncidentAsFailed(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
+	events := decorateNewestFirst(
+		testEvent(base, 3, UploadAbandoned, map[string]any{
+			"recorder_name": "hourly",
+			"filename":      "hourly.mp3",
+			"error":         "final timeout",
+			"retry":         24,
+		}),
+		testEvent(base, 2, UploadRetry, map[string]any{
+			"recorder_name": "hourly",
+			"filename":      "hourly.mp3",
+			"error":         "still offline",
+			"retry":         2,
+		}),
+		testEvent(base, 1, UploadFailed, map[string]any{
+			"recorder_name": "hourly",
+			"filename":      "hourly.mp3",
+			"error":         "s3 offline",
+			"retry":         1,
+		}),
+	)
+
+	groups := GroupEvents(events)
+	if len(groups.Attention) != 1 {
+		t.Fatalf("attention len = %d, want 1", len(groups.Attention))
+	}
+	item := groups.Attention[0]
+	if item.StatusText != "Failed" {
+		t.Fatalf("status = %q, want Failed", item.StatusText)
+	}
+	if item.Title != "Upload abandoned" {
+		t.Fatalf("title = %q, want Upload abandoned", item.Title)
+	}
+	if !containsString(item.Chips, "gave up after 24") {
+		t.Fatalf("chips = %v, want gave up after 24", item.Chips)
+	}
+	if item.Detail != "final timeout" {
+		t.Fatalf("detail = %q, want final timeout", item.Detail)
+	}
+	if len(item.Events) != len(events) {
+		t.Fatalf("incident events = %d, want %d", len(item.Events), len(events))
 	}
 	assertPartition(t, events, &groups)
 }
@@ -483,10 +525,12 @@ func assertPartition(t *testing.T, events []EventView, groups *EventGroups) {
 	}
 }
 
-func itemsBySourceKey(items []EventGroupItem) map[string]EventGroupItem {
+func itemsByStreamID(items []EventGroupItem) map[string]EventGroupItem {
 	bySource := make(map[string]EventGroupItem, len(items))
 	for i := range items {
-		bySource[items[i].SourceKey] = items[i]
+		if len(items[i].Events) > 0 {
+			bySource[items[i].Events[0].StreamID] = items[i]
+		}
 	}
 	return bySource
 }

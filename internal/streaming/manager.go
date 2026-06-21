@@ -122,10 +122,6 @@ func (m *Manager) SetEventCallback(cb EventCallback, getStreamName func(string) 
 	m.getStreamName = getStreamName
 }
 
-func (m *Manager) emitEvent(streamID, event, message, errMsg string) {
-	m.emitEventWithMode(streamID, "", event, message, errMsg, 0, 0)
-}
-
 func (m *Manager) emitEventWithMode(
 	streamID string,
 	mode types.StreamMode,
@@ -594,7 +590,7 @@ func (m *Manager) Stop(streamID string) error {
 
 		slog.Info("stopping listener stream", "stream_id", streamID)
 		m.stopListenerResources(streamID, stream)
-		m.emitEvent(streamID, "stream_stopped", "Stream stopped by user", "")
+		m.emitEventWithMode(streamID, stream.mode, "stream_stopped", "Stream stopped by user", "", 0, 0)
 
 		m.mu.Lock()
 		if m.streams[streamID] == stream {
@@ -1129,6 +1125,15 @@ func (m *Manager) monitorListenerEncoder(streamID string, ctx StreamContext, sto
 				m.recordListenerEncoderFailure(streamID, stream, backoff, errMsg, 0)
 				continue
 			}
+			m.emitEventWithMode(
+				streamID,
+				types.StreamModeListener,
+				"stream_started",
+				fmt.Sprintf("Listening on %s", cfg.Endpoint()),
+				"",
+				0,
+				0,
+			)
 			break
 		}
 	}

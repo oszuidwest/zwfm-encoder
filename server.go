@@ -368,10 +368,10 @@ var staticFiles = map[string]staticFile{
 		content:     appJS,
 		name:        "app.js",
 	},
-	"/eventKeys.js": {
+	"/eventHelpers.js": {
 		contentType: "application/javascript",
-		content:     eventKeysJS,
-		name:        "eventKeys.js",
+		content:     eventHelpersJS,
+		name:        "eventHelpers.js",
 	},
 	"/icons.js": {
 		contentType: "application/javascript",

@@ -56,7 +56,6 @@ type ProcessStatus struct {
 	Error          string       `json:"error,omitempty"`
 	Uptime         string       `json:"uptime,omitempty"`
 	AudioDrops     int64        `json:"audio_drops,omitempty"`
-	PendingUploads int          `json:"pending_uploads,omitempty"` // Failed uploads waiting for retry.
 	EncoderRunning bool         `json:"encoder_running,omitempty"`
 	ClientCount    int64        `json:"client_count,omitempty"`
 	// ListenerDrops counts chunks dropped from full fan-out subscriber queues.
