@@ -726,7 +726,7 @@
                 </div>
 
                 <!-- Events Panel - issue-first event view -->
-                <div class="panel events-panel" role="tabpanel" id="panel-events" aria-labelledby="tab-events" x-show="settingsTab === 'events'" x-data="{ groups: { attention: [], resolved: [], activity: [], routine: [], routineCount: 0 } }" x-effect="if (settingsTab === 'events') groups = eventGroups()" x-init="$watch('settingsTab', val => val === 'events' && loadEvents())">
+                <div class="panel events-panel" role="tabpanel" id="panel-events" aria-labelledby="tab-events" x-show="settingsTab === 'events'" x-data="{ groups: { attention: [], resolved: [], activity: [], routine: [], routineCount: 0 } }" x-effect="if (settingsTab === 'events') { groups = eventGroups(); if (eventFilter && eventGroupCount(groups, eventFilter) === 0) eventFilter = ''; }" x-init="$watch('settingsTab', val => val === 'events' && loadEvents())">
                     <div class="event-summary" :data-state="eventSummaryState(groups)">
                         <span class="event-summary-main" x-text="eventSummaryText(groups)"></span>
                         <span class="event-summary-muted" x-text="eventSummaryMutedText(groups)"></span>

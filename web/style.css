@@ -333,7 +333,7 @@
         text-align: center;
     }
 
-    :where(.btn, .icon-btn, .nav-btn, .add-btn, .mode-btn, .tab, .segmented-btn):focus-visible {
+    :where(.btn, .icon-btn, .nav-btn, .add-btn, .mode-btn, .tab, .segmented-btn, .filter-pill):focus-visible {
         outline: 2px solid var(--brand);
         outline-offset: 2px;
     }
@@ -1970,8 +1970,6 @@
 
     .filter-dot.attention { --event-color: var(--danger); }
     .filter-dot.resolved { --event-color: var(--success); }
-    .filter-dot.activity { --event-color: var(--text-secondary); }
-    .filter-dot.routine { --event-color: var(--text-secondary); }
 
     .event-list {
         overflow: hidden;

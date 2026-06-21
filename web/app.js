@@ -87,7 +87,7 @@ const EVENT_CATEGORY_LABELS = {
 };
 
 // Status sections the event dashboard groups into, used for the filter pills.
-// The key matches the EventGroups field; label/dot drive the pill rendering.
+// The key matches the keys produced by eventGroups(); label/dot drive the pill rendering.
 const EVENT_GROUP_FILTERS = [
     { key: 'attention', label: 'Needs attention' },
     { key: 'resolved', label: 'Resolved' },
@@ -1720,8 +1720,10 @@ document.addEventListener('alpine:init', () => {
 
         /**
          * Loads events from the API (stream, audio, and recorder events).
-         * The event-type filter is applied client-side in eventGroups() so the
-         * server can still pair problem/recovery events across the full window.
+         * Always requests the full newest-first window (no server-side
+         * filtering) so the server can pair problem/recovery events across it;
+         * the status-section filter is applied in the template via
+         * sectionVisible().
          * @param {boolean} reset - If true, resets pagination and replaces events
          */
         async loadEvents(reset = true) {
@@ -1900,10 +1902,9 @@ document.addEventListener('alpine:init', () => {
             };
         },
 
-        // eventGroupCount returns how many rows the named section contributes.
+        // eventGroupCount returns how many items the named section contributes.
         // Routine collapses to one row but reports its underlying event count.
         eventGroupCount(groups, key) {
-            if (!groups) return 0;
             if (key === 'routine') return groups.routineCount || 0;
             return (groups[key] || []).length;
         },
