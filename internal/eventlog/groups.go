@@ -144,16 +144,7 @@ func GroupEvents(events []EventView, now time.Time) EventGroups {
 	}
 
 	asc := append([]groupedEvent(nil), grouped...)
-	slices.SortStableFunc(asc, func(a, b groupedEvent) int {
-		switch {
-		case a.view.Timestamp.Before(b.view.Timestamp):
-			return -1
-		case a.view.Timestamp.After(b.view.Timestamp):
-			return 1
-		default:
-			return a.id - b.id
-		}
-	})
+	slices.SortStableFunc(asc, compareGroupedEvents)
 
 	state := newGroupingState()
 	for i := range asc {
@@ -699,17 +690,20 @@ func groupedEventViews(events []groupedEvent) []EventView {
 
 func incidentEventViews(events []groupedEvent) []EventView {
 	ordered := append([]groupedEvent(nil), events...)
-	slices.SortStableFunc(ordered, func(a, b groupedEvent) int {
-		switch {
-		case a.view.Timestamp.Before(b.view.Timestamp):
-			return -1
-		case a.view.Timestamp.After(b.view.Timestamp):
-			return 1
-		default:
-			return a.id - b.id
-		}
-	})
+	slices.SortStableFunc(ordered, compareGroupedEvents)
 	return groupedEventViews(ordered)
+}
+
+// compareGroupedEvents orders events chronologically, breaking ties by input order.
+func compareGroupedEvents(a, b groupedEvent) int {
+	switch {
+	case a.view.Timestamp.Before(b.view.Timestamp):
+		return -1
+	case a.view.Timestamp.After(b.view.Timestamp):
+		return 1
+	default:
+		return a.id - b.id
+	}
 }
 
 func sortItemsDesc(items []EventGroupItem) {
