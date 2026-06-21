@@ -224,7 +224,7 @@ func TestLogStreamPersistsModeInDetails(t *testing.T) {
 	}
 }
 
-func writeEvents(t *testing.T, path string, events []Event) {
+func writeEvents(t testing.TB, path string, events []Event) {
 	t.Helper()
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) //nolint:gosec // Test path is under t.TempDir.
 	if err != nil {
@@ -241,6 +241,27 @@ func writeEvents(t *testing.T, path string, events []Event) {
 		t.Fatalf("close log: %v", err)
 	}
 }
+
+var benchmarkReadLastEvents []Event
+
+func BenchmarkReadLast(b *testing.B) {
+	path := filepath.Join(b.TempDir(), "encoder.jsonl")
+	events := benchmarkEventHistory(2000)
+	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
+		events[i], events[j] = events[j], events[i]
+	}
+	writeEvents(b, path, events)
+
+	b.ReportAllocs()
+	for b.Loop() {
+		var err error
+		benchmarkReadLastEvents, _, err = ReadLast(path, 500, 0, FilterAll)
+		if err != nil {
+			b.Fatalf("ReadLast() error = %v", err)
+		}
+	}
+}
+
 func mustMarshal(t *testing.T, event *Event) string {
 	t.Helper()
 	data, err := json.Marshal(&event)

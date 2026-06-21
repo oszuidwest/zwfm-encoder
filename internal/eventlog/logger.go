@@ -505,14 +505,12 @@ func readLinesReverse(filePath string, handle func([]byte) (bool, error)) error 
 		size := min(tailReadChunkSize, offset)
 		offset -= size
 
-		chunk := make([]byte, size)
+		chunk := make([]byte, int(size), int(size)+len(tail))
 		if _, err := file.ReadAt(chunk, offset); err != nil && err != io.EOF {
 			return err
 		}
 
-		data := make([]byte, len(chunk), len(chunk)+len(tail))
-		copy(data, chunk)
-		data = append(data, tail...)
+		data := append(chunk, tail...)
 		parts := bytes.Split(data, []byte{'\n'})
 		for i := len(parts) - 1; i >= 1; i-- {
 			cont, err := handle(parts[i])

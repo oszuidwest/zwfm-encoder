@@ -303,3 +303,87 @@ func assertPartition(t *testing.T, events []EventView, groups *EventGroups) {
 func eventTestKey(event *EventView) string {
 	return fmt.Sprintf("%s/%d", event.Type, event.Timestamp.UnixNano())
 }
+
+var benchmarkGroups EventGroups
+
+func BenchmarkDecorateAndGroupEvents(b *testing.B) {
+	events := benchmarkEventHistory(500)
+	now := events[0].Timestamp.Add(time.Minute)
+
+	b.ReportAllocs()
+	for b.Loop() {
+		views := DecorateEvents(events)
+		benchmarkGroups = GroupEvents(views, now)
+	}
+}
+
+func benchmarkEventHistory(total int) []Event {
+	base := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
+	events := make([]Event, total)
+	for i := range total {
+		events[total-1-i] = benchmarkEvent(base, i)
+	}
+	return events
+}
+
+func benchmarkEvent(base time.Time, i int) Event {
+	ts := base.Add(time.Duration(i) * time.Second)
+	streamID := fmt.Sprintf("stream-%02d", i%5)
+	recorder := fmt.Sprintf("hourly-%02d", i%4)
+	filename := fmt.Sprintf("rec-%03d.mp3", i/12)
+	event := Event{
+		Timestamp: ts,
+		StreamID:  streamID,
+		Details: map[string]any{
+			"stream_name":    streamID,
+			"mode":           "caller",
+			"error":          "connection lost",
+			"retry":          1,
+			"level_left_db":  -62.5,
+			"level_right_db": -63.1,
+			"duration_ms":    int64(1400),
+			"recorder_name":  recorder,
+			"filename":       filename,
+			"s3_key":         filename,
+			"codec":          "mp3",
+			"storage_mode":   "both",
+		},
+	}
+
+	switch i % 12 {
+	case 0:
+		event.Type = StreamStarted
+		event.Message = "Connecting"
+	case 1:
+		event.Type = StreamError
+	case 2:
+		event.Type = StreamRetry
+	case 3:
+		event.Type = StreamStable
+	case 4:
+		event.Type = SilenceStart
+		event.StreamID = ""
+	case 5:
+		event.Type = SilenceEnd
+		event.StreamID = ""
+	case 6:
+		event.Type = RecorderStarted
+		event.StreamID = ""
+	case 7:
+		event.Type = RecorderFile
+		event.StreamID = ""
+	case 8:
+		event.Type = UploadQueued
+		event.StreamID = ""
+	case 9:
+		event.Type = UploadFailed
+		event.StreamID = ""
+	case 10:
+		event.Type = UploadRetry
+		event.StreamID = ""
+	default:
+		event.Type = UploadCompleted
+		event.StreamID = ""
+	}
+	return event
+}

@@ -152,7 +152,7 @@ func GroupEvents(events []EventView, now time.Time) EventGroups {
 	}
 
 	ongoing := state.ongoing()
-	consumed := consumedEventIDs(state.closed, state.failed, ongoing)
+	consumed := consumedEventIDs(len(grouped), state.closed, state.failed, ongoing)
 
 	groups := EmptyEventGroups()
 	var routineEvents []groupedEvent
@@ -248,8 +248,8 @@ func (s *groupingState) ongoing() []*historicalIncident {
 	return ongoing
 }
 
-func consumedEventIDs(groups ...[]*historicalIncident) map[int]bool {
-	consumed := map[int]bool{}
+func consumedEventIDs(eventCount int, groups ...[]*historicalIncident) []bool {
+	consumed := make([]bool, eventCount)
 	for _, incidents := range groups {
 		for _, incident := range incidents {
 			for i := range incident.events {
@@ -374,10 +374,25 @@ func activityEventItem(event groupedEvent, now time.Time) EventGroupItem {
 
 func routineEventItem(events []groupedEvent, now time.Time) EventGroupItem {
 	chips := []string{}
-	files := countEvents(events, RecorderFile)
-	queued := countEvents(events, UploadQueued)
-	uploaded := countEvents(events, UploadCompleted)
-	cleanups := countEvents(events, CleanupCompleted)
+	source := "zwfm-hourly"
+	files, queued, uploaded, cleanups := 0, 0, 0, 0
+	for i := range events {
+		switch events[i].view.Type {
+		case RecorderFile:
+			files++
+		case UploadQueued:
+			queued++
+		case UploadCompleted:
+			uploaded++
+		case CleanupCompleted:
+			cleanups++
+		}
+		if source == "zwfm-hourly" {
+			if name := detailString(events[i].details, "recorder_name"); name != "" {
+				source = name
+			}
+		}
+	}
 	if files > 0 {
 		chips = append(chips, pluralCount(files, "file"))
 	}
@@ -391,13 +406,6 @@ func routineEventItem(events []groupedEvent, now time.Time) EventGroupItem {
 	}
 
 	first := events[0]
-	source := "zwfm-hourly"
-	for i := range events {
-		if name := detailString(events[i].details, "recorder_name"); name != "" {
-			source = name
-			break
-		}
-	}
 
 	return EventGroupItem{
 		Key:        fmt.Sprintf("routine:%d:%s", len(events), first.view.Timestamp.Format(time.RFC3339Nano)),
@@ -666,16 +674,6 @@ func recorderStorageLabel(mode string) string {
 	default:
 		return ""
 	}
-}
-
-func countEvents(events []groupedEvent, eventType EventType) int {
-	count := 0
-	for i := range events {
-		if events[i].view.Type == eventType {
-			count++
-		}
-	}
-	return count
 }
 
 func groupedEventViews(events []groupedEvent) []EventView {
