@@ -630,8 +630,8 @@ GET /api/events?limit=50&offset=0&type=stream
 
 ### Response
 
-`severity`, `category`, and `reason` are added by the API when events are read.
-They are not stored in the JSON Lines file described above.
+`severity`, `category`, `reason`, and `groups` are added by the API when events
+are read. They are not stored in the JSON Lines file described above.
 
 ```json
 {
@@ -645,6 +645,22 @@ They are not stored in the JSON Lines file described above.
       "details": { ... }
     }
   ],
+  "groups": {
+    "attention": [],
+    "resolved": [],
+    "activity": [],
+    "routine": [
+      {
+        "key": "routine:1:2026-06-21T10:02:00Z",
+        "category": "recorder",
+        "severity": "success",
+        "title": "Hourly recording",
+        "statusText": "Normal",
+        "events": [ ... ]
+      }
+    ],
+    "routineCount": 1
+  },
   "has_more": true
 }
 ```
@@ -654,6 +670,7 @@ They are not stored in the JSON Lines file described above.
 | `severity` | `error`, `warning`, `success`, `info`, `unknown` | Display severity derived from `type` |
 | `category` | `stream`, `audio`, `recorder`, `unknown` | Emitting subsystem derived from `type` |
 | `reason` | `problem`, `recovery`, `lifecycle`, `routine`, `unknown` | Why the event matters in the UI |
+| `groups` | object | Historical grouping for the events UI: `attention`, `resolved`, `activity`, `routine`, and `routineCount` |
 
 ---
 

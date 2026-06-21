@@ -84,15 +84,6 @@ const EVENT_CATEGORY_LABELS = {
     unknown: 'System',
 };
 
-const EVENT_CLOSES = {
-    silence_start: 'silence_end',
-    channel_imbalance_start: 'channel_imbalance_end',
-    stream_error: 'stream_stable',
-    stream_retry: 'stream_stable',
-    upload_failed: 'upload_completed',
-    upload_retry: 'upload_completed',
-};
-
 const RECORDER_STORAGE_LABELS = {
     both: 'Local + S3',
     s3: 'S3',
@@ -328,6 +319,22 @@ const normalizeEventReason = (reason) => (
     ['problem', 'recovery', 'lifecycle', 'routine'].includes(reason) ? reason : 'unknown'
 );
 
+const emptyEventGroups = () => ({
+    attention: [],
+    resolved: [],
+    activity: [],
+    routine: [],
+    routineCount: 0,
+});
+
+const normalizeEventGroups = (groups = {}) => ({
+    attention: Array.isArray(groups.attention) ? groups.attention : [],
+    resolved: Array.isArray(groups.resolved) ? groups.resolved : [],
+    activity: Array.isArray(groups.activity) ? groups.activity : [],
+    routine: Array.isArray(groups.routine) ? groups.routine : [],
+    routineCount: Number.isFinite(groups.routineCount) ? groups.routineCount : 0,
+});
+
 document.addEventListener('alpine:init', () => {
     Alpine.data('encoderApp', () => ({
         view: 'dashboard',
@@ -375,6 +382,7 @@ document.addEventListener('alpine:init', () => {
 
         // Event history includes stream, audio, and recorder events.
         events: [],
+        eventHistoryGroups: emptyEventGroups(),
         eventsError: '',
         eventsLoading: false,
         eventsHasMore: false,
@@ -1693,22 +1701,21 @@ document.addEventListener('alpine:init', () => {
             if (reset) {
                 this.eventsOffset = 0;
                 this.events = [];
+                this.eventHistoryGroups = emptyEventGroups();
                 this.eventOpenRows = {};
             }
             this.eventsError = '';
             this.eventsLoading = true;
             try {
+                const limit = reset ? EVENT_PAGE_SIZE : this.eventsOffset + EVENT_PAGE_SIZE;
                 const params = new URLSearchParams({
-                    limit: String(EVENT_PAGE_SIZE),
-                    offset: String(this.eventsOffset),
+                    limit: String(limit),
+                    offset: '0',
                 });
                 const data = await requestJSON(`/api/events?${params}`);
                 const newEvents = data.events || [];
-                if (reset) {
-                    this.events = newEvents;
-                } else {
-                    this.events = [...this.events, ...newEvents];
-                }
+                this.events = newEvents;
+                this.eventHistoryGroups = normalizeEventGroups(data.groups);
                 this.eventsHasMore = data.has_more || false;
                 return true;
             } catch (error) {
@@ -1846,7 +1853,7 @@ document.addEventListener('alpine:init', () => {
         },
 
         eventGroups() {
-            const history = this.buildHistoricalEventGroups();
+            const history = normalizeEventGroups(this.eventHistoryGroups);
             const liveAttention = this.buildLiveAttentionItems();
             const liveDedupeKeys = new Set(
                 liveAttention.flatMap(item => this.eventItemDedupeKeys(item)),
@@ -2021,11 +2028,11 @@ document.addEventListener('alpine:init', () => {
         },
 
         recorderStatusSourceKey(recorderName) {
-            return `recorder:${recorderName || ''}:`;
+            return recorderName ? `recorder:${recorderName}:` : '';
         },
 
         recorderUploadSourceKey(recorderName) {
-            return `recorder-upload:${recorderName || ''}`;
+            return recorderName ? `recorder-upload:${recorderName}` : '';
         },
 
         latestRecorderProblemEvents(recorderName) {
@@ -2037,301 +2044,9 @@ document.addEventListener('alpine:init', () => {
             }).slice(0, 3);
         },
 
-        buildHistoricalEventGroups() {
-            const asc = [...this.events].sort((a, b) => this.eventTimeValue(a) - this.eventTimeValue(b));
-            const openByKey = new Map();
-            const closed = [];
-            const failed = [];
-            const consumed = new Set();
-
-            for (const event of asc) {
-                // Incidents keep references to this.events entries; consumed relies on that identity.
-                const key = this.eventSourceKey(event);
-                const open = openByKey.get(key);
-                if (open?.closeType === event.type) {
-                    open.events.push(event);
-                    open.endTs = this.eventTimeValue(event);
-                    open.durationMs = this.eventDurationMs(event) || (open.endTs - open.startTs);
-                    closed.push(open);
-                    openByKey.delete(key);
-                    continue;
-                }
-
-                if (open && this.getEventReason(event) === 'problem') {
-                    open.events.push(event);
-                    open.attempts += 1;
-                    if (this.getEventSeverity(event) === 'error') open.severity = 'error';
-                    continue;
-                }
-
-                if (event.type === 'audio_dump_ready') {
-                    const target = this.findLatestSilenceIncident(closed);
-                    if (target) {
-                        target.dump = true;
-                        target.events.push(event);
-                    }
-                    continue;
-                }
-
-                if (this.getEventReason(event) !== 'problem') continue;
-                // Listener stream problems have no historical close event; live status owns their health.
-                if (this.isListenerHistoricalStreamProblem(event)) continue;
-
-                if (event.type === 'upload_abandoned') {
-                    const incident = this.newIncident(event, key, null);
-                    incident.events.push(event);
-                    incident.attempts = 1;
-                    failed.push(incident);
-                    continue;
-                }
-
-                // Some routine events close incidents, e.g. upload_completed closes upload_failed.
-                const closeType = EVENT_CLOSES[event.type];
-                let incident = openByKey.get(key);
-                if (!incident) {
-                    incident = this.newIncident(event, key, closeType);
-                    openByKey.set(key, incident);
-                }
-                incident.events.push(event);
-                incident.attempts += 1;
-                if (this.getEventSeverity(event) === 'error') incident.severity = 'error';
-            }
-
-            const ongoing = [...openByKey.values()];
-            for (const incident of [...closed, ...failed, ...ongoing]) {
-                for (const event of incident.events) consumed.add(event);
-            }
-
-            const activity = this.events
-                .filter(event => !consumed.has(event) && this.getEventReason(event) !== 'routine')
-                .map((event, index) => this.activityEventItem(event, index));
-            const routineEvents = this.events.filter(event => (
-                !consumed.has(event) && this.getEventReason(event) === 'routine'
-            ));
-
-            return {
-                attention: [
-                    ...ongoing.map(incident => this.incidentItem(incident, incident.firstType === 'recorder_error' ? 'unresolved' : 'ongoing')),
-                    ...failed.map(incident => this.incidentItem(incident, 'failed')),
-                ].sort((a, b) => b.sortTs - a.sortTs),
-                resolved: closed
-                    .map(incident => this.incidentItem(incident, 'resolved'))
-                    .sort((a, b) => b.sortTs - a.sortTs),
-                activity,
-                routine: routineEvents.length ? [this.routineEventItem(routineEvents)] : [],
-                routineCount: routineEvents.length,
-            };
-        },
-
-        newIncident(event, key, closeType) {
-            const startTs = this.eventTimeValue(event);
-            return {
-                key,
-                closeType,
-                firstType: event.type,
-                firstEvent: event,
-                severity: this.getEventSeverity(event),
-                startTs,
-                endTs: startTs,
-                durationMs: 0,
-                attempts: 0,
-                dump: false,
-                events: [],
-            };
-        },
-
-        findLatestSilenceIncident(incidents) {
-            for (let i = incidents.length - 1; i >= 0; i -= 1) {
-                if (incidents[i].firstType === 'silence_start') return incidents[i];
-            }
-            return null;
-        },
-
-        incidentItem(incident, status) {
-            const events = [...incident.events].sort((a, b) => this.eventTimeValue(a) - this.eventTimeValue(b));
-            const first = incident.firstEvent;
-            const duration = incident.durationMs || Math.max(0, incident.endTs - incident.startTs);
-            const chips = [];
-            if (status === 'resolved' && duration > 0) chips.push(formatSmartDuration(duration));
-            if (incident.attempts > 1) chips.push(`${incident.attempts} tries`);
-            if (incident.dump) chips.push('audio dump');
-            if (status === 'failed' && first.details?.retry) chips.push(`gave up after ${first.details.retry}`);
-            const statusText = {
-                failed: 'Failed',
-                ongoing: 'Ongoing',
-                resolved: 'Resolved',
-                unresolved: 'Unresolved',
-            }[status] || 'Ongoing';
-
-            return {
-                key: `incident:${status}:${incident.key}:${incident.startTs}`,
-                sourceKey: incident.key,
-                dedupeKey: this.eventDedupeKey(first),
-                category: this.getEventCategory(first),
-                severity: status === 'resolved' ? 'success' : incident.severity,
-                title: this.incidentTitle(first),
-                source: this.getEventSource(first),
-                statusText,
-                chips,
-                detail: this.firstEventError(events) || this.getEventDetail(first) || first.msg || '',
-                when: status === 'ongoing'
-                    ? `since ${this.formatRelativeEventTime(incident.startTs)}`
-                    : this.formatRelativeEventTime(status === 'resolved' ? incident.endTs : incident.startTs),
-                events,
-                sortTs: incident.startTs,
-            };
-        },
-
-        incidentTitle(event) {
-            switch (event.type) {
-                case 'silence_start':
-                    return 'Silence on input';
-                case 'channel_imbalance_start':
-                    return 'Channel imbalance';
-                case 'stream_error':
-                case 'stream_retry':
-                    return 'Stream disconnected';
-                case 'upload_failed':
-                case 'upload_retry':
-                    return 'Upload failed';
-                case 'upload_abandoned':
-                    return 'Upload abandoned';
-                case 'recorder_error':
-                    return 'Recorder error';
-                default:
-                    return this.getEventLabel(event.type);
-            }
-        },
-
-        firstEventError(events) {
-            for (const event of events) {
-                if (event.details?.error) return event.details.error;
-            }
-            return '';
-        },
-
-        eventDurationMs(event) {
-            const duration = event.details?.duration_ms;
-            return Number.isFinite(duration) ? duration : 0;
-        },
-
-        eventSourceKey(event) {
-            const details = event.details || {};
-            switch (this.getEventCategory(event)) {
-                case 'stream':
-                    return `stream:${event.stream_id || details.stream_name || ''}`;
-                case 'audio':
-                    return event.type?.startsWith('channel_imbalance_') ? 'audio:imbalance' : 'audio:silence';
-                case 'recorder':
-                    if (event.type?.startsWith('upload_')) {
-                        return `recorder:${details.recorder_name || ''}:${details.s3_key || details.filename || ''}`;
-                    }
-                    return this.recorderStatusSourceKey(details.recorder_name);
-                default:
-                    return `unknown:${event.type || ''}`;
-            }
-        },
-
-        eventDedupeKey(event) {
-            if (this.getEventCategory(event) === 'recorder' && event.type?.startsWith('upload_')) {
-                return this.recorderUploadSourceKey(event.details?.recorder_name);
-            }
-            return this.eventSourceKey(event);
-        },
-
         eventItemDedupeKeys(item) {
             // Keep these keys aligned with live issue keys so live state suppresses matching history.
             return [item.sourceKey, item.dedupeKey].filter(Boolean);
-        },
-
-        isListenerHistoricalStreamProblem(event) {
-            if (this.getEventCategory(event) !== 'stream' || this.getEventReason(event) !== 'problem') return false;
-
-            return event.details?.mode === 'listener';
-        },
-
-        activityEventItem(event, index) {
-            const severity = this.getEventSeverity(event);
-            return {
-                key: this.eventRowKey(event, index),
-                category: this.getEventCategory(event),
-                severity,
-                title: this.activityTitle(event),
-                source: this.getEventSource(event),
-                statusText: this.activityStatusText(event),
-                chips: [],
-                detail: this.getEventDetail(event) || event.msg || '',
-                when: this.formatRelativeEventTime(event.ts),
-                events: [event],
-                sortTs: this.eventTimeValue(event),
-            };
-        },
-
-        activityTitle(event) {
-            if (event.type === 'stream_started' && /^Listening on/.test(event.msg || '')) return 'Listener started';
-            switch (event.type) {
-                case 'stream_started':
-                    return 'Stream started';
-                case 'stream_stable':
-                    return 'Stream connected';
-                case 'stream_stopped':
-                    return 'Stream stopped';
-                case 'recorder_started':
-                    return 'Recorder started';
-                case 'recorder_stopped':
-                    return 'Recorder stopped';
-                default:
-                    return this.getEventLabel(event.type);
-            }
-        },
-
-        activityStatusText(event) {
-            if (event.type === 'stream_started' && /^Listening on/.test(event.msg || '')) return 'Listening';
-            switch (event.type) {
-                case 'stream_started':
-                    return 'Started';
-                case 'stream_stable':
-                    return 'Connected';
-                case 'stream_stopped':
-                    return 'Stopped';
-                case 'recorder_started':
-                    return 'Started';
-                case 'recorder_stopped':
-                    return 'Stopped';
-                case 'silence_end':
-                case 'channel_imbalance_end':
-                    return 'Recovered';
-                default:
-                    return this.getEventLabel(event.type);
-            }
-        },
-
-        routineEventItem(events) {
-            const countType = (type) => events.filter(event => event.type === type).length;
-            const recorderEvent = events.find(event => event.details?.recorder_name);
-            const chips = [];
-            const files = countType('recorder_file');
-            const queued = countType('upload_queued');
-            const uploaded = countType('upload_completed');
-            const cleanups = countType('cleanup_completed');
-            if (files) chips.push(`${files} file${files === 1 ? '' : 's'}`);
-            if (uploaded) chips.push(`${uploaded} upload${uploaded === 1 ? '' : 's'}`);
-            else if (queued) chips.push(`${queued} queued`);
-            if (cleanups) chips.push(`${cleanups} cleanup${cleanups === 1 ? '' : 's'}`);
-
-            return {
-                key: `routine:${events.length}:${events[0]?.ts || ''}`,
-                category: 'recorder',
-                severity: 'success',
-                title: 'Hourly recording',
-                source: recorderEvent?.details?.recorder_name || 'zwfm-hourly',
-                statusText: 'Normal',
-                chips,
-                detail: '',
-                when: events[0] ? `last ${this.formatRelativeEventTime(events[0].ts)}` : '',
-                events,
-                trailLimit: 8,
-            };
         },
 
         eventRowKey(event, index) {

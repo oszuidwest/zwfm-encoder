@@ -1179,26 +1179,6 @@ func countRunningRecorders(statuses map[string]types.ProcessStatus) int {
 	return count
 }
 
-type eventView struct {
-	eventlog.Event
-	Severity eventlog.Severity `json:"severity"`
-	Category eventlog.Category `json:"category"`
-	Reason   eventlog.Reason   `json:"reason"`
-}
-
-func decorateEvents(events []eventlog.Event) []eventView {
-	views := make([]eventView, len(events))
-	for i, event := range events {
-		views[i] = eventView{
-			Event:    event,
-			Severity: event.Type.Severity(),
-			Category: event.Type.Category(),
-			Reason:   event.Type.Reason(),
-		}
-	}
-	return views
-}
-
 // handleAPIEvents returns events from the event log.
 func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 	logPath := ""
@@ -1210,7 +1190,8 @@ func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAPIEventsFromPath(w http.ResponseWriter, r *http.Request, logPath string) {
 	emptyResponse := map[string]any{
-		"events":   []eventView{},
+		"events":   []eventlog.EventView{},
+		"groups":   eventlog.EmptyEventGroups(),
 		"has_more": false,
 	}
 
@@ -1256,8 +1237,10 @@ func (s *Server) handleAPIEventsFromPath(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
+	views := eventlog.DecorateEvents(eventList)
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"events":   decorateEvents(eventList),
+		"events":   views,
+		"groups":   eventlog.GroupEvents(views, time.Now()),
 		"has_more": hasMore,
 	})
 }

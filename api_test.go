@@ -248,6 +248,9 @@ func TestHandleAPIEventsDecoratesClassificationAndKeepsPagination(t *testing.T) 
 		eventlog.CategoryRecorder,
 		eventlog.ReasonRoutine,
 	)
+	if firstPage.Groups.RoutineCount != 1 {
+		t.Fatalf("routine count = %d, want 1", firstPage.Groups.RoutineCount)
+	}
 
 	rec = runJSONHandler(
 		t,
@@ -274,6 +277,9 @@ func TestHandleAPIEventsDecoratesClassificationAndKeepsPagination(t *testing.T) 
 		eventlog.CategoryRecorder,
 		eventlog.ReasonProblem,
 	)
+	if len(secondPage.Groups.Attention) != 1 {
+		t.Fatalf("attention groups = %d, want 1", len(secondPage.Groups.Attention))
+	}
 }
 
 func readyFixture() readyInputs {
@@ -320,8 +326,9 @@ type eventViewForTest struct {
 }
 
 type eventsResponseForTest struct {
-	Events  []eventViewForTest `json:"events"`
-	HasMore bool               `json:"has_more"`
+	Events  []eventViewForTest   `json:"events"`
+	Groups  eventlog.EventGroups `json:"groups"`
+	HasMore bool                 `json:"has_more"`
 }
 
 func writeAPIEvents(t *testing.T, path string, events []eventlog.Event) {
