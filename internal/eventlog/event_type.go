@@ -1,48 +1,48 @@
 package eventlog
 
-// Severity classifies how urgent an event type is for API consumers.
+// Severity classifies event urgency for API consumers.
 type Severity string
 
 const (
-	// SeverityError indicates a failure that needs operator attention.
+	// SeverityError marks a failure that needs operator attention.
 	SeverityError Severity = "error"
-	// SeverityWarning indicates degraded or retrying behavior.
+	// SeverityWarning marks degraded or retrying behavior.
 	SeverityWarning Severity = "warning"
-	// SeveritySuccess indicates a recovery or successful completion.
+	// SeveritySuccess marks recovery or successful completion.
 	SeveritySuccess Severity = "success"
-	// SeverityInfo indicates neutral lifecycle or routine information.
+	// SeverityInfo marks neutral lifecycle or routine activity.
 	SeverityInfo Severity = "info"
-	// SeverityUnknown indicates an unrecognized event type.
+	// SeverityUnknown marks an unclassified event type.
 	SeverityUnknown Severity = "unknown"
 )
 
-// Reason classifies why an event type matters to the events UI.
+// Reason classifies why an event is grouped.
 type Reason string
 
 const (
-	// ReasonProblem indicates an event type that represents a problem.
+	// ReasonProblem marks an active or failed problem.
 	ReasonProblem Reason = "problem"
-	// ReasonRecovery indicates an event type that recovers from a problem.
+	// ReasonRecovery marks recovery from a problem.
 	ReasonRecovery Reason = "recovery"
-	// ReasonLifecycle indicates an intentional start, stop, or state transition.
+	// ReasonLifecycle marks an intentional state change.
 	ReasonLifecycle Reason = "lifecycle"
-	// ReasonRoutine indicates high-volume healthy recorder activity.
+	// ReasonRoutine marks high-volume healthy recorder activity.
 	ReasonRoutine Reason = "routine"
-	// ReasonUnknown indicates an unrecognized event type.
+	// ReasonUnknown marks an unclassified event type.
 	ReasonUnknown Reason = "unknown"
 )
 
-// Category classifies the subsystem that emitted an event type.
+// Category classifies event source subsystems.
 type Category string
 
 const (
-	// CategoryStream indicates stream output events.
+	// CategoryStream marks stream output events.
 	CategoryStream Category = "stream"
-	// CategoryAudio indicates input audio health events.
+	// CategoryAudio marks input audio health events.
 	CategoryAudio Category = "audio"
-	// CategoryRecorder indicates recorder and upload events.
+	// CategoryRecorder marks recorder and upload events.
 	CategoryRecorder Category = "recorder"
-	// CategoryUnknown indicates an unrecognized event type.
+	// CategoryUnknown marks an unclassified event type.
 	CategoryUnknown Category = "unknown"
 )
 
@@ -75,7 +75,7 @@ var eventClassifications = map[EventType]eventClassification{
 	CleanupCompleted:      {category: CategoryRecorder, severity: SeveritySuccess, reason: ReasonRoutine},
 }
 
-// Category returns the subsystem category for t.
+// Category returns t's subsystem category.
 func (t EventType) Category() Category {
 	if classification, ok := eventClassifications[t]; ok {
 		return classification.category
@@ -83,7 +83,7 @@ func (t EventType) Category() Category {
 	return CategoryUnknown
 }
 
-// Severity returns the display severity for t.
+// Severity returns t's display severity.
 func (t EventType) Severity() Severity {
 	if classification, ok := eventClassifications[t]; ok {
 		return classification.severity
@@ -91,7 +91,7 @@ func (t EventType) Severity() Severity {
 	return SeverityUnknown
 }
 
-// Reason returns the semantic reason for t.
+// Reason returns t's event grouping reason.
 func (t EventType) Reason() Reason {
 	if classification, ok := eventClassifications[t]; ok {
 		return classification.reason

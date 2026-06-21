@@ -261,8 +261,7 @@ func TestHandleAPIEventsDecoratesClassificationAndKeepsPagination(t *testing.T) 
 		t.Fatalf("routine count = %d, want 1", firstPage.Groups.RoutineCount)
 	}
 
-	// Grouping is computed over the exact returned window. Non-UI callers using
-	// offset pagination can therefore split an incident across page boundaries.
+	// Grouping uses only the returned window; offset pagination can split incidents.
 	rec = runJSONHandler(
 		t,
 		func(w http.ResponseWriter, r *http.Request) {
@@ -367,7 +366,8 @@ type eventsResponseForTest struct {
 
 func writeAPIEvents(t *testing.T, path string, events []eventlog.Event) {
 	t.Helper()
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) //nolint:gosec // Test path is under t.TempDir.
+	//nolint:gosec // Test path is under t.TempDir.
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatalf("open log: %v", err)
 	}

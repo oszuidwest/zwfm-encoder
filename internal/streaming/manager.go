@@ -1139,10 +1139,7 @@ func (m *Manager) monitorListenerEncoder(streamID string, ctx StreamContext, sto
 	}
 }
 
-// prepareListenerRetry prepares the listener encoder to attempt another run.
-// When retry is no longer permitted it finalizes shutdown via
-// stopListenerAfterRetryEnd and returns a false ok value; otherwise it returns the
-// current stream config.
+// prepareListenerRetry returns the current config or finalizes listener shutdown.
 func (m *Manager) prepareListenerRetry(
 	streamID string, stream *Stream, ctx StreamContext, errMsg string,
 ) (cfg *types.Stream, ok bool) {

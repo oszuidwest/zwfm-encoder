@@ -22,7 +22,7 @@ var styleCSS string
 //go:embed web/app.js
 var appJS string
 
-// eventHelpersJS is the embedded shared event UI helper code.
+// eventHelpersJS is the embedded event UI helper code.
 //
 //go:embed web/eventHelpers.js
 var eventHelpersJS string

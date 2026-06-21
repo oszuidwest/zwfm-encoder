@@ -1,6 +1,6 @@
 package eventlog
 
-// EventView is an event decorated with API-only display metadata.
+// EventView is an event plus serve-time display metadata.
 type EventView struct {
 	Event
 	Severity Severity `json:"severity"`
@@ -10,7 +10,7 @@ type EventView struct {
 	Detail   string   `json:"detail,omitempty"`
 }
 
-// DecorateEvents adds serve-time display metadata to events without changing JSONL.
+// DecorateEvents adds display metadata without changing JSONL records.
 func DecorateEvents(events []Event) []EventView {
 	views := make([]EventView, len(events))
 	for i, event := range events {

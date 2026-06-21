@@ -1179,7 +1179,7 @@ func countRunningRecorders(statuses map[string]types.ProcessStatus) int {
 	return count
 }
 
-// handleAPIEvents returns events from the event log.
+// handleAPIEvents returns decorated event history from the active log.
 func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 	logPath := ""
 	if s.encoder != nil {
@@ -1195,7 +1195,6 @@ func (s *Server) handleAPIEventsFromPath(w http.ResponseWriter, r *http.Request,
 		"has_more": false,
 	}
 
-	// Parse limit parameter (default 50, max MaxReadLimit)
 	limit := 50
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
 		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
@@ -1203,7 +1202,6 @@ func (s *Server) handleAPIEventsFromPath(w http.ResponseWriter, r *http.Request,
 		}
 	}
 
-	// Parse offset parameter (default 0)
 	offset := 0
 	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
 		if parsed, err := strconv.Atoi(offsetStr); err == nil && parsed >= 0 {
@@ -1211,7 +1209,6 @@ func (s *Server) handleAPIEventsFromPath(w http.ResponseWriter, r *http.Request,
 		}
 	}
 
-	// Parse type filter parameter
 	var filter eventlog.TypeFilter
 	switch r.URL.Query().Get("type") {
 	case "stream":
@@ -1229,7 +1226,6 @@ func (s *Server) handleAPIEventsFromPath(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	// Read events from log file
 	eventList, hasMore, err := eventlog.ReadLast(logPath, limit, offset, filter)
 	if err != nil {
 		slog.Warn("failed to read events", "error", err)

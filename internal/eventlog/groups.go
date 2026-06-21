@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// EventGroups is the historical event grouping used by the events UI.
+// EventGroups is the grouped /api/events payload.
 type EventGroups struct {
 	Attention    []EventGroupItem `json:"attention"`
 	Resolved     []EventGroupItem `json:"resolved"`
@@ -19,7 +19,7 @@ type EventGroups struct {
 	RoutineCount int              `json:"routineCount"`
 }
 
-// EventGroupItem is one rendered row in a historical event group.
+// EventGroupItem is one row in an event group.
 type EventGroupItem struct {
 	Key        string      `json:"key"`
 	Category   Category    `json:"category"`
@@ -40,8 +40,7 @@ type groupedEvent struct {
 	details map[string]any
 }
 
-// groupingState walks events oldest-first, opening problem incidents and closing
-// them when the matching recovery event arrives.
+// groupingState tracks incidents while events are processed oldest-first.
 type groupingState struct {
 	openByKey map[string]*historicalIncident
 	closed    []*historicalIncident
@@ -94,7 +93,7 @@ var eventLabels = map[EventType]string{
 	CleanupCompleted:      "Cleanup",
 }
 
-// EmptyEventGroups returns the JSON shape for an empty event history.
+// EmptyEventGroups returns empty groups with non-nil slices.
 func EmptyEventGroups() EventGroups {
 	return EventGroups{
 		Attention: []EventGroupItem{},
@@ -104,8 +103,8 @@ func EmptyEventGroups() EventGroups {
 	}
 }
 
-// GroupEvents folds historical events into attention, resolved, activity, and routine rows.
-// It groups only the supplied event window, so pagination can split incidents.
+// GroupEvents groups decorated events for the events UI.
+// Only supplied events are grouped, so pagination can split incidents.
 func GroupEvents(events []EventView) EventGroups {
 	grouped := make([]groupedEvent, len(events))
 	for i := range events {
@@ -221,7 +220,7 @@ func eventClosesIncident(open *historicalIncident, event groupedEvent) bool {
 	if open.closeType == event.view.Type {
 		return true
 	}
-	// Listener starts close stream incidents by mode; prefix fallback supports legacy logs.
+	// Listener restarts resolve incidents; message fallback supports legacy logs.
 	return open.closeType == StreamStable &&
 		event.view.Type == StreamStarted &&
 		isListenerStreamEvent(event)
@@ -307,7 +306,7 @@ func incidentItem(incident *historicalIncident, status string) EventGroupItem {
 
 	sortTs := incident.startTs
 	if status == "resolved" || status == "failed" {
-		// Open incidents sort by start; terminal incidents sort by recent outcome.
+		// Open incidents sort by start; terminal incidents by final event.
 		sortTs = incident.endTs
 	}
 
@@ -686,7 +685,7 @@ func incidentEventViews(events []groupedEvent) []EventView {
 	return groupedEventViews(ordered)
 }
 
-// compareGroupedEvents orders events chronologically, breaking ties by input order.
+// compareGroupedEvents orders events chronologically with stable ties.
 func compareGroupedEvents(a, b groupedEvent) int {
 	switch {
 	case a.view.Timestamp.Before(b.view.Timestamp):

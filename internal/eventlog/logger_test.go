@@ -209,7 +209,8 @@ func TestLogStreamPersistsModeInDetails(t *testing.T) {
 		t.Fatalf("Close() error = %v", err)
 	}
 
-	data, err := os.ReadFile(path) //nolint:gosec // Test reads a controlled temp path.
+	//nolint:gosec // Test reads a controlled temp path.
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read log: %v", err)
 	}
@@ -226,7 +227,8 @@ func TestLogStreamPersistsModeInDetails(t *testing.T) {
 
 func writeEvents(t testing.TB, path string, events []Event) {
 	t.Helper()
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) //nolint:gosec // Test path is under t.TempDir.
+	//nolint:gosec // Test path is under t.TempDir.
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatalf("open log: %v", err)
 	}
