@@ -726,14 +726,25 @@
                 </div>
 
                 <!-- Events Panel - issue-first event view -->
-                <div class="panel events-panel" role="tabpanel" id="panel-events" aria-labelledby="tab-events" x-show="settingsTab === 'events'" x-data="{ groups: { attention: [], resolved: [], activity: [], routine: [], routineCount: 0 } }" x-effect="if (settingsTab === 'events') groups = eventGroups()" x-init="$watch('settingsTab', val => val === 'events' && loadEvents())">
+                <div class="panel events-panel" role="tabpanel" id="panel-events" aria-labelledby="tab-events" x-show="settingsTab === 'events'" x-data="{ groups: { attention: [], resolved: [], activity: [], routine: [], routineCount: 0 } }" x-effect="if (settingsTab === 'events') { groups = eventGroups(); if (eventFilter && eventGroupCount(groups, eventFilter) === 0) eventFilter = ''; }" x-init="$watch('settingsTab', val => val === 'events' && loadEvents())">
                     <div class="event-summary" :data-state="eventSummaryState(groups)">
                         <span class="event-summary-main" x-text="eventSummaryText(groups)"></span>
                         <span class="event-summary-muted" x-text="eventSummaryMutedText(groups)"></span>
                     </div>
 
-                    <div class="event-list" x-show="events.length > 0 || groups.attention.length > 0">
-                        <template x-if="groups.attention.length > 0">
+                    <div class="event-filter" role="group" aria-label="Filter events by status">
+                        <button type="button" class="filter-pill" :class="{ active: !eventFilter }" :aria-pressed="(!eventFilter).toString()" @click="eventFilter = ''">All</button>
+                        <template x-for="groupFilter in eventGroupFilters" :key="groupFilter.key">
+                            <button type="button" class="filter-pill" x-show="eventGroupCount(groups, groupFilter.key) > 0" :class="{ active: eventFilter === groupFilter.key }" :aria-pressed="(eventFilter === groupFilter.key).toString()" @click="eventFilter = groupFilter.key">
+                                <span class="filter-dot" :class="groupFilter.key"></span>
+                                <span x-text="groupFilter.label"></span>
+                                <span class="filter-pill-count" x-text="eventGroupCount(groups, groupFilter.key)"></span>
+                            </button>
+                        </template>
+                    </div>
+
+                    <div class="event-list" x-show="visibleEventGroupKeys(groups).length > 0">
+                        <template x-if="sectionVisible(groups, 'attention')">
                             <div>
                                 <div class="event-section-heading attention">
                                     <span>Needs attention</span>
@@ -770,7 +781,7 @@
                             </div>
                         </template>
 
-                        <template x-if="groups.resolved.length > 0">
+                        <template x-if="sectionVisible(groups, 'resolved')">
                             <div>
                                 <div class="event-section-heading">
                                     <span>Resolved</span>
@@ -807,7 +818,7 @@
                             </div>
                         </template>
 
-                        <template x-if="groups.activity.length > 0">
+                        <template x-if="sectionVisible(groups, 'activity')">
                             <div>
                                 <div class="event-section-heading">
                                     <span>Activity</span>
@@ -833,7 +844,7 @@
                             </div>
                         </template>
 
-                        <template x-if="groups.routine.length > 0">
+                        <template x-if="sectionVisible(groups, 'routine')">
                             <div>
                                 <div class="event-section-heading">
                                     <span>Routine</span>
@@ -874,8 +885,8 @@
                     <div class="event-empty event-error" x-show="eventsError && !eventsLoading">
                         <p x-text="eventsError"></p>
                     </div>
-                    <div class="event-empty" x-show="!eventsError && events.length === 0 && groups.attention.length === 0 && !eventsLoading">
-                        <p>No events yet</p>
+                    <div class="event-empty" x-show="!eventsError && !eventsLoading && visibleEventGroupKeys(groups).length === 0">
+                        <p x-text="eventFilter ? 'No matching events' : 'No events yet'"></p>
                     </div>
                     <div class="event-loading" x-show="eventsLoading">
                         <p>Loading...</p>

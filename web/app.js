@@ -86,6 +86,16 @@ const EVENT_CATEGORY_LABELS = {
     unknown: 'System',
 };
 
+// Status sections the event dashboard groups into, used for the filter pills.
+// The key matches the keys produced by eventGroups(); label/dot drive the pill rendering.
+const EVENT_GROUP_FILTERS = [
+    { key: 'attention', label: 'Needs attention' },
+    { key: 'resolved', label: 'Resolved' },
+    { key: 'activity', label: 'Activity' },
+    { key: 'routine', label: 'Routine' },
+];
+const EVENT_GROUP_FILTER_KEYS = EVENT_GROUP_FILTERS.map(filter => filter.key);
+
 const RECORDER_STORAGE_LABELS = {
     both: 'Local + S3',
     s3: 'S3',
@@ -385,6 +395,8 @@ document.addEventListener('alpine:init', () => {
         // Event history includes stream, audio, and recorder events.
         events: [],
         eventHistoryGroups: emptyEventGroups(),
+        eventFilter: '', // '' = all sections, or a group key: attention | resolved | activity | routine
+        eventGroupFilters: EVENT_GROUP_FILTERS,
         eventsError: '',
         eventsLoading: false,
         eventsHasMore: false,
@@ -1707,7 +1719,11 @@ document.addEventListener('alpine:init', () => {
         },
 
         /**
-         * Loads events from the API (all types: stream_* and silence_*).
+         * Loads events from the API (stream, audio, and recorder events).
+         * Always requests the full newest-first window (no server-side
+         * filtering) so the server can pair problem/recovery events across it;
+         * the status-section filter is applied in the template via
+         * sectionVisible().
          * @param {boolean} reset - If true, resets pagination and replaces events
          */
         async loadEvents(reset = true) {
@@ -1884,6 +1900,25 @@ document.addEventListener('alpine:init', () => {
                 routine: history.routine,
                 routineCount: history.routineCount,
             };
+        },
+
+        // eventGroupCount returns how many items the named section contributes.
+        // Routine collapses to one row but reports its underlying event count.
+        eventGroupCount(groups, key) {
+            if (key === 'routine') return groups.routineCount || 0;
+            return (groups[key] || []).length;
+        },
+
+        // sectionVisible reports whether a section should render given the active
+        // status filter: it must be non-empty and either unfiltered or selected.
+        sectionVisible(groups, key) {
+            return this.eventGroupCount(groups, key) > 0 &&
+                (!this.eventFilter || this.eventFilter === key);
+        },
+
+        // visibleEventGroupKeys lists the sections to render under the active filter.
+        visibleEventGroupKeys(groups) {
+            return EVENT_GROUP_FILTER_KEYS.filter(key => this.sectionVisible(groups, key));
         },
 
         eventSummaryState(groups) {

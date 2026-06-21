@@ -333,7 +333,7 @@
         text-align: center;
     }
 
-    :where(.btn, .icon-btn, .nav-btn, .add-btn, .mode-btn, .tab, .segmented-btn):focus-visible {
+    :where(.btn, .icon-btn, .nav-btn, .add-btn, .mode-btn, .tab, .segmented-btn, .filter-pill):focus-visible {
         outline: 2px solid var(--brand);
         outline-offset: 2px;
     }
@@ -1916,6 +1916,60 @@
         color: var(--text-secondary);
         font-size: var(--text-sm);
     }
+
+    .event-filter {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: var(--space-2);
+        padding: var(--space-4) var(--space-7);
+        border-bottom: 1px solid var(--border-default);
+    }
+
+    .filter-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-2);
+        padding: var(--space-2) var(--space-4);
+        font-size: var(--text-sm);
+        font-weight: 500;
+        color: var(--text-secondary);
+        background: transparent;
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-full);
+        cursor: pointer;
+        transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+    }
+
+    .filter-pill:hover {
+        color: var(--text-primary);
+        border-color: var(--border-strong);
+    }
+
+    .filter-pill.active {
+        color: var(--text-primary);
+        background: var(--surface-elevated);
+        border-color: var(--border-strong);
+    }
+
+    .filter-pill-count {
+        color: var(--text-secondary);
+        font-variant-numeric: tabular-nums;
+    }
+
+    .filter-pill.active .filter-pill-count {
+        color: var(--text-primary);
+    }
+
+    .filter-dot {
+        width: 0.5rem;
+        height: 0.5rem;
+        border-radius: var(--radius-full);
+        background: var(--event-color, var(--text-secondary));
+    }
+
+    .filter-dot.attention { --event-color: var(--danger); }
+    .filter-dot.resolved { --event-color: var(--success); }
 
     .event-list {
         overflow: hidden;
