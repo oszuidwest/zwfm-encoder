@@ -22,6 +22,11 @@ var styleCSS string
 //go:embed web/app.js
 var appJS string
 
+// eventKeysJS is the embedded shared event key builder code.
+//
+//go:embed web/eventKeys.js
+var eventKeysJS string
+
 // iconsJS is the embedded SVG icons module.
 //
 //go:embed web/icons.js

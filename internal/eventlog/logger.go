@@ -510,8 +510,8 @@ func readLinesReverse(filePath string, handle func([]byte) (bool, error)) error 
 			return err
 		}
 
-		data := append(chunk, tail...)
-		parts := bytes.Split(data, []byte{'\n'})
+		chunk = append(chunk, tail...)
+		parts := bytes.Split(chunk, []byte{'\n'})
 		for i := len(parts) - 1; i >= 1; i-- {
 			cont, err := handle(parts[i])
 			if err != nil {

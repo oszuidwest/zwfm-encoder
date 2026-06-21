@@ -1,6 +1,7 @@
 package eventlog
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -30,7 +31,6 @@ type EventGroupItem struct {
 	StatusText string      `json:"statusText"`
 	Chips      []string    `json:"chips"`
 	Detail     string      `json:"detail,omitempty"`
-	When       string      `json:"when,omitempty"`
 	Events     []EventView `json:"events"`
 	SortTs     int64       `json:"sortTs"`
 	TrailLimit int         `json:"trailLimit,omitempty"`
@@ -51,17 +51,17 @@ type groupingState struct {
 }
 
 type historicalIncident struct {
-	key       string
-	closeType EventType
-	firstType EventType
-	first     groupedEvent
-	severity  Severity
-	startTs   int64
-	endTs     int64
-	duration  int64
-	attempts  int
-	dump      bool
-	events    []groupedEvent
+	key        string
+	closeType  EventType
+	firstType  EventType
+	first      groupedEvent
+	severity   Severity
+	startTs    int64
+	endTs      int64
+	durationMs int64
+	attempts   int
+	dump       bool
+	events     []groupedEvent
 }
 
 var eventCloses = map[EventType]EventType{
@@ -107,11 +107,7 @@ func EmptyEventGroups() EventGroups {
 }
 
 // GroupEvents folds historical events into attention, resolved, activity, and routine rows.
-func GroupEvents(events []EventView, now time.Time) EventGroups {
-	if now.IsZero() {
-		now = time.Now()
-	}
-
+func GroupEvents(events []EventView) EventGroups {
 	grouped := make([]groupedEvent, len(events))
 	for i := range events {
 		grouped[i] = groupedEvent{
@@ -124,12 +120,19 @@ func GroupEvents(events []EventView, now time.Time) EventGroups {
 	asc := append([]groupedEvent(nil), grouped...)
 	slices.SortStableFunc(asc, compareGroupedEvents)
 
-	state := newGroupingState()
+	state := &groupingState{
+		openByKey: map[string]*historicalIncident{},
+		closed:    []*historicalIncident{},
+		failed:    []*historicalIncident{},
+	}
 	for i := range asc {
 		state.process(asc[i])
 	}
 
-	ongoing := state.ongoing()
+	ongoing := make([]*historicalIncident, 0, len(state.openByKey))
+	for _, incident := range state.openByKey {
+		ongoing = append(ongoing, incident)
+	}
 	consumed := consumedEventIDs(len(grouped), state.closed, state.failed, ongoing)
 
 	groups := EmptyEventGroups()
@@ -143,10 +146,10 @@ func GroupEvents(events []EventView, now time.Time) EventGroups {
 			routineEvents = append(routineEvents, event)
 			continue
 		}
-		groups.Activity = append(groups.Activity, activityEventItem(event, now))
+		groups.Activity = append(groups.Activity, activityEventItem(event))
 	}
 	if len(routineEvents) > 0 {
-		groups.Routine = append(groups.Routine, routineEventItem(routineEvents, now))
+		groups.Routine = append(groups.Routine, routineEventItem(routineEvents))
 		groups.RoutineCount = len(routineEvents)
 	}
 
@@ -155,26 +158,18 @@ func GroupEvents(events []EventView, now time.Time) EventGroups {
 		if incident.firstType == RecorderError {
 			status = "unresolved"
 		}
-		groups.Attention = append(groups.Attention, incidentItem(incident, status, now))
+		groups.Attention = append(groups.Attention, incidentItem(incident, status))
 	}
 	for _, incident := range state.failed {
-		groups.Attention = append(groups.Attention, incidentItem(incident, "failed", now))
+		groups.Attention = append(groups.Attention, incidentItem(incident, "failed"))
 	}
 	for _, incident := range state.closed {
-		groups.Resolved = append(groups.Resolved, incidentItem(incident, "resolved", now))
+		groups.Resolved = append(groups.Resolved, incidentItem(incident, "resolved"))
 	}
 
 	sortItemsDesc(groups.Attention)
 	sortItemsDesc(groups.Resolved)
 	return groups
-}
-
-func newGroupingState() *groupingState {
-	return &groupingState{
-		openByKey: map[string]*historicalIncident{},
-		closed:    []*historicalIncident{},
-		failed:    []*historicalIncident{},
-	}
 }
 
 func (s *groupingState) process(event groupedEvent) {
@@ -199,7 +194,7 @@ func (s *groupingState) process(event groupedEvent) {
 		return
 	}
 
-	if event.view.Reason != ReasonProblem || isListenerHistoricalStreamProblem(event) {
+	if event.view.Reason != ReasonProblem {
 		return
 	}
 
@@ -216,14 +211,6 @@ func (s *groupingState) process(event groupedEvent) {
 		s.openByKey[key] = incident
 	}
 	incident.add(event)
-}
-
-func (s *groupingState) ongoing() []*historicalIncident {
-	ongoing := make([]*historicalIncident, 0, len(s.openByKey))
-	for _, incident := range s.openByKey {
-		ongoing = append(ongoing, incident)
-	}
-	return ongoing
 }
 
 func consumedEventIDs(eventCount int, groups ...[]*historicalIncident) []bool {
@@ -256,9 +243,7 @@ func (i *historicalIncident) add(event groupedEvent) {
 	i.events = append(i.events, event)
 	i.endTs = eventTimeValue(event.view.Timestamp)
 	if duration := detailInt64(event.details, "duration_ms"); duration > 0 {
-		i.duration = duration
-	} else {
-		i.duration = max(i.duration, i.endTs-i.startTs)
+		i.durationMs = duration
 	}
 	if event.view.Reason == ReasonProblem {
 		i.attempts++
@@ -277,10 +262,10 @@ func latestSilenceIncident(incidents []*historicalIncident) *historicalIncident 
 	return nil
 }
 
-func incidentItem(incident *historicalIncident, status string, now time.Time) EventGroupItem {
+func incidentItem(incident *historicalIncident, status string) EventGroupItem {
 	events := incidentEventViews(incident.events)
 	first := incident.first
-	duration := incident.duration
+	duration := incident.durationMs
 	if duration == 0 {
 		duration = max(0, incident.endTs-incident.startTs)
 	}
@@ -306,15 +291,6 @@ func incidentItem(incident *historicalIncident, status string, now time.Time) Ev
 		severity = SeveritySuccess
 	}
 
-	whenTs := incident.startTs
-	if status == "resolved" {
-		whenTs = incident.endTs
-	}
-	when := formatRelativeEventTime(now, whenTs)
-	if status == "ongoing" {
-		when = "since " + when
-	}
-
 	return EventGroupItem{
 		Key:        fmt.Sprintf("incident:%s:%s:%d", status, incident.key, incident.startTs),
 		SourceKey:  incident.key,
@@ -326,13 +302,12 @@ func incidentItem(incident *historicalIncident, status string, now time.Time) Ev
 		StatusText: statusText(status),
 		Chips:      chips,
 		Detail:     firstEventError(incident.events),
-		When:       when,
 		Events:     events,
 		SortTs:     incident.startTs,
 	}
 }
 
-func activityEventItem(event groupedEvent, now time.Time) EventGroupItem {
+func activityEventItem(event groupedEvent) EventGroupItem {
 	return EventGroupItem{
 		Key:        eventRowKey(event),
 		SourceKey:  eventSourceKey(event),
@@ -344,16 +319,16 @@ func activityEventItem(event groupedEvent, now time.Time) EventGroupItem {
 		StatusText: activityStatusText(event),
 		Chips:      []string{},
 		Detail:     eventDetail(event),
-		When:       formatRelativeEventTime(now, eventTimeValue(event.view.Timestamp)),
 		Events:     []EventView{*event.view},
 		SortTs:     eventTimeValue(event.view.Timestamp),
 	}
 }
 
-func routineEventItem(events []groupedEvent, now time.Time) EventGroupItem {
+func routineEventItem(events []groupedEvent) EventGroupItem {
 	chips := []string{}
 	source := "zwfm-hourly"
 	files, queued, uploaded, cleanups := 0, 0, 0, 0
+	recorderNames := map[string]bool{}
 	for i := range events {
 		switch events[i].view.Type {
 		case RecorderFile:
@@ -365,11 +340,18 @@ func routineEventItem(events []groupedEvent, now time.Time) EventGroupItem {
 		case CleanupCompleted:
 			cleanups++
 		}
-		if source == "zwfm-hourly" {
-			if name := detailString(events[i].details, "recorder_name"); name != "" {
-				source = name
-			}
+		if name := detailString(events[i].details, "recorder_name"); name != "" {
+			recorderNames[name] = true
 		}
+	}
+	switch len(recorderNames) {
+	case 0:
+	case 1:
+		for name := range recorderNames {
+			source = name
+		}
+	default:
+		source = pluralCount(len(recorderNames), "recorder")
 	}
 	if files > 0 {
 		chips = append(chips, pluralCount(files, "file"))
@@ -393,7 +375,6 @@ func routineEventItem(events []groupedEvent, now time.Time) EventGroupItem {
 		Source:     source,
 		StatusText: "Normal",
 		Chips:      chips,
-		When:       "last " + formatRelativeEventTime(now, eventTimeValue(first.view.Timestamp)),
 		Events:     groupedEventViews(events),
 		SortTs:     eventTimeValue(first.view.Timestamp),
 		TrailLimit: 8,
@@ -418,7 +399,7 @@ func eventSourceKey(event groupedEvent) string {
 	case CategoryRecorder:
 		name := detailString(event.details, "recorder_name")
 		if isUploadEvent(event.view.Type) {
-			file := firstNonEmpty(
+			file := cmp.Or(
 				detailString(event.details, "s3_key"),
 				detailString(event.details, "filename"),
 			)
@@ -428,7 +409,7 @@ func eventSourceKey(event groupedEvent) string {
 			return fmt.Sprintf("recorder-upload-event:%d", event.id)
 		}
 		if name != "" {
-			return recorderStatusSourceKey(name)
+			return "recorder:" + name + ":"
 		}
 		return fmt.Sprintf("recorder-event:%s:%d", event.view.Type, event.id)
 	default:
@@ -440,24 +421,10 @@ func eventDedupeKey(event groupedEvent) string {
 	// Keep these historical dedupe keys byte-identical to live issue keys in web/app.js.
 	if event.view.Category == CategoryRecorder && isUploadEvent(event.view.Type) {
 		if name := detailString(event.details, "recorder_name"); name != "" {
-			return recorderUploadSourceKey(name)
+			return "recorder-upload:" + name
 		}
 	}
 	return eventSourceKey(event)
-}
-
-func recorderStatusSourceKey(name string) string {
-	return "recorder:" + name + ":"
-}
-
-func recorderUploadSourceKey(name string) string {
-	return "recorder-upload:" + name
-}
-
-func isListenerHistoricalStreamProblem(event groupedEvent) bool {
-	return event.view.Category == CategoryStream &&
-		event.view.Reason == ReasonProblem &&
-		detailString(event.details, "mode") == "listener"
 }
 
 func eventSource(event groupedEvent) string {
@@ -571,7 +538,7 @@ func eventDetail(event groupedEvent) string {
 	details := event.details
 	switch event.view.Type {
 	case StreamError:
-		return firstNonEmpty(detailString(details, "error"), "Unknown error")
+		return cmp.Or(detailString(details, "error"), "Unknown error")
 	case StreamRetry:
 		return retryErrorDetail(details, "")
 	case SilenceStart:
@@ -597,7 +564,7 @@ func eventDetail(event groupedEvent) string {
 		}
 		return detailString(details, "dump_filename")
 	case RecorderError, UploadFailed:
-		return firstNonEmpty(detailString(details, "error"), "Unknown error")
+		return cmp.Or(detailString(details, "error"), "Unknown error")
 	case UploadRetry, UploadAbandoned:
 		return retryErrorDetail(details, "Unknown error")
 	case RecorderFile, UploadQueued, UploadCompleted:
@@ -622,7 +589,7 @@ func firstEventError(events []groupedEvent) string {
 		}
 	}
 	if len(events) > 0 {
-		return firstNonEmpty(eventDetail(events[0]), events[0].view.Message)
+		return cmp.Or(eventDetail(events[0]), events[0].view.Message)
 	}
 	return ""
 }
@@ -719,23 +686,6 @@ func eventTimeValue(timestamp time.Time) int64 {
 	return timestamp.UnixMilli()
 }
 
-func formatRelativeEventTime(now time.Time, timestampMs int64) string {
-	if timestampMs == 0 {
-		return ""
-	}
-	diff := max(int64(0), now.UnixMilli()-timestampMs)
-	switch {
-	case diff < int64(time.Minute/time.Millisecond):
-		return "just now"
-	case diff < int64(time.Hour/time.Millisecond):
-		return fmt.Sprintf("%dm ago", diff/int64(time.Minute/time.Millisecond))
-	case diff < int64((24*time.Hour)/time.Millisecond):
-		return fmt.Sprintf("%dh ago", diff/int64(time.Hour/time.Millisecond))
-	default:
-		return fmt.Sprintf("%dd ago", diff/int64((24*time.Hour)/time.Millisecond))
-	}
-}
-
 func formatSmartDuration(ms int64) string {
 	if ms < int64(time.Second/time.Millisecond) {
 		return fmt.Sprintf("%dms", ms)
@@ -820,15 +770,6 @@ func pluralCount(count int, singular string) string {
 		return "1 " + singular
 	}
 	return fmt.Sprintf("%d %ss", count, singular)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func joinNonEmpty(sep string, values ...string) string {

@@ -1233,14 +1233,14 @@ func (s *Server) handleAPIEventsFromPath(w http.ResponseWriter, r *http.Request,
 	eventList, hasMore, err := eventlog.ReadLast(logPath, limit, offset, filter)
 	if err != nil {
 		slog.Warn("failed to read events", "error", err)
-		s.writeJSON(w, http.StatusOK, emptyResponse)
+		s.writeError(w, http.StatusInternalServerError, "Could not read event history")
 		return
 	}
 
 	views := eventlog.DecorateEvents(eventList)
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"events":   views,
-		"groups":   eventlog.GroupEvents(views, time.Now()),
+		"groups":   eventlog.GroupEvents(views),
 		"has_more": hasMore,
 	})
 }

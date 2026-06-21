@@ -11,7 +11,9 @@
     }
 
     /* Keep native hidden state and Alpine cloaking above component styles. */
+    /* biome-ignore lint/complexity/noImportantStyles: Hidden and Alpine cloak states must override component display rules. */
     [hidden] { display: none !important; }
+    /* biome-ignore lint/complexity/noImportantStyles: Hidden and Alpine cloak states must override component display rules. */
     [x-cloak] { display: none !important; }
 }
 
@@ -265,9 +267,13 @@
         *,
         *::before,
         *::after {
+            /* biome-ignore lint/complexity/noImportantStyles: User reduced-motion preferences must override all component animations. */
             animation-duration: var(--duration-reduced-motion) !important;
+            /* biome-ignore lint/complexity/noImportantStyles: User reduced-motion preferences must override all component animations. */
             animation-iteration-count: 1 !important;
+            /* biome-ignore lint/complexity/noImportantStyles: User reduced-motion preferences must override all component transitions. */
             transition-duration: var(--duration-reduced-motion) !important;
+            /* biome-ignore lint/complexity/noImportantStyles: User reduced-motion preferences must override smooth scrolling. */
             scroll-behavior: auto !important;
         }
     }
@@ -1874,7 +1880,7 @@
     }
 
 
-    /* Event log: prototype 21 issue-first inbox. */
+    /* Event log: issue-first inbox. */
     .events-panel {
         background: var(--surface-card);
         border: 1px solid var(--border-default);
@@ -1898,6 +1904,10 @@
     }
 
     .event-summary[data-state="attention"] .event-summary-main {
+        color: var(--danger);
+    }
+
+    .event-summary[data-state="error"] .event-summary-main {
         color: var(--danger);
     }
 

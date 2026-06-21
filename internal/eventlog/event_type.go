@@ -46,6 +46,12 @@ const (
 	CategoryUnknown Category = "unknown"
 )
 
+type eventClassification struct {
+	category Category
+	severity Severity
+	reason   Reason
+}
+
 var allEventTypes = [...]EventType{
 	StreamStarted,
 	StreamStable,
@@ -69,49 +75,49 @@ var allEventTypes = [...]EventType{
 	CleanupCompleted,
 }
 
+var eventClassifications = map[EventType]eventClassification{
+	StreamStarted:         {category: CategoryStream, severity: SeverityInfo, reason: ReasonLifecycle},
+	StreamStable:          {category: CategoryStream, severity: SeveritySuccess, reason: ReasonRecovery},
+	StreamError:           {category: CategoryStream, severity: SeverityError, reason: ReasonProblem},
+	StreamRetry:           {category: CategoryStream, severity: SeverityWarning, reason: ReasonProblem},
+	StreamStopped:         {category: CategoryStream, severity: SeverityInfo, reason: ReasonLifecycle},
+	SilenceStart:          {category: CategoryAudio, severity: SeverityWarning, reason: ReasonProblem},
+	SilenceEnd:            {category: CategoryAudio, severity: SeveritySuccess, reason: ReasonRecovery},
+	AudioDumpReady:        {category: CategoryAudio, severity: SeverityInfo, reason: ReasonLifecycle},
+	ChannelImbalanceStart: {category: CategoryAudio, severity: SeverityWarning, reason: ReasonProblem},
+	ChannelImbalanceEnd:   {category: CategoryAudio, severity: SeveritySuccess, reason: ReasonRecovery},
+	RecorderStarted:       {category: CategoryRecorder, severity: SeverityInfo, reason: ReasonLifecycle},
+	RecorderStopped:       {category: CategoryRecorder, severity: SeverityInfo, reason: ReasonLifecycle},
+	RecorderError:         {category: CategoryRecorder, severity: SeverityError, reason: ReasonProblem},
+	RecorderFile:          {category: CategoryRecorder, severity: SeverityInfo, reason: ReasonRoutine},
+	UploadQueued:          {category: CategoryRecorder, severity: SeverityInfo, reason: ReasonRoutine},
+	UploadCompleted:       {category: CategoryRecorder, severity: SeveritySuccess, reason: ReasonRoutine},
+	UploadFailed:          {category: CategoryRecorder, severity: SeverityError, reason: ReasonProblem},
+	UploadRetry:           {category: CategoryRecorder, severity: SeverityWarning, reason: ReasonProblem},
+	UploadAbandoned:       {category: CategoryRecorder, severity: SeverityError, reason: ReasonProblem},
+	CleanupCompleted:      {category: CategoryRecorder, severity: SeveritySuccess, reason: ReasonRoutine},
+}
+
 // Category returns the subsystem category for t.
 func (t EventType) Category() Category {
-	switch {
-	case IsStreamEvent(t):
-		return CategoryStream
-	case IsSilenceEvent(t), IsChannelImbalanceEvent(t):
-		return CategoryAudio
-	case IsRecorderEvent(t):
-		return CategoryRecorder
-	default:
-		return CategoryUnknown
+	if classification, ok := eventClassifications[t]; ok {
+		return classification.category
 	}
+	return CategoryUnknown
 }
 
 // Severity returns the display severity for t.
 func (t EventType) Severity() Severity {
-	switch t {
-	case StreamError, RecorderError, UploadFailed, UploadAbandoned:
-		return SeverityError
-	case StreamRetry, SilenceStart, ChannelImbalanceStart, UploadRetry:
-		return SeverityWarning
-	case StreamStable, SilenceEnd, ChannelImbalanceEnd, UploadCompleted, CleanupCompleted:
-		return SeveritySuccess
-	case StreamStarted, StreamStopped, AudioDumpReady, RecorderStarted, RecorderStopped, RecorderFile, UploadQueued:
-		return SeverityInfo
-	default:
-		return SeverityUnknown
+	if classification, ok := eventClassifications[t]; ok {
+		return classification.severity
 	}
+	return SeverityUnknown
 }
 
 // Reason returns the semantic reason for t.
 func (t EventType) Reason() Reason {
-	switch t {
-	case StreamError, StreamRetry, SilenceStart, ChannelImbalanceStart,
-		RecorderError, UploadFailed, UploadRetry, UploadAbandoned:
-		return ReasonProblem
-	case StreamStable, SilenceEnd, ChannelImbalanceEnd:
-		return ReasonRecovery
-	case StreamStarted, StreamStopped, AudioDumpReady, RecorderStarted, RecorderStopped:
-		return ReasonLifecycle
-	case RecorderFile, UploadQueued, UploadCompleted, CleanupCompleted:
-		return ReasonRoutine
-	default:
-		return ReasonUnknown
+	if classification, ok := eventClassifications[t]; ok {
+		return classification.reason
 	}
+	return ReasonUnknown
 }

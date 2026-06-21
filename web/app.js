@@ -54,6 +54,8 @@ const API = {
     RECORDING_REGENERATE_KEY: '/api/recording/regenerate-key',
 };
 
+const EVENT_KEYS = window.eventKeyBuilders;
+
 const EVENT_LABELS = {
     stream_started: 'Started',
     stream_stable: 'Connected',
@@ -386,11 +388,12 @@ document.addEventListener('alpine:init', () => {
         eventsError: '',
         eventsLoading: false,
         eventsHasMore: false,
-        eventsOffset: 0,
+        eventsWindowSize: EVENT_PAGE_SIZE,
         eventOpenRows: {},
 
         devices: [],
         levels: { ...DEFAULT_LEVELS },
+        liveAudioIssues: { silence: false, imbalance: false },
         vuMode: readStorage(STORAGE_KEYS.VU_MODE, 'peak'),
         clipActive: false,
         clipTimeout: null,
@@ -727,6 +730,16 @@ document.addEventListener('alpine:init', () => {
             updateHold(levels.display_right, this.levels.hold_right ?? -60, this.levels.hold_right_time ?? 0, 'right');
 
             this.levels = levels;
+            const liveAudioIssues = {
+                silence: levels.silence_level === 'active',
+                imbalance: levels.channel_imbalance_level === 'active',
+            };
+            if (
+                liveAudioIssues.silence !== this.liveAudioIssues.silence ||
+                liveAudioIssues.imbalance !== this.liveAudioIssues.imbalance
+            ) {
+                this.liveAudioIssues = liveAudioIssues;
+            }
             const newSilenceState = this.getSilenceState();
 
             if (newSilenceState !== prevSilenceState) {
@@ -1699,7 +1712,7 @@ document.addEventListener('alpine:init', () => {
          */
         async loadEvents(reset = true) {
             if (reset) {
-                this.eventsOffset = 0;
+                this.eventsWindowSize = EVENT_PAGE_SIZE;
                 this.events = [];
                 this.eventHistoryGroups = emptyEventGroups();
                 this.eventOpenRows = {};
@@ -1707,9 +1720,10 @@ document.addEventListener('alpine:init', () => {
             this.eventsError = '';
             this.eventsLoading = true;
             try {
-                const limit = reset ? EVENT_PAGE_SIZE : this.eventsOffset + EVENT_PAGE_SIZE;
+                // The API groups over the returned window, so load-more expands
+                // the newest-first window instead of asking for a separate page.
                 const params = new URLSearchParams({
-                    limit: String(limit),
+                    limit: String(this.eventsWindowSize),
                     offset: '0',
                 });
                 const data = await requestJSON(`/api/events?${params}`);
@@ -1731,10 +1745,10 @@ document.addEventListener('alpine:init', () => {
          * Loads more events (pagination).
          */
         async loadMoreEvents() {
-            const previousOffset = this.eventsOffset;
-            this.eventsOffset += EVENT_PAGE_SIZE;
+            const previousWindowSize = this.eventsWindowSize;
+            this.eventsWindowSize += EVENT_PAGE_SIZE;
             const loaded = await this.loadEvents(false);
-            if (!loaded) this.eventsOffset = previousOffset;
+            if (!loaded) this.eventsWindowSize = previousWindowSize;
         },
 
         formatEventTime(ts) {
@@ -1853,7 +1867,7 @@ document.addEventListener('alpine:init', () => {
         },
 
         eventGroups() {
-            const history = normalizeEventGroups(this.eventHistoryGroups);
+            const history = this.eventHistoryGroups || emptyEventGroups();
             const liveAttention = this.buildLiveAttentionItems();
             const liveDedupeKeys = new Set(
                 liveAttention.flatMap(item => this.eventItemDedupeKeys(item)),
@@ -1872,7 +1886,13 @@ document.addEventListener('alpine:init', () => {
             };
         },
 
+        eventSummaryState(groups) {
+            if (this.eventsError) return 'error';
+            return groups.attention.length > 0 ? 'attention' : 'clear';
+        },
+
         eventSummaryText(groups) {
+            if (this.eventsError) return 'History unavailable';
             if (groups.attention.length > 0) {
                 const resolved = groups.resolved.length > 0 ? ` / ${groups.resolved.length} resolved` : '';
                 return `${groups.attention.length} need attention${resolved}`;
@@ -1881,12 +1901,36 @@ document.addEventListener('alpine:init', () => {
         },
 
         eventSummaryMutedText(groups) {
+            if (this.eventsError) return 'Could not load events';
             const parts = [];
             if (groups.attention.length === 0 && groups.resolved.length > 0) parts.push(`${groups.resolved.length} resolved`);
             if (groups.activity.length > 0) parts.push(`${groups.activity.length} activity`);
             if (groups.routineCount > 0) parts.push(`${groups.routineCount} routine`);
             if (parts.length > 0) return parts.join(', ');
             return groups.attention.length > 0 ? '' : 'No history loaded';
+        },
+
+        eventItemWhen(item, section) {
+            if (item.when) return item.when;
+
+            const time = this.eventItemReferenceTime(item, section);
+            if (!time) return '';
+
+            const relative = this.formatRelativeEventTime(time);
+            if (!relative) return '';
+            if (section === 'routine') return `last ${relative}`;
+            if (item.statusText === 'Ongoing') return `since ${relative}`;
+            return relative;
+        },
+
+        eventItemReferenceTime(item, section) {
+            const events = item.events || [];
+            if (section === 'resolved' && events.length > 0) {
+                const lastTime = this.eventTimeValue(events[events.length - 1]);
+                if (lastTime) return lastTime;
+            }
+            if (Number.isFinite(item.sortTs)) return item.sortTs;
+            return this.eventTimeValue(events[0]);
         },
 
         buildLiveAttentionItems() {
@@ -1926,7 +1970,7 @@ document.addEventListener('alpine:init', () => {
             return {
                 key: `live:stream:${stream.id}`,
                 // Keep live source keys byte-identical to backend dedupe keys in internal/eventlog/groups.go.
-                sourceKey: `stream:${stream.id}`,
+                sourceKey: EVENT_KEYS.streamSourceKey(stream.id),
                 category: 'stream',
                 severity,
                 title,
@@ -1956,44 +2000,38 @@ document.addEventListener('alpine:init', () => {
         },
 
         buildLiveSilenceIssue() {
-            if (this.levels.silence_level !== 'active') return null;
-            const duration = this.levels.silence_duration_ms || 0;
-            const chips = duration > 0 ? [formatSmartDuration(duration)] : [];
-            const detail = `L: ${meterLevel(this.levels.left).toFixed(1)}dB  R: ${meterLevel(this.levels.right).toFixed(1)}dB`;
+            if (!this.liveAudioIssues.silence) return null;
             const latest = this.events.find(event => event.type === 'silence_start');
             return {
                 key: 'live:audio:silence',
                 // Keep live source keys byte-identical to backend dedupe keys in internal/eventlog/groups.go.
-                sourceKey: 'audio:silence',
+                sourceKey: EVENT_KEYS.audioSilenceSourceKey(),
                 category: 'audio',
                 severity: 'warning',
                 title: 'Silence on input',
                 source: 'Audio',
                 statusText: 'Ongoing',
-                chips: chips.map(chip => `${chip} so far`),
-                detail,
+                chips: [],
+                detail: latest ? this.getEventDetail(latest) : 'Silence active',
                 when: latest ? `since ${this.formatRelativeEventTime(latest.ts)}` : 'now',
                 events: latest ? [latest] : [],
             };
         },
 
         buildLiveImbalanceIssue() {
-            if (this.levels.channel_imbalance_level !== 'active') return null;
-            const duration = this.levels.channel_imbalance_duration_ms || 0;
-            const chips = duration > 0 ? [formatSmartDuration(duration)] : [];
-            const detail = `${(this.levels.imbalance_db || 0).toFixed(1)}dB L/R difference`;
+            if (!this.liveAudioIssues.imbalance) return null;
             const latest = this.events.find(event => event.type === 'channel_imbalance_start');
             return {
                 key: 'live:audio:imbalance',
                 // Keep live source keys byte-identical to backend dedupe keys in internal/eventlog/groups.go.
-                sourceKey: 'audio:imbalance',
+                sourceKey: EVENT_KEYS.audioImbalanceSourceKey(),
                 category: 'audio',
                 severity: 'warning',
                 title: 'Channel imbalance',
                 source: 'Audio',
                 statusText: 'Ongoing',
-                chips: chips.map(chip => `${chip} so far`),
-                detail,
+                chips: [],
+                detail: latest ? this.getEventDetail(latest) : 'Channel imbalance active',
                 when: latest ? `since ${this.formatRelativeEventTime(latest.ts)}` : 'now',
                 events: latest ? [latest] : [],
             };
@@ -2032,12 +2070,12 @@ document.addEventListener('alpine:init', () => {
 
         recorderStatusSourceKey(recorderName) {
             // Keep live recorder keys byte-identical to backend dedupe keys in internal/eventlog/groups.go.
-            return recorderName ? `recorder:${recorderName}:` : '';
+            return EVENT_KEYS.recorderStatusSourceKey(recorderName);
         },
 
         recorderUploadSourceKey(recorderName) {
             // Upload keys are intentionally recorder-wide so live retry state hides per-file history.
-            return recorderName ? `recorder-upload:${recorderName}` : '';
+            return EVENT_KEYS.recorderUploadSourceKey(recorderName);
         },
 
         latestRecorderProblemEvents(recorderName) {
