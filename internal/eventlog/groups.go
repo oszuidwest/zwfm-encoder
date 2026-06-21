@@ -9,14 +9,6 @@ import (
 	"time"
 )
 
-// EventView is an event decorated with API-only classification fields.
-type EventView struct {
-	Event
-	Severity Severity `json:"severity"`
-	Category Category `json:"category"`
-	Reason   Reason   `json:"reason"`
-}
-
 // EventGroups is the historical event grouping used by the events UI.
 type EventGroups struct {
 	Attention    []EventGroupItem `json:"attention"`
@@ -102,20 +94,6 @@ var eventLabels = map[EventType]string{
 	UploadRetry:           "Retry",
 	UploadAbandoned:       "Abandoned",
 	CleanupCompleted:      "Cleanup",
-}
-
-// DecorateEvents adds serve-time classification to events without changing JSONL.
-func DecorateEvents(events []Event) []EventView {
-	views := make([]EventView, len(events))
-	for i, event := range events {
-		views[i] = EventView{
-			Event:    event,
-			Severity: event.Type.Severity(),
-			Category: event.Type.Category(),
-			Reason:   event.Type.Reason(),
-		}
-	}
-	return views
 }
 
 // EmptyEventGroups returns the JSON shape for an empty event history.
