@@ -146,7 +146,7 @@ func TestEmitEventIncludesRuntimeStreamMode(t *testing.T) {
 		gotMode = mode
 	}, nil)
 
-	m.emitEvent(id, "stream_error", "Listener encoder failed", "boom", 0, 0)
+	m.emitEvent(id, "stream_error", "Listener encoder failed", "boom")
 	if gotMode != string(types.StreamModeListener) {
 		t.Fatalf("mode = %q, want %q", gotMode, types.StreamModeListener)
 	}

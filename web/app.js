@@ -375,7 +375,7 @@ document.addEventListener('alpine:init', () => {
 
         // Event history includes stream, audio, and recorder events.
         events: [],
-        eventFilter: '',
+        eventsError: '',
         eventsLoading: false,
         eventsHasMore: false,
         eventsOffset: 0,
@@ -1695,15 +1695,13 @@ document.addEventListener('alpine:init', () => {
                 this.events = [];
                 this.eventOpenRows = {};
             }
+            this.eventsError = '';
             this.eventsLoading = true;
             try {
                 const params = new URLSearchParams({
                     limit: String(EVENT_PAGE_SIZE),
                     offset: String(this.eventsOffset),
                 });
-                if (this.eventFilter) {
-                    params.set('type', this.eventFilter);
-                }
                 const data = await requestJSON(`/api/events?${params}`);
                 const newEvents = data.events || [];
                 if (reset) {
@@ -1712,8 +1710,11 @@ document.addEventListener('alpine:init', () => {
                     this.events = [...this.events, ...newEvents];
                 }
                 this.eventsHasMore = data.has_more || false;
+                return true;
             } catch (error) {
                 console.error('Failed to load events:', error);
+                this.eventsError = `Could not load events: ${error?.message || 'request failed'}`;
+                return false;
             } finally {
                 this.eventsLoading = false;
             }
@@ -1723,8 +1724,10 @@ document.addEventListener('alpine:init', () => {
          * Loads more events (pagination).
          */
         async loadMoreEvents() {
+            const previousOffset = this.eventsOffset;
             this.eventsOffset += EVENT_PAGE_SIZE;
-            await this.loadEvents(false);
+            const loaded = await this.loadEvents(false);
+            if (!loaded) this.eventsOffset = previousOffset;
         },
 
         formatEventTime(ts) {
@@ -1842,18 +1845,18 @@ document.addEventListener('alpine:init', () => {
             }
         },
 
-        eventCategoryMatches(category) {
-            return !this.eventFilter || this.eventFilter === category;
-        },
-
         eventGroups() {
             const history = this.buildHistoricalEventGroups();
             const liveAttention = this.buildLiveAttentionItems();
-            const liveSourceKeys = new Set(liveAttention.map(item => item.sourceKey).filter(Boolean));
+            const liveDedupeKeys = new Set(
+                liveAttention.flatMap(item => this.eventItemDedupeKeys(item)),
+            );
             return {
                 attention: [
                     ...liveAttention,
-                    ...history.attention.filter(item => !liveSourceKeys.has(item.sourceKey)),
+                    ...history.attention.filter(item => (
+                        !this.eventItemDedupeKeys(item).some(key => liveDedupeKeys.has(key))
+                    )),
                 ],
                 resolved: history.resolved,
                 activity: history.activity,
@@ -1881,23 +1884,17 @@ document.addEventListener('alpine:init', () => {
 
         buildLiveAttentionItems() {
             const items = [];
-            if (this.eventCategoryMatches('stream')) {
-                for (const stream of this.streams) {
-                    const item = this.buildLiveStreamIssue(stream);
-                    if (item) items.push(item);
-                }
+            for (const stream of this.streams) {
+                const item = this.buildLiveStreamIssue(stream);
+                if (item) items.push(item);
             }
-            if (this.eventCategoryMatches('audio')) {
-                const silence = this.buildLiveSilenceIssue();
-                const imbalance = this.buildLiveImbalanceIssue();
-                if (silence) items.push(silence);
-                if (imbalance) items.push(imbalance);
-            }
-            if (this.eventCategoryMatches('recorder')) {
-                for (const recorder of this.recorders) {
-                    const item = this.buildLiveRecorderIssue(recorder);
-                    if (item) items.push(item);
-                }
+            const silence = this.buildLiveSilenceIssue();
+            const imbalance = this.buildLiveImbalanceIssue();
+            if (silence) items.push(silence);
+            if (imbalance) items.push(imbalance);
+            for (const recorder of this.recorders) {
+                const item = this.buildLiveRecorderIssue(recorder);
+                if (item) items.push(item);
             }
             return items;
         },
@@ -2002,15 +1999,18 @@ document.addEventListener('alpine:init', () => {
             if (!errored && pending === 0) return null;
 
             const chips = [];
-            if (pending > 0) chips.push(`${pending} pending upload${pending === 1 ? '' : 's'}`);
+            if (pending > 0) chips.push(`${pending} retry upload${pending === 1 ? '' : 's'}`);
             if (recorder.recording_mode) chips.push(recorder.recording_mode);
+            const sourceKey = errored
+                ? this.recorderStatusSourceKey(recorder.name)
+                : this.recorderUploadSourceKey(recorder.name);
 
             return {
                 key: `live:recorder:${recorder.id}`,
-                sourceKey: `recorder:${recorder.name || ''}:`,
+                sourceKey,
                 category: 'recorder',
                 severity: errored ? 'error' : 'warning',
-                title: errored ? 'Recorder error' : 'Upload pending',
+                title: errored ? 'Recorder error' : 'Upload retry pending',
                 source: recorder.name || 'Recorder',
                 statusText: errored ? 'Unresolved' : 'Ongoing',
                 chips,
@@ -2018,6 +2018,14 @@ document.addEventListener('alpine:init', () => {
                 when: 'now',
                 events: this.latestRecorderProblemEvents(recorder.name),
             };
+        },
+
+        recorderStatusSourceKey(recorderName) {
+            return `recorder:${recorderName || ''}:`;
+        },
+
+        recorderUploadSourceKey(recorderName) {
+            return `recorder-upload:${recorderName || ''}`;
         },
 
         latestRecorderProblemEvents(recorderName) {
@@ -2037,6 +2045,7 @@ document.addEventListener('alpine:init', () => {
             const consumed = new Set();
 
             for (const event of asc) {
+                // Incidents keep references to this.events entries; consumed relies on that identity.
                 const key = this.eventSourceKey(event);
                 const open = openByKey.get(key);
                 if (open?.closeType === event.type) {
@@ -2065,6 +2074,7 @@ document.addEventListener('alpine:init', () => {
                 }
 
                 if (this.getEventReason(event) !== 'problem') continue;
+                // Listener stream problems have no historical close event; live status owns their health.
                 if (this.isListenerHistoricalStreamProblem(event)) continue;
 
                 if (event.type === 'upload_abandoned') {
@@ -2075,6 +2085,7 @@ document.addEventListener('alpine:init', () => {
                     continue;
                 }
 
+                // Some routine events close incidents, e.g. upload_completed closes upload_failed.
                 const closeType = EVENT_CLOSES[event.type];
                 let incident = openByKey.get(key);
                 if (!incident) {
@@ -2155,6 +2166,7 @@ document.addEventListener('alpine:init', () => {
             return {
                 key: `incident:${status}:${incident.key}:${incident.startTs}`,
                 sourceKey: incident.key,
+                dedupeKey: this.eventDedupeKey(first),
                 category: this.getEventCategory(first),
                 severity: status === 'resolved' ? 'success' : incident.severity,
                 title: this.incidentTitle(first),
@@ -2162,7 +2174,9 @@ document.addEventListener('alpine:init', () => {
                 statusText,
                 chips,
                 detail: this.firstEventError(events) || this.getEventDetail(first) || first.msg || '',
-                when: status === 'ongoing' ? `since ${this.formatRelativeEventTime(incident.startTs)}` : this.formatRelativeEventTime(status === 'resolved' ? incident.endTs : incident.startTs),
+                when: status === 'ongoing'
+                    ? `since ${this.formatRelativeEventTime(incident.startTs)}`
+                    : this.formatRelativeEventTime(status === 'resolved' ? incident.endTs : incident.startTs),
                 events,
                 sortTs: incident.startTs,
             };
@@ -2209,10 +2223,25 @@ document.addEventListener('alpine:init', () => {
                 case 'audio':
                     return event.type?.startsWith('channel_imbalance_') ? 'audio:imbalance' : 'audio:silence';
                 case 'recorder':
-                    return `recorder:${details.recorder_name || ''}:${details.s3_key || details.filename || ''}`;
+                    if (event.type?.startsWith('upload_')) {
+                        return `recorder:${details.recorder_name || ''}:${details.s3_key || details.filename || ''}`;
+                    }
+                    return this.recorderStatusSourceKey(details.recorder_name);
                 default:
                     return `unknown:${event.type || ''}`;
             }
+        },
+
+        eventDedupeKey(event) {
+            if (this.getEventCategory(event) === 'recorder' && event.type?.startsWith('upload_')) {
+                return this.recorderUploadSourceKey(event.details?.recorder_name);
+            }
+            return this.eventSourceKey(event);
+        },
+
+        eventItemDedupeKeys(item) {
+            // Keep these keys aligned with live issue keys so live state suppresses matching history.
+            return [item.sourceKey, item.dedupeKey].filter(Boolean);
         },
 
         isListenerHistoricalStreamProblem(event) {

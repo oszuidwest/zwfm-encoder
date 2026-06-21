@@ -330,9 +330,9 @@ func writeAPIEvents(t *testing.T, path string, events []eventlog.Event) {
 	if err != nil {
 		t.Fatalf("open log: %v", err)
 	}
-	encoder := json.NewEncoder(file)
+	enc := json.NewEncoder(file)
 	for i := range events {
-		if err := encoder.Encode(&events[i]); err != nil {
+		if err := enc.Encode(&events[i]); err != nil {
 			_ = file.Close()
 			t.Fatalf("encode event: %v", err)
 		}

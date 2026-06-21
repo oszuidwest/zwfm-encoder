@@ -38,16 +38,16 @@ func TestEventTypeClassification(t *testing.T) {
 		CleanupCompleted:      {category: CategoryRecorder, severity: SeveritySuccess, reason: ReasonRoutine},
 	}
 
-	gotTypes := AllEventTypes()
+	gotTypes := allEventTypes[:]
 	gotTypeSet := make(map[EventType]bool, len(gotTypes))
 	for _, eventType := range gotTypes {
 		gotTypeSet[eventType] = true
 	}
 	if len(gotTypeSet) != len(gotTypes) {
-		t.Fatalf("AllEventTypes() contains duplicates: %v", gotTypes)
+		t.Fatalf("allEventTypes contains duplicates: %v", gotTypes)
 	}
 	if !maps.Equal(gotTypeSet, keySet(expected)) {
-		t.Fatalf("AllEventTypes() = %v, want keys %v", slices.Sorted(maps.Keys(gotTypeSet)), slices.Sorted(maps.Keys(expected)))
+		t.Fatalf("allEventTypes = %v, want keys %v", slices.Sorted(maps.Keys(gotTypeSet)), slices.Sorted(maps.Keys(expected)))
 	}
 
 	for eventType, want := range expected {
@@ -62,8 +62,8 @@ func TestEventTypeClassification(t *testing.T) {
 			if got := eventType.Reason(); got != want.reason {
 				t.Fatalf("Reason() = %q, want %q", got, want.reason)
 			}
-			if got := eventType.IsRoutine(); got != (want.reason == ReasonRoutine) {
-				t.Fatalf("IsRoutine() = %v, want %v", got, want.reason == ReasonRoutine)
+			if got := eventType.Reason() == ReasonRoutine; got != (want.reason == ReasonRoutine) {
+				t.Fatalf("Reason() == ReasonRoutine = %v, want %v", got, want.reason == ReasonRoutine)
 			}
 		})
 	}
@@ -82,8 +82,8 @@ func TestUnknownEventTypeClassification(t *testing.T) {
 	if got := eventType.Reason(); got != ReasonUnknown {
 		t.Fatalf("Reason() = %q, want %q", got, ReasonUnknown)
 	}
-	if eventType.IsRoutine() {
-		t.Fatal("IsRoutine() = true, want false")
+	if eventType.Reason() == ReasonRoutine {
+		t.Fatal("Reason() == ReasonRoutine, want false")
 	}
 }
 

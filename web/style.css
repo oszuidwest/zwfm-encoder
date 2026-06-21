@@ -2123,6 +2123,10 @@
         margin: 0;
     }
 
+    .event-error {
+        color: var(--danger);
+    }
+
     .event-load-more {
         display: block;
         width: 100%;

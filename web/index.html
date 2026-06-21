@@ -726,7 +726,7 @@
                 </div>
 
                 <!-- Events Panel - issue-first event view -->
-                <div class="panel events-panel" role="tabpanel" id="panel-events" aria-labelledby="tab-events" x-show="settingsTab === 'events'" x-data="{ groups: { attention: [], resolved: [], activity: [], routine: [], routineCount: 0 } }" x-effect="groups = eventGroups()" x-init="$watch('settingsTab', val => val === 'events' && loadEvents())">
+                <div class="panel events-panel" role="tabpanel" id="panel-events" aria-labelledby="tab-events" x-show="settingsTab === 'events'" x-data="{ groups: { attention: [], resolved: [], activity: [], routine: [], routineCount: 0 } }" x-effect="if (settingsTab === 'events') groups = eventGroups()" x-init="$watch('settingsTab', val => val === 'events' && loadEvents())">
                     <div class="event-summary" :data-state="groups.attention.length > 0 ? 'attention' : 'clear'">
                         <span class="event-summary-main" x-text="eventSummaryText(groups)"></span>
                         <span class="event-summary-muted" x-text="eventSummaryMutedText(groups)"></span>
@@ -871,13 +871,16 @@
                         </template>
                     </div>
 
-                    <div class="event-empty" x-show="events.length === 0 && groups.attention.length === 0 && !eventsLoading">
+                    <div class="event-empty event-error" x-show="eventsError && !eventsLoading">
+                        <p x-text="eventsError"></p>
+                    </div>
+                    <div class="event-empty" x-show="!eventsError && events.length === 0 && groups.attention.length === 0 && !eventsLoading">
                         <p>No events yet</p>
                     </div>
                     <div class="event-loading" x-show="eventsLoading">
                         <p>Loading...</p>
                     </div>
-                    <button type="button" class="event-load-more" x-show="eventsHasMore && !eventsLoading" @click="loadMoreEvents()">Load older events</button>
+                    <button type="button" class="event-load-more" x-show="eventsHasMore && !eventsLoading && !eventsError" @click="loadMoreEvents()">Load older events</button>
                 </div>
 
                 <!-- About Panel - Version info and attribution

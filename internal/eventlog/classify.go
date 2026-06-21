@@ -1,7 +1,5 @@
 package eventlog
 
-import "slices"
-
 // Severity classifies how urgent an event type is for API consumers.
 type Severity string
 
@@ -71,11 +69,6 @@ var allEventTypes = [...]EventType{
 	CleanupCompleted,
 }
 
-// AllEventTypes returns the canonical list of known event types.
-func AllEventTypes() []EventType {
-	return slices.Clone(allEventTypes[:])
-}
-
 // Category returns the subsystem category for t.
 func (t EventType) Category() Category {
 	switch {
@@ -121,9 +114,4 @@ func (t EventType) Reason() Reason {
 	default:
 		return ReasonUnknown
 	}
-}
-
-// IsRoutine reports whether t is part of routine recorder activity.
-func (t EventType) IsRoutine() bool {
-	return t.Reason() == ReasonRoutine
 }

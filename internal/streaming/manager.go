@@ -122,8 +122,8 @@ func (m *Manager) SetEventCallback(cb EventCallback, getStreamName func(string) 
 	m.getStreamName = getStreamName
 }
 
-func (m *Manager) emitEvent(streamID, event, message, errMsg string, retryCount, maxRetries int) {
-	m.emitEventWithMode(streamID, "", event, message, errMsg, retryCount, maxRetries)
+func (m *Manager) emitEvent(streamID, event, message, errMsg string) {
+	m.emitEventWithMode(streamID, "", event, message, errMsg, 0, 0)
 }
 
 func (m *Manager) emitEventWithMode(
@@ -163,9 +163,10 @@ func (m *Manager) maybeEmitStable(id string, started *Stream) {
 	m.mu.RLock()
 	cur, exists := m.streams[id]
 	stable := exists && cur == started && cur.state == types.ProcessRunning
+	mode := started.mode
 	m.mu.RUnlock()
 	if stable {
-		m.emitEvent(id, "stream_stable", "Stream connected and stable", "", 0, 0)
+		m.emitEventWithMode(id, mode, "stream_stable", "Stream connected and stable", "", 0, 0)
 	}
 }
 
@@ -298,7 +299,15 @@ func (m *Manager) startCaller(stream *types.Stream) (bool, error) {
 
 	go m.runWriter(stream.ID, s)
 
-	m.emitEvent(stream.ID, "stream_started", fmt.Sprintf("Connecting to %s", stream.Endpoint()), "", 0, 0)
+	m.emitEventWithMode(
+		stream.ID,
+		stream.ModeOrDefault(),
+		"stream_started",
+		fmt.Sprintf("Connecting to %s", stream.Endpoint()),
+		"",
+		0,
+		0,
+	)
 
 	// Guard the stable event against restarts during the stability window.
 	go func() {
@@ -384,7 +393,15 @@ func (m *Manager) startListenerFanout(stream *types.Stream) (bool, error) {
 	m.streams[stream.ID] = s
 	m.mu.Unlock()
 
-	m.emitEvent(stream.ID, "stream_started", fmt.Sprintf("Listening on %s", stream.Endpoint()), "", 0, 0)
+	m.emitEventWithMode(
+		stream.ID,
+		types.StreamModeListener,
+		"stream_started",
+		fmt.Sprintf("Listening on %s", stream.Endpoint()),
+		"",
+		0,
+		0,
+	)
 	return true, nil
 }
 
@@ -577,7 +594,7 @@ func (m *Manager) Stop(streamID string) error {
 
 		slog.Info("stopping listener stream", "stream_id", streamID)
 		m.stopListenerResources(streamID, stream)
-		m.emitEvent(streamID, "stream_stopped", "Stream stopped by user", "", 0, 0)
+		m.emitEvent(streamID, "stream_stopped", "Stream stopped by user", "")
 
 		m.mu.Lock()
 		if m.streams[streamID] == stream {
