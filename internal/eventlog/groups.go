@@ -155,23 +155,17 @@ func GroupEvents(events []EventView, now time.Time) EventGroups {
 	consumed := consumedEventIDs(state.closed, state.failed, ongoing)
 
 	groups := EmptyEventGroups()
+	var routineEvents []groupedEvent
 	for i := range grouped {
 		event := grouped[i]
 		if consumed[event.id] {
 			continue
 		}
 		if event.view.Reason == ReasonRoutine {
+			routineEvents = append(routineEvents, event)
 			continue
 		}
 		groups.Activity = append(groups.Activity, activityEventItem(event, now))
-	}
-
-	routineEvents := []groupedEvent{}
-	for i := range grouped {
-		event := grouped[i]
-		if !consumed[event.id] && event.view.Reason == ReasonRoutine {
-			routineEvents = append(routineEvents, event)
-		}
 	}
 	if len(routineEvents) > 0 {
 		groups.Routine = append(groups.Routine, routineEventItem(routineEvents, now))
@@ -521,8 +515,12 @@ func incidentTitle(t EventType) string {
 	}
 }
 
+func isListenerStreamStart(event groupedEvent) bool {
+	return event.view.Type == StreamStarted && strings.HasPrefix(event.view.Message, "Listening on")
+}
+
 func activityTitle(event groupedEvent) string {
-	if event.view.Type == StreamStarted && strings.HasPrefix(event.view.Message, "Listening on") {
+	if isListenerStreamStart(event) {
 		return "Listener started"
 	}
 	switch event.view.Type {
@@ -542,7 +540,7 @@ func activityTitle(event groupedEvent) string {
 }
 
 func activityStatusText(event groupedEvent) string {
-	if event.view.Type == StreamStarted && strings.HasPrefix(event.view.Message, "Listening on") {
+	if isListenerStreamStart(event) {
 		return "Listening"
 	}
 	switch event.view.Type {

@@ -206,6 +206,57 @@ func TestGroupEventsHandlesZeroTimestamp(t *testing.T) {
 	assertPartition(t, events, &groups)
 }
 
+func TestGroupEventsLabelsListenerStartActivity(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
+	events := DecorateEvents([]Event{
+		{
+			Timestamp: base.Add(2 * time.Second),
+			Type:      StreamStarted,
+			StreamID:  "listener",
+			Message:   "Listening on 0.0.0.0:9000",
+			Details: map[string]any{
+				"stream_name": "Listener",
+				"mode":        "listener",
+			},
+		},
+		{
+			Timestamp: base.Add(time.Second),
+			Type:      StreamStarted,
+			StreamID:  "caller",
+			Message:   "Connecting to stream.example.com:9000",
+			Details: map[string]any{
+				"stream_name": "Caller",
+				"mode":        "caller",
+			},
+		},
+	})
+
+	groups := GroupEvents(events, base.Add(time.Minute))
+	if len(groups.Activity) != 2 {
+		t.Fatalf("activity len = %d, want 2", len(groups.Activity))
+	}
+
+	items := map[string]EventGroupItem{}
+	for i := range groups.Activity {
+		items[groups.Activity[i].SourceKey] = groups.Activity[i]
+	}
+	if got := items["stream:listener"].Title; got != "Listener started" {
+		t.Fatalf("listener title = %q, want Listener started", got)
+	}
+	if got := items["stream:listener"].StatusText; got != "Listening" {
+		t.Fatalf("listener status = %q, want Listening", got)
+	}
+	if got := items["stream:caller"].Title; got != "Stream started" {
+		t.Fatalf("caller title = %q, want Stream started", got)
+	}
+	if got := items["stream:caller"].StatusText; got != "Started" {
+		t.Fatalf("caller status = %q, want Started", got)
+	}
+	assertPartition(t, events, &groups)
+}
+
 func testEvent(base time.Time, second int, eventType EventType, details map[string]any) Event {
 	return Event{
 		Timestamp: base.Add(time.Duration(second) * time.Second),
