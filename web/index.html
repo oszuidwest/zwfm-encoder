@@ -726,7 +726,7 @@
                 </div>
 
                 <!-- Events Panel - issue-first event view -->
-                <div class="panel events-panel" role="tabpanel" id="panel-events" aria-labelledby="tab-events" x-show="settingsTab === 'events'" x-data="{ groups: { attention: [], resolved: [], activity: [], routine: [], routineCount: 0 } }" x-effect="if (settingsTab === 'events') { groups = eventGroups(); if (eventFilter && eventGroupCount(groups, eventFilter) === 0) eventFilter = ''; }" x-init="$watch('settingsTab', val => val === 'events' && loadEvents())">
+                <div class="panel events-panel" role="tabpanel" id="panel-events" aria-labelledby="tab-events" x-show="settingsTab === 'events'" x-data="{ groups: { attention: [], resolved: [], activity: [], routine: [], routineCount: 0 } }" x-effect="if (settingsTab === 'events') { const nextGroups = eventGroups(); groups = nextGroups; if (eventFilter && eventGroupCount(nextGroups, eventFilter) === 0) eventFilter = ''; }" x-init="$watch('settingsTab', val => val === 'events' && loadEvents())">
                     <div class="event-summary" :data-state="eventSummaryState(groups)">
                         <span class="event-summary-main" x-text="eventSummaryText(groups)"></span>
                         <span class="event-summary-muted" x-text="eventSummaryMutedText(groups)"></span>
@@ -757,7 +757,7 @@
                                             <span class="event-title" x-text="item.title"></span>
                                             <span class="event-source" x-text="item.source"></span>
                                             <span class="event-status" :class="eventRowStateClass(item)" x-text="item.statusText"></span>
-                                            <button type="button" class="event-toggle" x-show="eventItemHasTrail(item)" :aria-expanded="isEventRowOpen(item.key).toString()" @click="toggleEventRow(item.key)" x-html="icons.chevronDown"></button>
+                                            <button type="button" class="event-toggle" x-show="eventItemHasTrail(item)" :aria-label="eventToggleLabel(item)" :aria-expanded="isEventRowOpen(item.key).toString()" :aria-controls="eventTrailId(item)" @click="toggleEventRow(item.key)" x-html="icons.chevronDown"></button>
                                         </div>
                                         <div class="event-row-meta">
                                             <template x-for="chip in item.chips" :key="chip">
@@ -766,12 +766,12 @@
                                             <span class="event-detail" x-show="item.detail" x-text="item.detail"></span>
                                             <span class="event-when" x-text="eventItemWhen(item, 'attention')"></span>
                                         </div>
-                                        <div class="event-trail" x-show="isEventRowOpen(item.key)">
+                                        <div class="event-trail" :id="eventTrailId(item)" x-show="isEventRowOpen(item.key)">
                                             <template x-for="(trailEvent, trailIndex) in visibleEventTrail(item)" :key="eventRowKey(trailEvent, trailIndex)">
                                                 <div class="event-trail-row">
                                                     <time class="event-trail-time" :datetime="trailEvent.ts" x-text="formatEventTime(trailEvent.ts)"></time>
-                                                    <span class="event-trail-label" x-text="getEventLabel(trailEvent.type)"></span>
-                                                    <span class="event-trail-detail" x-text="getEventDetail(trailEvent) || trailEvent.msg || ''"></span>
+                                                    <span class="event-trail-label" x-text="trailEvent.label || trailEvent.type"></span>
+                                                    <span class="event-trail-detail" x-text="trailEvent.detail || trailEvent.msg || ''"></span>
                                                 </div>
                                             </template>
                                             <div class="event-trail-more" x-show="eventTrailMoreCount(item) > 0" x-text="'+' + eventTrailMoreCount(item) + ' older events'"></div>
@@ -794,7 +794,7 @@
                                             <span class="event-title" x-text="item.title"></span>
                                             <span class="event-source" x-text="item.source"></span>
                                             <span class="event-status" :class="eventRowStateClass(item)" x-text="item.statusText"></span>
-                                            <button type="button" class="event-toggle" x-show="eventItemHasTrail(item)" :aria-expanded="isEventRowOpen(item.key).toString()" @click="toggleEventRow(item.key)" x-html="icons.chevronDown"></button>
+                                            <button type="button" class="event-toggle" x-show="eventItemHasTrail(item)" :aria-label="eventToggleLabel(item)" :aria-expanded="isEventRowOpen(item.key).toString()" :aria-controls="eventTrailId(item)" @click="toggleEventRow(item.key)" x-html="icons.chevronDown"></button>
                                         </div>
                                         <div class="event-row-meta">
                                             <template x-for="chip in item.chips" :key="chip">
@@ -803,12 +803,12 @@
                                             <span class="event-detail" x-show="item.detail" x-text="item.detail"></span>
                                             <span class="event-when" x-text="eventItemWhen(item, 'resolved')"></span>
                                         </div>
-                                        <div class="event-trail" x-show="isEventRowOpen(item.key)">
+                                        <div class="event-trail" :id="eventTrailId(item)" x-show="isEventRowOpen(item.key)">
                                             <template x-for="(trailEvent, trailIndex) in visibleEventTrail(item)" :key="eventRowKey(trailEvent, trailIndex)">
                                                 <div class="event-trail-row">
                                                     <time class="event-trail-time" :datetime="trailEvent.ts" x-text="formatEventTime(trailEvent.ts)"></time>
-                                                    <span class="event-trail-label" x-text="getEventLabel(trailEvent.type)"></span>
-                                                    <span class="event-trail-detail" x-text="getEventDetail(trailEvent) || trailEvent.msg || ''"></span>
+                                                    <span class="event-trail-label" x-text="trailEvent.label || trailEvent.type"></span>
+                                                    <span class="event-trail-detail" x-text="trailEvent.detail || trailEvent.msg || ''"></span>
                                                 </div>
                                             </template>
                                             <div class="event-trail-more" x-show="eventTrailMoreCount(item) > 0" x-text="'+' + eventTrailMoreCount(item) + ' older events'"></div>
@@ -857,7 +857,7 @@
                                             <span class="event-title" x-text="item.title"></span>
                                             <span class="event-source" x-text="item.source"></span>
                                             <span class="event-status" :class="eventRowStateClass(item)" x-text="item.statusText"></span>
-                                            <button type="button" class="event-toggle" :aria-expanded="isEventRowOpen(item.key).toString()" @click="toggleEventRow(item.key)" x-html="icons.chevronDown"></button>
+                                            <button type="button" class="event-toggle" :aria-label="eventToggleLabel(item)" :aria-expanded="isEventRowOpen(item.key).toString()" :aria-controls="eventTrailId(item)" @click="toggleEventRow(item.key)" x-html="icons.chevronDown"></button>
                                         </div>
                                         <div class="event-row-meta">
                                             <template x-for="chip in item.chips" :key="chip">
@@ -866,12 +866,12 @@
                                             <span class="event-detail" x-show="item.detail" x-text="item.detail"></span>
                                             <span class="event-when" x-text="eventItemWhen(item, 'routine')"></span>
                                         </div>
-                                        <div class="event-trail" x-show="isEventRowOpen(item.key)">
+                                        <div class="event-trail" :id="eventTrailId(item)" x-show="isEventRowOpen(item.key)">
                                             <template x-for="(trailEvent, trailIndex) in visibleEventTrail(item)" :key="eventRowKey(trailEvent, trailIndex)">
                                                 <div class="event-trail-row">
                                                     <time class="event-trail-time" :datetime="trailEvent.ts" x-text="formatEventTime(trailEvent.ts)"></time>
-                                                    <span class="event-trail-label" x-text="getEventLabel(trailEvent.type)"></span>
-                                                    <span class="event-trail-detail" x-text="getEventDetail(trailEvent) || trailEvent.msg || ''"></span>
+                                                    <span class="event-trail-label" x-text="trailEvent.label || trailEvent.type"></span>
+                                                    <span class="event-trail-detail" x-text="trailEvent.detail || trailEvent.msg || ''"></span>
                                                 </div>
                                             </template>
                                             <div class="event-trail-more" x-show="eventTrailMoreCount(item) > 0" x-text="'+' + eventTrailMoreCount(item) + ' older events'"></div>
@@ -892,6 +892,9 @@
                         <p>Loading...</p>
                     </div>
                     <button type="button" class="event-load-more" x-show="eventsHasMore && !eventsLoading && !eventsError" @click="loadMoreEvents()">Load older events</button>
+                    <div class="event-empty" x-show="eventsLimitReached && !eventsLoading && !eventsError">
+                        <p x-text="eventWindowLimitMessage()"></p>
+                    </div>
                 </div>
 
                 <!-- About Panel - Version info and attribution
@@ -1359,7 +1362,7 @@
     </main>
 
     <script src="/icons.js"></script>
-    <script src="/eventKeys.js"></script>
+    <script src="/eventHelpers.js"></script>
     <script src="/app.js"></script>
 </body>
 </html>

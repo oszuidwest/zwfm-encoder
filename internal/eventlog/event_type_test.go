@@ -38,16 +38,10 @@ func TestEventTypeClassification(t *testing.T) {
 		CleanupCompleted:      {category: CategoryRecorder, severity: SeveritySuccess, reason: ReasonRoutine},
 	}
 
-	gotTypes := allEventTypes[:]
-	gotTypeSet := make(map[EventType]bool, len(gotTypes))
-	for _, eventType := range gotTypes {
-		gotTypeSet[eventType] = true
-	}
-	if len(gotTypeSet) != len(gotTypes) {
-		t.Fatalf("allEventTypes contains duplicates: %v", gotTypes)
-	}
-	if !maps.Equal(gotTypeSet, keySet(expected)) {
-		t.Fatalf("allEventTypes = %v, want keys %v", slices.Sorted(maps.Keys(gotTypeSet)), slices.Sorted(maps.Keys(expected)))
+	gotTypes := slices.Sorted(maps.Keys(eventClassifications))
+	wantTypes := slices.Sorted(maps.Keys(expected))
+	if !slices.Equal(gotTypes, wantTypes) {
+		t.Fatalf("classified event types = %v, want %v", gotTypes, wantTypes)
 	}
 
 	for eventType, want := range expected {
@@ -85,12 +79,4 @@ func TestUnknownEventTypeClassification(t *testing.T) {
 	if eventType.Reason() == ReasonRoutine {
 		t.Fatal("Reason() == ReasonRoutine, want false")
 	}
-}
-
-func keySet[K comparable, V any](m map[K]V) map[K]bool {
-	set := make(map[K]bool, len(m))
-	for key := range m {
-		set[key] = true
-	}
-	return set
 }

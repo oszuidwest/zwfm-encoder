@@ -1,6 +1,6 @@
 ---
-# Hybrid: `go` delegates to go-ci.yml; `frontend` stays inline for the
-# dependabot lockfile-commit step.
+# Hybrid: `go` delegates to go-ci.yml; frontend lint/tests stay inline, while
+# Dependabot lockfile refresh runs in a separate write-scoped job.
 name: CI
 
 "on":
@@ -15,6 +15,7 @@ name: CI
       - 'web/**'
       - 'tests/**'
       - 'package.json'
+      - 'bun.lockb'
       - 'biome.json'
       - '.htmlhintrc'
   pull_request:
@@ -28,6 +29,7 @@ name: CI
       - 'web/**'
       - 'tests/**'
       - 'package.json'
+      - 'bun.lockb'
       - 'biome.json'
       - '.htmlhintrc'
 
@@ -44,7 +46,33 @@ jobs:
     name: Frontend
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # commit refreshed bun.lockb on dependabot PRs
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.head_ref }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: >-
+          bun install
+          ${{ github.actor != 'dependabot[bot]' && '--frozen-lockfile' || '' }}
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Test JavaScript
+        run: bun run test:js
+
+  frontend-lockfile:
+    name: Frontend lockfile
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v6
@@ -54,22 +82,13 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
-      - name: Install dependencies
-        run: >-
-          bun install
-          ${{ github.actor != 'dependabot[bot]' && '--frozen-lockfile' || '' }}
+      - name: Refresh lockfile
+        run: bun install --ignore-scripts
 
       - name: Commit updated lockfile
-        if: github.actor == 'dependabot[bot]'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add bun.lockb
           git diff --staged --quiet || git commit -m "chore: update bun.lockb"
           git push
-
-      - name: Lint
-        run: bun run lint
-
-      - name: Test JavaScript
-        run: bun run test:js

@@ -3,7 +3,6 @@
 config.json
 /node_modules
 /screenshots
-/events-current.png
 *.exe
 
 # Markdown files (only README, LICENSE, and docs on GitHub)

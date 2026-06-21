@@ -52,29 +52,6 @@ type eventClassification struct {
 	reason   Reason
 }
 
-var allEventTypes = [...]EventType{
-	StreamStarted,
-	StreamStable,
-	StreamError,
-	StreamRetry,
-	StreamStopped,
-	SilenceStart,
-	SilenceEnd,
-	AudioDumpReady,
-	ChannelImbalanceStart,
-	ChannelImbalanceEnd,
-	RecorderStarted,
-	RecorderStopped,
-	RecorderError,
-	RecorderFile,
-	UploadQueued,
-	UploadCompleted,
-	UploadFailed,
-	UploadRetry,
-	UploadAbandoned,
-	CleanupCompleted,
-}
-
 var eventClassifications = map[EventType]eventClassification{
 	StreamStarted:         {category: CategoryStream, severity: SeverityInfo, reason: ReasonLifecycle},
 	StreamStable:          {category: CategoryStream, severity: SeveritySuccess, reason: ReasonRecovery},

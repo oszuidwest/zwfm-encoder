@@ -51,9 +51,9 @@ Events are categorized by severity for UI display:
 ## Stream Events
 
 Stream events track the lifecycle and health of audio output streams. Local SRT
-listener streams reuse the same event types: fan-out startup is logged as
-`stream_started` with "Listening on ..." text, listener encoder failures are
-logged as `stream_error`/`stream_retry`, and listeners do not emit
+listener streams reuse the same event types: fan-out startup and successful
+listener encoder restarts are logged as `stream_started`, listener encoder
+failures are logged as `stream_error`/`stream_retry`, and listeners do not emit
 `stream_stable` because a running listener is waiting for clients rather than a
 confirmed remote output.
 
@@ -83,7 +83,7 @@ confirmed remote output.
 
 - **Severity:** `info`
 - **UI Label:** Started
-- **Triggered:** When a stream begins connecting to its destination, or when a local SRT listener fan-out starts.
+- **Triggered:** When a stream begins connecting to its destination, when a local SRT listener fan-out starts, or when a listener encoder successfully restarts after retry.
 
 ```json
 {
@@ -630,8 +630,9 @@ GET /api/events?limit=50&offset=0&type=stream
 
 ### Response
 
-`severity`, `category`, `reason`, and `groups` are added by the API when events
-are read. They are not stored in the JSON Lines file described above.
+`severity`, `category`, `reason`, `label`, `detail`, and `groups` are added by
+the API when events are read. They are not stored in the JSON Lines file
+described above.
 
 ```json
 {
@@ -642,7 +643,12 @@ are read. They are not stored in the JSON Lines file described above.
       "severity": "success",
       "category": "recorder",
       "reason": "routine",
-      "details": { ... }
+      "label": "Uploaded",
+      "detail": "hourly.mp3 - MP3",
+      "details": {
+        "filename": "hourly.mp3",
+        "codec": "mp3"
+      }
     }
   ],
   "groups": {
@@ -656,7 +662,14 @@ are read. They are not stored in the JSON Lines file described above.
         "severity": "success",
         "title": "Hourly recording",
         "statusText": "Normal",
-        "events": [ ... ]
+        "events": [
+          {
+            "ts": "2026-06-21T10:02:00Z",
+            "type": "upload_completed",
+            "label": "Uploaded",
+            "detail": "hourly.mp3 - MP3"
+          }
+        ]
       }
     ],
     "routineCount": 1
@@ -670,7 +683,15 @@ are read. They are not stored in the JSON Lines file described above.
 | `severity` | `error`, `warning`, `success`, `info`, `unknown` | Display severity derived from `type` |
 | `category` | `stream`, `audio`, `recorder`, `unknown` | Emitting subsystem derived from `type` |
 | `reason` | `problem`, `recovery`, `lifecycle`, `routine`, `unknown` | Why the event matters in the UI |
+| `label` | string | Short event label derived from `type` |
+| `detail` | string | Display detail derived from `details`, omitted when empty |
 | `groups` | object | Historical grouping for the events UI: `attention`, `resolved`, `activity`, `routine`, and `routineCount` |
+
+Grouping is computed over the returned event window only. If an API client uses
+small `limit` values or non-zero `offset` pagination, an incident can be split
+across pages and therefore grouped differently on each page. The embedded UI
+loads an expanding newest-first window so problem and recovery events can be
+paired within the same response.
 
 ---
 
