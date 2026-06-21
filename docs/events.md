@@ -62,6 +62,7 @@ confirmed remote output.
 ```json
 {
   "stream_name": "Main Stream",
+  "mode": "caller",
   "error": "Connection refused",
   "retry": 3,
   "max_retries": 99
@@ -71,6 +72,7 @@ confirmed remote output.
 | Field | Type | Description |
 |-------|------|-------------|
 | `stream_name` | string | Human-readable stream name |
+| `mode` | string | Stream mode at emit time; always present on stream events: `caller` or `listener` |
 | `error` | string | Error message (if applicable) |
 | `retry` | int | Current retry attempt number |
 | `max_retries` | int | Maximum retry attempts configured |
@@ -89,7 +91,8 @@ confirmed remote output.
   "type": "stream_started",
   "stream_id": "stream-4ce838a5",
   "details": {
-    "stream_name": "Main Stream"
+    "stream_name": "Main Stream",
+    "mode": "caller"
   }
 }
 ```
@@ -108,7 +111,8 @@ confirmed remote output.
   "type": "stream_stable",
   "stream_id": "stream-4ce838a5",
   "details": {
-    "stream_name": "Main Stream"
+    "stream_name": "Main Stream",
+    "mode": "caller"
   }
 }
 ```
@@ -128,6 +132,7 @@ confirmed remote output.
   "stream_id": "stream-4ce838a5",
   "details": {
     "stream_name": "Main Stream",
+    "mode": "caller",
     "error": "Error opening output files: Connection refused"
   }
 }
@@ -148,6 +153,7 @@ confirmed remote output.
   "stream_id": "stream-4ce838a5",
   "details": {
     "stream_name": "Main Stream",
+    "mode": "caller",
     "error": "Error opening output files: Connection refused",
     "retry": 1,
     "max_retries": 99
@@ -169,7 +175,8 @@ confirmed remote output.
   "type": "stream_stopped",
   "stream_id": "stream-4ce838a5",
   "details": {
-    "stream_name": "Main Stream"
+    "stream_name": "Main Stream",
+    "mode": "caller"
   }
 }
 ```
@@ -623,36 +630,54 @@ GET /api/events?limit=50&offset=0&type=stream
 
 ### Response
 
+`severity`, `category`, and `reason` are added by the API when events are read.
+They are not stored in the JSON Lines file described above.
+
 ```json
 {
-  "events": [ ... ],
+  "events": [
+    {
+      "ts": "2026-06-21T10:02:00Z",
+      "type": "upload_completed",
+      "severity": "success",
+      "category": "recorder",
+      "reason": "routine",
+      "details": { ... }
+    }
+  ],
   "has_more": true
 }
 ```
+
+| Field | Values | Description |
+|-------|--------|-------------|
+| `severity` | `error`, `warning`, `success`, `info`, `unknown` | Display severity derived from `type` |
+| `category` | `stream`, `audio`, `recorder`, `unknown` | Emitting subsystem derived from `type` |
+| `reason` | `problem`, `recovery`, `lifecycle`, `routine`, `unknown` | Why the event matters in the UI |
 
 ---
 
 ## Event Summary Table
 
-| Event Type | Category | Severity | UI Label | Trigger |
-|------------|----------|----------|----------|---------|
-| `stream_started` | Stream | info | Started | Stream begins connecting or listener fan-out starts |
-| `stream_stable` | Stream | success | Connected | Caller stream stable for 10s |
-| `stream_error` | Stream | error | Error | Stream encounters error |
-| `stream_retry` | Stream | warning | Retry | Caller stream or listener encoder retrying after failure |
-| `stream_stopped` | Stream | info | Stopped | Stream intentionally stopped |
-| `silence_start` | Audio | warning | Silence | Audio below threshold |
-| `silence_end` | Audio | success | Recovered | Audio returns above threshold |
-| `audio_dump_ready` | Audio | info | Audio Dump | MP3 context file ready after silence |
-| `channel_imbalance_start` | Audio | warning | Imbalance | L/R level difference above threshold |
-| `channel_imbalance_end` | Audio | success | Balanced | L/R channels balanced again |
-| `recorder_started` | Recorder | info | Started | Recorder begins recording |
-| `recorder_stopped` | Recorder | info | Stopped | Recorder stops recording |
-| `recorder_error` | Recorder | error | Error | Recorder encounters error |
-| `recorder_file` | Recorder | info | New File | New recording file created |
-| `upload_queued` | Recorder | info | Upload Queued | File queued for S3 upload |
-| `upload_completed` | Recorder | success | Uploaded | S3 upload successful |
-| `upload_failed` | Recorder | error | Upload Failed | S3 upload failed |
-| `upload_retry` | Recorder | warning | Retry | Failed upload being retried |
-| `upload_abandoned` | Recorder | error | Abandoned | Upload abandoned after 24h |
-| `cleanup_completed` | Recorder | success | Cleanup | Retention cleanup completed |
+| Event Type | Category | Severity | Reason | UI Label | Trigger |
+|------------|----------|----------|--------|----------|---------|
+| `stream_started` | stream | info | lifecycle | Started | Stream begins connecting or listener fan-out starts |
+| `stream_stable` | stream | success | recovery | Connected | Caller stream stable for 10s |
+| `stream_error` | stream | error | problem | Error | Stream encounters error |
+| `stream_retry` | stream | warning | problem | Retry | Caller stream or listener encoder retrying after failure |
+| `stream_stopped` | stream | info | lifecycle | Stopped | Stream intentionally stopped |
+| `silence_start` | audio | warning | problem | Silence | Audio below threshold |
+| `silence_end` | audio | success | recovery | Recovered | Audio returns above threshold |
+| `audio_dump_ready` | audio | info | lifecycle | Audio Dump | MP3 context file ready after silence |
+| `channel_imbalance_start` | audio | warning | problem | Imbalance | L/R level difference above threshold |
+| `channel_imbalance_end` | audio | success | recovery | Balanced | L/R channels balanced again |
+| `recorder_started` | recorder | info | lifecycle | Started | Recorder begins recording |
+| `recorder_stopped` | recorder | info | lifecycle | Stopped | Recorder stops recording |
+| `recorder_error` | recorder | error | problem | Error | Recorder encounters error |
+| `recorder_file` | recorder | info | routine | New File | New recording file created |
+| `upload_queued` | recorder | info | routine | Upload Queued | File queued for S3 upload |
+| `upload_completed` | recorder | success | routine | Uploaded | S3 upload successful |
+| `upload_failed` | recorder | error | problem | Upload Failed | S3 upload failed |
+| `upload_retry` | recorder | warning | problem | Retry | Failed upload being retried |
+| `upload_abandoned` | recorder | error | problem | Abandoned | Upload abandoned after 24h |
+| `cleanup_completed` | recorder | success | routine | Cleanup | Retention cleanup completed |

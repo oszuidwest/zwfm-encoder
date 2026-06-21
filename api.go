@@ -1179,10 +1179,38 @@ func countRunningRecorders(statuses map[string]types.ProcessStatus) int {
 	return count
 }
 
+type eventView struct {
+	eventlog.Event
+	Severity eventlog.Severity `json:"severity"`
+	Category eventlog.Category `json:"category"`
+	Reason   eventlog.Reason   `json:"reason"`
+}
+
+func decorateEvents(events []eventlog.Event) []eventView {
+	views := make([]eventView, len(events))
+	for i, event := range events {
+		views[i] = eventView{
+			Event:    event,
+			Severity: event.Type.Severity(),
+			Category: event.Type.Category(),
+			Reason:   event.Type.Reason(),
+		}
+	}
+	return views
+}
+
 // handleAPIEvents returns events from the event log.
 func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
+	logPath := ""
+	if s.encoder != nil {
+		logPath = s.encoder.EventLogPath()
+	}
+	s.handleAPIEventsFromPath(w, r, logPath)
+}
+
+func (s *Server) handleAPIEventsFromPath(w http.ResponseWriter, r *http.Request, logPath string) {
 	emptyResponse := map[string]any{
-		"events":   []eventlog.Event{},
+		"events":   []eventView{},
 		"has_more": false,
 	}
 
@@ -1215,8 +1243,6 @@ func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 		filter = eventlog.FilterAll
 	}
 
-	// Get event log path from encoder
-	logPath := s.encoder.EventLogPath()
 	if logPath == "" {
 		s.writeJSON(w, http.StatusOK, emptyResponse)
 		return
@@ -1231,7 +1257,7 @@ func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"events":   eventList,
+		"events":   decorateEvents(eventList),
 		"has_more": hasMore,
 	})
 }

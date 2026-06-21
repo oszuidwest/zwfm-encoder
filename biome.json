@@ -1,7 +1,7 @@
 {
 	"$schema": "https://biomejs.dev/schemas/2.3.9/schema.json",
 	"files": {
-		"includes": ["**/web/**/*.js", "**/web/**/*.css", "!**/alpine.min.js"]
+		"includes": ["**/web/**/*.js", "**/web/**/*.css", "!**/alpine.min.js", "!**/web/prototypes/**"]
 	},
 	"linter": {
 		"enabled": true,

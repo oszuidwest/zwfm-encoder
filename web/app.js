@@ -28,12 +28,6 @@ const TIME_FORMATTER = new Intl.DateTimeFormat('nl-NL', {
     minute: '2-digit',
     second: '2-digit',
 });
-const DATE_FORMATTER = new Intl.DateTimeFormat('nl-NL', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-});
 
 // IEC 60268-10 Type I: 20 dB fallback in 1.7 seconds.
 const PPM_DECAY_DB_PER_SEC = 20 / 1.7;
@@ -83,28 +77,20 @@ const EVENT_LABELS = {
     cleanup_completed: 'Cleanup',
 };
 
-const EVENT_SEVERITY = {
-    stream_error: 'error',
-    stream_retry: 'warning',
-    stream_stable: 'success',
-    silence_start: 'warning',
-    silence_end: 'success',
-    audio_dump_ready: 'info',
-    channel_imbalance_start: 'warning',
-    channel_imbalance_end: 'success',
-    recorder_error: 'error',
-    upload_failed: 'error',
-    upload_abandoned: 'error',
-    upload_completed: 'success',
-    cleanup_completed: 'success',
-    upload_retry: 'warning',
+const EVENT_CATEGORY_LABELS = {
+    stream: 'Streams',
+    audio: 'Audio',
+    recorder: 'Recording',
+    unknown: 'System',
 };
 
-const EVENT_CATEGORY_BADGE = {
-    stream: 'S',
-    audio: 'A',
-    recorder: 'R',
-    system: '•',
+const EVENT_CLOSES = {
+    silence_start: 'silence_end',
+    channel_imbalance_start: 'channel_imbalance_end',
+    stream_error: 'stream_stable',
+    stream_retry: 'stream_stable',
+    upload_failed: 'upload_completed',
+    upload_retry: 'upload_completed',
 };
 
 const RECORDER_STORAGE_LABELS = {
@@ -200,7 +186,7 @@ const copyTextToClipboard = async (text) => {
             await navigator.clipboard.writeText(text);
             return;
         } catch {
-            // Fall through to the legacy path for browsers that deny clipboard permissions.
+            // Fall through to document.execCommand for browsers that deny clipboard permissions.
         }
     }
     copyTextFallback(text);
@@ -330,16 +316,16 @@ const deepClone = (obj) => typeof structuredClone === 'function'
     ? structuredClone(obj)
     : JSON.parse(JSON.stringify(obj));
 
-const isAudioEventType = (type = '') => (
-    type.startsWith('silence_') ||
-    type === 'audio_dump_ready' ||
-    type.startsWith('channel_imbalance_')
+const normalizeEventSeverity = (severity) => (
+    ['error', 'warning', 'success', 'info'].includes(severity) ? severity : 'info'
 );
 
-const isRecorderEventType = (type = '') => (
-    type.startsWith('recorder_') ||
-    type.startsWith('upload_') ||
-    type === 'cleanup_completed'
+const normalizeEventCategory = (category) => (
+    ['stream', 'audio', 'recorder'].includes(category) ? category : 'unknown'
+);
+
+const normalizeEventReason = (reason) => (
+    ['problem', 'recovery', 'lifecycle', 'routine'].includes(reason) ? reason : 'unknown'
 );
 
 document.addEventListener('alpine:init', () => {
@@ -393,6 +379,7 @@ document.addEventListener('alpine:init', () => {
         eventsLoading: false,
         eventsHasMore: false,
         eventsOffset: 0,
+        eventOpenRows: {},
 
         devices: [],
         levels: { ...DEFAULT_LEVELS },
@@ -1706,6 +1693,7 @@ document.addEventListener('alpine:init', () => {
             if (reset) {
                 this.eventsOffset = 0;
                 this.events = [];
+                this.eventOpenRows = {};
             }
             this.eventsLoading = true;
             try {
@@ -1739,79 +1727,43 @@ document.addEventListener('alpine:init', () => {
             await this.loadEvents(false);
         },
 
-        /**
-         * Formats an event timestamp as short time (HH:MM:SS).
-         * @param {string} ts - ISO timestamp
-         * @returns {string} Formatted time string
-         */
         formatEventTime(ts) {
             if (!ts) return '';
             return TIME_FORMATTER.format(new Date(ts));
         },
 
-        /**
-         * Returns a date key (YYYY-MM-DD) for grouping events by day.
-         * @param {string} ts - ISO timestamp
-         * @returns {string} Date key
-         */
-        getEventDateKey(ts) {
-            if (!ts) return '';
-            const d = new Date(ts);
-            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        formatRelativeEventTime(value) {
+            const time = typeof value === 'number' ? value : new Date(value).getTime();
+            if (!Number.isFinite(time)) return '';
+
+            const diff = Math.max(0, Date.now() - time);
+            if (diff < MS_PER_MINUTE) return 'just now';
+            if (diff < 60 * MS_PER_MINUTE) return `${Math.floor(diff / MS_PER_MINUTE)}m ago`;
+            if (diff < MS_PER_DAY) return `${Math.floor(diff / (60 * MS_PER_MINUTE))}h ago`;
+            return `${Math.floor(diff / MS_PER_DAY)}d ago`;
         },
 
-        /**
-         * Checks whether the event at the given index starts a new date group.
-         * @param {number} index - Event index in the events array
-         * @returns {boolean} True if this event's date differs from the previous event
-         */
-        isNewDateGroup(index) {
-            if (index === 0) return true;
-            return this.getEventDateKey(this.events[index].ts) !== this.getEventDateKey(this.events[index - 1].ts);
+        eventTimeValue(event) {
+            const time = new Date(event?.ts).getTime();
+            return Number.isFinite(time) ? time : 0;
         },
 
-        /**
-         * Formats a date label for date separator rows.
-         * Returns "Today", "Yesterday", or a localized date string.
-         * @param {string} ts - ISO timestamp
-         * @returns {string} Human-readable date label
-         */
-        formatEventDate(ts) {
-            if (!ts) return '';
-            const date = new Date(ts);
-            const now = new Date();
-            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-            const eventDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-            const diffDays = Math.round((today - eventDay) / MS_PER_DAY);
-
-            if (diffDays === 0) return 'Today';
-            if (diffDays === 1) return 'Yesterday';
-            return DATE_FORMATTER.format(date);
+        getEventSeverity(event) {
+            return normalizeEventSeverity(event?.severity);
         },
 
-        /**
-         * Gets the severity level for an event type.
-         * @param {string} type - Event type
-         * @returns {string} Severity: 'error', 'warning', 'success', or 'info'
-         */
-        getEventSeverity(type) {
-            return EVENT_SEVERITY[type] || 'info';
+        getEventCategory(event) {
+            return normalizeEventCategory(event?.category);
         },
 
-        /**
-         * Gets a short label for an event type.
-         * @param {string} type - Event type
-         * @returns {string} Short label
-         */
+        getEventReason(event) {
+            return normalizeEventReason(event?.reason);
+        },
+
         getEventLabel(type) {
             return EVENT_LABELS[type] || type;
         },
 
-        /**
-         * Gets the detail text for an event (error message, stream name, etc.).
-         * @param {Object} event - Event object
-         * @returns {string} Detail text
-         */
         getEventDetail(event) {
             const details = event.details || {};
             const streamName = details.stream_name || '';
@@ -1851,6 +1803,11 @@ document.addEventListener('alpine:init', () => {
             if (event.type === 'recorder_error' || event.type === 'upload_failed') {
                 return details.error || 'Unknown error';
             }
+            if (event.type === 'upload_retry' || event.type === 'upload_abandoned') {
+                const retryNum = details.retry ? `Retry #${details.retry}` : '';
+                const error = details.error || '';
+                return [retryNum, error].filter(Boolean).join(' - ') || 'Unknown error';
+            }
             if (event.type === 'recorder_file' || event.type === 'upload_queued' || event.type === 'upload_completed') {
                 const filename = details.filename || '';
                 const codec = details.codec || '';
@@ -1871,52 +1828,520 @@ document.addEventListener('alpine:init', () => {
             return streamName;
         },
 
-        /**
-         * Gets the text for stream badge.
-         * @param {Object} event - Event object
-         * @returns {string} Short stream identifier
-         */
-        isAudioEvent(event) {
-            return isAudioEventType(event.type);
-        },
-
-        getStreamBadgeText(event) {
-            // Silence events show "Audio" (they're system-wide, not stream-specific)
-            if (this.isAudioEvent(event)) {
-                return 'Audio';
-            }
-            // Recorder events show recorder name
-            if (isRecorderEventType(event.type)) {
-                const details = event.details || {};
-                const name = details.recorder_name || 'Recorder';
-                return name.length > 8 ? name.slice(0, 8) : name;
-            }
-            // Stream events show stream name (shortened if needed)
+        getEventSource(event) {
             const details = event.details || {};
-            const name = details.stream_name || event.stream_id || 'Stream';
-            // Return first part if it's a compound name, or truncate
-            return name.length > 8 ? name.slice(0, 8) : name;
+            switch (this.getEventCategory(event)) {
+                case 'audio':
+                    return 'Audio';
+                case 'recorder':
+                    return details.recorder_name || 'Recorder';
+                case 'stream':
+                    return details.stream_name || event.stream_id || 'Stream';
+                default:
+                    return EVENT_CATEGORY_LABELS.unknown;
+            }
         },
 
-        /**
-         * Gets the event category for styling.
-         * @param {Object} event - Event object
-         * @returns {string} Category: 'stream', 'audio', 'recorder', or 'system'
-         */
-        getEventCategory(event) {
-            if (isAudioEventType(event.type)) return 'audio';
-            if (isRecorderEventType(event.type)) return 'recorder';
-            if (event.type?.startsWith('stream_')) return 'stream';
-            return 'system';
+        eventCategoryMatches(category) {
+            return !this.eventFilter || this.eventFilter === category;
         },
 
-        /**
-         * Gets the short badge letter for event category.
-         * @param {Object} event - Event object
-         * @returns {string} Single letter: 'S', 'A', 'R', or '•'
-         */
-        getEventCategoryBadge(event) {
-            return EVENT_CATEGORY_BADGE[this.getEventCategory(event)] || EVENT_CATEGORY_BADGE.system;
+        eventGroups() {
+            const history = this.buildHistoricalEventGroups();
+            const liveAttention = this.buildLiveAttentionItems();
+            const liveSourceKeys = new Set(liveAttention.map(item => item.sourceKey).filter(Boolean));
+            return {
+                attention: [
+                    ...liveAttention,
+                    ...history.attention.filter(item => !liveSourceKeys.has(item.sourceKey)),
+                ],
+                resolved: history.resolved,
+                activity: history.activity,
+                routine: history.routine,
+                routineCount: history.routineCount,
+            };
+        },
+
+        eventSummaryText(groups) {
+            if (groups.attention.length > 0) {
+                const resolved = groups.resolved.length > 0 ? ` / ${groups.resolved.length} resolved` : '';
+                return `${groups.attention.length} need attention${resolved}`;
+            }
+            return 'All clear';
+        },
+
+        eventSummaryMutedText(groups) {
+            const parts = [];
+            if (groups.attention.length === 0 && groups.resolved.length > 0) parts.push(`${groups.resolved.length} resolved`);
+            if (groups.activity.length > 0) parts.push(`${groups.activity.length} activity`);
+            if (groups.routineCount > 0) parts.push(`${groups.routineCount} routine`);
+            if (parts.length > 0) return parts.join(', ');
+            return groups.attention.length > 0 ? '' : 'No history loaded';
+        },
+
+        buildLiveAttentionItems() {
+            const items = [];
+            if (this.eventCategoryMatches('stream')) {
+                for (const stream of this.streams) {
+                    const item = this.buildLiveStreamIssue(stream);
+                    if (item) items.push(item);
+                }
+            }
+            if (this.eventCategoryMatches('audio')) {
+                const silence = this.buildLiveSilenceIssue();
+                const imbalance = this.buildLiveImbalanceIssue();
+                if (silence) items.push(silence);
+                if (imbalance) items.push(imbalance);
+            }
+            if (this.eventCategoryMatches('recorder')) {
+                for (const recorder of this.recorders) {
+                    const item = this.buildLiveRecorderIssue(recorder);
+                    if (item) items.push(item);
+                }
+            }
+            return items;
+        },
+
+        buildLiveStreamIssue(stream) {
+            if (!stream.enabled) return null;
+            const status = this.streamStatuses[stream.id];
+            if (!status?.state) return null;
+
+            const isListener = this.isListenerStream(stream);
+            const problem = isListener
+                ? status.exhausted || status.state === 'error' || (status.state === 'running' && !status.encoder_running)
+                : !(status.state === 'running' && status.stable && !status.exhausted);
+            if (!problem) return null;
+
+            const latest = this.latestStreamProblemEvent(stream.id);
+            const severity = status.exhausted || status.state === 'error' ? 'error' : 'warning';
+            const tries = status.retry_count ? `${status.retry_count} ${status.retry_count === 1 ? 'try' : 'tries'}` : '';
+            const title = isListener ? 'Listener encoder issue' : 'Stream disconnected';
+            const detail = status.error || (latest ? this.getEventDetail(latest) : '') || this.streamIssueDetail(status, isListener);
+
+            return {
+                key: `live:stream:${stream.id}`,
+                sourceKey: `stream:${stream.id}`,
+                category: 'stream',
+                severity,
+                title,
+                source: this.streamEndpoint(stream),
+                statusText: status.exhausted ? 'Failed' : 'Ongoing',
+                chips: tries ? [tries] : [],
+                detail,
+                when: latest ? `since ${this.formatRelativeEventTime(latest.ts)}` : 'now',
+                events: latest ? [latest] : [],
+            };
+        },
+
+        streamIssueDetail(status, isListener) {
+            if (status.state === 'running' && isListener && !status.encoder_running) return 'Encoder process is not running';
+            if (status.state === 'running') return 'Waiting for stable output';
+            if (status.state === 'starting') return isListener ? 'Starting listener' : 'Connecting';
+            if (status.state === 'stopping') return 'Stopping';
+            return status.state || 'Unavailable';
+        },
+
+        latestStreamProblemEvent(streamID) {
+            return this.events.find(event => (
+                this.getEventCategory(event) === 'stream' &&
+                this.getEventReason(event) === 'problem' &&
+                event.stream_id === streamID
+            ));
+        },
+
+        buildLiveSilenceIssue() {
+            if (this.levels.silence_level !== 'active') return null;
+            const duration = this.levels.silence_duration_ms || 0;
+            const chips = duration > 0 ? [formatSmartDuration(duration)] : [];
+            const detail = `L: ${meterLevel(this.levels.left).toFixed(1)}dB  R: ${meterLevel(this.levels.right).toFixed(1)}dB`;
+            const latest = this.events.find(event => event.type === 'silence_start');
+            return {
+                key: 'live:audio:silence',
+                sourceKey: 'audio:silence',
+                category: 'audio',
+                severity: 'warning',
+                title: 'Silence on input',
+                source: 'Audio',
+                statusText: 'Ongoing',
+                chips: chips.map(chip => `${chip} so far`),
+                detail,
+                when: latest ? `since ${this.formatRelativeEventTime(latest.ts)}` : 'now',
+                events: latest ? [latest] : [],
+            };
+        },
+
+        buildLiveImbalanceIssue() {
+            if (this.levels.channel_imbalance_level !== 'active') return null;
+            const duration = this.levels.channel_imbalance_duration_ms || 0;
+            const chips = duration > 0 ? [formatSmartDuration(duration)] : [];
+            const detail = `${(this.levels.imbalance_db || 0).toFixed(1)}dB L/R difference`;
+            const latest = this.events.find(event => event.type === 'channel_imbalance_start');
+            return {
+                key: 'live:audio:imbalance',
+                sourceKey: 'audio:imbalance',
+                category: 'audio',
+                severity: 'warning',
+                title: 'Channel imbalance',
+                source: 'Audio',
+                statusText: 'Ongoing',
+                chips: chips.map(chip => `${chip} so far`),
+                detail,
+                when: latest ? `since ${this.formatRelativeEventTime(latest.ts)}` : 'now',
+                events: latest ? [latest] : [],
+            };
+        },
+
+        buildLiveRecorderIssue(recorder) {
+            if (!recorder.enabled) return null;
+            const status = this.recorderStatuses[recorder.id];
+            if (!status?.state) return null;
+
+            const pending = status.pending_uploads || 0;
+            const errored = status.state === 'error';
+            if (!errored && pending === 0) return null;
+
+            const chips = [];
+            if (pending > 0) chips.push(`${pending} pending upload${pending === 1 ? '' : 's'}`);
+            if (recorder.recording_mode) chips.push(recorder.recording_mode);
+
+            return {
+                key: `live:recorder:${recorder.id}`,
+                sourceKey: `recorder:${recorder.name || ''}:`,
+                category: 'recorder',
+                severity: errored ? 'error' : 'warning',
+                title: errored ? 'Recorder error' : 'Upload pending',
+                source: recorder.name || 'Recorder',
+                statusText: errored ? 'Unresolved' : 'Ongoing',
+                chips,
+                detail: status.error || '',
+                when: 'now',
+                events: this.latestRecorderProblemEvents(recorder.name),
+            };
+        },
+
+        latestRecorderProblemEvents(recorderName) {
+            return this.events.filter(event => {
+                const details = event.details || {};
+                return this.getEventCategory(event) === 'recorder' &&
+                    this.getEventReason(event) === 'problem' &&
+                    details.recorder_name === recorderName;
+            }).slice(0, 3);
+        },
+
+        buildHistoricalEventGroups() {
+            const asc = [...this.events].sort((a, b) => this.eventTimeValue(a) - this.eventTimeValue(b));
+            const openByKey = new Map();
+            const closed = [];
+            const failed = [];
+            const consumed = new Set();
+
+            for (const event of asc) {
+                const key = this.eventSourceKey(event);
+                const open = openByKey.get(key);
+                if (open?.closeType === event.type) {
+                    open.events.push(event);
+                    open.endTs = this.eventTimeValue(event);
+                    open.durationMs = this.eventDurationMs(event) || (open.endTs - open.startTs);
+                    closed.push(open);
+                    openByKey.delete(key);
+                    continue;
+                }
+
+                if (open && this.getEventReason(event) === 'problem') {
+                    open.events.push(event);
+                    open.attempts += 1;
+                    if (this.getEventSeverity(event) === 'error') open.severity = 'error';
+                    continue;
+                }
+
+                if (event.type === 'audio_dump_ready') {
+                    const target = this.findLatestSilenceIncident(closed);
+                    if (target) {
+                        target.dump = true;
+                        target.events.push(event);
+                    }
+                    continue;
+                }
+
+                if (this.getEventReason(event) !== 'problem') continue;
+                if (this.isListenerHistoricalStreamProblem(event)) continue;
+
+                if (event.type === 'upload_abandoned') {
+                    const incident = this.newIncident(event, key, null);
+                    incident.events.push(event);
+                    incident.attempts = 1;
+                    failed.push(incident);
+                    continue;
+                }
+
+                const closeType = EVENT_CLOSES[event.type];
+                let incident = openByKey.get(key);
+                if (!incident) {
+                    incident = this.newIncident(event, key, closeType);
+                    openByKey.set(key, incident);
+                }
+                incident.events.push(event);
+                incident.attempts += 1;
+                if (this.getEventSeverity(event) === 'error') incident.severity = 'error';
+            }
+
+            const ongoing = [...openByKey.values()];
+            for (const incident of [...closed, ...failed, ...ongoing]) {
+                for (const event of incident.events) consumed.add(event);
+            }
+
+            const activity = this.events
+                .filter(event => !consumed.has(event) && this.getEventReason(event) !== 'routine')
+                .map((event, index) => this.activityEventItem(event, index));
+            const routineEvents = this.events.filter(event => (
+                !consumed.has(event) && this.getEventReason(event) === 'routine'
+            ));
+
+            return {
+                attention: [
+                    ...ongoing.map(incident => this.incidentItem(incident, incident.firstType === 'recorder_error' ? 'unresolved' : 'ongoing')),
+                    ...failed.map(incident => this.incidentItem(incident, 'failed')),
+                ].sort((a, b) => b.sortTs - a.sortTs),
+                resolved: closed
+                    .map(incident => this.incidentItem(incident, 'resolved'))
+                    .sort((a, b) => b.sortTs - a.sortTs),
+                activity,
+                routine: routineEvents.length ? [this.routineEventItem(routineEvents)] : [],
+                routineCount: routineEvents.length,
+            };
+        },
+
+        newIncident(event, key, closeType) {
+            const startTs = this.eventTimeValue(event);
+            return {
+                key,
+                closeType,
+                firstType: event.type,
+                firstEvent: event,
+                severity: this.getEventSeverity(event),
+                startTs,
+                endTs: startTs,
+                durationMs: 0,
+                attempts: 0,
+                dump: false,
+                events: [],
+            };
+        },
+
+        findLatestSilenceIncident(incidents) {
+            for (let i = incidents.length - 1; i >= 0; i -= 1) {
+                if (incidents[i].firstType === 'silence_start') return incidents[i];
+            }
+            return null;
+        },
+
+        incidentItem(incident, status) {
+            const events = [...incident.events].sort((a, b) => this.eventTimeValue(a) - this.eventTimeValue(b));
+            const first = incident.firstEvent;
+            const duration = incident.durationMs || Math.max(0, incident.endTs - incident.startTs);
+            const chips = [];
+            if (status === 'resolved' && duration > 0) chips.push(formatSmartDuration(duration));
+            if (incident.attempts > 1) chips.push(`${incident.attempts} tries`);
+            if (incident.dump) chips.push('audio dump');
+            if (status === 'failed' && first.details?.retry) chips.push(`gave up after ${first.details.retry}`);
+            const statusText = {
+                failed: 'Failed',
+                ongoing: 'Ongoing',
+                resolved: 'Resolved',
+                unresolved: 'Unresolved',
+            }[status] || 'Ongoing';
+
+            return {
+                key: `incident:${status}:${incident.key}:${incident.startTs}`,
+                sourceKey: incident.key,
+                category: this.getEventCategory(first),
+                severity: status === 'resolved' ? 'success' : incident.severity,
+                title: this.incidentTitle(first),
+                source: this.getEventSource(first),
+                statusText,
+                chips,
+                detail: this.firstEventError(events) || this.getEventDetail(first) || first.msg || '',
+                when: status === 'ongoing' ? `since ${this.formatRelativeEventTime(incident.startTs)}` : this.formatRelativeEventTime(status === 'resolved' ? incident.endTs : incident.startTs),
+                events,
+                sortTs: incident.startTs,
+            };
+        },
+
+        incidentTitle(event) {
+            switch (event.type) {
+                case 'silence_start':
+                    return 'Silence on input';
+                case 'channel_imbalance_start':
+                    return 'Channel imbalance';
+                case 'stream_error':
+                case 'stream_retry':
+                    return 'Stream disconnected';
+                case 'upload_failed':
+                case 'upload_retry':
+                    return 'Upload failed';
+                case 'upload_abandoned':
+                    return 'Upload abandoned';
+                case 'recorder_error':
+                    return 'Recorder error';
+                default:
+                    return this.getEventLabel(event.type);
+            }
+        },
+
+        firstEventError(events) {
+            for (const event of events) {
+                if (event.details?.error) return event.details.error;
+            }
+            return '';
+        },
+
+        eventDurationMs(event) {
+            const duration = event.details?.duration_ms;
+            return Number.isFinite(duration) ? duration : 0;
+        },
+
+        eventSourceKey(event) {
+            const details = event.details || {};
+            switch (this.getEventCategory(event)) {
+                case 'stream':
+                    return `stream:${event.stream_id || details.stream_name || ''}`;
+                case 'audio':
+                    return event.type?.startsWith('channel_imbalance_') ? 'audio:imbalance' : 'audio:silence';
+                case 'recorder':
+                    return `recorder:${details.recorder_name || ''}:${details.s3_key || details.filename || ''}`;
+                default:
+                    return `unknown:${event.type || ''}`;
+            }
+        },
+
+        isListenerHistoricalStreamProblem(event) {
+            if (this.getEventCategory(event) !== 'stream' || this.getEventReason(event) !== 'problem') return false;
+
+            return event.details?.mode === 'listener';
+        },
+
+        activityEventItem(event, index) {
+            const severity = this.getEventSeverity(event);
+            return {
+                key: this.eventRowKey(event, index),
+                category: this.getEventCategory(event),
+                severity,
+                title: this.activityTitle(event),
+                source: this.getEventSource(event),
+                statusText: this.activityStatusText(event),
+                chips: [],
+                detail: this.getEventDetail(event) || event.msg || '',
+                when: this.formatRelativeEventTime(event.ts),
+                events: [event],
+                sortTs: this.eventTimeValue(event),
+            };
+        },
+
+        activityTitle(event) {
+            if (event.type === 'stream_started' && /^Listening on/.test(event.msg || '')) return 'Listener started';
+            switch (event.type) {
+                case 'stream_started':
+                    return 'Stream started';
+                case 'stream_stable':
+                    return 'Stream connected';
+                case 'stream_stopped':
+                    return 'Stream stopped';
+                case 'recorder_started':
+                    return 'Recorder started';
+                case 'recorder_stopped':
+                    return 'Recorder stopped';
+                default:
+                    return this.getEventLabel(event.type);
+            }
+        },
+
+        activityStatusText(event) {
+            if (event.type === 'stream_started' && /^Listening on/.test(event.msg || '')) return 'Listening';
+            switch (event.type) {
+                case 'stream_started':
+                    return 'Started';
+                case 'stream_stable':
+                    return 'Connected';
+                case 'stream_stopped':
+                    return 'Stopped';
+                case 'recorder_started':
+                    return 'Started';
+                case 'recorder_stopped':
+                    return 'Stopped';
+                case 'silence_end':
+                case 'channel_imbalance_end':
+                    return 'Recovered';
+                default:
+                    return this.getEventLabel(event.type);
+            }
+        },
+
+        routineEventItem(events) {
+            const countType = (type) => events.filter(event => event.type === type).length;
+            const recorderEvent = events.find(event => event.details?.recorder_name);
+            const chips = [];
+            const files = countType('recorder_file');
+            const queued = countType('upload_queued');
+            const uploaded = countType('upload_completed');
+            const cleanups = countType('cleanup_completed');
+            if (files) chips.push(`${files} file${files === 1 ? '' : 's'}`);
+            if (uploaded) chips.push(`${uploaded} upload${uploaded === 1 ? '' : 's'}`);
+            else if (queued) chips.push(`${queued} queued`);
+            if (cleanups) chips.push(`${cleanups} cleanup${cleanups === 1 ? '' : 's'}`);
+
+            return {
+                key: `routine:${events.length}:${events[0]?.ts || ''}`,
+                category: 'recorder',
+                severity: 'success',
+                title: 'Hourly recording',
+                source: recorderEvent?.details?.recorder_name || 'zwfm-hourly',
+                statusText: 'Normal',
+                chips,
+                detail: '',
+                when: events[0] ? `last ${this.formatRelativeEventTime(events[0].ts)}` : '',
+                events,
+                trailLimit: 8,
+            };
+        },
+
+        eventRowKey(event, index) {
+            return `event:${event.type}:${event.ts}:${event.stream_id || ''}:${index}`;
+        },
+
+        eventRowStateClass(item) {
+            switch (item.severity) {
+                case 'error':
+                    return 'state-danger';
+                case 'warning':
+                    return 'state-warning';
+                case 'success':
+                    return 'state-success';
+                default:
+                    return 'state-stopped';
+            }
+        },
+
+        eventItemHasTrail(item) {
+            return (item.events || []).length > 1;
+        },
+
+        visibleEventTrail(item) {
+            const events = item.events || [];
+            return item.trailLimit ? events.slice(0, item.trailLimit) : events;
+        },
+
+        eventTrailMoreCount(item) {
+            const events = item.events || [];
+            return item.trailLimit && events.length > item.trailLimit ? events.length - item.trailLimit : 0;
+        },
+
+        toggleEventRow(key) {
+            this.eventOpenRows = { ...this.eventOpenRows, [key]: !this.eventOpenRows[key] };
+        },
+
+        isEventRowOpen(key) {
+            return Boolean(this.eventOpenRows[key]);
         },
 
         /**

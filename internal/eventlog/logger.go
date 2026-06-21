@@ -79,6 +79,7 @@ type Event struct {
 // StreamDetails holds stream event information.
 type StreamDetails struct {
 	StreamName string `json:"stream_name,omitempty"`
+	Mode       string `json:"mode"`
 	Error      string `json:"error,omitempty"`
 	RetryCount int    `json:"retry,omitempty"`
 	MaxRetries int    `json:"max_retries,omitempty"`
@@ -262,7 +263,7 @@ func (l *Logger) openLocked() error {
 
 // LogStream records a stream event with error and retry details.
 func (l *Logger) LogStream(
-	eventType EventType, streamID, streamName, message, errMsg string,
+	eventType EventType, streamID, streamName, mode, message, errMsg string,
 	retryCount, maxRetries int,
 ) error {
 	return l.Log(&Event{
@@ -271,6 +272,7 @@ func (l *Logger) LogStream(
 		Message:  message,
 		Details: &StreamDetails{
 			StreamName: streamName,
+			Mode:       mode,
 			Error:      errMsg,
 			RetryCount: retryCount,
 			MaxRetries: maxRetries,
