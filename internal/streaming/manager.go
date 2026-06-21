@@ -44,7 +44,7 @@ type StreamContext interface {
 
 // EventCallback handles stream event notifications.
 type EventCallback func(
-	streamID, streamName string, event string, message string,
+	streamID, streamName, mode string, event string, message string,
 	err string, retryCount, maxRetries int,
 )
 
@@ -122,10 +122,28 @@ func (m *Manager) SetEventCallback(cb EventCallback, getStreamName func(string) 
 	m.getStreamName = getStreamName
 }
 
-func (m *Manager) emitEvent(streamID, event, message, errMsg string, retryCount, maxRetries int) {
+func (m *Manager) emitEvent(streamID, event, message, errMsg string) {
+	m.emitEventWithMode(streamID, "", event, message, errMsg, 0, 0)
+}
+
+func (m *Manager) emitEventWithMode(
+	streamID string,
+	mode types.StreamMode,
+	event string,
+	message string,
+	errMsg string,
+	retryCount int,
+	maxRetries int,
+) {
 	m.mu.RLock()
 	cb := m.onEvent
 	getName := m.getStreamName
+	modeText := ""
+	if mode != "" {
+		modeText = string(mode.OrDefault())
+	} else if stream, exists := m.streams[streamID]; exists && stream.mode != "" {
+		modeText = string(stream.mode.OrDefault())
+	}
 	m.mu.RUnlock()
 
 	if cb == nil {
@@ -136,7 +154,7 @@ func (m *Manager) emitEvent(streamID, event, message, errMsg string, retryCount,
 	if getName != nil {
 		name = getName(streamID)
 	}
-	cb(streamID, name, event, message, errMsg, retryCount, maxRetries)
+	cb(streamID, name, modeText, event, message, errMsg, retryCount, maxRetries)
 }
 
 // maybeEmitStable emits stream_stable only for the same running stream instance.
@@ -145,9 +163,10 @@ func (m *Manager) maybeEmitStable(id string, started *Stream) {
 	m.mu.RLock()
 	cur, exists := m.streams[id]
 	stable := exists && cur == started && cur.state == types.ProcessRunning
+	mode := started.mode
 	m.mu.RUnlock()
 	if stable {
-		m.emitEvent(id, "stream_stable", "Stream connected and stable", "", 0, 0)
+		m.emitEventWithMode(id, mode, "stream_stable", "Stream connected and stable", "", 0, 0)
 	}
 }
 
@@ -280,7 +299,15 @@ func (m *Manager) startCaller(stream *types.Stream) (bool, error) {
 
 	go m.runWriter(stream.ID, s)
 
-	m.emitEvent(stream.ID, "stream_started", fmt.Sprintf("Connecting to %s", stream.Endpoint()), "", 0, 0)
+	m.emitEventWithMode(
+		stream.ID,
+		stream.ModeOrDefault(),
+		"stream_started",
+		fmt.Sprintf("Connecting to %s", stream.Endpoint()),
+		"",
+		0,
+		0,
+	)
 
 	// Guard the stable event against restarts during the stability window.
 	go func() {
@@ -366,7 +393,15 @@ func (m *Manager) startListenerFanout(stream *types.Stream) (bool, error) {
 	m.streams[stream.ID] = s
 	m.mu.Unlock()
 
-	m.emitEvent(stream.ID, "stream_started", fmt.Sprintf("Listening on %s", stream.Endpoint()), "", 0, 0)
+	m.emitEventWithMode(
+		stream.ID,
+		types.StreamModeListener,
+		"stream_started",
+		fmt.Sprintf("Listening on %s", stream.Endpoint()),
+		"",
+		0,
+		0,
+	)
 	return true, nil
 }
 
@@ -559,6 +594,7 @@ func (m *Manager) Stop(streamID string) error {
 
 		slog.Info("stopping listener stream", "stream_id", streamID)
 		m.stopListenerResources(streamID, stream)
+		m.emitEvent(streamID, "stream_stopped", "Stream stopped by user", "")
 
 		m.mu.Lock()
 		if m.streams[streamID] == stream {
@@ -566,7 +602,6 @@ func (m *Manager) Stop(streamID string) error {
 		}
 		m.mu.Unlock()
 
-		m.emitEvent(streamID, "stream_stopped", "Stream stopped by user", "", 0, 0)
 		return nil
 	}
 
@@ -898,11 +933,11 @@ func (m *Manager) handleStreamExit(
 
 	switch classifyStreamExit(mode, err, cause) {
 	case streamExitIntentionalStop:
-		m.emitEvent(streamID, "stream_stopped", "Stream stopped by user", "", 0, 0)
+		m.emitEventWithMode(streamID, mode, "stream_stopped", "Stream stopped by user", "", 0, 0)
 		return
 	case streamExitNormalStop:
 		m.ResetRetry(streamID)
-		m.emitEvent(streamID, "stream_stopped", "Stream ended normally", "", 0, 0)
+		m.emitEventWithMode(streamID, mode, "stream_stopped", "Stream ended normally", "", 0, 0)
 		return
 	case streamExitFailure:
 		// Handled by the shared error path below.
@@ -916,7 +951,7 @@ func (m *Manager) handleStreamExit(
 			slog.Error("stream error", "stream_id", streamID, "error", errMsg)
 		}
 		m.SetError(streamID, errMsg)
-		m.emitEvent(streamID, "stream_error", "Stream failed", errMsg, 0, 0)
+		m.emitEventWithMode(streamID, mode, "stream_error", "Stream failed", errMsg, 0, 0)
 
 		if runDuration >= types.SuccessThreshold {
 			m.ResetRetry(streamID)
@@ -989,7 +1024,7 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 		maxRetries := stream.MaxRetriesOrDefault()
 		slog.Info("stream stopped, waiting before retry",
 			"stream_id", streamID, "delay", retryDelay, "retry", retryCount, "max_retries", maxRetries)
-		m.emitEvent(streamID, "stream_retry",
+		m.emitEventWithMode(streamID, mode, "stream_retry",
 			fmt.Sprintf("Retrying in %s", retryDelay.Round(time.Second)),
 			"", retryCount, maxRetries)
 
@@ -1074,7 +1109,7 @@ func (m *Manager) monitorListenerEncoder(streamID string, ctx StreamContext, sto
 			maxRetries := cfg.MaxRetriesOrDefault()
 			slog.Info("listener encoder stopped, waiting before retry",
 				"stream_id", streamID, "delay", retryDelay, "retry", retryCount, "max_retries", maxRetries)
-			m.emitEvent(streamID, "stream_retry",
+			m.emitEventWithMode(streamID, types.StreamModeListener, "stream_retry",
 				fmt.Sprintf("Retrying encoder in %s", retryDelay.Round(time.Second)),
 				"", retryCount, maxRetries)
 
@@ -1145,7 +1180,7 @@ func (m *Manager) recordListenerEncoderFailure(
 	stream.encoderMu.Unlock()
 
 	slog.Error("listener encoder error", "stream_id", streamID, "error", errMsg)
-	m.emitEvent(streamID, "stream_error", "Listener encoder failed", errMsg, 0, 0)
+	m.emitEventWithMode(streamID, stream.mode, "stream_error", "Listener encoder failed", errMsg, 0, 0)
 
 	m.mu.Lock()
 	if cur, exists := m.streams[streamID]; exists && cur == stream {

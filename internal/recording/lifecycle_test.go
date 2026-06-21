@@ -85,6 +85,25 @@ func TestQueueForUploadAfterWorkerStopPersistsToRetryQueue(t *testing.T) {
 	}
 }
 
+func TestRecorderStatusReportsPendingUploads(t *testing.T) {
+	t.Parallel()
+
+	r, err := NewGenericRecorder(GenericRecorderConfig{
+		Recorder: testS3Recorder(),
+		SpoolDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	r.retryQueue = []pendingUpload{{}, {}}
+	r.mu.Unlock()
+
+	if got := r.Status().PendingUploads; got != 2 {
+		t.Fatalf("PendingUploads = %d, want 2", got)
+	}
+}
+
 func TestRemoveRecorderStopsAndRemoves(t *testing.T) {
 	m, err := NewManager("", t.TempDir(), 60, nil)
 	if err != nil {

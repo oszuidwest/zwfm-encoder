@@ -116,7 +116,7 @@ func TestMaybeEmitStableOnlyForSameRunningInstance(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := NewManager("ffmpeg")
 			var events []string
-			m.SetEventCallback(func(_, _, event, _, _ string, _, _ int) {
+			m.SetEventCallback(func(_, _, _, event, _, _ string, _, _ int) {
 				events = append(events, event)
 			}, nil)
 			started := &Stream{state: types.ProcessRunning}
@@ -130,6 +130,45 @@ func TestMaybeEmitStableOnlyForSameRunningInstance(t *testing.T) {
 		})
 	}
 }
+
+func TestEmitEventIncludesRuntimeStreamMode(t *testing.T) {
+	t.Parallel()
+
+	const id = "listener-1"
+	m := NewManager("ffmpeg")
+	m.streams[id] = &Stream{
+		state: types.ProcessRunning,
+		mode:  types.StreamModeListener,
+	}
+
+	var gotMode string
+	m.SetEventCallback(func(_, _, mode, _, _, _ string, _, _ int) {
+		gotMode = mode
+	}, nil)
+
+	m.emitEvent(id, "stream_error", "Listener encoder failed", "boom")
+	if gotMode != string(types.StreamModeListener) {
+		t.Fatalf("mode = %q, want %q", gotMode, types.StreamModeListener)
+	}
+}
+
+func TestEmitEventWithModeUsesExplicitModeWithoutRuntimeStream(t *testing.T) {
+	t.Parallel()
+
+	const id = "caller-1"
+	m := NewManager("ffmpeg")
+
+	var gotMode string
+	m.SetEventCallback(func(_, _, mode, _, _, _ string, _, _ int) {
+		gotMode = mode
+	}, nil)
+
+	m.emitEventWithMode(id, types.StreamModeCaller, "stream_stopped", "Stream ended normally", "", 0, 0)
+	if gotMode != string(types.StreamModeCaller) {
+		t.Fatalf("mode = %q, want %q", gotMode, types.StreamModeCaller)
+	}
+}
+
 func TestStatusesNeverMarksListenerStable(t *testing.T) {
 	t.Parallel()
 	const id = "listener-1"

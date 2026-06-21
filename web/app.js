@@ -28,12 +28,6 @@ const TIME_FORMATTER = new Intl.DateTimeFormat('nl-NL', {
     minute: '2-digit',
     second: '2-digit',
 });
-const DATE_FORMATTER = new Intl.DateTimeFormat('nl-NL', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-});
 
 // IEC 60268-10 Type I: 20 dB fallback in 1.7 seconds.
 const PPM_DECAY_DB_PER_SEC = 20 / 1.7;
@@ -60,6 +54,8 @@ const API = {
     RECORDING_REGENERATE_KEY: '/api/recording/regenerate-key',
 };
 
+const EVENT_KEYS = window.eventKeyBuilders;
+
 const EVENT_LABELS = {
     stream_started: 'Started',
     stream_stable: 'Connected',
@@ -83,28 +79,11 @@ const EVENT_LABELS = {
     cleanup_completed: 'Cleanup',
 };
 
-const EVENT_SEVERITY = {
-    stream_error: 'error',
-    stream_retry: 'warning',
-    stream_stable: 'success',
-    silence_start: 'warning',
-    silence_end: 'success',
-    audio_dump_ready: 'info',
-    channel_imbalance_start: 'warning',
-    channel_imbalance_end: 'success',
-    recorder_error: 'error',
-    upload_failed: 'error',
-    upload_abandoned: 'error',
-    upload_completed: 'success',
-    cleanup_completed: 'success',
-    upload_retry: 'warning',
-};
-
-const EVENT_CATEGORY_BADGE = {
-    stream: 'S',
-    audio: 'A',
-    recorder: 'R',
-    system: '•',
+const EVENT_CATEGORY_LABELS = {
+    stream: 'Streams',
+    audio: 'Audio',
+    recorder: 'Recording',
+    unknown: 'System',
 };
 
 const RECORDER_STORAGE_LABELS = {
@@ -200,7 +179,7 @@ const copyTextToClipboard = async (text) => {
             await navigator.clipboard.writeText(text);
             return;
         } catch {
-            // Fall through to the legacy path for browsers that deny clipboard permissions.
+            // Fall through to document.execCommand for browsers that deny clipboard permissions.
         }
     }
     copyTextFallback(text);
@@ -330,17 +309,33 @@ const deepClone = (obj) => typeof structuredClone === 'function'
     ? structuredClone(obj)
     : JSON.parse(JSON.stringify(obj));
 
-const isAudioEventType = (type = '') => (
-    type.startsWith('silence_') ||
-    type === 'audio_dump_ready' ||
-    type.startsWith('channel_imbalance_')
+const normalizeEventSeverity = (severity) => (
+    ['error', 'warning', 'success', 'info'].includes(severity) ? severity : 'info'
 );
 
-const isRecorderEventType = (type = '') => (
-    type.startsWith('recorder_') ||
-    type.startsWith('upload_') ||
-    type === 'cleanup_completed'
+const normalizeEventCategory = (category) => (
+    ['stream', 'audio', 'recorder'].includes(category) ? category : 'unknown'
 );
+
+const normalizeEventReason = (reason) => (
+    ['problem', 'recovery', 'lifecycle', 'routine'].includes(reason) ? reason : 'unknown'
+);
+
+const emptyEventGroups = () => ({
+    attention: [],
+    resolved: [],
+    activity: [],
+    routine: [],
+    routineCount: 0,
+});
+
+const normalizeEventGroups = (groups = {}) => ({
+    attention: Array.isArray(groups.attention) ? groups.attention : [],
+    resolved: Array.isArray(groups.resolved) ? groups.resolved : [],
+    activity: Array.isArray(groups.activity) ? groups.activity : [],
+    routine: Array.isArray(groups.routine) ? groups.routine : [],
+    routineCount: Number.isFinite(groups.routineCount) ? groups.routineCount : 0,
+});
 
 document.addEventListener('alpine:init', () => {
     Alpine.data('encoderApp', () => ({
@@ -389,13 +384,16 @@ document.addEventListener('alpine:init', () => {
 
         // Event history includes stream, audio, and recorder events.
         events: [],
-        eventFilter: '',
+        eventHistoryGroups: emptyEventGroups(),
+        eventsError: '',
         eventsLoading: false,
         eventsHasMore: false,
-        eventsOffset: 0,
+        eventsWindowSize: EVENT_PAGE_SIZE,
+        eventOpenRows: {},
 
         devices: [],
         levels: { ...DEFAULT_LEVELS },
+        liveAudioIssues: { silence: false, imbalance: false },
         vuMode: readStorage(STORAGE_KEYS.VU_MODE, 'peak'),
         clipActive: false,
         clipTimeout: null,
@@ -732,6 +730,16 @@ document.addEventListener('alpine:init', () => {
             updateHold(levels.display_right, this.levels.hold_right ?? -60, this.levels.hold_right_time ?? 0, 'right');
 
             this.levels = levels;
+            const liveAudioIssues = {
+                silence: levels.silence_level === 'active',
+                imbalance: levels.channel_imbalance_level === 'active',
+            };
+            if (
+                liveAudioIssues.silence !== this.liveAudioIssues.silence ||
+                liveAudioIssues.imbalance !== this.liveAudioIssues.imbalance
+            ) {
+                this.liveAudioIssues = liveAudioIssues;
+            }
             const newSilenceState = this.getSilenceState();
 
             if (newSilenceState !== prevSilenceState) {
@@ -1704,28 +1712,30 @@ document.addEventListener('alpine:init', () => {
          */
         async loadEvents(reset = true) {
             if (reset) {
-                this.eventsOffset = 0;
+                this.eventsWindowSize = EVENT_PAGE_SIZE;
                 this.events = [];
+                this.eventHistoryGroups = emptyEventGroups();
+                this.eventOpenRows = {};
             }
+            this.eventsError = '';
             this.eventsLoading = true;
             try {
+                // The API groups over the returned window, so load-more expands
+                // the newest-first window instead of asking for a separate page.
                 const params = new URLSearchParams({
-                    limit: String(EVENT_PAGE_SIZE),
-                    offset: String(this.eventsOffset),
+                    limit: String(this.eventsWindowSize),
+                    offset: '0',
                 });
-                if (this.eventFilter) {
-                    params.set('type', this.eventFilter);
-                }
                 const data = await requestJSON(`/api/events?${params}`);
                 const newEvents = data.events || [];
-                if (reset) {
-                    this.events = newEvents;
-                } else {
-                    this.events = [...this.events, ...newEvents];
-                }
+                this.events = newEvents;
+                this.eventHistoryGroups = normalizeEventGroups(data.groups);
                 this.eventsHasMore = data.has_more || false;
+                return true;
             } catch (error) {
                 console.error('Failed to load events:', error);
+                this.eventsError = `Could not load events: ${error?.message || 'request failed'}`;
+                return false;
             } finally {
                 this.eventsLoading = false;
             }
@@ -1735,83 +1745,49 @@ document.addEventListener('alpine:init', () => {
          * Loads more events (pagination).
          */
         async loadMoreEvents() {
-            this.eventsOffset += EVENT_PAGE_SIZE;
-            await this.loadEvents(false);
+            const previousWindowSize = this.eventsWindowSize;
+            this.eventsWindowSize += EVENT_PAGE_SIZE;
+            const loaded = await this.loadEvents(false);
+            if (!loaded) this.eventsWindowSize = previousWindowSize;
         },
 
-        /**
-         * Formats an event timestamp as short time (HH:MM:SS).
-         * @param {string} ts - ISO timestamp
-         * @returns {string} Formatted time string
-         */
         formatEventTime(ts) {
             if (!ts) return '';
             return TIME_FORMATTER.format(new Date(ts));
         },
 
-        /**
-         * Returns a date key (YYYY-MM-DD) for grouping events by day.
-         * @param {string} ts - ISO timestamp
-         * @returns {string} Date key
-         */
-        getEventDateKey(ts) {
-            if (!ts) return '';
-            const d = new Date(ts);
-            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        formatRelativeEventTime(value) {
+            const time = typeof value === 'number' ? value : new Date(value).getTime();
+            if (!Number.isFinite(time)) return '';
+
+            const diff = Math.max(0, Date.now() - time);
+            if (diff < MS_PER_MINUTE) return 'just now';
+            if (diff < 60 * MS_PER_MINUTE) return `${Math.floor(diff / MS_PER_MINUTE)}m ago`;
+            if (diff < MS_PER_DAY) return `${Math.floor(diff / (60 * MS_PER_MINUTE))}h ago`;
+            return `${Math.floor(diff / MS_PER_DAY)}d ago`;
         },
 
-        /**
-         * Checks whether the event at the given index starts a new date group.
-         * @param {number} index - Event index in the events array
-         * @returns {boolean} True if this event's date differs from the previous event
-         */
-        isNewDateGroup(index) {
-            if (index === 0) return true;
-            return this.getEventDateKey(this.events[index].ts) !== this.getEventDateKey(this.events[index - 1].ts);
+        eventTimeValue(event) {
+            const time = new Date(event?.ts).getTime();
+            return Number.isFinite(time) ? time : 0;
         },
 
-        /**
-         * Formats a date label for date separator rows.
-         * Returns "Today", "Yesterday", or a localized date string.
-         * @param {string} ts - ISO timestamp
-         * @returns {string} Human-readable date label
-         */
-        formatEventDate(ts) {
-            if (!ts) return '';
-            const date = new Date(ts);
-            const now = new Date();
-            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-            const eventDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-            const diffDays = Math.round((today - eventDay) / MS_PER_DAY);
-
-            if (diffDays === 0) return 'Today';
-            if (diffDays === 1) return 'Yesterday';
-            return DATE_FORMATTER.format(date);
+        getEventSeverity(event) {
+            return normalizeEventSeverity(event?.severity);
         },
 
-        /**
-         * Gets the severity level for an event type.
-         * @param {string} type - Event type
-         * @returns {string} Severity: 'error', 'warning', 'success', or 'info'
-         */
-        getEventSeverity(type) {
-            return EVENT_SEVERITY[type] || 'info';
+        getEventCategory(event) {
+            return normalizeEventCategory(event?.category);
         },
 
-        /**
-         * Gets a short label for an event type.
-         * @param {string} type - Event type
-         * @returns {string} Short label
-         */
+        getEventReason(event) {
+            return normalizeEventReason(event?.reason);
+        },
+
         getEventLabel(type) {
             return EVENT_LABELS[type] || type;
         },
 
-        /**
-         * Gets the detail text for an event (error message, stream name, etc.).
-         * @param {Object} event - Event object
-         * @returns {string} Detail text
-         */
         getEventDetail(event) {
             const details = event.details || {};
             const streamName = details.stream_name || '';
@@ -1851,6 +1827,11 @@ document.addEventListener('alpine:init', () => {
             if (event.type === 'recorder_error' || event.type === 'upload_failed') {
                 return details.error || 'Unknown error';
             }
+            if (event.type === 'upload_retry' || event.type === 'upload_abandoned') {
+                const retryNum = details.retry ? `Retry #${details.retry}` : '';
+                const error = details.error || '';
+                return [retryNum, error].filter(Boolean).join(' - ') || 'Unknown error';
+            }
             if (event.type === 'recorder_file' || event.type === 'upload_queued' || event.type === 'upload_completed') {
                 const filename = details.filename || '';
                 const codec = details.codec || '';
@@ -1871,52 +1852,283 @@ document.addEventListener('alpine:init', () => {
             return streamName;
         },
 
-        /**
-         * Gets the text for stream badge.
-         * @param {Object} event - Event object
-         * @returns {string} Short stream identifier
-         */
-        isAudioEvent(event) {
-            return isAudioEventType(event.type);
-        },
-
-        getStreamBadgeText(event) {
-            // Silence events show "Audio" (they're system-wide, not stream-specific)
-            if (this.isAudioEvent(event)) {
-                return 'Audio';
-            }
-            // Recorder events show recorder name
-            if (isRecorderEventType(event.type)) {
-                const details = event.details || {};
-                const name = details.recorder_name || 'Recorder';
-                return name.length > 8 ? name.slice(0, 8) : name;
-            }
-            // Stream events show stream name (shortened if needed)
+        getEventSource(event) {
             const details = event.details || {};
-            const name = details.stream_name || event.stream_id || 'Stream';
-            // Return first part if it's a compound name, or truncate
-            return name.length > 8 ? name.slice(0, 8) : name;
+            switch (this.getEventCategory(event)) {
+                case 'audio':
+                    return 'Audio';
+                case 'recorder':
+                    return details.recorder_name || 'Recorder';
+                case 'stream':
+                    return details.stream_name || event.stream_id || 'Stream';
+                default:
+                    return EVENT_CATEGORY_LABELS.unknown;
+            }
         },
 
-        /**
-         * Gets the event category for styling.
-         * @param {Object} event - Event object
-         * @returns {string} Category: 'stream', 'audio', 'recorder', or 'system'
-         */
-        getEventCategory(event) {
-            if (isAudioEventType(event.type)) return 'audio';
-            if (isRecorderEventType(event.type)) return 'recorder';
-            if (event.type?.startsWith('stream_')) return 'stream';
-            return 'system';
+        eventGroups() {
+            const history = this.eventHistoryGroups || emptyEventGroups();
+            const liveAttention = this.buildLiveAttentionItems();
+            const liveDedupeKeys = new Set(
+                liveAttention.flatMap(item => this.eventItemDedupeKeys(item)),
+            );
+            return {
+                attention: [
+                    ...liveAttention,
+                    ...history.attention.filter(item => (
+                        !this.eventItemDedupeKeys(item).some(key => liveDedupeKeys.has(key))
+                    )),
+                ],
+                resolved: history.resolved,
+                activity: history.activity,
+                routine: history.routine,
+                routineCount: history.routineCount,
+            };
         },
 
-        /**
-         * Gets the short badge letter for event category.
-         * @param {Object} event - Event object
-         * @returns {string} Single letter: 'S', 'A', 'R', or '•'
-         */
-        getEventCategoryBadge(event) {
-            return EVENT_CATEGORY_BADGE[this.getEventCategory(event)] || EVENT_CATEGORY_BADGE.system;
+        eventSummaryState(groups) {
+            if (this.eventsError) return 'error';
+            return groups.attention.length > 0 ? 'attention' : 'clear';
+        },
+
+        eventSummaryText(groups) {
+            if (this.eventsError) return 'History unavailable';
+            if (groups.attention.length > 0) {
+                const resolved = groups.resolved.length > 0 ? ` / ${groups.resolved.length} resolved` : '';
+                return `${groups.attention.length} need attention${resolved}`;
+            }
+            return 'All clear';
+        },
+
+        eventSummaryMutedText(groups) {
+            if (this.eventsError) return 'Could not load events';
+            const parts = [];
+            if (groups.attention.length === 0 && groups.resolved.length > 0) parts.push(`${groups.resolved.length} resolved`);
+            if (groups.activity.length > 0) parts.push(`${groups.activity.length} activity`);
+            if (groups.routineCount > 0) parts.push(`${groups.routineCount} routine`);
+            if (parts.length > 0) return parts.join(', ');
+            return groups.attention.length > 0 ? '' : 'No history loaded';
+        },
+
+        eventItemWhen(item, section) {
+            if (item.when) return item.when;
+
+            const time = this.eventItemReferenceTime(item, section);
+            if (!time) return '';
+
+            const relative = this.formatRelativeEventTime(time);
+            if (!relative) return '';
+            if (section === 'routine') return `last ${relative}`;
+            if (item.statusText === 'Ongoing') return `since ${relative}`;
+            return relative;
+        },
+
+        eventItemReferenceTime(item, section) {
+            const events = item.events || [];
+            if (section === 'resolved' && events.length > 0) {
+                const lastTime = this.eventTimeValue(events[events.length - 1]);
+                if (lastTime) return lastTime;
+            }
+            if (Number.isFinite(item.sortTs)) return item.sortTs;
+            return this.eventTimeValue(events[0]);
+        },
+
+        buildLiveAttentionItems() {
+            const items = [];
+            for (const stream of this.streams) {
+                const item = this.buildLiveStreamIssue(stream);
+                if (item) items.push(item);
+            }
+            const silence = this.buildLiveSilenceIssue();
+            const imbalance = this.buildLiveImbalanceIssue();
+            if (silence) items.push(silence);
+            if (imbalance) items.push(imbalance);
+            for (const recorder of this.recorders) {
+                const item = this.buildLiveRecorderIssue(recorder);
+                if (item) items.push(item);
+            }
+            return items;
+        },
+
+        buildLiveStreamIssue(stream) {
+            if (!stream.enabled) return null;
+            const status = this.streamStatuses[stream.id];
+            if (!status?.state) return null;
+
+            const isListener = this.isListenerStream(stream);
+            const problem = isListener
+                ? status.exhausted || status.state === 'error' || (status.state === 'running' && !status.encoder_running)
+                : !(status.state === 'running' && status.stable && !status.exhausted);
+            if (!problem) return null;
+
+            const latest = this.latestStreamProblemEvent(stream.id);
+            const severity = status.exhausted || status.state === 'error' ? 'error' : 'warning';
+            const tries = status.retry_count ? `${status.retry_count} ${status.retry_count === 1 ? 'try' : 'tries'}` : '';
+            const title = isListener ? 'Listener encoder issue' : 'Stream disconnected';
+            const detail = status.error || (latest ? this.getEventDetail(latest) : '') || this.streamIssueDetail(status, isListener);
+
+            return {
+                key: `live:stream:${stream.id}`,
+                // Keep live source keys byte-identical to backend dedupe keys in internal/eventlog/groups.go.
+                sourceKey: EVENT_KEYS.streamSourceKey(stream.id),
+                category: 'stream',
+                severity,
+                title,
+                source: this.streamEndpoint(stream),
+                statusText: status.exhausted ? 'Failed' : 'Ongoing',
+                chips: tries ? [tries] : [],
+                detail,
+                when: latest ? `since ${this.formatRelativeEventTime(latest.ts)}` : 'now',
+                events: latest ? [latest] : [],
+            };
+        },
+
+        streamIssueDetail(status, isListener) {
+            if (status.state === 'running' && isListener && !status.encoder_running) return 'Encoder process is not running';
+            if (status.state === 'running') return 'Waiting for stable output';
+            if (status.state === 'starting') return isListener ? 'Starting listener' : 'Connecting';
+            if (status.state === 'stopping') return 'Stopping';
+            return status.state || 'Unavailable';
+        },
+
+        latestStreamProblemEvent(streamID) {
+            return this.events.find(event => (
+                this.getEventCategory(event) === 'stream' &&
+                this.getEventReason(event) === 'problem' &&
+                event.stream_id === streamID
+            ));
+        },
+
+        buildLiveSilenceIssue() {
+            if (!this.liveAudioIssues.silence) return null;
+            const latest = this.events.find(event => event.type === 'silence_start');
+            return {
+                key: 'live:audio:silence',
+                // Keep live source keys byte-identical to backend dedupe keys in internal/eventlog/groups.go.
+                sourceKey: EVENT_KEYS.audioSilenceSourceKey(),
+                category: 'audio',
+                severity: 'warning',
+                title: 'Silence on input',
+                source: 'Audio',
+                statusText: 'Ongoing',
+                chips: [],
+                detail: latest ? this.getEventDetail(latest) : 'Silence active',
+                when: latest ? `since ${this.formatRelativeEventTime(latest.ts)}` : 'now',
+                events: latest ? [latest] : [],
+            };
+        },
+
+        buildLiveImbalanceIssue() {
+            if (!this.liveAudioIssues.imbalance) return null;
+            const latest = this.events.find(event => event.type === 'channel_imbalance_start');
+            return {
+                key: 'live:audio:imbalance',
+                // Keep live source keys byte-identical to backend dedupe keys in internal/eventlog/groups.go.
+                sourceKey: EVENT_KEYS.audioImbalanceSourceKey(),
+                category: 'audio',
+                severity: 'warning',
+                title: 'Channel imbalance',
+                source: 'Audio',
+                statusText: 'Ongoing',
+                chips: [],
+                detail: latest ? this.getEventDetail(latest) : 'Channel imbalance active',
+                when: latest ? `since ${this.formatRelativeEventTime(latest.ts)}` : 'now',
+                events: latest ? [latest] : [],
+            };
+        },
+
+        buildLiveRecorderIssue(recorder) {
+            if (!recorder.enabled) return null;
+            const status = this.recorderStatuses[recorder.id];
+            if (!status?.state) return null;
+
+            const pending = status.pending_uploads || 0;
+            const errored = status.state === 'error';
+            if (!errored && pending === 0) return null;
+
+            const chips = [];
+            if (pending > 0) chips.push(`${pending} retry upload${pending === 1 ? '' : 's'}`);
+            if (recorder.recording_mode) chips.push(recorder.recording_mode);
+            const sourceKey = errored
+                ? this.recorderStatusSourceKey(recorder.name)
+                : this.recorderUploadSourceKey(recorder.name);
+
+            return {
+                key: `live:recorder:${recorder.id}`,
+                sourceKey,
+                category: 'recorder',
+                severity: errored ? 'error' : 'warning',
+                title: errored ? 'Recorder error' : 'Upload retry pending',
+                source: recorder.name || 'Recorder',
+                statusText: errored ? 'Unresolved' : 'Ongoing',
+                chips,
+                detail: status.error || '',
+                when: 'now',
+                events: this.latestRecorderProblemEvents(recorder.name),
+            };
+        },
+
+        recorderStatusSourceKey(recorderName) {
+            // Keep live recorder keys byte-identical to backend dedupe keys in internal/eventlog/groups.go.
+            return EVENT_KEYS.recorderStatusSourceKey(recorderName);
+        },
+
+        recorderUploadSourceKey(recorderName) {
+            // Upload keys are intentionally recorder-wide so live retry state hides per-file history.
+            return EVENT_KEYS.recorderUploadSourceKey(recorderName);
+        },
+
+        latestRecorderProblemEvents(recorderName) {
+            return this.events.filter(event => {
+                const details = event.details || {};
+                return this.getEventCategory(event) === 'recorder' &&
+                    this.getEventReason(event) === 'problem' &&
+                    details.recorder_name === recorderName;
+            }).slice(0, 3);
+        },
+
+        eventItemDedupeKeys(item) {
+            // Keep these keys aligned with live issue keys so live state suppresses matching history.
+            return [item.sourceKey, item.dedupeKey].filter(Boolean);
+        },
+
+        eventRowKey(event, index) {
+            return `event:${event.type}:${event.ts}:${event.stream_id || ''}:${index}`;
+        },
+
+        eventRowStateClass(item) {
+            switch (item.severity) {
+                case 'error':
+                    return 'state-danger';
+                case 'warning':
+                    return 'state-warning';
+                case 'success':
+                    return 'state-success';
+                default:
+                    return 'state-stopped';
+            }
+        },
+
+        eventItemHasTrail(item) {
+            return (item.events || []).length > 1;
+        },
+
+        visibleEventTrail(item) {
+            const events = item.events || [];
+            return item.trailLimit ? events.slice(0, item.trailLimit) : events;
+        },
+
+        eventTrailMoreCount(item) {
+            const events = item.events || [];
+            return item.trailLimit && events.length > item.trailLimit ? events.length - item.trailLimit : 0;
+        },
+
+        toggleEventRow(key) {
+            this.eventOpenRows = { ...this.eventOpenRows, [key]: !this.eventOpenRows[key] };
+        },
+
+        isEventRowOpen(key) {
+            return Boolean(this.eventOpenRows[key]);
         },
 
         /**

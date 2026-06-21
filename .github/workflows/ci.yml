@@ -13,6 +13,7 @@ name: CI
       - '.golangci.yml'
       - '.golangci.yaml'
       - 'web/**'
+      - 'tests/**'
       - 'package.json'
       - 'biome.json'
       - '.htmlhintrc'
@@ -25,6 +26,7 @@ name: CI
       - '.golangci.yml'
       - '.golangci.yaml'
       - 'web/**'
+      - 'tests/**'
       - 'package.json'
       - 'biome.json'
       - '.htmlhintrc'
@@ -68,3 +70,6 @@ jobs:
 
       - name: Lint
         run: bun run lint
+
+      - name: Test JavaScript
+        run: bun run test:js

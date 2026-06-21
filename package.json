@@ -5,7 +5,8 @@
   "scripts": {
     "lint": "bun run lint:html && bun run lint:code",
     "lint:html": "htmlhint web/*.html",
-    "lint:code": "biome check web/"
+    "lint:code": "biome check web/",
+    "test:js": "bun test tests/*.test.js"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.0",

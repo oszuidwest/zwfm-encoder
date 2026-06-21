@@ -168,7 +168,63 @@ func TestReadLastIncludesChannelImbalanceUnderAudioFilter(t *testing.T) {
 	}
 	assertMessages(t, got, []string{"imbalance-end", "imbalance-start"})
 }
-func writeEvents(t *testing.T, path string, events []Event) {
+
+func TestEventJSONDoesNotPersistClassification(t *testing.T) {
+	t.Parallel()
+
+	line := mustMarshal(t, &Event{Type: UploadFailed})
+	for _, want := range []string{`"type":"upload_failed"`} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("marshaled event = %s, want to contain %s", line, want)
+		}
+	}
+	for _, forbidden := range []string{`"severity"`, `"category"`, `"reason"`} {
+		if strings.Contains(line, forbidden) {
+			t.Fatalf("marshaled event = %s, want no %s field", line, forbidden)
+		}
+	}
+}
+
+func TestLogStreamPersistsModeInDetails(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "encoder.jsonl")
+	logger, err := NewLogger(path)
+	if err != nil {
+		t.Fatalf("NewLogger() error = %v", err)
+	}
+	if err := logger.LogStream(
+		StreamStarted,
+		"stream-1",
+		"Main Stream",
+		"listener",
+		"Listening on 0.0.0.0:9000",
+		"",
+		0,
+		0,
+	); err != nil {
+		t.Fatalf("LogStream() error = %v", err)
+	}
+	if err := logger.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	data, err := os.ReadFile(path) //nolint:gosec // Test reads a controlled temp path.
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	var event struct {
+		Details StreamDetails `json:"details"`
+	}
+	if err := json.Unmarshal(data, &event); err != nil {
+		t.Fatalf("unmarshal event: %v", err)
+	}
+	if got := event.Details.Mode; got != "listener" {
+		t.Fatalf("details.mode = %q, want listener", got)
+	}
+}
+
+func writeEvents(t testing.TB, path string, events []Event) {
 	t.Helper()
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) //nolint:gosec // Test path is under t.TempDir.
 	if err != nil {
@@ -185,6 +241,27 @@ func writeEvents(t *testing.T, path string, events []Event) {
 		t.Fatalf("close log: %v", err)
 	}
 }
+
+var benchmarkReadLastEvents []Event
+
+func BenchmarkReadLast(b *testing.B) {
+	path := filepath.Join(b.TempDir(), "encoder.jsonl")
+	events := benchmarkEventHistory(2000)
+	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
+		events[i], events[j] = events[j], events[i]
+	}
+	writeEvents(b, path, events)
+
+	b.ReportAllocs()
+	for b.Loop() {
+		var err error
+		benchmarkReadLastEvents, _, err = ReadLast(path, 500, 0, FilterAll)
+		if err != nil {
+			b.Fatalf("ReadLast() error = %v", err)
+		}
+	}
+}
+
 func mustMarshal(t *testing.T, event *Event) string {
 	t.Helper()
 	data, err := json.Marshal(&event)

@@ -4,16 +4,19 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/oszuidwest/zwfm-encoder/internal/audio"
-	"github.com/oszuidwest/zwfm-encoder/internal/config"
-	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
-	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/oszuidwest/zwfm-encoder/internal/audio"
+	"github.com/oszuidwest/zwfm-encoder/internal/config"
+	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
+	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
 func TestDerefReturnsValueWhenPresentFallbackWhenNil(t *testing.T) {
@@ -198,6 +201,108 @@ func TestBuildReadyResponseIgnoresListenerStreams(t *testing.T) {
 		t.Fatalf("production_monitored = %v, want 0", got)
 	}
 }
+
+func TestHandleAPIEventsDecoratesClassificationAndKeepsPagination(t *testing.T) {
+	t.Parallel()
+
+	logPath := filepath.Join(t.TempDir(), "encoder.jsonl")
+	writeAPIEvents(t, logPath, []eventlog.Event{
+		{
+			Timestamp: time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC),
+			Type:      eventlog.StreamStarted,
+			Message:   "Connecting to srt://example",
+		},
+		{
+			Timestamp: time.Date(2026, 6, 21, 10, 1, 0, 0, time.UTC),
+			Type:      eventlog.UploadFailed,
+		},
+		{
+			Timestamp: time.Date(2026, 6, 21, 10, 2, 0, 0, time.UTC),
+			Type:      eventlog.UploadCompleted,
+		},
+	})
+
+	server := freshServer(t)
+	rec := runJSONHandler(
+		t,
+		func(w http.ResponseWriter, r *http.Request) {
+			server.handleAPIEventsFromPath(w, r, logPath)
+		},
+		http.MethodGet,
+		"/api/events?limit=1&type=recorder",
+		"",
+	)
+	assertStatus(t, rec, http.StatusOK)
+	firstPage := decodeJSON[eventsResponseForTest](t, rec.Body.Bytes())
+	if !firstPage.HasMore {
+		t.Fatal("has_more = false, want true")
+	}
+	if len(firstPage.Events) != 1 {
+		t.Fatalf("len(events) = %d, want 1", len(firstPage.Events))
+	}
+	assertEventView(
+		t,
+		firstPage.Events[0],
+		eventlog.UploadCompleted,
+		eventlog.SeveritySuccess,
+		eventlog.CategoryRecorder,
+		eventlog.ReasonRoutine,
+	)
+	if firstPage.Groups.RoutineCount != 1 {
+		t.Fatalf("routine count = %d, want 1", firstPage.Groups.RoutineCount)
+	}
+
+	// Grouping is computed over the exact returned window. Non-UI callers using
+	// offset pagination can therefore split an incident across page boundaries.
+	rec = runJSONHandler(
+		t,
+		func(w http.ResponseWriter, r *http.Request) {
+			server.handleAPIEventsFromPath(w, r, logPath)
+		},
+		http.MethodGet,
+		"/api/events?limit=1&offset=1&type=recorder",
+		"",
+	)
+	assertStatus(t, rec, http.StatusOK)
+	secondPage := decodeJSON[eventsResponseForTest](t, rec.Body.Bytes())
+	if secondPage.HasMore {
+		t.Fatal("has_more = true, want false")
+	}
+	if len(secondPage.Events) != 1 {
+		t.Fatalf("len(events) = %d, want 1", len(secondPage.Events))
+	}
+	assertEventView(
+		t,
+		secondPage.Events[0],
+		eventlog.UploadFailed,
+		eventlog.SeverityError,
+		eventlog.CategoryRecorder,
+		eventlog.ReasonProblem,
+	)
+	if len(secondPage.Groups.Attention) != 1 {
+		t.Fatalf("attention groups = %d, want 1", len(secondPage.Groups.Attention))
+	}
+}
+
+func TestHandleAPIEventsReadFailureReturnsError(t *testing.T) {
+	t.Parallel()
+
+	logPath := t.TempDir()
+	server := freshServer(t)
+	rec := runJSONHandler(
+		t,
+		func(w http.ResponseWriter, r *http.Request) {
+			server.handleAPIEventsFromPath(w, r, logPath)
+		},
+		http.MethodGet,
+		"/api/events",
+		"",
+	)
+
+	assertStatus(t, rec, http.StatusInternalServerError)
+	assertErrorEqual(t, rec, "Could not read event history")
+}
+
 func readyFixture() readyInputs {
 	return readyInputs{
 		ffmpegAvailable:    true,
@@ -233,6 +338,61 @@ func readyFixture() readyInputs {
 		pendingUploads: 0,
 	}
 }
+
+type eventViewForTest struct {
+	Type     eventlog.EventType `json:"type"`
+	Severity eventlog.Severity  `json:"severity"`
+	Category eventlog.Category  `json:"category"`
+	Reason   eventlog.Reason    `json:"reason"`
+}
+
+type eventsResponseForTest struct {
+	Events  []eventViewForTest   `json:"events"`
+	Groups  eventlog.EventGroups `json:"groups"`
+	HasMore bool                 `json:"has_more"`
+}
+
+func writeAPIEvents(t *testing.T, path string, events []eventlog.Event) {
+	t.Helper()
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) //nolint:gosec // Test path is under t.TempDir.
+	if err != nil {
+		t.Fatalf("open log: %v", err)
+	}
+	enc := json.NewEncoder(file)
+	for i := range events {
+		if err := enc.Encode(&events[i]); err != nil {
+			_ = file.Close()
+			t.Fatalf("encode event: %v", err)
+		}
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close log: %v", err)
+	}
+}
+
+func assertEventView(
+	t *testing.T,
+	got eventViewForTest,
+	wantType eventlog.EventType,
+	wantSeverity eventlog.Severity,
+	wantCategory eventlog.Category,
+	wantReason eventlog.Reason,
+) {
+	t.Helper()
+	if got.Type != wantType {
+		t.Fatalf("type = %q, want %q", got.Type, wantType)
+	}
+	if got.Severity != wantSeverity {
+		t.Fatalf("severity = %q, want %q", got.Severity, wantSeverity)
+	}
+	if got.Category != wantCategory {
+		t.Fatalf("category = %q, want %q", got.Category, wantCategory)
+	}
+	if got.Reason != wantReason {
+		t.Fatalf("reason = %q, want %q", got.Reason, wantReason)
+	}
+}
+
 func healthFixture() healthInputs {
 	return healthInputs{
 		ffmpegAvailable: true,

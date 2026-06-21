@@ -725,53 +725,162 @@
                     </div>
                 </div>
 
-                <!-- Events Panel - Compact event log with stream identification -->
-                <div class="panel" role="tabpanel" id="panel-events" aria-labelledby="tab-events" x-show="settingsTab === 'events'" x-init="$watch('settingsTab', val => val === 'events' && loadEvents())">
-                    <div class="section">
-                        <div class="event-toolbar">
-                            <div class="event-filter-pills">
-                                <button type="button" class="filter-pill" :class="{ active: eventFilter === '' }" @click="eventFilter = ''; loadEvents(true)">All</button>
-                                <button type="button" class="filter-pill" :class="{ active: eventFilter === 'stream' }" @click="eventFilter = 'stream'; loadEvents(true)"><span class="filter-dot stream"></span>Streams</button>
-                                <button type="button" class="filter-pill" :class="{ active: eventFilter === 'audio' }" @click="eventFilter = 'audio'; loadEvents(true)"><span class="filter-dot audio"></span>Audio</button>
-                                <button type="button" class="filter-pill" :class="{ active: eventFilter === 'recorder' }" @click="eventFilter = 'recorder'; loadEvents(true)"><span class="filter-dot recorder"></span>Recorders</button>
-                            </div>
-                            <span class="event-count" x-show="events.length > 0" x-text="events.length + ' events'"></span>
-                        </div>
+                <!-- Events Panel - issue-first event view -->
+                <div class="panel events-panel" role="tabpanel" id="panel-events" aria-labelledby="tab-events" x-show="settingsTab === 'events'" x-data="{ groups: { attention: [], resolved: [], activity: [], routine: [], routineCount: 0 } }" x-effect="if (settingsTab === 'events') groups = eventGroups()" x-init="$watch('settingsTab', val => val === 'events' && loadEvents())">
+                    <div class="event-summary" :data-state="eventSummaryState(groups)">
+                        <span class="event-summary-main" x-text="eventSummaryText(groups)"></span>
+                        <span class="event-summary-muted" x-text="eventSummaryMutedText(groups)"></span>
                     </div>
-                    <div class="section section--flush">
-                        <div class="event-list" x-show="events.length > 0">
-                            <template x-for="(event, index) in events" :key="index">
-                                <div>
-                                <div class="event-date-separator" x-show="isNewDateGroup(index)">
-                                    <span class="event-date-label" x-text="formatEventDate(event.ts)"></span>
+
+                    <div class="event-list" x-show="events.length > 0 || groups.attention.length > 0">
+                        <template x-if="groups.attention.length > 0">
+                            <div>
+                                <div class="event-section-heading attention">
+                                    <span>Needs attention</span>
+                                    <span class="event-section-count" x-text="groups.attention.length"></span>
                                 </div>
-                                <article class="event-row" :data-severity="getEventSeverity(event.type)">
-                                    <div class="event-time-col">
-                                        <time class="event-time" :datetime="event.ts" :title="new Date(event.ts).toLocaleString('nl-NL')" x-text="formatEventTime(event.ts)"></time>
-                                    </div>
-                                    <div class="event-category-col">
-                                        <span class="category-badge" :class="getEventCategory(event)" x-text="getEventCategoryBadge(event)"></span>
-                                    </div>
-                                    <div class="event-content-col">
-                                        <div class="event-main">
-                                            <span class="severity-dot" :class="getEventSeverity(event.type)"></span>
-                                            <span class="event-source" x-text="getStreamBadgeText(event)"></span>
-                                            <span class="event-action" x-text="getEventLabel(event.type)"></span>
+                                <template x-for="item in groups.attention" :key="item.key">
+                                    <article class="event-row" :class="eventRowStateClass(item) + (isEventRowOpen(item.key) ? ' is-open' : '')">
+                                        <div class="event-row-main">
+                                            <span class="event-state-dot"></span>
+                                            <span class="event-title" x-text="item.title"></span>
+                                            <span class="event-source" x-text="item.source"></span>
+                                            <span class="event-status" :class="eventRowStateClass(item)" x-text="item.statusText"></span>
+                                            <button type="button" class="event-toggle" x-show="eventItemHasTrail(item)" :aria-expanded="isEventRowOpen(item.key).toString()" @click="toggleEventRow(item.key)" x-html="icons.chevronDown"></button>
                                         </div>
-                                        <p class="event-detail" x-show="getEventDetail(event)" x-text="getEventDetail(event)"></p>
-                                    </div>
-                                </article>
+                                        <div class="event-row-meta">
+                                            <template x-for="chip in item.chips" :key="chip">
+                                                <span class="event-chip" x-text="chip"></span>
+                                            </template>
+                                            <span class="event-detail" x-show="item.detail" x-text="item.detail"></span>
+                                            <span class="event-when" x-text="eventItemWhen(item, 'attention')"></span>
+                                        </div>
+                                        <div class="event-trail" x-show="isEventRowOpen(item.key)">
+                                            <template x-for="(trailEvent, trailIndex) in visibleEventTrail(item)" :key="eventRowKey(trailEvent, trailIndex)">
+                                                <div class="event-trail-row">
+                                                    <time class="event-trail-time" :datetime="trailEvent.ts" x-text="formatEventTime(trailEvent.ts)"></time>
+                                                    <span class="event-trail-label" x-text="getEventLabel(trailEvent.type)"></span>
+                                                    <span class="event-trail-detail" x-text="getEventDetail(trailEvent) || trailEvent.msg || ''"></span>
+                                                </div>
+                                            </template>
+                                            <div class="event-trail-more" x-show="eventTrailMoreCount(item) > 0" x-text="'+' + eventTrailMoreCount(item) + ' older events'"></div>
+                                        </div>
+                                    </article>
+                                </template>
+                            </div>
+                        </template>
+
+                        <template x-if="groups.resolved.length > 0">
+                            <div>
+                                <div class="event-section-heading">
+                                    <span>Resolved</span>
+                                    <span class="event-section-count" x-text="groups.resolved.length"></span>
                                 </div>
-                            </template>
-                        </div>
-                        <div class="event-empty" x-show="events.length === 0 && !eventsLoading">
-                            <p>No events yet</p>
-                        </div>
-                        <div class="event-loading" x-show="eventsLoading">
-                            <p>Loading...</p>
-                        </div>
-                        <button type="button" class="event-load-more" x-show="eventsHasMore && !eventsLoading" @click="loadMoreEvents()">Load older events</button>
+                                <template x-for="item in groups.resolved" :key="item.key">
+                                    <article class="event-row" :class="eventRowStateClass(item) + (isEventRowOpen(item.key) ? ' is-open' : '')">
+                                        <div class="event-row-main">
+                                            <span class="event-state-dot"></span>
+                                            <span class="event-title" x-text="item.title"></span>
+                                            <span class="event-source" x-text="item.source"></span>
+                                            <span class="event-status" :class="eventRowStateClass(item)" x-text="item.statusText"></span>
+                                            <button type="button" class="event-toggle" x-show="eventItemHasTrail(item)" :aria-expanded="isEventRowOpen(item.key).toString()" @click="toggleEventRow(item.key)" x-html="icons.chevronDown"></button>
+                                        </div>
+                                        <div class="event-row-meta">
+                                            <template x-for="chip in item.chips" :key="chip">
+                                                <span class="event-chip" x-text="chip"></span>
+                                            </template>
+                                            <span class="event-detail" x-show="item.detail" x-text="item.detail"></span>
+                                            <span class="event-when" x-text="eventItemWhen(item, 'resolved')"></span>
+                                        </div>
+                                        <div class="event-trail" x-show="isEventRowOpen(item.key)">
+                                            <template x-for="(trailEvent, trailIndex) in visibleEventTrail(item)" :key="eventRowKey(trailEvent, trailIndex)">
+                                                <div class="event-trail-row">
+                                                    <time class="event-trail-time" :datetime="trailEvent.ts" x-text="formatEventTime(trailEvent.ts)"></time>
+                                                    <span class="event-trail-label" x-text="getEventLabel(trailEvent.type)"></span>
+                                                    <span class="event-trail-detail" x-text="getEventDetail(trailEvent) || trailEvent.msg || ''"></span>
+                                                </div>
+                                            </template>
+                                            <div class="event-trail-more" x-show="eventTrailMoreCount(item) > 0" x-text="'+' + eventTrailMoreCount(item) + ' older events'"></div>
+                                        </div>
+                                    </article>
+                                </template>
+                            </div>
+                        </template>
+
+                        <template x-if="groups.activity.length > 0">
+                            <div>
+                                <div class="event-section-heading">
+                                    <span>Activity</span>
+                                    <span class="event-section-count" x-text="groups.activity.length"></span>
+                                </div>
+                                <template x-for="item in groups.activity" :key="item.key">
+                                    <article class="event-row" :class="eventRowStateClass(item)">
+                                        <div class="event-row-main">
+                                            <span class="event-state-dot"></span>
+                                            <span class="event-title" x-text="item.title"></span>
+                                            <span class="event-source" x-text="item.source"></span>
+                                            <span class="event-status plain" x-text="item.statusText"></span>
+                                        </div>
+                                        <div class="event-row-meta">
+                                            <template x-for="chip in item.chips" :key="chip">
+                                                <span class="event-chip" x-text="chip"></span>
+                                            </template>
+                                            <span class="event-detail" x-show="item.detail" x-text="item.detail"></span>
+                                            <span class="event-when" x-text="eventItemWhen(item, 'activity')"></span>
+                                        </div>
+                                    </article>
+                                </template>
+                            </div>
+                        </template>
+
+                        <template x-if="groups.routine.length > 0">
+                            <div>
+                                <div class="event-section-heading">
+                                    <span>Routine</span>
+                                    <span class="event-section-count" x-text="groups.routineCount"></span>
+                                </div>
+                                <template x-for="item in groups.routine" :key="item.key">
+                                    <article class="event-row" :class="eventRowStateClass(item) + (isEventRowOpen(item.key) ? ' is-open' : '')">
+                                        <div class="event-row-main">
+                                            <span class="event-state-dot"></span>
+                                            <span class="event-title" x-text="item.title"></span>
+                                            <span class="event-source" x-text="item.source"></span>
+                                            <span class="event-status" :class="eventRowStateClass(item)" x-text="item.statusText"></span>
+                                            <button type="button" class="event-toggle" :aria-expanded="isEventRowOpen(item.key).toString()" @click="toggleEventRow(item.key)" x-html="icons.chevronDown"></button>
+                                        </div>
+                                        <div class="event-row-meta">
+                                            <template x-for="chip in item.chips" :key="chip">
+                                                <span class="event-chip" x-text="chip"></span>
+                                            </template>
+                                            <span class="event-detail" x-show="item.detail" x-text="item.detail"></span>
+                                            <span class="event-when" x-text="eventItemWhen(item, 'routine')"></span>
+                                        </div>
+                                        <div class="event-trail" x-show="isEventRowOpen(item.key)">
+                                            <template x-for="(trailEvent, trailIndex) in visibleEventTrail(item)" :key="eventRowKey(trailEvent, trailIndex)">
+                                                <div class="event-trail-row">
+                                                    <time class="event-trail-time" :datetime="trailEvent.ts" x-text="formatEventTime(trailEvent.ts)"></time>
+                                                    <span class="event-trail-label" x-text="getEventLabel(trailEvent.type)"></span>
+                                                    <span class="event-trail-detail" x-text="getEventDetail(trailEvent) || trailEvent.msg || ''"></span>
+                                                </div>
+                                            </template>
+                                            <div class="event-trail-more" x-show="eventTrailMoreCount(item) > 0" x-text="'+' + eventTrailMoreCount(item) + ' older events'"></div>
+                                        </div>
+                                    </article>
+                                </template>
+                            </div>
+                        </template>
                     </div>
+
+                    <div class="event-empty event-error" x-show="eventsError && !eventsLoading">
+                        <p x-text="eventsError"></p>
+                    </div>
+                    <div class="event-empty" x-show="!eventsError && events.length === 0 && groups.attention.length === 0 && !eventsLoading">
+                        <p>No events yet</p>
+                    </div>
+                    <div class="event-loading" x-show="eventsLoading">
+                        <p>Loading...</p>
+                    </div>
+                    <button type="button" class="event-load-more" x-show="eventsHasMore && !eventsLoading && !eventsError" @click="loadMoreEvents()">Load older events</button>
                 </div>
 
                 <!-- About Panel - Version info and attribution
@@ -1239,6 +1348,7 @@
     </main>
 
     <script src="/icons.js"></script>
+    <script src="/eventKeys.js"></script>
     <script src="/app.js"></script>
 </body>
 </html>

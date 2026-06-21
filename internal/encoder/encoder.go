@@ -192,13 +192,16 @@ func (e *Encoder) SRTErrorMessage() string {
 	return ""
 }
 
-func (e *Encoder) onStreamEvent(streamID, streamName, eventType, message, errMsg string, retryCount, maxRetries int) {
+func (e *Encoder) onStreamEvent(
+	streamID, streamName, mode, eventType, message, errMsg string,
+	retryCount, maxRetries int,
+) {
 	if e.eventLogger == nil {
 		return
 	}
 
 	if err := e.eventLogger.LogStream(
-		eventlog.EventType(eventType), streamID, streamName, message, errMsg,
+		eventlog.EventType(eventType), streamID, streamName, mode, message, errMsg,
 		retryCount, maxRetries,
 	); err != nil {
 		slog.Warn("failed to log stream event", "error", err)
