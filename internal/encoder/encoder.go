@@ -224,6 +224,16 @@ func (e *Encoder) EventLogPath() string {
 	return e.eventLogger.Path()
 }
 
+// EventSeq returns the event log's change counter, which increments on every
+// logged event and is zero when no logger is configured. Live views compare
+// successive values to detect new events without refetching on every status tick.
+func (e *Encoder) EventSeq() uint64 {
+	if e.eventLogger == nil {
+		return 0
+	}
+	return e.eventLogger.Seq()
+}
+
 // InitRecording prepares the recording manager for use.
 func (e *Encoder) InitRecording() error {
 	e.mu.Lock()

@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -140,6 +141,7 @@ type Logger struct {
 	file         *os.File
 	encoder      *json.Encoder
 	maxSizeBytes int64
+	seq          atomic.Uint64 // incremented on each written event; a change signal for live views
 }
 
 const (
@@ -205,6 +207,7 @@ func (l *Logger) Log(event *Event) error {
 	if err := l.encoder.Encode(event); err != nil {
 		return err
 	}
+	l.seq.Add(1)
 
 	return l.rotateIfNeededLocked()
 }
@@ -399,6 +402,15 @@ func (l *Logger) Close() error {
 // Path returns the log file location.
 func (l *Logger) Path() string {
 	return l.filePath
+}
+
+// Seq returns a counter that increments on every written event. It is a
+// lightweight change signal so live views can refetch only when a new event has
+// been logged. The counter is in-memory and resets to zero on restart, so
+// consumers must treat it as an opaque token and compare successive values
+// rather than rely on its absolute magnitude.
+func (l *Logger) Seq() uint64 {
+	return l.seq.Load()
 }
 
 // TypeFilter selects event categories for [ReadLast].

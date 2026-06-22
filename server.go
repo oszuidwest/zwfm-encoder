@@ -199,6 +199,7 @@ func (s *Server) buildWSRuntime() types.WSRuntimeStatus {
 		RecorderStatuses:   s.encoder.RecorderStatuses(),
 		GraphSecretExpiry:  s.encoder.GraphSecretExpiry(),
 		Version:            s.version.Info(),
+		EventSeq:           s.encoder.EventSeq(),
 	}
 }
 
