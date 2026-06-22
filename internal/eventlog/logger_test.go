@@ -130,6 +130,7 @@ func TestLoggerRotatesWhenSizeLimitIsReached(t *testing.T) {
 	}
 	assertMessages(t, got, []string{"rotated"})
 }
+
 func TestLoggerSeqIncrementsOnEachWrite(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "encoder.jsonl")
@@ -156,6 +157,25 @@ func TestLoggerSeqIncrementsOnEachWrite(t *testing.T) {
 	}
 	if got := logger.Seq(); got != 2 {
 		t.Fatalf("Seq() after second write = %d, want 2", got)
+	}
+}
+
+func TestLoggerSeqDoesNotIncrementOnFailedWrite(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "encoder.jsonl")
+	logger, err := NewLogger(path)
+	if err != nil {
+		t.Fatalf("NewLogger() error = %v", err)
+	}
+	// Close the underlying file so the encode write fails before the counter is bumped.
+	if err := logger.file.Close(); err != nil {
+		t.Fatalf("closing underlying file: %v", err)
+	}
+	if err := logger.Log(&Event{Type: StreamStarted, Message: "doomed"}); err == nil {
+		t.Fatal("Log() error = nil, want a write error after the file was closed")
+	}
+	if got := logger.Seq(); got != 0 {
+		t.Fatalf("Seq() after failed write = %d, want 0", got)
 	}
 }
 
