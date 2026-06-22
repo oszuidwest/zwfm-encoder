@@ -5,8 +5,8 @@ go 1.26.4
 require (
 	github.com/aws/aws-sdk-go-v2 v1.42.0
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.24
-	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.2.10
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.103.3
+	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.2.11
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.104.0
 	github.com/datarhei/gosrt v0.11.0
 	github.com/gorilla/websocket v1.5.3
 	golang.org/x/mod v0.37.0
