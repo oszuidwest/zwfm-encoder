@@ -491,6 +491,7 @@ type WSRuntimeStatus struct {
 	RecorderStatuses   map[string]ProcessStatus `json:"recorder_statuses"`
 	GraphSecretExpiry  SecretExpiryInfo         `json:"graph_secret_expiry"`
 	Version            VersionInfo              `json:"version"`
+	EventSeq           uint64                   `json:"event_seq"` // event-log change counter; clients refetch events only when it changes
 }
 
 // APIConfigResponse contains the complete encoder configuration for API responses.

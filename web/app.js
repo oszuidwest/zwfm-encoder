@@ -339,6 +339,8 @@ document.addEventListener('alpine:init', () => {
         eventGroupFilters: EVENT_GROUP_FILTERS,
         eventsError: '',
         eventsLoading: false,
+        eventSeq: 0, // latest event-log change counter reported over WebSocket
+        lastEventSeq: 0, // event counter reflected by the currently loaded list
         eventsHasMore: false,
         eventsLimitReached: false,
         eventsWindowSize: EVENT_PAGE_SIZE,
@@ -812,7 +814,14 @@ document.addEventListener('alpine:init', () => {
             // Recorder statuses
             this.recorderStatuses = msg.recorder_statuses || {};
 
-            if (this.settingsTab === 'events' && !this.eventsLoading) {
+            // Live-refresh the events list only while it is on screen and only
+            // when a new event has actually been logged. The server bumps
+            // event_seq on every write, so an unchanged counter means there is
+            // nothing new to fetch — a healthy station then polls /api/events
+            // never instead of every status tick.
+            this.eventSeq = msg.event_seq ?? 0;
+            if (this.view === 'settings' && this.settingsTab === 'events' &&
+                this.eventSeq !== this.lastEventSeq && !this.eventsLoading) {
                 void this.loadEvents(false);
             }
 
@@ -1667,6 +1676,10 @@ document.addEventListener('alpine:init', () => {
                 this.eventOpenRows = {};
                 this.eventsLimitReached = false;
             }
+            // Capture the counter before the request so events logged while it is
+            // in flight still trigger one more refresh on the next tick rather
+            // than being marked as already seen.
+            const seqAtLoad = this.eventSeq;
             this.eventsError = '';
             this.eventsLoading = true;
             try {
@@ -1680,6 +1693,7 @@ document.addEventListener('alpine:init', () => {
                 this.eventHistoryGroups = normalizeEventGroups(data.groups);
                 this.eventsHasMore = Boolean(data.has_more) && this.eventsWindowSize < EVENT_HELPERS.EVENT_MAX_READ_LIMIT;
                 this.eventsLimitReached = Boolean(data.has_more) && this.eventsWindowSize >= EVENT_HELPERS.EVENT_MAX_READ_LIMIT;
+                this.lastEventSeq = seqAtLoad;
                 return true;
             } catch (error) {
                 console.error('Failed to load events:', error);

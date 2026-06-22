@@ -130,6 +130,35 @@ func TestLoggerRotatesWhenSizeLimitIsReached(t *testing.T) {
 	}
 	assertMessages(t, got, []string{"rotated"})
 }
+func TestLoggerSeqIncrementsOnEachWrite(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "encoder.jsonl")
+	logger, err := NewLogger(path)
+	if err != nil {
+		t.Fatalf("NewLogger() error = %v", err)
+	}
+	defer func() {
+		if err := logger.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	}()
+	if got := logger.Seq(); got != 0 {
+		t.Fatalf("Seq() before any write = %d, want 0", got)
+	}
+	if err := logger.Log(&Event{Type: StreamStarted, Message: "first"}); err != nil {
+		t.Fatalf("Log() error = %v", err)
+	}
+	if got := logger.Seq(); got != 1 {
+		t.Fatalf("Seq() after first write = %d, want 1", got)
+	}
+	if err := logger.Log(&Event{Type: StreamStopped, Message: "second"}); err != nil {
+		t.Fatalf("Log() error = %v", err)
+	}
+	if got := logger.Seq(); got != 2 {
+		t.Fatalf("Seq() after second write = %d, want 2", got)
+	}
+}
+
 func TestFilterAudioMatchesChannelImbalanceButIsSilenceDoesNot(t *testing.T) {
 	t.Parallel()
 	imbalance := []EventType{ChannelImbalanceStart, ChannelImbalanceEnd}
