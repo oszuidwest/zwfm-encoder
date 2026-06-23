@@ -1,6 +1,9 @@
 ---
 # Hybrid: `go` delegates to go-ci.yml; frontend lint/tests stay inline, while
-# Dependabot lockfile refresh runs in a separate write-scoped job.
+# Dependabot lockfile refresh runs in a separate write-scoped job. Pull requests
+# run unfiltered so the required `go / Go` and `Frontend` checks always report on
+# every PR; the branch ruleset on main requires them, and a path-filtered run
+# would leave them never reported, blocking merges (and Dependabot auto-merge).
 name: CI
 
 "on":
@@ -20,18 +23,6 @@ name: CI
       - '.htmlhintrc'
   pull_request:
     branches: ['main']
-    paths:
-      - '**.go'
-      - 'go.mod'
-      - 'go.sum'
-      - '.golangci.yml'
-      - '.golangci.yaml'
-      - 'web/**'
-      - 'tests/**'
-      - 'package.json'
-      - 'bun.lockb'
-      - 'biome.json'
-      - '.htmlhintrc'
 
 permissions:
   contents: read

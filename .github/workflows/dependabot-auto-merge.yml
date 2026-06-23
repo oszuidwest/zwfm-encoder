@@ -1,0 +1,31 @@
+---
+# Arms GitHub native auto-merge on Dependabot PRs for patch and minor bumps.
+# The merge only happens once the branch ruleset's required `CI Gate` check
+# passes, so a failing build keeps the PR open. Major bumps are left for a
+# manual review.
+name: Dependabot auto-merge
+
+"on": pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+
+      - name: Enable auto-merge for patch and minor updates
+        if: >-
+          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+          steps.meta.outputs.update-type == 'version-update:semver-minor'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
