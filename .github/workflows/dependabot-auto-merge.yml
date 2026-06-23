@@ -1,8 +1,13 @@
 ---
-# Arms GitHub native auto-merge on Dependabot PRs for patch and minor bumps.
-# The merge only happens once the branch ruleset's required `CI Gate` check
-# passes, so a failing build keeps the PR open. Major bumps are left for a
-# manual review.
+# Arms GitHub native auto-merge (squash) on Dependabot PRs for patch and minor
+# bumps; major bumps are left for manual review. The merge only happens once the
+# main ruleset's required checks (`go / Go` and `Frontend`) pass, so a failing
+# build keeps the PR open.
+#
+# Depends on two things that live outside this file: the repo setting
+# Settings -> General -> "Allow auto-merge", and the main branch ruleset's
+# required status checks. Without the ruleset there is nothing to wait for and
+# `gh pr merge --auto` errors.
 name: Dependabot auto-merge
 
 "on": pull_request
@@ -20,6 +25,8 @@ jobs:
       - name: Fetch Dependabot metadata
         id: meta
         uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Enable auto-merge for patch and minor updates
         if: >-
