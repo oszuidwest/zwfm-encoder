@@ -13,9 +13,9 @@ func benchmarkPCMChunk() []byte {
 	return make([]byte, benchmarkPCMChunkSize)
 }
 
-// BenchmarkDistributorStreamFanOutCallerStreams measures shared-copy fan-out
-// for caller-mode streams. The path allocates one PCM copy per chunk regardless
-// of stream count.
+// BenchmarkDistributorStreamFanOutCallerStreams measures caller-mode fan-out
+// from the distributor boundary. It should allocate one PCM copy per chunk
+// regardless of the number of running caller streams.
 func BenchmarkDistributorStreamFanOutCallerStreams(b *testing.B) {
 	pcm := benchmarkPCMChunk()
 	for _, count := range []int{1, 4, 16} {
@@ -44,8 +44,8 @@ func BenchmarkDistributorStreamFanOutCallerStreams(b *testing.B) {
 	}
 }
 
-// BenchmarkDistributorStreamFanOutListenerStreams covers the listener-mode
-// fan-out path, including the no-encoder-run case that must not allocate.
+// BenchmarkDistributorStreamFanOutListenerStreams measures listener-mode fan-out,
+// including the no-encoder-run path where no PCM copy should be allocated.
 func BenchmarkDistributorStreamFanOutListenerStreams(b *testing.B) {
 	pcm := benchmarkPCMChunk()
 
