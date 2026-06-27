@@ -21,24 +21,19 @@ func TestSessionManagerCreateReturnsValidToken(t *testing.T) {
 	}
 }
 
+// invalidTokenCases covers tokens that no validator should ever accept.
+var invalidTokenCases = []struct {
+	name  string
+	token string
+}{
+	{name: "unknown token is rejected", token: "unknown-token"},
+	{name: "empty token is rejected", token: ""},
+}
+
 func TestSessionManagerValidateRejectsInvalidTokens(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name  string
-		token string
-	}{
-		{
-			name:  "unknown token is rejected",
-			token: "unknown-token",
-		},
-		{
-			name:  "empty token is rejected",
-			token: "",
-		},
-	}
-
-	for _, tt := range tests {
+	for _, tt := range invalidTokenCases {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -102,21 +97,7 @@ func TestSessionManagerCreateCSRFTokenValidatesOnce(t *testing.T) {
 func TestSessionManagerValidateCSRFTokenRejectsInvalidTokens(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name  string
-		token string
-	}{
-		{
-			name:  "unknown token is rejected",
-			token: "unknown-token",
-		},
-		{
-			name:  "empty token is rejected",
-			token: "",
-		},
-	}
-
-	for _, tt := range tests {
+	for _, tt := range invalidTokenCases {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -372,12 +353,6 @@ func TestSessionManagerLogoutClearsCookieAndDeletesSession(t *testing.T) {
 }
 
 func requestSessionCookie(value string) *http.Cookie {
-	return &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    value,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
-	}
+	// Requests only carry the cookie name and value; other attributes are response-only.
+	return &http.Cookie{Name: sessionCookieName, Value: value}
 }
