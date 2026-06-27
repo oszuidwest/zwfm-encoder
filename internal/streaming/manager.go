@@ -687,11 +687,12 @@ func (m *Manager) StopAll() error {
 	return errors.Join(errs...)
 }
 
-// WriteAudioFanOut enqueues one shared, immutable PCM copy to every running
-// managed stream. The copy is allocated lazily on the first stream that has a
-// live destination, so a chunk fanned out to N streams allocates once instead of
-// once per stream. data may be reused by the caller after this returns; the
-// queued copy is never mutated by writer goroutines.
+// WriteAudioFanOut queues PCM audio for every running stream that can accept it.
+//
+// The caller may reuse data after the call returns. The manager clones the chunk
+// lazily on the first live destination, then shares that copied slice across all
+// queues for this fan-out pass. Stream writers must treat queued chunks as
+// read-only.
 func (m *Manager) WriteAudioFanOut(data []byte) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -711,10 +712,10 @@ func (m *Manager) WriteAudioFanOut(data []byte) {
 	}
 }
 
-// offerAudioLazy dispatches a chunk to the stream's caller channel or, for
-// listener mode, its active encoder run. copyChunk is invoked only once a live
-// destination is confirmed, so fan-out callers sharing one copy allocate at
-// most once and skip allocating entirely when no destination is ready.
+// offerAudioLazy sends a fan-out chunk to the caller queue or active listener
+// encoder. It invokes copyChunk only after confirming a live destination, so the
+// fan-out path can share one cloned slice and skip cloning when no stream can
+// receive audio.
 func (s *Stream) offerAudioLazy(streamID string, copyChunk func() []byte) {
 	if s.mode == types.StreamModeListener {
 		s.encoderMu.RLock()

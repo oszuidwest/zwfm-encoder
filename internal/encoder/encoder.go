@@ -930,8 +930,8 @@ func (e *Encoder) runDistributor(runID uint64) {
 
 		distributor.ProcessSamples(buf[:n])
 
-		// Fan out one shared, immutable PCM copy to all streams rather than
-		// cloning per stream. Errors are logged internally by the manager.
+		// Let the stream manager clone lazily so running stream queues can share
+		// one PCM copy without retaining the reused capture buffer.
 		e.streamManager.WriteAudioFanOut(buf[:n])
 
 		// Recording fan-out stays non-blocking; recorders own their queues.
