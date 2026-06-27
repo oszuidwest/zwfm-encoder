@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -431,18 +432,17 @@ func TestStatusesListenerWithoutFanoutReportsNoDrops(t *testing.T) {
 		t.Fatalf("ListenerDrops = %d, want 0 when fanout is nil", status.ListenerDrops)
 	}
 }
-func TestWriteAudioListenerSkipsWhenNoEncoderRun(t *testing.T) {
+func TestWriteAudioFanOutListenerSkipsWhenNoEncoderRun(t *testing.T) {
 	t.Parallel()
 	m := NewManager("ffmpeg")
 	m.streams["listener-1"] = &Stream{
 		state: types.ProcessRunning,
 		mode:  types.StreamModeListener,
 	}
-	if err := m.WriteAudio("listener-1", []byte("pcm")); err != nil {
-		t.Fatalf("WriteAudio() error = %v", err)
-	}
+	m.WriteAudioFanOut([]byte("pcm"))
 }
-func TestWriteAudioListenerSkipsWithoutAllocatingWhenNoEncoderRun(t *testing.T) {
+
+func TestWriteAudioFanOutListenerSkipsWithoutAllocatingWhenNoEncoderRun(t *testing.T) {
 	m := NewManager("ffmpeg")
 	m.streams["listener-1"] = &Stream{
 		state: types.ProcessRunning,
@@ -450,18 +450,15 @@ func TestWriteAudioListenerSkipsWithoutAllocatingWhenNoEncoderRun(t *testing.T) 
 	}
 	pcm := make([]byte, 20*1024)
 
-	var writeErr error
 	allocs := testing.AllocsPerRun(1000, func() {
-		writeErr = m.WriteAudio("listener-1", pcm)
+		m.WriteAudioFanOut(pcm)
 	})
-	if writeErr != nil {
-		t.Fatalf("WriteAudio() error = %v", writeErr)
-	}
 	if allocs != 0 {
-		t.Fatalf("WriteAudio() allocations = %.1f, want 0", allocs)
+		t.Fatalf("WriteAudioFanOut allocations = %.1f, want 0", allocs)
 	}
 }
-func TestWriteAudioListenerCopiesQueuedChunk(t *testing.T) {
+
+func TestWriteAudioFanOutListenerCopiesQueuedChunk(t *testing.T) {
 	t.Parallel()
 	m := NewManager("ffmpeg")
 	run := &encoderRun{audioCh: make(chan []byte, 1)}
@@ -473,9 +470,7 @@ func TestWriteAudioListenerCopiesQueuedChunk(t *testing.T) {
 	m.streams["listener-1"] = stream
 
 	src := []byte{1, 2, 3, 4}
-	if err := m.WriteAudio("listener-1", src); err != nil {
-		t.Fatalf("WriteAudio() error = %v", err)
-	}
+	m.WriteAudioFanOut(src)
 	src[0] = 99 // Simulate distributor buffer reuse after enqueue.
 
 	got := <-run.audioCh
@@ -486,7 +481,8 @@ func TestWriteAudioListenerCopiesQueuedChunk(t *testing.T) {
 		t.Fatal("queued listener chunk aliases the source buffer")
 	}
 }
-func TestWriteAudioListenerUsesBoundedEncoderQueue(t *testing.T) {
+
+func TestWriteAudioFanOutListenerUsesBoundedEncoderQueue(t *testing.T) {
 	t.Parallel()
 	m := NewManager("ffmpeg")
 	run := &encoderRun{audioCh: make(chan []byte, audioBufferSize)}
@@ -504,9 +500,7 @@ func TestWriteAudioListenerUsesBoundedEncoderQueue(t *testing.T) {
 		[]byte("five"),
 		[]byte("six"),
 	} {
-		if err := m.WriteAudio("listener-1", chunk); err != nil {
-			t.Fatalf("WriteAudio() error = %v", err)
-		}
+		m.WriteAudioFanOut(chunk)
 	}
 	if got := len(run.audioCh); got != audioBufferSize {
 		t.Fatalf("listener encoder queue len = %d, want %d", got, audioBufferSize)
@@ -518,6 +512,104 @@ func TestWriteAudioListenerUsesBoundedEncoderQueue(t *testing.T) {
 		t.Fatalf("audio drops = %d, want 1", got)
 	}
 }
+
+func TestWriteAudioFanOutSharesOneCopyAcrossStreams(t *testing.T) {
+	t.Parallel()
+	m := NewManager("ffmpeg")
+	add := func(id string, state types.ProcessState) chan []byte {
+		ch := make(chan []byte, audioBufferSize)
+		m.streams[id] = &Stream{state: state, mode: types.StreamModeCaller, audioCh: ch}
+		return ch
+	}
+	chA := add("a", types.ProcessRunning)
+	chB := add("b", types.ProcessRunning)
+	chStopped := add("c", types.ProcessStopped)
+
+	src := []byte{1, 2, 3, 4}
+	m.WriteAudioFanOut(src)
+	src[0] = 99 // Simulate distributor buffer reuse after enqueue.
+
+	gotA := <-chA
+	gotB := <-chB
+	if !bytes.Equal(gotA, []byte{1, 2, 3, 4}) || !bytes.Equal(gotB, []byte{1, 2, 3, 4}) {
+		t.Fatalf("streams saw mutated source: a=%v b=%v, want original bytes", gotA, gotB)
+	}
+	if &gotA[0] != &gotB[0] {
+		t.Fatal("expected running streams to share one copied slice")
+	}
+	if got := len(chStopped); got != 0 {
+		t.Fatalf("stopped stream received %d chunks, want 0", got)
+	}
+}
+
+func TestWriteAudioFanOutSharesOneCopyAcrossCallerAndListener(t *testing.T) {
+	t.Parallel()
+	m := NewManager("ffmpeg")
+	callerCh := make(chan []byte, audioBufferSize)
+	m.streams["caller"] = &Stream{
+		state:   types.ProcessRunning,
+		mode:    types.StreamModeCaller,
+		audioCh: callerCh,
+	}
+	listenerRun := &encoderRun{audioCh: make(chan []byte, audioBufferSize)}
+	listener := &Stream{
+		state: types.ProcessRunning,
+		mode:  types.StreamModeListener,
+	}
+	listener.encoder = listenerRun
+	m.streams["listener"] = listener
+
+	src := []byte{1, 2, 3, 4}
+	m.WriteAudioFanOut(src)
+	src[0] = 99 // Simulate distributor buffer reuse after enqueue.
+
+	callerChunk := <-callerCh
+	listenerChunk := <-listenerRun.audioCh
+	if !bytes.Equal(callerChunk, []byte{1, 2, 3, 4}) ||
+		!bytes.Equal(listenerChunk, []byte{1, 2, 3, 4}) {
+		t.Fatalf("streams saw mutated source: caller=%v listener=%v, want original bytes",
+			callerChunk, listenerChunk)
+	}
+	if &callerChunk[0] != &listenerChunk[0] {
+		t.Fatal("expected caller and active listener streams to share one copied slice")
+	}
+}
+
+func TestWriteAudioFanOutAllocatesOncePerChunk(t *testing.T) {
+	m := NewManager("ffmpeg")
+	chans := make([]chan []byte, 16)
+	for i := range chans {
+		id := strconv.Itoa(i)
+		ch := make(chan []byte, audioBufferSize)
+		m.streams[id] = &Stream{state: types.ProcessRunning, mode: types.StreamModeCaller, audioCh: ch}
+		chans[i] = ch
+	}
+	pcm := make([]byte, 20*1024)
+
+	allocs := testing.AllocsPerRun(50, func() {
+		m.WriteAudioFanOut(pcm)
+		for _, ch := range chans {
+			<-ch
+		}
+	})
+	if allocs != 1 {
+		t.Fatalf("WriteAudioFanOut allocations = %.1f, want 1 shared copy for 16 streams", allocs)
+	}
+}
+
+func TestWriteAudioFanOutSkipsAllocationWhenNoRunningStream(t *testing.T) {
+	m := NewManager("ffmpeg")
+	m.streams["stopped"] = &Stream{state: types.ProcessStopped, mode: types.StreamModeCaller}
+	pcm := make([]byte, 20*1024)
+
+	allocs := testing.AllocsPerRun(50, func() {
+		m.WriteAudioFanOut(pcm)
+	})
+	if allocs != 0 {
+		t.Fatalf("WriteAudioFanOut allocations = %.1f, want 0 when no stream is running", allocs)
+	}
+}
+
 func TestMonitorListenerEncoderRetriesAndStopsFanoutOnExhaustion(t *testing.T) {
 	ffmpegPath := fakeLongRunningExecutable(t)
 	port := freeUDPPort(t)
@@ -636,9 +728,7 @@ func TestMonitorListenerEncoderReleasesBlockedWriterAfterStdoutEnds(t *testing.T
 		m.MonitorAndRetry(stream.ID, ctx, stopChan)
 	}()
 	run := waitListenerRun(t, m, stream.ID, nil)
-	if err := m.WriteAudio(stream.ID, bytes.Repeat([]byte{1}, 8*1024*1024)); err != nil {
-		t.Fatalf("WriteAudio() error = %v", err)
-	}
+	m.WriteAudioFanOut(bytes.Repeat([]byte{1}, 8*1024*1024))
 	waitForListenerWriterToTakeAudio(t, run)
 	if err := os.WriteFile(closeStdoutPath, []byte("close"), 0o600); err != nil {
 		t.Fatalf("WriteFile(close stdout marker) error = %v", err)

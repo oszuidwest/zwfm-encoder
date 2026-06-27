@@ -930,12 +930,9 @@ func (e *Encoder) runDistributor(runID uint64) {
 
 		distributor.ProcessSamples(buf[:n])
 
-		streams := e.config.ConfiguredStreams()
-		for i := range streams {
-			stream := &streams[i]
-			// WriteAudio logs errors internally and marks stream as stopped
-			_ = e.streamManager.WriteAudio(stream.ID, buf[:n]) //nolint:errcheck // Errors logged internally by WriteAudio
-		}
+		// Fan out one shared, immutable PCM copy to all streams rather than
+		// cloning per stream. Errors are logged internally by the manager.
+		e.streamManager.WriteAudioFanOut(buf[:n])
 
 		// Recording fan-out stays non-blocking; recorders own their queues.
 		if e.recordingManager != nil {
