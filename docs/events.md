@@ -363,6 +363,18 @@ and recovery settings.
 
 ---
 
+### Channel Imbalance Notifications
+
+When enabled per channel, `channel_imbalance_start` and
+`channel_imbalance_end` also dispatch notifications. Webhook payloads include
+`event`, `level_left_db`, `level_right_db`, `balance_db`, `imbalance_db`, the
+existing `threshold` field, and `duration_ms` on `channel_imbalance_end`.
+Microsoft Graph email notifications include the same measurements in human
+readable form. Zabbix uses the dedicated imbalance trapper key with
+`event=CHANNEL_IMBALANCE` on start and `event=CHANNEL_BALANCED` on recovery.
+
+---
+
 ## Recorder Events
 
 Recorder events track the lifecycle of audio recording, file uploads, and cleanup operations.

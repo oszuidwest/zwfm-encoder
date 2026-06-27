@@ -11,12 +11,17 @@ import (
 type AlertChannel interface {
 	Name() string
 	IsConfiguredForSilence(cfg *config.Snapshot) bool
+	IsConfiguredForImbalance(cfg *config.Snapshot) bool
 	IsConfiguredForUpload(cfg *config.Snapshot) bool
 	SubscribesSilenceStart(cfg *config.Snapshot) bool
 	SubscribesSilenceEnd(cfg *config.Snapshot) bool
+	SubscribesChannelImbalanceStart(cfg *config.Snapshot) bool
+	SubscribesChannelImbalanceEnd(cfg *config.Snapshot) bool
 	SubscribesAudioDump(cfg *config.Snapshot) bool
 	SendSilenceStart(ctx context.Context, cfg *config.Snapshot, levelL, levelR float64) error
 	SendSilenceEnd(ctx context.Context, cfg *config.Snapshot, durationMS int64, levelL, levelR float64) error
+	SendChannelImbalanceStart(ctx context.Context, cfg *config.Snapshot, data ChannelImbalanceData) error
+	SendChannelImbalanceEnd(ctx context.Context, cfg *config.Snapshot, data ChannelImbalanceData) error
 	SendAudioDump(
 		ctx context.Context, cfg *config.Snapshot, durationMS int64, levelL, levelR float64,
 		result *silencedump.EncodeResult,
@@ -31,6 +36,16 @@ type UploadAbandonedData struct {
 	S3Key        string
 	LastError    string
 	RetryCount   int
+}
+
+// ChannelImbalanceData contains details for channel imbalance notification dispatch.
+type ChannelImbalanceData struct {
+	LevelL      float64
+	LevelR      float64
+	BalanceDB   float64
+	ImbalanceDB float64
+	ThresholdDB float64
+	DurationMs  int64
 }
 
 // silenceEventData groups audio level and silence parameters shared across
@@ -93,6 +108,46 @@ func (d *Dispatcher) DispatchSilenceEnd(
 				func() error { return ch.SendSilenceEnd(ctx, &cfg, durationMS, levelL, levelR) },
 				ch.Name(),
 				"silence_end",
+			)
+		}(ch, cfg)
+	}
+}
+
+// DispatchChannelImbalanceStart sends imbalance-start notifications to subscribed channels.
+//
+//nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
+func (d *Dispatcher) DispatchChannelImbalanceStart(
+	ctx context.Context, active []AlertChannel, cfg config.Snapshot, data ChannelImbalanceData,
+) {
+	for _, ch := range active {
+		if !ch.SubscribesChannelImbalanceStart(&cfg) {
+			continue
+		}
+		go func(ch AlertChannel, cfg config.Snapshot) {
+			logNotifyResult(
+				func() error { return ch.SendChannelImbalanceStart(ctx, &cfg, data) },
+				ch.Name(),
+				"channel_imbalance_start",
+			)
+		}(ch, cfg)
+	}
+}
+
+// DispatchChannelImbalanceEnd sends imbalance-end notifications to the active channel subset.
+//
+//nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
+func (d *Dispatcher) DispatchChannelImbalanceEnd(
+	ctx context.Context, active []AlertChannel, cfg config.Snapshot, data ChannelImbalanceData,
+) {
+	for _, ch := range active {
+		if !ch.SubscribesChannelImbalanceEnd(&cfg) {
+			continue
+		}
+		go func(ch AlertChannel, cfg config.Snapshot) {
+			logNotifyResult(
+				func() error { return ch.SendChannelImbalanceEnd(ctx, &cfg, data) },
+				ch.Name(),
+				"channel_imbalance_end",
 			)
 		}(ch, cfg)
 	}

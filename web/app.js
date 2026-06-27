@@ -367,16 +367,37 @@ document.addEventListener('alpine:init', () => {
             silence_dump: { enabled: true, retention_days: 7 },
             recording_max_duration_minutes: 240,
             webhook_has_url: false,
+            webhook_events: {
+                silence_start: true,
+                silence_end: true,
+                audio_dump: true,
+                channel_imbalance_start: false,
+                channel_imbalance_end: false
+            },
             zabbix_server: '',
             zabbix_port: 10051,
             zabbix_host: '',
             zabbix_silence_key: '',
+            zabbix_imbalance_key: '',
             zabbix_upload_key: '',
+            zabbix_events: {
+                silence_start: true,
+                silence_end: true,
+                channel_imbalance_start: false,
+                channel_imbalance_end: false
+            },
             graph_tenant_id: '',
             graph_client_id: '',
             graph_from_address: '',
             graph_recipients: '',
             graph_has_secret: false,
+            email_events: {
+                silence_start: true,
+                silence_end: true,
+                audio_dump: true,
+                channel_imbalance_start: false,
+                channel_imbalance_end: false
+            },
             recording_has_api_key: false,
             srt_available: false,
             srt_error: '',
@@ -399,11 +420,28 @@ document.addEventListener('alpine:init', () => {
             recordingMaxDurationMinutes: 240,
             silenceWebhook: '',
             clearWebhook: false,
-            webhookEvents: { silence_start: true, silence_end: true, audio_dump: true },
-            zabbix: { server: '', port: 10051, host: '', silenceKey: '', uploadKey: '' },
-            zabbixEvents: { silence_start: true, silence_end: true },
+            webhookEvents: {
+                silence_start: true,
+                silence_end: true,
+                audio_dump: true,
+                channel_imbalance_start: false,
+                channel_imbalance_end: false
+            },
+            zabbix: { server: '', port: 10051, host: '', silenceKey: '', imbalanceKey: '', uploadKey: '' },
+            zabbixEvents: {
+                silence_start: true,
+                silence_end: true,
+                channel_imbalance_start: false,
+                channel_imbalance_end: false
+            },
             graph: { tenantId: '', clientId: '', clientSecret: '', clearSecret: false, fromAddress: '', recipients: '' },
-            emailEvents: { silence_start: true, silence_end: true, audio_dump: true },
+            emailEvents: {
+                silence_start: true,
+                silence_end: true,
+                audio_dump: true,
+                channel_imbalance_start: false,
+                channel_imbalance_end: false
+            },
             recordingApiKey: '',
             platform: ''
         },
@@ -892,18 +930,23 @@ document.addEventListener('alpine:init', () => {
                 webhookEvents: {
                     silence_start: this.config.webhook_events?.silence_start ?? true,
                     silence_end: this.config.webhook_events?.silence_end ?? true,
-                    audio_dump: this.config.webhook_events?.audio_dump ?? true
+                    audio_dump: this.config.webhook_events?.audio_dump ?? true,
+                    channel_imbalance_start: this.config.webhook_events?.channel_imbalance_start ?? false,
+                    channel_imbalance_end: this.config.webhook_events?.channel_imbalance_end ?? false
                 },
                 zabbix: {
                     server: this.config.zabbix_server || '',
                     port: this.config.zabbix_port || 10051,
                     host: this.config.zabbix_host || '',
                     silenceKey: this.config.zabbix_silence_key || '',
+                    imbalanceKey: this.config.zabbix_imbalance_key || '',
                     uploadKey: this.config.zabbix_upload_key || ''
                 },
                 zabbixEvents: {
                     silence_start: this.config.zabbix_events?.silence_start ?? true,
-                    silence_end: this.config.zabbix_events?.silence_end ?? true
+                    silence_end: this.config.zabbix_events?.silence_end ?? true,
+                    channel_imbalance_start: this.config.zabbix_events?.channel_imbalance_start ?? false,
+                    channel_imbalance_end: this.config.zabbix_events?.channel_imbalance_end ?? false
                 },
                 graph: {
                     tenantId: this.config.graph_tenant_id || '',
@@ -916,7 +959,9 @@ document.addEventListener('alpine:init', () => {
                 emailEvents: {
                     silence_start: this.config.email_events?.silence_start ?? true,
                     silence_end: this.config.email_events?.silence_end ?? true,
-                    audio_dump: this.config.email_events?.audio_dump ?? true
+                    audio_dump: this.config.email_events?.audio_dump ?? true,
+                    channel_imbalance_start: this.config.email_events?.channel_imbalance_start ?? false,
+                    channel_imbalance_end: this.config.email_events?.channel_imbalance_end ?? false
                 },
                 recordingApiKey: '', // Only populated after regenerate so hidden keys are not copyable.
                 recordingMaxDurationMinutes: this.config.recording_max_duration_minutes ?? 240,
@@ -986,6 +1031,7 @@ document.addEventListener('alpine:init', () => {
                         zabbix_port: this.config.zabbix_port,
                         zabbix_host: this.config.zabbix_host,
                         zabbix_silence_key: this.config.zabbix_silence_key,
+                        zabbix_imbalance_key: this.config.zabbix_imbalance_key,
                         zabbix_upload_key: this.config.zabbix_upload_key,
                         zabbix_events: this.config.zabbix_events,
                         graph_tenant_id: this.config.graph_tenant_id,
@@ -1032,6 +1078,7 @@ document.addEventListener('alpine:init', () => {
                 zabbix_port: form.zabbix.port,
                 zabbix_host: form.zabbix.host,
                 zabbix_silence_key: form.zabbix.silenceKey,
+                zabbix_imbalance_key: form.zabbix.imbalanceKey,
                 zabbix_upload_key: form.zabbix.uploadKey,
                 zabbix_events: form.zabbixEvents,
                 graph_tenant_id: form.graph.tenantId,
@@ -1893,6 +1940,7 @@ document.addEventListener('alpine:init', () => {
                     payload.zabbix_port = this.settingsForm.zabbix.port;
                     payload.zabbix_host = this.settingsForm.zabbix.host;
                     payload.zabbix_silence_key = this.settingsForm.zabbix.silenceKey;
+                    payload.zabbix_imbalance_key = this.settingsForm.zabbix.imbalanceKey;
                     payload.zabbix_upload_key = this.settingsForm.zabbix.uploadKey;
                 }
             }

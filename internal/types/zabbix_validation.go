@@ -12,7 +12,7 @@ const (
 	ZabbixServerRequired = "server_required"
 	// ZabbixHostRequired means the monitored host name is empty.
 	ZabbixHostRequired = "host_required"
-	// ZabbixKeyRequired means neither silence_key nor upload_key is set
+	// ZabbixKeyRequired means none of silence_key, imbalance_key, or upload_key is set
 	// (for ValidateZabbixConfigured) or the per-target key is empty
 	// (for ValidateZabbixTarget).
 	ZabbixKeyRequired = "key_required"
@@ -38,11 +38,11 @@ func (c *ZabbixConfig) ValidationIssues() validation.Issues {
 }
 
 // ValidateZabbixConfigured reports completeness issues for the Zabbix
-// test-send handler: server + host + at least one of silence_key/upload_key.
+// test-send handler: server + host + at least one of silence_key/imbalance_key/upload_key.
 // Port is intentionally not validated here because the historical handler
 // path delegates port-range failures to the runtime (502), not preflight
 // (400); ValidateZabbixTarget handles port-range at send time.
-func ValidateZabbixConfigured(server, host, silenceKey, uploadKey string) validation.Issues {
+func ValidateZabbixConfigured(server, host, silenceKey, imbalanceKey, uploadKey string) validation.Issues {
 	var issues validation.Issues
 	if server == "" {
 		issues = append(issues, validation.Issue{Field: "server", Code: ZabbixServerRequired})
@@ -50,7 +50,7 @@ func ValidateZabbixConfigured(server, host, silenceKey, uploadKey string) valida
 	if host == "" {
 		issues = append(issues, validation.Issue{Field: "host", Code: ZabbixHostRequired})
 	}
-	if silenceKey == "" && uploadKey == "" {
+	if silenceKey == "" && imbalanceKey == "" && uploadKey == "" {
 		issues = append(issues, validation.Issue{Field: "silence_key", Code: ZabbixKeyRequired})
 	}
 	return issues

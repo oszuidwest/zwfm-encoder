@@ -21,13 +21,16 @@ var webhookClient = &http.Client{Timeout: 10 * time.Second}
 
 // WebhookPayload represents the data sent to webhook endpoints.
 type WebhookPayload struct {
-	Event             string  `json:"event"`
-	SilenceDurationMs int64   `json:"silence_duration_ms,omitempty"`
-	LevelLeftDB       float64 `json:"level_left_db,omitempty"`  // dB
-	LevelRightDB      float64 `json:"level_right_db,omitempty"` // dB
-	Threshold         float64 `json:"threshold,omitempty"`      // dB
-	Message           string  `json:"message,omitempty"`
-	Timestamp         string  `json:"timestamp"` // RFC3339
+	Event             string   `json:"event"`
+	SilenceDurationMs int64    `json:"silence_duration_ms,omitempty"`
+	LevelLeftDB       float64  `json:"level_left_db,omitempty"`  // dB
+	LevelRightDB      float64  `json:"level_right_db,omitempty"` // dB
+	BalanceDB         *float64 `json:"balance_db,omitempty"`     // dB
+	ImbalanceDB       *float64 `json:"imbalance_db,omitempty"`   // dB
+	Threshold         float64  `json:"threshold,omitempty"`      // dB
+	DurationMs        int64    `json:"duration_ms,omitempty"`
+	Message           string   `json:"message,omitempty"`
+	Timestamp         string   `json:"timestamp"` // RFC3339
 
 	AudioDumpBase64    string `json:"audio_dump_base64,omitempty"`
 	AudioDumpFilename  string `json:"audio_dump_filename,omitempty"`
@@ -61,6 +64,37 @@ func sendWebhookSilenceEnd(ctx context.Context, webhookURL string, e silenceEven
 		LevelRightDB:      e.LevelR,
 		Threshold:         e.Threshold,
 		Timestamp:         timestampUTC(),
+	})
+}
+
+// sendWebhookChannelImbalanceStart notifies the configured webhook of confirmed L/R imbalance.
+func sendWebhookChannelImbalanceStart(ctx context.Context, webhookURL string, e ChannelImbalanceData) error {
+	balanceDB := e.BalanceDB
+	imbalanceDB := e.ImbalanceDB
+	return sendWebhook(ctx, webhookURL, &WebhookPayload{
+		Event:        "channel_imbalance_start",
+		LevelLeftDB:  e.LevelL,
+		LevelRightDB: e.LevelR,
+		BalanceDB:    &balanceDB,
+		ImbalanceDB:  &imbalanceDB,
+		Threshold:    e.ThresholdDB,
+		Timestamp:    timestampUTC(),
+	})
+}
+
+// sendWebhookChannelImbalanceEnd notifies the configured webhook that L/R balance has recovered.
+func sendWebhookChannelImbalanceEnd(ctx context.Context, webhookURL string, e ChannelImbalanceData) error {
+	balanceDB := e.BalanceDB
+	imbalanceDB := e.ImbalanceDB
+	return sendWebhook(ctx, webhookURL, &WebhookPayload{
+		Event:        "channel_imbalance_end",
+		LevelLeftDB:  e.LevelL,
+		LevelRightDB: e.LevelR,
+		BalanceDB:    &balanceDB,
+		ImbalanceDB:  &imbalanceDB,
+		Threshold:    e.ThresholdDB,
+		DurationMs:   e.DurationMs,
+		Timestamp:    timestampUTC(),
 	})
 }
 
@@ -177,6 +211,9 @@ func (c *WebhookChannel) Name() string { return "webhook" }
 // IsConfiguredForSilence reports whether the channel participates in silence flows.
 func (c *WebhookChannel) IsConfiguredForSilence(cfg *config.Snapshot) bool { return cfg.HasWebhook() }
 
+// IsConfiguredForImbalance reports whether the channel participates in channel imbalance flows.
+func (c *WebhookChannel) IsConfiguredForImbalance(cfg *config.Snapshot) bool { return cfg.HasWebhook() }
+
 // IsConfiguredForUpload reports whether the channel participates in upload-abandonment flows.
 func (c *WebhookChannel) IsConfiguredForUpload(cfg *config.Snapshot) bool { return cfg.HasWebhook() }
 
@@ -188,6 +225,16 @@ func (c *WebhookChannel) SubscribesSilenceStart(cfg *config.Snapshot) bool {
 // SubscribesSilenceEnd reports whether silence-end events should be sent.
 func (c *WebhookChannel) SubscribesSilenceEnd(cfg *config.Snapshot) bool {
 	return cfg.HasWebhook() && cfg.WebhookEvents.SilenceEnd
+}
+
+// SubscribesChannelImbalanceStart reports whether imbalance-start events should be sent.
+func (c *WebhookChannel) SubscribesChannelImbalanceStart(cfg *config.Snapshot) bool {
+	return cfg.HasWebhook() && cfg.WebhookEvents.ChannelImbalanceStart
+}
+
+// SubscribesChannelImbalanceEnd reports whether imbalance-end events should be sent.
+func (c *WebhookChannel) SubscribesChannelImbalanceEnd(cfg *config.Snapshot) bool {
+	return cfg.HasWebhook() && cfg.WebhookEvents.ChannelImbalanceEnd
 }
 
 // SubscribesAudioDump reports whether audio-dump events should be sent.
@@ -212,6 +259,18 @@ func (c *WebhookChannel) SendSilenceEnd(
 		LevelR:     levelR,
 		Threshold:  cfg.SilenceThreshold,
 	})
+}
+
+func (c *WebhookChannel) SendChannelImbalanceStart(
+	ctx context.Context, cfg *config.Snapshot, data ChannelImbalanceData,
+) error {
+	return sendWebhookChannelImbalanceStart(ctx, cfg.WebhookURL, data)
+}
+
+func (c *WebhookChannel) SendChannelImbalanceEnd(
+	ctx context.Context, cfg *config.Snapshot, data ChannelImbalanceData,
+) error {
+	return sendWebhookChannelImbalanceEnd(ctx, cfg.WebhookURL, data)
 }
 
 func (c *WebhookChannel) SendAudioDump(

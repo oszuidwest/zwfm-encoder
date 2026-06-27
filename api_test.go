@@ -747,6 +747,16 @@ func seededZabbixSettings() *config.SettingsUpdate {
 	}
 }
 
+// seededZabbixImbalanceSettings returns a complete saved Zabbix config with only the imbalance key.
+func seededZabbixImbalanceSettings() *config.SettingsUpdate {
+	return &config.SettingsUpdate{
+		ZabbixServer:       "zabbix.example.com",
+		ZabbixPort:         10051,
+		ZabbixHost:         "encoder-01",
+		ZabbixImbalanceKey: "imbalance",
+	}
+}
+
 type sensitiveFixture struct {
 	server          *Server
 	streamID        string
@@ -862,6 +872,46 @@ func TestHandleAPIConfigIncludesChannelImbalance(t *testing.T) {
 	}
 }
 
+func TestHandleAPIConfigIncludesNotificationImbalanceFields(t *testing.T) {
+	t.Parallel()
+	s := freshServer(t)
+	upd := validBaselineSettings(s.config)
+	upd.WebhookEvents = types.EventSubscriptions{ChannelImbalanceStart: true}
+	upd.EmailEvents = types.EventSubscriptions{ChannelImbalanceEnd: true}
+	upd.ZabbixServer = "zabbix.example.com"
+	upd.ZabbixPort = 10051
+	upd.ZabbixHost = "encoder-01"
+	upd.ZabbixImbalanceKey = "imbalance.alert"
+	upd.ZabbixEvents = types.ZabbixEventSubscriptions{
+		ChannelImbalanceStart: true,
+		ChannelImbalanceEnd:   true,
+	}
+	if err := s.config.ApplySettings(upd); err != nil {
+		t.Fatalf("ApplySettings() error = %v", err)
+	}
+
+	rec := runJSONHandler(t, s.handleAPIConfig, http.MethodGet, "/api/config", "")
+	assertStatus(t, rec, http.StatusOK)
+	assertContains(t, rec.Body.Bytes(),
+		`"zabbix_imbalance_key":"imbalance.alert"`,
+		`"channel_imbalance_start":true`,
+		`"channel_imbalance_end":true`,
+	)
+	resp := decodeJSON[types.APIConfigResponse](t, rec.Body.Bytes())
+	if resp.ZabbixImbalanceKey != "imbalance.alert" {
+		t.Fatalf("ZabbixImbalanceKey = %q, want imbalance.alert", resp.ZabbixImbalanceKey)
+	}
+	if !resp.WebhookEvents.ChannelImbalanceStart {
+		t.Fatal("WebhookEvents.ChannelImbalanceStart = false, want true")
+	}
+	if !resp.EmailEvents.ChannelImbalanceEnd {
+		t.Fatal("EmailEvents.ChannelImbalanceEnd = false, want true")
+	}
+	if !resp.ZabbixEvents.ChannelImbalanceStart || !resp.ZabbixEvents.ChannelImbalanceEnd {
+		t.Fatalf("ZabbixEvents = %+v, want imbalance start/end true", resp.ZabbixEvents)
+	}
+}
+
 func TestApplyWithPreserveRoundTripsChannelImbalance(t *testing.T) {
 	t.Parallel()
 	s := freshServer(t)
@@ -881,6 +931,46 @@ func TestApplyWithPreserveRoundTripsChannelImbalance(t *testing.T) {
 	}
 	if snap.ChannelImbalanceRecoveryMs != 4000 {
 		t.Fatalf("ChannelImbalanceRecoveryMs = %d, want 4000", snap.ChannelImbalanceRecoveryMs)
+	}
+}
+
+func TestApplyWithPreserveRoundTripsNotificationImbalanceFields(t *testing.T) {
+	t.Parallel()
+	s := freshServer(t)
+	upd := validBaselineSettings(s.config)
+	upd.WebhookEvents = types.EventSubscriptions{
+		SilenceStart:          true,
+		ChannelImbalanceStart: true,
+		ChannelImbalanceEnd:   true,
+	}
+	upd.EmailEvents = types.EventSubscriptions{
+		SilenceEnd:          true,
+		AudioDump:           true,
+		ChannelImbalanceEnd: true,
+	}
+	upd.ZabbixServer = "zabbix.example.com"
+	upd.ZabbixPort = 10051
+	upd.ZabbixHost = "encoder-01"
+	upd.ZabbixImbalanceKey = "imbalance.alert"
+	upd.ZabbixEvents = types.ZabbixEventSubscriptions{
+		ChannelImbalanceStart: true,
+		ChannelImbalanceEnd:   true,
+	}
+	snap, err := applyWithPreserve(t, s.config, upd)
+	if err != nil {
+		t.Fatalf("applyWithPreserve() error = %v", err)
+	}
+	if snap.WebhookEvents != upd.WebhookEvents {
+		t.Fatalf("WebhookEvents = %+v, want %+v", snap.WebhookEvents, upd.WebhookEvents)
+	}
+	if snap.EmailEvents != upd.EmailEvents {
+		t.Fatalf("EmailEvents = %+v, want %+v", snap.EmailEvents, upd.EmailEvents)
+	}
+	if snap.ZabbixEvents != upd.ZabbixEvents.ToEventSubscriptions() {
+		t.Fatalf("ZabbixEvents = %+v, want %+v", snap.ZabbixEvents, upd.ZabbixEvents.ToEventSubscriptions())
+	}
+	if snap.ZabbixImbalanceKey != "imbalance.alert" {
+		t.Fatalf("ZabbixImbalanceKey = %q, want imbalance.alert", snap.ZabbixImbalanceKey)
 	}
 }
 func TestHandleStreamEndpointsRedactPassword(t *testing.T) {
@@ -1224,6 +1314,25 @@ func TestNotificationTestEndpointSavedFallbacks(t *testing.T) {
 			wantError:  "Zabbix not fully configured",
 			call:       (*Server).handleAPITestZabbix,
 		},
+		{
+			name:       "zabbix omitted imbalance key falls back",
+			seed:       seededZabbixImbalanceSettings,
+			path:       "/api/notifications/test/zabbix",
+			body:       `{"zabbix_port":70000}`,
+			wantStatus: http.StatusBadGateway,
+			wantError:  "not fully configured",
+			contains:   true,
+			call:       (*Server).handleAPITestZabbix,
+		},
+		{
+			name:       "zabbix explicit empty imbalance key overrides",
+			seed:       seededZabbixImbalanceSettings,
+			path:       "/api/notifications/test/zabbix",
+			body:       `{"zabbix_imbalance_key":""}`,
+			wantStatus: http.StatusBadRequest,
+			wantError:  "Zabbix not fully configured",
+			call:       (*Server).handleAPITestZabbix,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1269,6 +1378,7 @@ func validBaselineSettings(cfg *config.Config) *config.SettingsUpdate {
 		ZabbixPort:                  snap.ZabbixPort,
 		ZabbixHost:                  snap.ZabbixHost,
 		ZabbixSilenceKey:            snap.ZabbixSilenceKey,
+		ZabbixImbalanceKey:          snap.ZabbixImbalanceKey,
 		ZabbixUploadKey:             snap.ZabbixUploadKey,
 		RecordingMaxDurationMinutes: snap.RecordingMaxDurationMinutes,
 	}

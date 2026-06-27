@@ -227,6 +227,17 @@ func TestLoadPreservesConfigDataAndSnapshotEntities(t *testing.T) {
 	if snap.WebhookEvents != want.Notifications.Webhook.Events {
 		t.Fatalf("Snapshot().WebhookEvents = %+v, want %+v", snap.WebhookEvents, want.Notifications.Webhook.Events)
 	}
+	if snap.EmailEvents != want.Notifications.Email.Events {
+		t.Fatalf("Snapshot().EmailEvents = %+v, want %+v", snap.EmailEvents, want.Notifications.Email.Events)
+	}
+	if snap.ZabbixEvents != want.Notifications.Zabbix.Events.ToEventSubscriptions() {
+		t.Fatalf("Snapshot().ZabbixEvents = %+v, want %+v",
+			snap.ZabbixEvents, want.Notifications.Zabbix.Events.ToEventSubscriptions())
+	}
+	if snap.ZabbixImbalanceKey != want.Notifications.Zabbix.ImbalanceKey {
+		t.Fatalf("Snapshot().ZabbixImbalanceKey = %q, want %q",
+			snap.ZabbixImbalanceKey, want.Notifications.Zabbix.ImbalanceKey)
+	}
 }
 func TestLoadRejectsInvalidConfiguredEntities(t *testing.T) {
 	t.Parallel()
@@ -369,8 +380,9 @@ func fullyPopulatedConfigData(t *testing.T) ConfigData {
 			Webhook: WebhookConfig{
 				URL: "https://example.com/hook",
 				Events: types.EventSubscriptions{
-					SilenceStart: true,
-					AudioDump:    true,
+					SilenceStart:          true,
+					AudioDump:             true,
+					ChannelImbalanceStart: true,
 				},
 			},
 			Email: EmailConfig{
@@ -380,19 +392,23 @@ func fullyPopulatedConfigData(t *testing.T) ConfigData {
 				FromAddress:  "studio@example.com",
 				Recipients:   "ops@example.com, engineer@example.com",
 				Events: types.EventSubscriptions{
-					SilenceEnd: true,
-					AudioDump:  true,
+					SilenceEnd:          true,
+					AudioDump:           true,
+					ChannelImbalanceEnd: true,
 				},
 			},
 			Zabbix: types.ZabbixConfig{
-				Server:     "zabbix.example.com",
-				Port:       10051,
-				Host:       "encoder-1",
-				SilenceKey: "encoder.silence",
-				UploadKey:  "encoder.upload",
+				Server:       "zabbix.example.com",
+				Port:         10051,
+				Host:         "encoder-1",
+				SilenceKey:   "encoder.silence",
+				ImbalanceKey: "encoder.imbalance",
+				UploadKey:    "encoder.upload",
 				Events: types.ZabbixEventSubscriptions{
-					SilenceStart: true,
-					SilenceEnd:   true,
+					SilenceStart:          true,
+					SilenceEnd:            true,
+					ChannelImbalanceStart: true,
+					ChannelImbalanceEnd:   true,
 				},
 			},
 		},
@@ -479,19 +495,28 @@ func TestLoadPreservesExplicitZeroAndFalseValues(t *testing.T) {
       "events": {
         "silence_start": false,
         "silence_end": false,
-        "audio_dump": false
+        "audio_dump": false,
+        "channel_imbalance_start": false,
+        "channel_imbalance_end": false
       }
     },
     "email": {
       "events": {
         "silence_start": false,
         "silence_end": false,
-        "audio_dump": false
+        "audio_dump": false,
+        "channel_imbalance_start": false,
+        "channel_imbalance_end": false
       }
     },
     "zabbix": {
       "port": 0,
-      "events": {"silence_start": false, "silence_end": false}
+      "events": {
+        "silence_start": false,
+        "silence_end": false,
+        "channel_imbalance_start": false,
+        "channel_imbalance_end": false
+      }
 	    }
 	  }
 	`))
@@ -539,8 +564,18 @@ func TestZabbixEventsJSONSemantics(t *testing.T) {
 			want: types.EventSubscriptions{SilenceStart: true},
 		},
 		{
+			name: "old event JSON defaults imbalance subscriptions false",
+			json: validConfigJSON(`"notifications":{"zabbix":{"events":{"silence_start":true,"silence_end":true}}}`),
+			want: types.EventSubscriptions{SilenceStart: true, SilenceEnd: true},
+		},
+		{
+			name: "partial object supports channel imbalance start",
+			json: validConfigJSON(`"notifications":{"zabbix":{"events":{"channel_imbalance_start":true}}}`),
+			want: types.EventSubscriptions{ChannelImbalanceStart: true},
+		},
+		{
 			name: "explicit false values disable events",
-			json: validConfigJSON(`"notifications":{"zabbix":{"events":{"silence_start":false,"silence_end":false}}}`),
+			json: validConfigJSON(`"notifications":{"zabbix":{"events":{"silence_start":false,"silence_end":false,"channel_imbalance_start":false,"channel_imbalance_end":false}}}`),
 			want: allFalse,
 		},
 	}
@@ -556,7 +591,7 @@ func TestZabbixEventsJSONSemantics(t *testing.T) {
 }
 func TestZabbixEventsRoundTrip(t *testing.T) {
 	t.Parallel()
-	configPath := writeConfig(t, validConfigJSON(`"notifications":{"zabbix":{"events":{"silence_start":true,"silence_end":true}}}`))
+	configPath := writeConfig(t, validConfigJSON(`"notifications":{"zabbix":{"events":{"silence_start":true,"silence_end":true,"channel_imbalance_start":true,"channel_imbalance_end":true}}}`))
 	cfg := New(configPath)
 	mustLoad(t, cfg)
 	stream := &types.Stream{Host: "127.0.0.1", Port: 1234, Codec: types.CodecPCM}
@@ -566,9 +601,63 @@ func TestZabbixEventsRoundTrip(t *testing.T) {
 	cfg2 := New(configPath)
 	mustLoad(t, cfg2)
 	got := cfg2.Snapshot().ZabbixEvents
-	want := types.EventSubscriptions{SilenceStart: true, SilenceEnd: true}
+	want := types.EventSubscriptions{
+		SilenceStart:          true,
+		SilenceEnd:            true,
+		ChannelImbalanceStart: true,
+		ChannelImbalanceEnd:   true,
+	}
 	if got != want {
 		t.Fatalf("ZabbixEvents after round-trip = %+v, want %+v", got, want)
+	}
+}
+
+func TestApplySettingsRoundTripsNotificationImbalanceFields(t *testing.T) {
+	t.Parallel()
+	cfg, configPath := newLoadedConfig(t)
+	upd := minimalValidUpdate()
+	upd.WebhookEvents = types.EventSubscriptions{
+		SilenceStart:          true,
+		AudioDump:             true,
+		ChannelImbalanceStart: true,
+		ChannelImbalanceEnd:   true,
+	}
+	upd.EmailEvents = types.EventSubscriptions{
+		SilenceEnd:          true,
+		AudioDump:           true,
+		ChannelImbalanceEnd: true,
+	}
+	upd.ZabbixEvents = types.ZabbixEventSubscriptions{
+		SilenceStart:          true,
+		ChannelImbalanceStart: true,
+		ChannelImbalanceEnd:   true,
+	}
+	upd.ZabbixServer = "zabbix.example.com"
+	upd.ZabbixPort = 10051
+	upd.ZabbixHost = "encoder-01"
+	upd.ZabbixSilenceKey = "silence.alert"
+	upd.ZabbixImbalanceKey = "imbalance.alert"
+	upd.ZabbixUploadKey = "upload.alert"
+	if err := cfg.ApplySettings(upd); err != nil {
+		t.Fatalf("ApplySettings() error = %v", err)
+	}
+	reloaded := New(configPath)
+	mustLoad(t, reloaded)
+	snap := reloaded.Snapshot()
+	if snap.WebhookEvents != upd.WebhookEvents {
+		t.Fatalf("WebhookEvents = %+v, want %+v", snap.WebhookEvents, upd.WebhookEvents)
+	}
+	if snap.EmailEvents != upd.EmailEvents {
+		t.Fatalf("EmailEvents = %+v, want %+v", snap.EmailEvents, upd.EmailEvents)
+	}
+	if snap.ZabbixEvents != upd.ZabbixEvents.ToEventSubscriptions() {
+		t.Fatalf("ZabbixEvents = %+v, want %+v", snap.ZabbixEvents, upd.ZabbixEvents.ToEventSubscriptions())
+	}
+	if snap.ZabbixImbalanceKey != "imbalance.alert" {
+		t.Fatalf("ZabbixImbalanceKey = %q, want imbalance.alert", snap.ZabbixImbalanceKey)
+	}
+	if !snap.HasZabbixImbalance() {
+		t.Fatal("HasZabbixImbalance() = false, want true")
 	}
 }
 func TestApplySettingsValidatesInput(t *testing.T) {

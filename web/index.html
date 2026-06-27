@@ -558,9 +558,9 @@
                     </div>
                 </div>
 
-                <!-- Notifications Panel - Notification configuration for silence events
+                <!-- Notifications Panel - Notification configuration for audio events
                      Three notification methods (can use multiple):
-                     - Webhook: HTTP POST to URL on silence start/end
+                     - Webhook: HTTP POST to URL on audio events
                      - File Log: Append JSON lines to local file
                      - Email: Microsoft Graph notifications -->
                 <div class="panel" role="tabpanel" id="panel-notifications" aria-labelledby="tab-notifications" x-show="settingsTab === 'notifications'">
@@ -578,7 +578,7 @@
                             <span class="channel-chevron icon-container" x-html="icons.chevronDown" aria-hidden="true"></span>
                         </button>
                         <div class="channel-body" id="channel-webhook" x-show="cardsOpen.webhook" x-cloak x-transition:enter="channel-body-enter" x-transition:leave="channel-body-leave">
-                        <p class="section-desc">POST request sent for silence events.</p>
+                        <p class="section-desc">POST request sent for configured audio events.</p>
                         <div class="form">
                             <div class="group">
                                 <label for="silence-webhook">Webhook URL</label>
@@ -595,6 +595,8 @@
                                     <label class="checkbox-label" for="webhook-evt-start"><input id="webhook-evt-start" type="checkbox" x-model="settingsForm.webhookEvents.silence_start" @change="markSettingsDirty()"> Silence start</label>
                                     <label class="checkbox-label" for="webhook-evt-end"><input id="webhook-evt-end" type="checkbox" x-model="settingsForm.webhookEvents.silence_end" @change="markSettingsDirty()"> Silence end</label>
                                     <label class="checkbox-label" for="webhook-evt-dump"><input id="webhook-evt-dump" type="checkbox" x-model="settingsForm.webhookEvents.audio_dump" @change="markSettingsDirty()"> Audio dump</label>
+                                    <label class="checkbox-label" for="webhook-evt-imbalance-start"><input id="webhook-evt-imbalance-start" type="checkbox" x-model="settingsForm.webhookEvents.channel_imbalance_start" @change="markSettingsDirty()"> Channel imbalance start</label>
+                                    <label class="checkbox-label" for="webhook-evt-imbalance-end"><input id="webhook-evt-imbalance-end" type="checkbox" x-model="settingsForm.webhookEvents.channel_imbalance_end" @change="markSettingsDirty()"> Channel imbalance end</label>
                                 </div>
                             </div>
                         </div>
@@ -618,7 +620,7 @@
                             <span class="channel-chevron icon-container" x-html="icons.chevronDown" aria-hidden="true"></span>
                         </button>
                         <div class="channel-body" id="channel-email" x-show="cardsOpen.email" x-cloak x-transition:enter="channel-body-enter" x-transition:leave="channel-body-leave">
-                        <p class="section-desc">Email notifications via Microsoft Graph API for silence events.</p>
+                        <p class="section-desc">Email notifications via Microsoft Graph API for configured audio events.</p>
                         <template x-if="graphSecretExpiry.expires_soon">
                             <div class="warning-banner">
                                 <span x-html="icons.warning"></span>
@@ -661,6 +663,8 @@
                                     <label class="checkbox-label" for="email-evt-start"><input id="email-evt-start" type="checkbox" x-model="settingsForm.emailEvents.silence_start" @change="markSettingsDirty()"> Silence start</label>
                                     <label class="checkbox-label" for="email-evt-end"><input id="email-evt-end" type="checkbox" x-model="settingsForm.emailEvents.silence_end" @change="markSettingsDirty()"> Silence end</label>
                                     <label class="checkbox-label" for="email-evt-dump"><input id="email-evt-dump" type="checkbox" x-model="settingsForm.emailEvents.audio_dump" @change="markSettingsDirty()"> Audio dump</label>
+                                    <label class="checkbox-label" for="email-evt-imbalance-start"><input id="email-evt-imbalance-start" type="checkbox" x-model="settingsForm.emailEvents.channel_imbalance_start" @change="markSettingsDirty()"> Channel imbalance start</label>
+                                    <label class="checkbox-label" for="email-evt-imbalance-end"><input id="email-evt-imbalance-end" type="checkbox" x-model="settingsForm.emailEvents.channel_imbalance_end" @change="markSettingsDirty()"> Channel imbalance end</label>
                                 </div>
                             </div>
                         </div>
@@ -684,7 +688,7 @@
                             <span class="channel-chevron icon-container" x-html="icons.chevronDown" aria-hidden="true"></span>
                         </button>
                         <div class="channel-body" id="channel-zabbix" x-show="cardsOpen.zabbix" x-cloak x-transition:enter="channel-body-enter" x-transition:leave="channel-body-leave">
-                        <p class="section-desc">Zabbix trapper items for silence and upload alerts.</p>
+                        <p class="section-desc">Zabbix trapper items for audio and upload alerts.</p>
                         <div class="form">
                             <div class="group">
                                 <label for="zabbix-server">Server</label>
@@ -706,15 +710,21 @@
                                     <input id="zabbix-key" type="text" placeholder="silence.alert" x-model="settingsForm.zabbix.silenceKey" @input="markSettingsDirty()">
                                 </div>
                                 <div class="group">
-                                    <label for="zabbix-upload-key">Upload Key</label>
-                                    <input id="zabbix-upload-key" type="text" placeholder="upload.alert" x-model="settingsForm.zabbix.uploadKey" @input="markSettingsDirty()">
+                                    <label for="zabbix-imbalance-key">Imbalance Key</label>
+                                    <input id="zabbix-imbalance-key" type="text" placeholder="imbalance.alert" x-model="settingsForm.zabbix.imbalanceKey" @input="markSettingsDirty()">
                                 </div>
+                            </div>
+                            <div class="group">
+                                <label for="zabbix-upload-key">Upload Key</label>
+                                <input id="zabbix-upload-key" type="text" placeholder="upload.alert" x-model="settingsForm.zabbix.uploadKey" @input="markSettingsDirty()">
                             </div>
                             <div class="group">
                                 <label>Events</label>
                                 <div class="checkbox-group">
                                     <label class="checkbox-label" for="zabbix-evt-start"><input id="zabbix-evt-start" type="checkbox" x-model="settingsForm.zabbixEvents.silence_start" @change="markSettingsDirty()"> Silence start</label>
                                     <label class="checkbox-label" for="zabbix-evt-end"><input id="zabbix-evt-end" type="checkbox" x-model="settingsForm.zabbixEvents.silence_end" @change="markSettingsDirty()"> Silence end</label>
+                                    <label class="checkbox-label" for="zabbix-evt-imbalance-start"><input id="zabbix-evt-imbalance-start" type="checkbox" x-model="settingsForm.zabbixEvents.channel_imbalance_start" @change="markSettingsDirty()"> Channel imbalance start</label>
+                                    <label class="checkbox-label" for="zabbix-evt-imbalance-end"><input id="zabbix-evt-imbalance-end" type="checkbox" x-model="settingsForm.zabbixEvents.channel_imbalance_end" @change="markSettingsDirty()"> Channel imbalance end</label>
                                 </div>
                             </div>
                         </div>

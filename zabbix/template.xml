@@ -54,6 +54,34 @@
                     </triggers>
                 </item>
                 <item>
+                    <uuid>d4e5f6a7b8c94d1e8f0a1b2c3d4e5f60</uuid>
+                    <name>Channel Imbalance Alert</name>
+                    <type>TRAP</type>
+                    <key>imbalance.alert</key>
+                    <value_type>TEXT</value_type>
+                    <description>Receives channel imbalance alerts from ZWFM encoder. Values contain CHANNEL_IMBALANCE, CHANNEL_BALANCED, or TEST messages with audio levels and balance details.</description>
+                    <triggers>
+                        <trigger>
+                            <uuid>f1e2d3c4b5a64718a9b0c1d2e3f4a5b6</uuid>
+                            <expression>find(/ZWFM Encoder Monitor/imbalance.alert,,&quot;like&quot;,&quot;event=CHANNEL_BALANCED&quot;) = 1</expression>
+                            <name>Channel Balance Restored</name>
+                            <opdata>{ITEM.LASTVALUE}</opdata>
+                            <priority>INFO</priority>
+                            <description>Left and right channels are balanced again, or audio dropped away from the imbalance detector.</description>
+                        </trigger>
+                        <trigger>
+                            <uuid>0a1b2c3d4e5f6789abc0def123456789</uuid>
+                            <expression>find(/ZWFM Encoder Monitor/imbalance.alert,,&quot;like&quot;,&quot;event=CHANNEL_IMBALANCE&quot;) = 1</expression>
+                            <recovery_mode>RECOVERY_EXPRESSION</recovery_mode>
+                            <recovery_expression>find(/ZWFM Encoder Monitor/imbalance.alert,,&quot;like&quot;,&quot;event=CHANNEL_BALANCED&quot;) = 1</recovery_expression>
+                            <name>Channel Imbalance Detected</name>
+                            <opdata>{ITEM.LASTVALUE}</opdata>
+                            <priority>HIGH</priority>
+                            <description>The left and right audio channels differ by more than the configured threshold. Trigger recovers when balance is restored or audio drops away.</description>
+                        </trigger>
+                    </triggers>
+                </item>
+                <item>
                     <uuid>b3a2f8c1e5d74a6e9c0b1d2e3f4a5b6c</uuid>
                     <name>Upload Alert</name>
                     <type>TRAP</type>

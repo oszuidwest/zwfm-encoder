@@ -217,13 +217,17 @@ func TestStreamValidateModeAware(t *testing.T) {
 }
 func TestEventSubscriptionsToZabbixEventSubscriptionsOmitsAudioDump(t *testing.T) {
 	got := (EventSubscriptions{
-		SilenceStart: true,
-		SilenceEnd:   false,
-		AudioDump:    true,
+		SilenceStart:          true,
+		SilenceEnd:            false,
+		AudioDump:             true,
+		ChannelImbalanceStart: true,
+		ChannelImbalanceEnd:   true,
 	}).ToZabbixEventSubscriptions()
 	want := ZabbixEventSubscriptions{
-		SilenceStart: true,
-		SilenceEnd:   false,
+		SilenceStart:          true,
+		SilenceEnd:            false,
+		ChannelImbalanceStart: true,
+		ChannelImbalanceEnd:   true,
 	}
 	if got != want {
 		t.Fatalf("ToZabbixEventSubscriptions() = %+v, want %+v", got, want)
@@ -231,8 +235,10 @@ func TestEventSubscriptionsToZabbixEventSubscriptionsOmitsAudioDump(t *testing.T
 }
 func TestZabbixEventSubscriptionsRoundTrip(t *testing.T) {
 	start := ZabbixEventSubscriptions{
-		SilenceStart: true,
-		SilenceEnd:   true,
+		SilenceStart:          true,
+		SilenceEnd:            true,
+		ChannelImbalanceStart: true,
+		ChannelImbalanceEnd:   true,
 	}
 	got := start.ToEventSubscriptions().ToZabbixEventSubscriptions()
 	if got != start {

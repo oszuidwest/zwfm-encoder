@@ -11,7 +11,7 @@ Audio streaming software for [ZuidWest FM](https://www.zuidwestfm.nl/) (Linux), 
 - **Configurable VU meters** - Peak/RMS metering with configurable peak hold, clip detection, and live WebSocket updates
 - **Silence detection** - Alerts via webhook, email, file log, or Zabbix when audio drops below threshold
 - **Silence audio dumps** - Capture audio around silence events for troubleshooting and recovery notifications
-- **Channel imbalance detection** - Detects dead or mismatched L/R channels with live UI state, event log entries, and readiness status
+- **Channel imbalance detection** - Detects dead or mismatched L/R channels with webhook, email, file log, Zabbix, live UI, and readiness status
 - **Multiple codecs** - MP3, Opus, or uncompressed PCM per output
 - **Single binary** - Web interface embedded, minimal runtime dependencies
 
@@ -105,19 +105,19 @@ Detects dead or mismatched stereo channels by comparing the left and right RMS l
 | Duration | 15 s | 0.5 to 300 | Seconds of imbalance before alerting |
 | Recovery | 5 s | 0.5 to 60 | Seconds of balanced audio, or dropped-away audio, before recovery |
 
-Channel imbalance events are written to the event log and exposed in the dashboard, `GET /health`, and `GET /ready`. A confirmed imbalance makes the `channel_imbalance` readiness component fail until the channels recover.
+Channel imbalance events can trigger webhook, email, and Zabbix notifications, are written to the event log, and are exposed in the dashboard, `GET /health`, and `GET /ready`. A confirmed imbalance makes the `channel_imbalance` readiness component fail until the channels recover.
 
 ## Alerting
 
-**Silence alerting options** (can use multiple simultaneously, each with per-event control):
-- **Webhook** - POST request to a URL; independently enable `silence_start`, `silence_end`, and `audio_dump` (MP3 attachment).
-- **Email** - Microsoft Graph API notification; independently enable `silence_start`, `silence_end`, and `audio_dump` (MP3 attachment).
+**Audio alerting options** (can use multiple simultaneously, each with per-event control):
+- **Webhook** - POST request to a URL; independently enable `silence_start`, `silence_end`, `audio_dump`, `channel_imbalance_start`, and `channel_imbalance_end`.
+- **Email** - Microsoft Graph API notification; independently enable `silence_start`, `silence_end`, `audio_dump`, `channel_imbalance_start`, and `channel_imbalance_end`.
 - **File Log** - Appends JSON Lines for every audio event, including silence and channel imbalance events (always records all events, no per-event toggle).
-- **Zabbix** - Send trapper items to a Zabbix server; independently enable `silence_start` and `silence_end` (no `audio_dump` - trapper items do not support file attachments).
+- **Zabbix** - Send trapper items to a Zabbix server; independently enable `silence_start`, `silence_end`, `channel_imbalance_start`, and `channel_imbalance_end` (no `audio_dump` - trapper items do not support file attachments).
 
-`silence_end` is sent immediately on recovery; `audio_dump_ready` is dispatched as a separate event once the MP3 encoding completes. Abandoned S3 uploads always alert every configured channel, regardless of per-event toggles.
+`silence_end` and `channel_imbalance_end` are sent immediately when recovery is confirmed; `audio_dump_ready` is dispatched as a separate event once the MP3 encoding completes. Abandoned S3 uploads always alert every configured channel, regardless of per-event toggles.
 
-Configure silence and channel imbalance detection under Settings -> Audio. Configure silence notifications under Settings -> Notifications.
+Configure silence and channel imbalance detection under Settings -> Audio. Configure audio notifications under Settings -> Notifications.
 
 ### Microsoft 365 Email Setup
 
@@ -135,9 +135,9 @@ The encoder warns when the secret expires within 30 days.
 
 1. Import [`zabbix/template.xml`](https://github.com/oszuidwest/zwfm-encoder/blob/main/zabbix/template.xml) in Zabbix (**Data collection** -> **Templates** -> **Import**)
 2. Link the template to your encoder host
-3. Configure in the encoder: server, port (default 10051), host name (must match Zabbix exactly), silence key, and upload key
+3. Configure in the encoder: server, port (default 10051), host name (must match Zabbix exactly), silence key, imbalance key, and upload key
 
-The template creates triggers for SILENCE (Disaster), RECOVERY (Info), TEST (Info), and UPLOAD_ABANDONED (High) events.
+The template creates triggers for SILENCE (Disaster), RECOVERY (Info), CHANNEL_IMBALANCE (High), CHANNEL_BALANCED (Info), TEST (Info), and UPLOAD_ABANDONED (High) events. Channel imbalance uses a separate `imbalance.alert` item; Zabbix imbalance notifications only work when `imbalance_key` is configured and the matching trapper item exists.
 
 ## Recording API
 
@@ -321,11 +321,11 @@ flowchart LR
     %% Alerting
     SD -->|event| SN
     SDM -->|MP3| SN
-    ID -->|events| EL
+    ID -->|event| SN
     SN -->|HTTP| N1
     SN -->|Graph API| N2
     SN -->|trapper| N4
-    SN -->|silence events| EL
+    SN -->|audio events| EL
 
     %% Streaming
     D ==>|PCM| OM
@@ -348,7 +348,7 @@ flowchart LR
 3. **Metering**: Calculates RMS/peak levels in Go (no FFmpeg filters), holds peaks for a configurable duration (default 3000 ms), detects clipping at +/-32760
 4. **Silence Detection**: Hysteresis-based detection with configurable threshold/duration/recovery. Buffers 15s audio context before/after silence events
 5. **Channel Imbalance Detection**: Hysteresis-based L/R balance detection with configurable threshold/duration/recovery. Reuses the silence threshold as a presence floor and reports live balance/imbalance values.
-6. **Alerting**: Silence events trigger webhook, email (MS Graph), log (JSON Lines), and/or Zabbix. Each channel has per-event subscriptions for `silence_start`, `silence_end`, and `audio_dump`. `silence_end` fires immediately on recovery; the `audio_dump_ready` event fires separately once the MP3 is ready. Channel imbalance events are logged and surfaced in health/readiness. Abandoned S3 uploads also trigger notifications.
+6. **Alerting**: Silence and channel imbalance events trigger webhook, email (MS Graph), log (JSON Lines), and/or Zabbix. Webhook and email support per-event subscriptions for `silence_start`, `silence_end`, `audio_dump`, `channel_imbalance_start`, and `channel_imbalance_end`; Zabbix supports the same set except `audio_dump`. `silence_end` and `channel_imbalance_end` fire immediately when recovery is confirmed; `audio_dump_ready` fires separately once the MP3 is ready. Abandoned S3 uploads also trigger notifications.
 7. **Streaming**: Per-output FFmpeg encoders; caller streams use FFmpeg SRT with retry/backoff, listener streams use a GoSRT multi-client fan-out around one FFmpeg stdout pipe
 8. **Recording**: Hourly rotation or on-demand, with optional S3 upload
 9. **Event Log**: All stream, audio, and recording events written to a JSON Lines file; accessible via web UI and REST API with pagination

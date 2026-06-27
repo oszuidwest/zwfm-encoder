@@ -156,6 +156,43 @@ func sendZabbixRecovery(ctx context.Context, server string, port int, host, key 
 			e.DurationMs, e.LevelL, e.LevelR, e.Threshold))
 }
 
+// sendZabbixChannelImbalanceStart sends a channel imbalance alert to Zabbix.
+func sendZabbixChannelImbalanceStart(
+	ctx context.Context, server string, port int, host, key string, e ChannelImbalanceData,
+) error {
+	return sendZabbixEvent(ctx, server, port, host, key, formatZabbixChannelImbalanceStartValue(e))
+}
+
+// sendZabbixChannelImbalanceEnd sends a channel balance recovery message to Zabbix.
+func sendZabbixChannelImbalanceEnd(
+	ctx context.Context, server string, port int, host, key string, e ChannelImbalanceData,
+) error {
+	return sendZabbixEvent(ctx, server, port, host, key, formatZabbixChannelImbalanceEndValue(e))
+}
+
+func formatZabbixChannelImbalanceStartValue(e ChannelImbalanceData) string {
+	return fmt.Sprintf(
+		"event=CHANNEL_IMBALANCE level_l=%.1f level_r=%.1f balance_db=%.1f imbalance_db=%.1f threshold=%.1f",
+		e.LevelL,
+		e.LevelR,
+		e.BalanceDB,
+		e.ImbalanceDB,
+		e.ThresholdDB,
+	)
+}
+
+func formatZabbixChannelImbalanceEndValue(e ChannelImbalanceData) string {
+	return fmt.Sprintf(
+		"event=CHANNEL_BALANCED duration_ms=%d level_l=%.1f level_r=%.1f balance_db=%.1f imbalance_db=%.1f threshold=%.1f",
+		e.DurationMs,
+		e.LevelL,
+		e.LevelR,
+		e.BalanceDB,
+		e.ImbalanceDB,
+		e.ThresholdDB,
+	)
+}
+
 // SendZabbixTest sends a test message to verify Zabbix config.
 func SendZabbixTest(server string, port int, host, key string) error {
 	if issues := types.ValidateZabbixTarget(server, port, host, key); len(issues) > 0 {
@@ -175,6 +212,11 @@ func (c *ZabbixChannel) IsConfiguredForSilence(cfg *config.Snapshot) bool {
 	return cfg.HasZabbixSilence()
 }
 
+// IsConfiguredForImbalance reports whether the channel participates in channel imbalance flows.
+func (c *ZabbixChannel) IsConfiguredForImbalance(cfg *config.Snapshot) bool {
+	return cfg.HasZabbixImbalance()
+}
+
 // IsConfiguredForUpload reports whether the channel participates in upload-abandonment flows.
 func (c *ZabbixChannel) IsConfiguredForUpload(cfg *config.Snapshot) bool {
 	return cfg.HasZabbixUpload()
@@ -188,6 +230,16 @@ func (c *ZabbixChannel) SubscribesSilenceStart(cfg *config.Snapshot) bool {
 // SubscribesSilenceEnd reports whether silence-end events should be sent.
 func (c *ZabbixChannel) SubscribesSilenceEnd(cfg *config.Snapshot) bool {
 	return cfg.HasZabbixSilence() && cfg.ZabbixEvents.SilenceEnd
+}
+
+// SubscribesChannelImbalanceStart reports whether imbalance-start events should be sent.
+func (c *ZabbixChannel) SubscribesChannelImbalanceStart(cfg *config.Snapshot) bool {
+	return cfg.HasZabbixImbalance() && cfg.ZabbixEvents.ChannelImbalanceStart
+}
+
+// SubscribesChannelImbalanceEnd reports whether imbalance-end events should be sent.
+func (c *ZabbixChannel) SubscribesChannelImbalanceEnd(cfg *config.Snapshot) bool {
+	return cfg.HasZabbixImbalance() && cfg.ZabbixEvents.ChannelImbalanceEnd
 }
 
 // SubscribesAudioDump always reports false because Zabbix cannot carry file attachments.
@@ -210,6 +262,32 @@ func (c *ZabbixChannel) SendSilenceEnd(
 		LevelR:     levelR,
 		Threshold:  cfg.SilenceThreshold,
 	})
+}
+
+func (c *ZabbixChannel) SendChannelImbalanceStart(
+	ctx context.Context, cfg *config.Snapshot, data ChannelImbalanceData,
+) error {
+	return sendZabbixChannelImbalanceStart(
+		ctx,
+		cfg.ZabbixServer,
+		cfg.ZabbixPort,
+		cfg.ZabbixHost,
+		cfg.ZabbixImbalanceKey,
+		data,
+	)
+}
+
+func (c *ZabbixChannel) SendChannelImbalanceEnd(
+	ctx context.Context, cfg *config.Snapshot, data ChannelImbalanceData,
+) error {
+	return sendZabbixChannelImbalanceEnd(
+		ctx,
+		cfg.ZabbixServer,
+		cfg.ZabbixPort,
+		cfg.ZabbixHost,
+		cfg.ZabbixImbalanceKey,
+		data,
+	)
 }
 
 func (c *ZabbixChannel) SendAudioDump(

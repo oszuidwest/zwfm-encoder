@@ -643,7 +643,32 @@ func (e *Encoder) TriggerTestWebhook() error {
 // TriggerTestZabbix sends a test notification to the configured Zabbix server.
 func (e *Encoder) TriggerTestZabbix() error {
 	cfg := e.config.Snapshot()
-	return notify.SendZabbixTest(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixSilenceKey)
+	if issues := types.ValidateZabbixConfigured(
+		cfg.ZabbixServer,
+		cfg.ZabbixHost,
+		cfg.ZabbixSilenceKey,
+		cfg.ZabbixImbalanceKey,
+		cfg.ZabbixUploadKey,
+	); len(issues) > 0 {
+		return fmt.Errorf("zabbix not fully configured")
+	}
+
+	for _, target := range []struct {
+		name string
+		key  string
+	}{
+		{name: "silence", key: cfg.ZabbixSilenceKey},
+		{name: "imbalance", key: cfg.ZabbixImbalanceKey},
+		{name: "upload", key: cfg.ZabbixUploadKey},
+	} {
+		if target.key == "" {
+			continue
+		}
+		if err := notify.SendZabbixTest(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, target.key); err != nil {
+			return fmt.Errorf("%s key: %w", target.name, err)
+		}
+	}
+	return nil
 }
 
 // isStopping reports whether shutdown has begun. The caller must hold e.mu.
