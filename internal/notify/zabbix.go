@@ -67,7 +67,7 @@ func sendZabbixPayload(ctx context.Context, server string, port int, payload zab
 		return util.WrapError("marshal zabbix payload", err)
 	}
 
-	// Build header: "ZBXD\x01" + 8-byte little endian length
+	// Build header: "ZBXD\x01" + 8-byte little-endian length.
 	header := make([]byte, zabbixHeaderSize)
 	copy(header[0:5], zabbixMagic[:])
 	binary.LittleEndian.PutUint64(header[5:], uint64(len(data)))
@@ -79,7 +79,7 @@ func sendZabbixPayload(ctx context.Context, server string, port int, payload zab
 		return util.WrapError("write zabbix payload", err)
 	}
 
-	// Read reply header
+	// Read reply header.
 	replyHeader := make([]byte, zabbixHeaderSize)
 	if _, err := io.ReadFull(conn, replyHeader); err != nil {
 		return util.WrapError("read zabbix reply header", err)
@@ -96,7 +96,7 @@ func sendZabbixPayload(ctx context.Context, server string, port int, payload zab
 		return fmt.Errorf("zabbix reply too large: %d bytes (max %d)", replyLen, maxReplySize)
 	}
 
-	// Read reply body
+	// Read reply body.
 	reply := make([]byte, replyLen)
 	if _, err := io.ReadFull(conn, reply); err != nil {
 		return util.WrapError("read zabbix reply body", err)
@@ -107,12 +107,12 @@ func sendZabbixPayload(ctx context.Context, server string, port int, payload zab
 		return util.WrapError("parse zabbix reply", err)
 	}
 
-	// Check for explicit failure response
+	// Check for explicit failure response.
 	if resp.Response == "failed" {
 		return fmt.Errorf("zabbix rejected data: %s", resp.Info)
 	}
 
-	// Check for no items processed (host/key not found in Zabbix)
+	// Check for no items processed, which usually means the host or key is unknown.
 	if strings.Contains(resp.Info, "processed: 0;") && strings.Contains(resp.Info, "failed: 0;") {
 		return fmt.Errorf("zabbix processed no items (check host/key config)")
 	}
@@ -193,7 +193,7 @@ func formatZabbixChannelImbalanceEndValue(e ChannelImbalanceData) string {
 	)
 }
 
-// SendZabbixTest sends a test message to verify Zabbix config.
+// SendZabbixTest validates a concrete Zabbix target before sending a test trapper value.
 func SendZabbixTest(server string, port int, host, key string) error {
 	if issues := types.ValidateZabbixTarget(server, port, host, key); len(issues) > 0 {
 		return fmt.Errorf("zabbix not fully configured (server, host, key, and a valid port 1-65535 are required)")
@@ -245,6 +245,7 @@ func (c *ZabbixChannel) SubscribesChannelImbalanceEnd(cfg *config.Snapshot) bool
 // SubscribesAudioDump always reports false because Zabbix cannot carry file attachments.
 func (c *ZabbixChannel) SubscribesAudioDump(_ *config.Snapshot) bool { return false }
 
+// SendSilenceStart sends a Zabbix trapper value for a newly detected silence event.
 func (c *ZabbixChannel) SendSilenceStart(ctx context.Context, cfg *config.Snapshot, levelL, levelR float64) error {
 	return sendZabbixSilence(ctx, cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixSilenceKey, silenceEventData{
 		LevelL:    levelL,
@@ -253,6 +254,7 @@ func (c *ZabbixChannel) SendSilenceStart(ctx context.Context, cfg *config.Snapsh
 	})
 }
 
+// SendSilenceEnd sends a Zabbix trapper value when audio recovers from silence.
 func (c *ZabbixChannel) SendSilenceEnd(
 	ctx context.Context, cfg *config.Snapshot, durationMS int64, levelL, levelR float64,
 ) error {
@@ -264,6 +266,7 @@ func (c *ZabbixChannel) SendSilenceEnd(
 	})
 }
 
+// SendChannelImbalanceStart sends a Zabbix trapper value when channel imbalance is confirmed.
 func (c *ZabbixChannel) SendChannelImbalanceStart(
 	ctx context.Context, cfg *config.Snapshot, data ChannelImbalanceData,
 ) error {
@@ -277,6 +280,7 @@ func (c *ZabbixChannel) SendChannelImbalanceStart(
 	)
 }
 
+// SendChannelImbalanceEnd sends a Zabbix trapper value when stereo balance recovers.
 func (c *ZabbixChannel) SendChannelImbalanceEnd(
 	ctx context.Context, cfg *config.Snapshot, data ChannelImbalanceData,
 ) error {
@@ -290,12 +294,14 @@ func (c *ZabbixChannel) SendChannelImbalanceEnd(
 	)
 }
 
+// SendAudioDump returns an error because Zabbix trapper items cannot carry attachments.
 func (c *ZabbixChannel) SendAudioDump(
 	_ context.Context, _ *config.Snapshot, _ int64, _, _ float64, _ *silencedump.EncodeResult,
 ) error {
 	return fmt.Errorf("zabbix channel does not support audio dump delivery")
 }
 
+// SendUploadAbandoned sends a Zabbix trapper value after a recording upload exhausts retries.
 func (c *ZabbixChannel) SendUploadAbandoned(ctx context.Context, cfg *config.Snapshot, params UploadAbandonedData) error {
 	return sendUploadAbandonedZabbix(ctx, cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixUploadKey, params)
 }

@@ -7,29 +7,57 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 )
 
-// AlertChannel is a notification delivery channel (webhook, email, Zabbix).
+// AlertChannel defines the delivery contract shared by webhook, email, and
+// Zabbix notification backends.
 type AlertChannel interface {
+	// Name returns the stable channel identifier used in logs and event labels.
 	Name() string
+
+	// IsConfiguredForSilence reports whether silence events have the backend
+	// settings required before per-event subscriptions are checked.
 	IsConfiguredForSilence(cfg *config.Snapshot) bool
+	// IsConfiguredForImbalance reports whether channel imbalance events have the
+	// backend settings required before per-event subscriptions are checked.
 	IsConfiguredForImbalance(cfg *config.Snapshot) bool
+	// IsConfiguredForUpload reports whether upload-abandonment events have the
+	// backend settings required before dispatch.
 	IsConfiguredForUpload(cfg *config.Snapshot) bool
+
+	// SubscribesSilenceStart reports whether a configured backend wants
+	// silence-start events.
 	SubscribesSilenceStart(cfg *config.Snapshot) bool
+	// SubscribesSilenceEnd reports whether a configured backend wants
+	// silence-recovery events.
 	SubscribesSilenceEnd(cfg *config.Snapshot) bool
+	// SubscribesChannelImbalanceStart reports whether a configured backend wants
+	// channel-imbalance start events.
 	SubscribesChannelImbalanceStart(cfg *config.Snapshot) bool
+	// SubscribesChannelImbalanceEnd reports whether a configured backend wants
+	// channel-imbalance recovery events.
 	SubscribesChannelImbalanceEnd(cfg *config.Snapshot) bool
+	// SubscribesAudioDump reports whether a configured backend wants audio-dump
+	// notifications after silence recovery.
 	SubscribesAudioDump(cfg *config.Snapshot) bool
+
+	// SendSilenceStart delivers a silence-start alert with the current stereo levels.
 	SendSilenceStart(ctx context.Context, cfg *config.Snapshot, levelL, levelR float64) error
+	// SendSilenceEnd delivers a silence-recovery alert with duration and final levels.
 	SendSilenceEnd(ctx context.Context, cfg *config.Snapshot, durationMS int64, levelL, levelR float64) error
+	// SendChannelImbalanceStart delivers a confirmed channel-imbalance alert.
 	SendChannelImbalanceStart(ctx context.Context, cfg *config.Snapshot, data ChannelImbalanceData) error
+	// SendChannelImbalanceEnd delivers a channel-balance recovery alert.
 	SendChannelImbalanceEnd(ctx context.Context, cfg *config.Snapshot, data ChannelImbalanceData) error
+	// SendAudioDump delivers an audio dump notification, or returns an error if
+	// the backend cannot carry attachments.
 	SendAudioDump(
 		ctx context.Context, cfg *config.Snapshot, durationMS int64, levelL, levelR float64,
 		result *silencedump.EncodeResult,
 	) error
+	// SendUploadAbandoned delivers an alert for a recording that exhausted upload retries.
 	SendUploadAbandoned(ctx context.Context, cfg *config.Snapshot, params UploadAbandonedData) error
 }
 
-// UploadAbandonedData contains details about an abandoned upload for notification dispatch.
+// UploadAbandonedData contains the retry context sent when a recorder upload is abandoned.
 type UploadAbandonedData struct {
 	RecorderName string
 	Filename     string
@@ -38,7 +66,8 @@ type UploadAbandonedData struct {
 	RetryCount   int
 }
 
-// ChannelImbalanceData contains details for channel imbalance notification dispatch.
+// ChannelImbalanceData contains the measured levels and thresholds for an
+// imbalance lifecycle event.
 type ChannelImbalanceData struct {
 	LevelL      float64
 	LevelR      float64

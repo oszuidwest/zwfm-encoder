@@ -19,7 +19,8 @@ import (
 
 var webhookClient = &http.Client{Timeout: 10 * time.Second}
 
-// WebhookPayload represents the data sent to webhook endpoints.
+// WebhookPayload is the JSON body sent to webhook endpoints.
+// Only the fields relevant to the event type are populated.
 type WebhookPayload struct {
 	Event             string   `json:"event"`
 	SilenceDurationMs int64    `json:"silence_duration_ms,omitempty"`
@@ -98,7 +99,7 @@ func sendWebhookChannelImbalanceEnd(ctx context.Context, webhookURL string, e Ch
 	})
 }
 
-// SendWebhookTest sends a test webhook notification.
+// SendWebhookTest validates the webhook URL before sending a test notification.
 func SendWebhookTest(webhookURL, stationName string) error {
 	if err := formatWebhookRuntimeError(types.ValidateWebhookURL(webhookURL, validation.RequireComplete)); err != nil {
 		return err
@@ -242,6 +243,7 @@ func (c *WebhookChannel) SubscribesAudioDump(cfg *config.Snapshot) bool {
 	return cfg.HasWebhook() && cfg.WebhookEvents.AudioDump
 }
 
+// SendSilenceStart posts a webhook payload for a newly detected silence event.
 func (c *WebhookChannel) SendSilenceStart(ctx context.Context, cfg *config.Snapshot, levelL, levelR float64) error {
 	return sendWebhookSilence(ctx, cfg.WebhookURL, silenceEventData{
 		LevelL:    levelL,
@@ -250,6 +252,7 @@ func (c *WebhookChannel) SendSilenceStart(ctx context.Context, cfg *config.Snaps
 	})
 }
 
+// SendSilenceEnd posts a webhook recovery payload with the silence duration.
 func (c *WebhookChannel) SendSilenceEnd(
 	ctx context.Context, cfg *config.Snapshot, durationMS int64, levelL, levelR float64,
 ) error {
@@ -261,18 +264,21 @@ func (c *WebhookChannel) SendSilenceEnd(
 	})
 }
 
+// SendChannelImbalanceStart posts a webhook payload when channel imbalance is confirmed.
 func (c *WebhookChannel) SendChannelImbalanceStart(
 	ctx context.Context, cfg *config.Snapshot, data ChannelImbalanceData,
 ) error {
 	return sendWebhookChannelImbalanceStart(ctx, cfg.WebhookURL, data)
 }
 
+// SendChannelImbalanceEnd posts a webhook payload when stereo balance recovers.
 func (c *WebhookChannel) SendChannelImbalanceEnd(
 	ctx context.Context, cfg *config.Snapshot, data ChannelImbalanceData,
 ) error {
 	return sendWebhookChannelImbalanceEnd(ctx, cfg.WebhookURL, data)
 }
 
+// SendAudioDump posts a webhook payload and embeds the dump file when available.
 func (c *WebhookChannel) SendAudioDump(
 	ctx context.Context, cfg *config.Snapshot, durationMS int64, levelL, levelR float64,
 	result *silencedump.EncodeResult,
@@ -286,6 +292,7 @@ func (c *WebhookChannel) SendAudioDump(
 	})
 }
 
+// SendUploadAbandoned posts a webhook payload after a recording upload exhausts retries.
 func (c *WebhookChannel) SendUploadAbandoned(ctx context.Context, cfg *config.Snapshot, params UploadAbandonedData) error {
 	return sendUploadAbandonedWebhook(ctx, cfg.WebhookURL, params)
 }

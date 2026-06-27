@@ -1132,7 +1132,7 @@ func (s *Snapshot) HasZabbixUpload() bool {
 
 // Atomic settings update.
 
-// SettingsUpdate contains all settings for atomic update.
+// SettingsUpdate is the JSON payload applied by the settings endpoint in one validated save.
 type SettingsUpdate struct {
 	// AudioInput is the audio input device identifier (platform-specific).
 	AudioInput string `json:"audio_input"`

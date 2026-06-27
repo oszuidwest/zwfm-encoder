@@ -23,12 +23,11 @@ const (
 
 // ValidationIssues reports stored-Zabbix-config validation issues.
 //
-// Today the only config-load and settings-save rule for Zabbix is port range:
-// port=0 is accepted (means "use default at send time"); non-zero must be
-// 1..65535. Completeness (server/host/key) is intentionally not enforced
-// at storage time to preserve historical behavior; the test-send handler
-// uses ValidateZabbixConfigured for that, and runtime senders use
-// ValidateZabbixTarget.
+// Stored config only enforces port range: port=0 is accepted (means "use
+// default at send time"); non-zero must be 1..65535. Completeness
+// (server/host/key) is intentionally not enforced at storage time to preserve
+// historical behavior; the test-send handler uses ValidateZabbixConfigured for
+// that, and runtime senders use ValidateZabbixTarget.
 func (c *ZabbixConfig) ValidationIssues() validation.Issues {
 	var issues validation.Issues
 	if c.Port != 0 && (c.Port < 1 || c.Port > 65535) {
