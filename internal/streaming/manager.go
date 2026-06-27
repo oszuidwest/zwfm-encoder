@@ -687,43 +687,63 @@ func (m *Manager) StopAll() error {
 	return errors.Join(errs...)
 }
 
-// WriteAudio enqueues audio data for a stream. The data is copied and sent
-// to the stream's buffered channel for its writer goroutine. If the buffer
+// WriteAudio enqueues audio data for a single stream. The data is copied and
+// sent to the stream's buffered channel for its writer goroutine. If the buffer
 // is full, the oldest chunk is dropped to keep the most recent audio.
 func (m *Manager) WriteAudio(streamID string, data []byte) error {
 	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	stream, exists := m.streams[streamID]
 	if !exists || stream.state != types.ProcessRunning {
-		m.mu.RUnlock()
 		return nil
 	}
-	if stream.mode == types.StreamModeListener {
-		m.mu.RUnlock()
-		m.writeListenerAudio(streamID, stream, data)
-		return nil
-	}
-	ch := stream.audioCh
-
-	// Clone data because the caller reuses the buffer.
-	buf := bytes.Clone(data)
-
-	stream.offerAudio(streamID, ch, buf, "audio buffer full, dropping chunk")
-
-	m.mu.RUnlock()
+	// Clone lazily so a listener with no active encoder run allocates nothing.
+	stream.offerAudioLazy(streamID, func() []byte { return bytes.Clone(data) })
 	return nil
 }
 
-func (m *Manager) writeListenerAudio(streamID string, stream *Stream, data []byte) {
-	stream.encoderMu.RLock()
-	run := stream.encoder
-	if run == nil || run.audioCh == nil {
-		stream.encoderMu.RUnlock()
+// WriteAudioFanOut enqueues one shared, immutable PCM copy to every running
+// stream in streams. The copy is allocated lazily on the first stream that has
+// a live destination, so a chunk fanned out to N streams allocates once instead
+// of once per stream. data may be reused by the caller after this returns; the
+// queued copy is never mutated by writer goroutines.
+func (m *Manager) WriteAudioFanOut(streams []types.Stream, data []byte) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var shared []byte
+	copyChunk := func() []byte {
+		if shared == nil {
+			shared = bytes.Clone(data)
+		}
+		return shared
+	}
+	for i := range streams {
+		id := streams[i].ID
+		stream, exists := m.streams[id]
+		if !exists || stream.state != types.ProcessRunning {
+			continue
+		}
+		stream.offerAudioLazy(id, copyChunk)
+	}
+}
+
+// offerAudioLazy dispatches a chunk to the stream's caller channel or, for
+// listener mode, its active encoder run. copyChunk is invoked only once a live
+// destination is confirmed, so fan-out callers sharing one copy allocate at
+// most once and skip allocating entirely when no destination is ready.
+func (s *Stream) offerAudioLazy(streamID string, copyChunk func() []byte) {
+	if s.mode == types.StreamModeListener {
+		s.encoderMu.RLock()
+		run := s.encoder
+		if run != nil && run.audioCh != nil {
+			s.offerAudio(streamID, run.audioCh, copyChunk(), "listener encoder audio buffer full, dropping chunk")
+		}
+		s.encoderMu.RUnlock()
 		return
 	}
-	ch := run.audioCh
-	buf := bytes.Clone(data)
-	stream.offerAudio(streamID, ch, buf, "listener encoder audio buffer full, dropping chunk")
-	stream.encoderMu.RUnlock()
+	s.offerAudio(streamID, s.audioCh, copyChunk(), "audio buffer full, dropping chunk")
 }
 
 func (s *Stream) offerAudio(streamID string, ch chan []byte, buf []byte, logMessage string) {
