@@ -1201,6 +1201,7 @@ func TestHandleUpdateStreamPasswordKeepReplaceClear(t *testing.T) {
 			stream := fixture.server.config.Stream(fixture.streamID)
 			if stream == nil {
 				t.Fatal("updated stream not found")
+				return
 			}
 			if stream.Password != tt.wantSecret {
 				t.Fatalf("stream password = %q, want %q", stream.Password, tt.wantSecret)
@@ -1224,6 +1225,7 @@ func TestHandleUpdateStreamClearPasswordConflictsWithNewValue(t *testing.T) {
 	stream := fixture.server.config.Stream(fixture.streamID)
 	if stream == nil {
 		t.Fatal("stream not found")
+		return
 	}
 	if stream.Password != fixture.streamPassword {
 		t.Fatalf("stream password = %q, want unchanged %q", stream.Password, fixture.streamPassword)
@@ -1259,6 +1261,7 @@ func TestHandleUpdateRecorderClearS3SecretConflictsWithNewValue(t *testing.T) {
 	recorder := fixture.server.config.Recorder(fixture.recorderID)
 	if recorder == nil {
 		t.Fatal("recorder not found")
+		return
 	}
 	if recorder.S3SecretAccessKey != fixture.s3Secret {
 		t.Fatalf("recorder S3 secret = %q, want unchanged %q", recorder.S3SecretAccessKey, fixture.s3Secret)

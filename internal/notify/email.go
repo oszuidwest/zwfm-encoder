@@ -107,9 +107,11 @@ func channelImbalanceDirection(balanceDB float64) string {
 	}
 }
 
-func buildChannelImbalanceStartEmail(stationName, eventTime string, e ChannelImbalanceData) (string, string) {
-	subject := "[ALERT] Channel Imbalance Detected - " + stationName
-	body := fmt.Sprintf(
+func buildChannelImbalanceStartEmail(
+	stationName, eventTime string, e ChannelImbalanceData,
+) (subject, body string) {
+	subject = "[ALERT] Channel Imbalance Detected - " + stationName
+	body = fmt.Sprintf(
 		"Channel imbalance was detected at %s.\n\n"+
 			"Level: Left %.1f dB / Right %.1f dB\n"+
 			"Balance: %.1f dB (%s)\n"+
@@ -127,9 +129,11 @@ func buildChannelImbalanceStartEmail(stationName, eventTime string, e ChannelImb
 	return subject, body
 }
 
-func buildChannelImbalanceEndEmail(stationName, eventTime string, e ChannelImbalanceData) (string, string) {
-	subject := "[OK] Channels Balanced - " + stationName
-	body := fmt.Sprintf(
+func buildChannelImbalanceEndEmail(
+	stationName, eventTime string, e ChannelImbalanceData,
+) (subject, body string) {
+	subject = "[OK] Channels Balanced - " + stationName
+	body = fmt.Sprintf(
 		"Channels were balanced at %s.\n\n"+
 			"The imbalance lasted %s.\n"+
 			"Final level: Left %.1f dB / Right %.1f dB\n"+
