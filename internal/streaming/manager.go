@@ -687,28 +687,12 @@ func (m *Manager) StopAll() error {
 	return errors.Join(errs...)
 }
 
-// WriteAudio enqueues audio data for a single stream. The data is copied and
-// sent to the stream's buffered channel for its writer goroutine. If the buffer
-// is full, the oldest chunk is dropped to keep the most recent audio.
-func (m *Manager) WriteAudio(streamID string, data []byte) error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	stream, exists := m.streams[streamID]
-	if !exists || stream.state != types.ProcessRunning {
-		return nil
-	}
-	// Clone lazily so a listener with no active encoder run allocates nothing.
-	stream.offerAudioLazy(streamID, func() []byte { return bytes.Clone(data) })
-	return nil
-}
-
 // WriteAudioFanOut enqueues one shared, immutable PCM copy to every running
-// stream in streams. The copy is allocated lazily on the first stream that has
-// a live destination, so a chunk fanned out to N streams allocates once instead
-// of once per stream. data may be reused by the caller after this returns; the
+// managed stream. The copy is allocated lazily on the first stream that has a
+// live destination, so a chunk fanned out to N streams allocates once instead of
+// once per stream. data may be reused by the caller after this returns; the
 // queued copy is never mutated by writer goroutines.
-func (m *Manager) WriteAudioFanOut(streams []types.Stream, data []byte) {
+func (m *Manager) WriteAudioFanOut(data []byte) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -719,10 +703,8 @@ func (m *Manager) WriteAudioFanOut(streams []types.Stream, data []byte) {
 		}
 		return shared
 	}
-	for i := range streams {
-		id := streams[i].ID
-		stream, exists := m.streams[id]
-		if !exists || stream.state != types.ProcessRunning {
+	for id, stream := range m.streams {
+		if stream.state != types.ProcessRunning {
 			continue
 		}
 		stream.offerAudioLazy(id, copyChunk)

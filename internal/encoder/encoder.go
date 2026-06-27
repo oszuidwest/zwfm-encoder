@@ -932,7 +932,7 @@ func (e *Encoder) runDistributor(runID uint64) {
 
 		// Fan out one shared, immutable PCM copy to all streams rather than
 		// cloning per stream. Errors are logged internally by the manager.
-		e.streamManager.WriteAudioFanOut(e.config.ConfiguredStreams(), buf[:n])
+		e.streamManager.WriteAudioFanOut(buf[:n])
 
 		// Recording fan-out stays non-blocking; recorders own their queues.
 		if e.recordingManager != nil {

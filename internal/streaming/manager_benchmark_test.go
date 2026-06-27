@@ -13,15 +13,13 @@ func benchmarkPCMChunk() []byte {
 	return make([]byte, benchmarkPCMChunkSize)
 }
 
-// BenchmarkDistributorStreamFanOutCallerStreams compares the per-stream clone
-// path (WriteAudio called once per stream) against the shared-copy fan-out
-// (WriteAudioFanOut) for caller-mode streams. The shared-copy path allocates
-// one PCM copy per chunk regardless of stream count.
+// BenchmarkDistributorStreamFanOutCallerStreams measures shared-copy fan-out
+// for caller-mode streams. The path allocates one PCM copy per chunk regardless
+// of stream count.
 func BenchmarkDistributorStreamFanOutCallerStreams(b *testing.B) {
 	pcm := benchmarkPCMChunk()
 	for _, count := range []int{1, 4, 16} {
 		m := NewManager("ffmpeg")
-		streams := make([]types.Stream, count)
 		chans := make([]chan []byte, count)
 		for i := range count {
 			id := fmt.Sprintf("stream-%02d", i)
@@ -31,26 +29,13 @@ func BenchmarkDistributorStreamFanOutCallerStreams(b *testing.B) {
 				mode:    types.StreamModeCaller,
 				audioCh: ch,
 			}
-			streams[i] = types.Stream{ID: id}
 			chans[i] = ch
 		}
 
-		b.Run(fmt.Sprintf("per-stream-clone/streams=%d", count), func(b *testing.B) {
+		b.Run(fmt.Sprintf("streams=%d", count), func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				for i := range streams {
-					_ = m.WriteAudio(streams[i].ID, pcm)
-				}
-				for _, ch := range chans {
-					<-ch
-				}
-			}
-		})
-
-		b.Run(fmt.Sprintf("shared-copy/streams=%d", count), func(b *testing.B) {
-			b.ReportAllocs()
-			for b.Loop() {
-				m.WriteAudioFanOut(streams, pcm)
+				m.WriteAudioFanOut(pcm)
 				for _, ch := range chans {
 					<-ch
 				}
@@ -70,11 +55,10 @@ func BenchmarkDistributorStreamFanOutListenerStreams(b *testing.B) {
 			state: types.ProcessRunning,
 			mode:  types.StreamModeListener,
 		}
-		streams := []types.Stream{{ID: "listener-1"}}
 
 		b.ReportAllocs()
 		for b.Loop() {
-			m.WriteAudioFanOut(streams, pcm)
+			m.WriteAudioFanOut(pcm)
 		}
 	})
 
@@ -87,11 +71,10 @@ func BenchmarkDistributorStreamFanOutListenerStreams(b *testing.B) {
 		}
 		stream.encoder = run
 		m.streams["listener-1"] = stream
-		streams := []types.Stream{{ID: "listener-1"}}
 
 		b.ReportAllocs()
 		for b.Loop() {
-			m.WriteAudioFanOut(streams, pcm)
+			m.WriteAudioFanOut(pcm)
 			<-run.audioCh
 		}
 	})
