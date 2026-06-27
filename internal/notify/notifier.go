@@ -23,7 +23,8 @@ type logJob struct {
 	fn        func()
 }
 
-// AlertOrchestrator manages silence and upload-abandonment alerting.
+// AlertOrchestrator coordinates silence, channel-imbalance, audio-dump, and
+// upload-abandonment alert lifecycles.
 type AlertOrchestrator struct {
 	cfg         *config.Config
 	eventLogger *eventlog.Logger
@@ -51,7 +52,7 @@ type pendingRecoveryData struct {
 	activeChannels []AlertChannel
 }
 
-// NewAlertOrchestrator creates a new alert orchestrator.
+// NewAlertOrchestrator wires notification dispatch and starts the ordered event-log worker.
 func NewAlertOrchestrator(cfg *config.Config, dispatcher *Dispatcher) *AlertOrchestrator {
 	notifyCtx, notifyCancel := context.WithCancel(context.Background())
 	o := &AlertOrchestrator{
@@ -97,7 +98,7 @@ func (o *AlertOrchestrator) SetEventLogger(logger *eventlog.Logger) {
 	o.eventLogger = logger
 }
 
-// HandleSilenceEvent dispatches silence start and recovery notifications based on the event.
+// HandleSilenceEvent translates detector transitions into silence notification lifecycles.
 func (o *AlertOrchestrator) HandleSilenceEvent(event audio.SilenceEvent) {
 	if event.JustEntered {
 		o.handleSilenceStart(event.CurrentLevelL, event.CurrentLevelR)
@@ -151,7 +152,7 @@ func (o *AlertOrchestrator) handleSilenceEnd(durationMS int64, levelL, levelR fl
 	o.enqueueLog("silence_end", func() { o.logSilenceEnd(now, &cfg, durationMS, levelL, levelR) })
 }
 
-// HandleChannelImbalanceEvent dispatches imbalance lifecycle notifications and writes event-log entries.
+// HandleChannelImbalanceEvent translates detector transitions into imbalance notifications.
 // It leaves silence notification state untouched.
 func (o *AlertOrchestrator) HandleChannelImbalanceEvent(event *audio.ImbalanceEvent) {
 	if event.JustEntered {
@@ -218,7 +219,7 @@ func (o *AlertOrchestrator) handleChannelImbalanceEnd(durationMS int64, levelL, 
 	})
 }
 
-// OnDumpReady dispatches audio_dump_ready notifications to subscribed channels.
+// OnDumpReady completes a pending silence recovery with an optional audio dump.
 func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
 	o.mu.Lock()
 	pending := o.pendingRecovery
@@ -244,7 +245,7 @@ func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
 	})
 }
 
-// HandleUploadAbandoned dispatches an upload-abandonment alert to all configured channels.
+// HandleUploadAbandoned dispatches an upload-abandonment alert outside the audio lifecycle.
 func (o *AlertOrchestrator) HandleUploadAbandoned(params UploadAbandonedData) {
 	cfg := o.cfg.Snapshot()
 	o.mu.Lock()
@@ -304,7 +305,7 @@ func (o *AlertOrchestrator) Close() {
 	})
 }
 
-// BuildGraphConfig builds a GraphConfig from a config snapshot.
+// BuildGraphConfig extracts Microsoft Graph email settings from a config snapshot.
 func BuildGraphConfig(cfg *config.Snapshot) *GraphConfig {
 	return &GraphConfig{
 		TenantID:     cfg.GraphTenantID,

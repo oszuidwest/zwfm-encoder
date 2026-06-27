@@ -13,10 +13,10 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// GraphConfig is the configuration for email notifications.
+// GraphConfig aliases the shared API shape used for Microsoft Graph email delivery.
 type GraphConfig = types.GraphConfig
 
-// EmailChannel implements AlertChannel for Microsoft Graph email delivery.
+// EmailChannel delivers AlertChannel events through Microsoft Graph.
 type EmailChannel struct {
 	mu           sync.Mutex
 	cachedClient *GraphClient
@@ -277,6 +277,7 @@ func (c *EmailChannel) getOrCreateClient(graphCfg *GraphConfig) (*GraphClient, e
 	return client, nil
 }
 
+// SendSilenceStart sends a Microsoft Graph email for a newly detected silence event.
 func (c *EmailChannel) SendSilenceStart(ctx context.Context, cfg *config.Snapshot, levelL, levelR float64) error {
 	graphCfg := BuildGraphConfig(cfg)
 	client, err := c.getOrCreateClient(graphCfg)
@@ -290,6 +291,7 @@ func (c *EmailChannel) SendSilenceStart(ctx context.Context, cfg *config.Snapsho
 	})
 }
 
+// SendSilenceEnd sends a Microsoft Graph recovery email with the silence duration.
 func (c *EmailChannel) SendSilenceEnd(
 	ctx context.Context, cfg *config.Snapshot, durationMs int64, levelL, levelR float64,
 ) error {
@@ -306,6 +308,7 @@ func (c *EmailChannel) SendSilenceEnd(
 	})
 }
 
+// SendChannelImbalanceStart sends a Microsoft Graph email when channel imbalance is confirmed.
 func (c *EmailChannel) SendChannelImbalanceStart(
 	ctx context.Context, cfg *config.Snapshot, data ChannelImbalanceData,
 ) error {
@@ -317,6 +320,7 @@ func (c *EmailChannel) SendChannelImbalanceStart(
 	return sendChannelImbalanceStartEmailWithClient(ctx, graphCfg, client, cfg.StationName, data)
 }
 
+// SendChannelImbalanceEnd sends a Microsoft Graph email when stereo balance recovers.
 func (c *EmailChannel) SendChannelImbalanceEnd(
 	ctx context.Context, cfg *config.Snapshot, data ChannelImbalanceData,
 ) error {
@@ -328,6 +332,7 @@ func (c *EmailChannel) SendChannelImbalanceEnd(
 	return sendChannelImbalanceEndEmailWithClient(ctx, graphCfg, client, cfg.StationName, data)
 }
 
+// SendAudioDump sends a Microsoft Graph email with the silence dump attached when available.
 func (c *EmailChannel) SendAudioDump(
 	ctx context.Context, cfg *config.Snapshot, durationMs int64, levelL, levelR float64,
 	result *silencedump.EncodeResult,
@@ -346,11 +351,12 @@ func (c *EmailChannel) SendAudioDump(
 	})
 }
 
+// SendUploadAbandoned sends a Microsoft Graph email after a recording upload exhausts retries.
 func (c *EmailChannel) SendUploadAbandoned(ctx context.Context, cfg *config.Snapshot, params UploadAbandonedData) error {
 	return sendUploadAbandonedEmail(ctx, BuildGraphConfig(cfg), cfg.StationName, params)
 }
 
-// SendTestEmail sends a test email to verify email configuration.
+// SendTestEmail validates Microsoft Graph credentials before sending a test email.
 func SendTestEmail(cfg *GraphConfig, stationName string) error {
 	if err := ValidateConfig(cfg); err != nil {
 		return util.WrapError("validate configuration", err)
