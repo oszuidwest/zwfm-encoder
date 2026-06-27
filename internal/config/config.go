@@ -118,9 +118,9 @@ type ChannelImbalanceDetectionConfig struct {
 
 // WebhookConfig holds webhook notification settings.
 type WebhookConfig struct {
-	// URL is the endpoint to POST silence alerts to.
+	// URL is the endpoint to POST audio alerts to.
 	URL string `json:"url"`
-	// Events controls which silence events trigger webhook notifications.
+	// Events controls which audio events trigger webhook notifications.
 	Events types.EventSubscriptions `json:"events"`
 }
 
@@ -136,7 +136,7 @@ type EmailConfig struct {
 	FromAddress string `json:"from_address"`
 	// Recipients is a comma-separated list of email addresses to notify.
 	Recipients string `json:"recipients"`
-	// Events controls which silence events trigger email notifications.
+	// Events controls which audio events trigger email notifications.
 	Events types.EventSubscriptions `json:"events"`
 }
 
@@ -629,7 +629,7 @@ func formatZabbixIssue(field string, issue validation.Issue) string {
 	case types.ZabbixHostRequired:
 		return field + ": is required when Zabbix is configured"
 	case types.ZabbixKeyRequired:
-		return field + ": at least one of silence_key or upload_key is required"
+		return field + ": at least one of silence_key, imbalance_key, or upload_key is required"
 	default:
 		return field + ": invalid Zabbix configuration"
 	}
@@ -974,13 +974,13 @@ type Snapshot struct {
 	// SilenceDumpRetentionDays is how many days to keep silence dump files.
 	SilenceDumpRetentionDays int
 
-	// WebhookURL is the endpoint to POST silence alerts to.
+	// WebhookURL is the endpoint to POST audio alerts to.
 	WebhookURL string
-	// WebhookEvents controls which silence events trigger webhook notifications.
+	// WebhookEvents controls which audio events trigger webhook notifications.
 	WebhookEvents types.EventSubscriptions
-	// EmailEvents controls which silence events trigger email notifications.
+	// EmailEvents controls which audio events trigger email notifications.
 	EmailEvents types.EventSubscriptions
-	// ZabbixEvents controls which silence events trigger Zabbix notifications.
+	// ZabbixEvents controls which audio events trigger Zabbix notifications.
 	// Internally this uses the unified event shape; AudioDump remains false for Zabbix.
 	ZabbixEvents types.EventSubscriptions
 
@@ -992,6 +992,8 @@ type Snapshot struct {
 	ZabbixHost string
 	// ZabbixSilenceKey is the item key for Zabbix silence trapper values.
 	ZabbixSilenceKey string
+	// ZabbixImbalanceKey is the item key for Zabbix channel imbalance trapper values.
+	ZabbixImbalanceKey string
 	// ZabbixUploadKey is the item key for Zabbix upload trapper values.
 	ZabbixUploadKey string
 
@@ -1058,11 +1060,12 @@ func (c *Config) Snapshot() Snapshot {
 		ZabbixEvents:  c.Notifications.Zabbix.Events.ToEventSubscriptions(),
 
 		// Zabbix
-		ZabbixServer:     c.Notifications.Zabbix.Server,
-		ZabbixPort:       c.Notifications.Zabbix.Port,
-		ZabbixHost:       c.Notifications.Zabbix.Host,
-		ZabbixSilenceKey: c.Notifications.Zabbix.SilenceKey,
-		ZabbixUploadKey:  c.Notifications.Zabbix.UploadKey,
+		ZabbixServer:       c.Notifications.Zabbix.Server,
+		ZabbixPort:         c.Notifications.Zabbix.Port,
+		ZabbixHost:         c.Notifications.Zabbix.Host,
+		ZabbixSilenceKey:   c.Notifications.Zabbix.SilenceKey,
+		ZabbixImbalanceKey: c.Notifications.Zabbix.ImbalanceKey,
+		ZabbixUploadKey:    c.Notifications.Zabbix.UploadKey,
 
 		// Microsoft Graph
 		GraphTenantID:     c.Notifications.Email.TenantID,
@@ -1097,6 +1100,11 @@ func (s *Snapshot) HasZabbixSilence() bool {
 	return s.ZabbixServer != "" && s.ZabbixHost != "" && s.ZabbixSilenceKey != ""
 }
 
+// HasZabbixImbalance reports whether Zabbix channel imbalance alerting is configured.
+func (s *Snapshot) HasZabbixImbalance() bool {
+	return s.ZabbixServer != "" && s.ZabbixHost != "" && s.ZabbixImbalanceKey != ""
+}
+
 // HasZabbixUpload reports whether Zabbix upload alerting is configured.
 func (s *Snapshot) HasZabbixUpload() bool {
 	return s.ZabbixServer != "" && s.ZabbixHost != "" && s.ZabbixUploadKey != ""
@@ -1126,13 +1134,13 @@ type SettingsUpdate struct {
 	SilenceDumpEnabled bool `json:"silence_dump_enabled"`
 	// SilenceDumpRetentionDays is how many days to keep silence dump files.
 	SilenceDumpRetentionDays int `json:"silence_dump_retention_days"`
-	// WebhookURL is the endpoint to POST silence alerts to.
+	// WebhookURL is the endpoint to POST audio alerts to.
 	WebhookURL string `json:"webhook_url"`
-	// WebhookEvents controls which silence events trigger webhook notifications.
+	// WebhookEvents controls which audio events trigger webhook notifications.
 	WebhookEvents types.EventSubscriptions `json:"webhook_events"`
-	// EmailEvents controls which silence events trigger email notifications.
+	// EmailEvents controls which audio events trigger email notifications.
 	EmailEvents types.EventSubscriptions `json:"email_events"`
-	// ZabbixEvents controls which silence events trigger Zabbix notifications.
+	// ZabbixEvents controls which audio events trigger Zabbix notifications.
 	// This stays on the public Zabbix-specific shape to avoid exposing audio_dump.
 	ZabbixEvents types.ZabbixEventSubscriptions `json:"zabbix_events"`
 	// ZabbixServer is the Zabbix trapper server hostname or IP.
@@ -1143,6 +1151,8 @@ type SettingsUpdate struct {
 	ZabbixHost string `json:"zabbix_host"`
 	// ZabbixSilenceKey is the item key for Zabbix silence trapper values.
 	ZabbixSilenceKey string `json:"zabbix_silence_key"`
+	// ZabbixImbalanceKey is the item key for Zabbix channel imbalance trapper values.
+	ZabbixImbalanceKey string `json:"zabbix_imbalance_key"`
 	// ZabbixUploadKey is the item key for Zabbix upload trapper values.
 	ZabbixUploadKey string `json:"zabbix_upload_key"`
 	// GraphTenantID is the Azure AD tenant ID for Graph API authentication.
@@ -1267,6 +1277,7 @@ func (c *Config) ApplySettings(s *SettingsUpdate) error {
 	c.Notifications.Zabbix.Port = s.ZabbixPort
 	c.Notifications.Zabbix.Host = s.ZabbixHost
 	c.Notifications.Zabbix.SilenceKey = s.ZabbixSilenceKey
+	c.Notifications.Zabbix.ImbalanceKey = s.ZabbixImbalanceKey
 	c.Notifications.Zabbix.UploadKey = s.ZabbixUploadKey
 	c.Notifications.Email.TenantID = s.GraphTenantID
 	c.Notifications.Email.ClientID = s.GraphClientID

@@ -29,11 +29,12 @@ type AlertOrchestrator struct {
 	eventLogger *eventlog.Logger
 	dispatcher  *Dispatcher
 
-	mu              sync.Mutex
-	activeChannels  []AlertChannel
-	pendingRecovery *pendingRecoveryData
-	notifyCtx       context.Context
-	notifyCancel    context.CancelFunc
+	mu                      sync.Mutex
+	activeChannels          []AlertChannel
+	imbalanceActiveChannels []AlertChannel
+	pendingRecovery         *pendingRecoveryData
+	notifyCtx               context.Context
+	notifyCancel            context.CancelFunc
 
 	logMu     sync.RWMutex
 	logQueue  chan logJob // serialized log writes; single worker guarantees JSONL write order
@@ -150,8 +151,8 @@ func (o *AlertOrchestrator) handleSilenceEnd(durationMS int64, levelL, levelR fl
 	o.enqueueLog("silence_end", func() { o.logSilenceEnd(now, &cfg, durationMS, levelL, levelR) })
 }
 
-// HandleChannelImbalanceEvent writes imbalance lifecycle events to the event log.
-// It leaves silence notification state untouched; imbalance notifications are not sent here.
+// HandleChannelImbalanceEvent dispatches imbalance lifecycle notifications and writes event-log entries.
+// It leaves silence notification state untouched.
 func (o *AlertOrchestrator) HandleChannelImbalanceEvent(event *audio.ImbalanceEvent) {
 	if event.JustEntered {
 		o.handleChannelImbalanceStart(event.CurrentLevelL, event.CurrentLevelR, event.BalanceDB, event.ImbalanceDB)
@@ -164,7 +165,30 @@ func (o *AlertOrchestrator) HandleChannelImbalanceEvent(event *audio.ImbalanceEv
 
 func (o *AlertOrchestrator) handleChannelImbalanceStart(levelL, levelR, balanceDB, imbalanceDB float64) {
 	cfg := o.cfg.Snapshot()
+
+	o.mu.Lock()
+	if o.imbalanceActiveChannels == nil {
+		active := make([]AlertChannel, 0, len(o.dispatcher.Channels()))
+		for _, ch := range o.dispatcher.Channels() {
+			if ch.IsConfiguredForImbalance(&cfg) {
+				active = append(active, ch)
+			}
+		}
+		o.imbalanceActiveChannels = active
+	}
+	active := o.imbalanceActiveChannels
+	ctx := o.notifyCtx
+	o.mu.Unlock()
+
+	data := ChannelImbalanceData{
+		LevelL:      levelL,
+		LevelR:      levelR,
+		BalanceDB:   balanceDB,
+		ImbalanceDB: imbalanceDB,
+		ThresholdDB: cfg.ChannelImbalanceThreshold,
+	}
 	now := time.Now()
+	o.dispatcher.DispatchChannelImbalanceStart(ctx, active, cfg, data)
 	o.enqueueLog("channel_imbalance_start", func() {
 		o.logChannelImbalanceStart(now, &cfg, levelL, levelR, balanceDB, imbalanceDB)
 	})
@@ -172,7 +196,23 @@ func (o *AlertOrchestrator) handleChannelImbalanceStart(levelL, levelR, balanceD
 
 func (o *AlertOrchestrator) handleChannelImbalanceEnd(durationMS int64, levelL, levelR, balanceDB, imbalanceDB float64) {
 	cfg := o.cfg.Snapshot()
+
+	o.mu.Lock()
+	active := o.imbalanceActiveChannels
+	o.imbalanceActiveChannels = nil
+	ctx := o.notifyCtx
+	o.mu.Unlock()
+
+	data := ChannelImbalanceData{
+		LevelL:      levelL,
+		LevelR:      levelR,
+		BalanceDB:   balanceDB,
+		ImbalanceDB: imbalanceDB,
+		ThresholdDB: cfg.ChannelImbalanceThreshold,
+		DurationMs:  durationMS,
+	}
 	now := time.Now()
+	o.dispatcher.DispatchChannelImbalanceEnd(ctx, active, cfg, data)
 	o.enqueueLog("channel_imbalance_end", func() {
 		o.logChannelImbalanceEnd(now, &cfg, durationMS, levelL, levelR, balanceDB, imbalanceDB)
 	})
@@ -220,6 +260,7 @@ func (o *AlertOrchestrator) HandleUploadAbandoned(params UploadAbandonedData) {
 func (o *AlertOrchestrator) Reset() {
 	o.mu.Lock()
 	o.activeChannels = nil
+	o.imbalanceActiveChannels = nil
 	o.pendingRecovery = nil
 	o.mu.Unlock()
 }

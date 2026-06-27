@@ -96,6 +96,76 @@ func sendSilenceEndEmailWithClient(
 	return sendEmailWithClient(ctx, cfg, client, subject, body)
 }
 
+func channelImbalanceDirection(balanceDB float64) string {
+	switch {
+	case balanceDB > 0:
+		return "left louder"
+	case balanceDB < 0:
+		return "right louder"
+	default:
+		return "balanced"
+	}
+}
+
+func buildChannelImbalanceStartEmail(
+	stationName, eventTime string, e ChannelImbalanceData,
+) (subject, body string) {
+	subject = "[ALERT] Channel Imbalance Detected - " + stationName
+	body = fmt.Sprintf(
+		"Channel imbalance was detected at %s.\n\n"+
+			"Level: Left %.1f dB / Right %.1f dB\n"+
+			"Balance: %.1f dB (%s)\n"+
+			"Imbalance: %.1f dB\n"+
+			"Threshold: %.1f dB\n\n"+
+			"The left and right channels differ by more than the configured threshold.",
+		eventTime,
+		e.LevelL,
+		e.LevelR,
+		e.BalanceDB,
+		channelImbalanceDirection(e.BalanceDB),
+		e.ImbalanceDB,
+		e.ThresholdDB,
+	)
+	return subject, body
+}
+
+func buildChannelImbalanceEndEmail(
+	stationName, eventTime string, e ChannelImbalanceData,
+) (subject, body string) {
+	subject = "[OK] Channels Balanced - " + stationName
+	body = fmt.Sprintf(
+		"Channels were balanced at %s.\n\n"+
+			"The imbalance lasted %s.\n"+
+			"Final level: Left %.1f dB / Right %.1f dB\n"+
+			"Final balance: %.1f dB (%s)\n"+
+			"Final imbalance: %.1f dB\n"+
+			"Threshold: %.1f dB",
+		eventTime,
+		util.FormatDuration(e.DurationMs),
+		e.LevelL,
+		e.LevelR,
+		e.BalanceDB,
+		channelImbalanceDirection(e.BalanceDB),
+		e.ImbalanceDB,
+		e.ThresholdDB,
+	)
+	return subject, body
+}
+
+func sendChannelImbalanceStartEmailWithClient(
+	ctx context.Context, cfg *GraphConfig, client *GraphClient, stationName string, e ChannelImbalanceData,
+) error {
+	subject, body := buildChannelImbalanceStartEmail(stationName, util.HumanTime(), e)
+	return sendEmailWithClient(ctx, cfg, client, subject, body)
+}
+
+func sendChannelImbalanceEndEmailWithClient(
+	ctx context.Context, cfg *GraphConfig, client *GraphClient, stationName string, e ChannelImbalanceData,
+) error {
+	subject, body := buildChannelImbalanceEndEmail(stationName, util.HumanTime(), e)
+	return sendEmailWithClient(ctx, cfg, client, subject, body)
+}
+
 // sendDumpReadyEmailWithClient does not delegate to sendEmailWithClient because it needs to attach a file.
 func sendDumpReadyEmailWithClient(
 	ctx context.Context, cfg *GraphConfig, client *GraphClient, stationName string, e silenceEventData,
@@ -153,6 +223,9 @@ func (c *EmailChannel) Name() string { return "email" }
 // IsConfiguredForSilence reports whether the channel participates in silence flows.
 func (c *EmailChannel) IsConfiguredForSilence(cfg *config.Snapshot) bool { return cfg.HasGraph() }
 
+// IsConfiguredForImbalance reports whether the channel participates in channel imbalance flows.
+func (c *EmailChannel) IsConfiguredForImbalance(cfg *config.Snapshot) bool { return cfg.HasGraph() }
+
 // IsConfiguredForUpload reports whether the channel participates in upload-abandonment flows.
 func (c *EmailChannel) IsConfiguredForUpload(cfg *config.Snapshot) bool { return cfg.HasGraph() }
 
@@ -164,6 +237,16 @@ func (c *EmailChannel) SubscribesSilenceStart(cfg *config.Snapshot) bool {
 // SubscribesSilenceEnd reports whether silence-end events should be sent.
 func (c *EmailChannel) SubscribesSilenceEnd(cfg *config.Snapshot) bool {
 	return cfg.HasGraph() && cfg.EmailEvents.SilenceEnd
+}
+
+// SubscribesChannelImbalanceStart reports whether imbalance-start events should be sent.
+func (c *EmailChannel) SubscribesChannelImbalanceStart(cfg *config.Snapshot) bool {
+	return cfg.HasGraph() && cfg.EmailEvents.ChannelImbalanceStart
+}
+
+// SubscribesChannelImbalanceEnd reports whether imbalance-end events should be sent.
+func (c *EmailChannel) SubscribesChannelImbalanceEnd(cfg *config.Snapshot) bool {
+	return cfg.HasGraph() && cfg.EmailEvents.ChannelImbalanceEnd
 }
 
 // SubscribesAudioDump reports whether audio-dump events should be sent.
@@ -221,6 +304,28 @@ func (c *EmailChannel) SendSilenceEnd(
 		LevelR:     levelR,
 		Threshold:  cfg.SilenceThreshold,
 	})
+}
+
+func (c *EmailChannel) SendChannelImbalanceStart(
+	ctx context.Context, cfg *config.Snapshot, data ChannelImbalanceData,
+) error {
+	graphCfg := BuildGraphConfig(cfg)
+	client, err := c.getOrCreateClient(graphCfg)
+	if err != nil {
+		return util.WrapError("create Graph client", err)
+	}
+	return sendChannelImbalanceStartEmailWithClient(ctx, graphCfg, client, cfg.StationName, data)
+}
+
+func (c *EmailChannel) SendChannelImbalanceEnd(
+	ctx context.Context, cfg *config.Snapshot, data ChannelImbalanceData,
+) error {
+	graphCfg := BuildGraphConfig(cfg)
+	client, err := c.getOrCreateClient(graphCfg)
+	if err != nil {
+		return util.WrapError("create Graph client", err)
+	}
+	return sendChannelImbalanceEndEmailWithClient(ctx, graphCfg, client, cfg.StationName, data)
 }
 
 func (c *EmailChannel) SendAudioDump(

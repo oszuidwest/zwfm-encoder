@@ -49,9 +49,9 @@ func TestZabbixConfigValidationIssues(t *testing.T) {
 }
 func TestValidateZabbixConfigured(t *testing.T) {
 	tests := []struct {
-		name                                string
-		server, host, silenceKey, uploadKey string
-		wantCodes                           []string
+		name                                              string
+		server, host, silenceKey, imbalanceKey, uploadKey string
+		wantCodes                                         []string
 	}{
 		{
 			name:      "all empty",
@@ -75,6 +75,12 @@ func TestValidateZabbixConfigured(t *testing.T) {
 			uploadKey: "upload",
 		},
 		{
+			name:         "server+host+imbalance_key OK",
+			server:       "zabbix.example.com",
+			host:         "encoder-01",
+			imbalanceKey: "imbalance",
+		},
+		{
 			name:      "neither key set",
 			server:    "zabbix.example.com",
 			host:      "encoder-01",
@@ -89,7 +95,13 @@ func TestValidateZabbixConfigured(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := zabbixCodes(ValidateZabbixConfigured(tt.server, tt.host, tt.silenceKey, tt.uploadKey))
+			got := zabbixCodes(ValidateZabbixConfigured(
+				tt.server,
+				tt.host,
+				tt.silenceKey,
+				tt.imbalanceKey,
+				tt.uploadKey,
+			))
 			if !slices.Equal(got, tt.wantCodes) {
 				t.Fatalf("ValidateZabbixConfigured codes = %v, want %v", got, tt.wantCodes)
 			}

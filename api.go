@@ -167,12 +167,13 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 		WebhookEvents: cfg.WebhookEvents,
 
 		// Notifications - Zabbix
-		ZabbixServer:     cfg.ZabbixServer,
-		ZabbixPort:       cfg.ZabbixPort,
-		ZabbixHost:       cfg.ZabbixHost,
-		ZabbixSilenceKey: cfg.ZabbixSilenceKey,
-		ZabbixUploadKey:  cfg.ZabbixUploadKey,
-		ZabbixEvents:     cfg.ZabbixEvents.ToZabbixEventSubscriptions(),
+		ZabbixServer:       cfg.ZabbixServer,
+		ZabbixPort:         cfg.ZabbixPort,
+		ZabbixHost:         cfg.ZabbixHost,
+		ZabbixSilenceKey:   cfg.ZabbixSilenceKey,
+		ZabbixImbalanceKey: cfg.ZabbixImbalanceKey,
+		ZabbixUploadKey:    cfg.ZabbixUploadKey,
+		ZabbixEvents:       cfg.ZabbixEvents.ToZabbixEventSubscriptions(),
 
 		// Notifications - Email
 		GraphTenantID:    cfg.GraphTenantID,
@@ -741,11 +742,12 @@ type NotificationTestRequest struct {
 	GraphFromAddress  *string `json:"graph_from_address,omitempty"`
 	GraphRecipients   *string `json:"graph_recipients,omitempty"`
 
-	ZabbixServer     *string `json:"zabbix_server,omitempty"`
-	ZabbixPort       *int    `json:"zabbix_port,omitempty"`
-	ZabbixHost       *string `json:"zabbix_host,omitempty"`
-	ZabbixSilenceKey *string `json:"zabbix_silence_key,omitempty"`
-	ZabbixUploadKey  *string `json:"zabbix_upload_key,omitempty"`
+	ZabbixServer       *string `json:"zabbix_server,omitempty"`
+	ZabbixPort         *int    `json:"zabbix_port,omitempty"`
+	ZabbixHost         *string `json:"zabbix_host,omitempty"`
+	ZabbixSilenceKey   *string `json:"zabbix_silence_key,omitempty"`
+	ZabbixImbalanceKey *string `json:"zabbix_imbalance_key,omitempty"`
+	ZabbixUploadKey    *string `json:"zabbix_upload_key,omitempty"`
 }
 
 // deref returns *p when p is non-nil, otherwise fallback. Used by notification-test
@@ -853,9 +855,10 @@ func (s *Server) handleAPITestZabbix(w http.ResponseWriter, r *http.Request) {
 	port := deref(req.ZabbixPort, cfg.ZabbixPort)
 	host := deref(req.ZabbixHost, cfg.ZabbixHost)
 	silenceKey := deref(req.ZabbixSilenceKey, cfg.ZabbixSilenceKey)
+	imbalanceKey := deref(req.ZabbixImbalanceKey, cfg.ZabbixImbalanceKey)
 	uploadKey := deref(req.ZabbixUploadKey, cfg.ZabbixUploadKey)
 
-	if issues := types.ValidateZabbixConfigured(server, host, silenceKey, uploadKey); len(issues) > 0 {
+	if issues := types.ValidateZabbixConfigured(server, host, silenceKey, imbalanceKey, uploadKey); len(issues) > 0 {
 		s.writeError(w, http.StatusBadRequest, "Zabbix not fully configured")
 		return
 	}
@@ -863,6 +866,12 @@ func (s *Server) handleAPITestZabbix(w http.ResponseWriter, r *http.Request) {
 	if silenceKey != "" {
 		if err := notify.SendZabbixTest(server, port, host, silenceKey); err != nil {
 			s.writeError(w, http.StatusBadGateway, "silence key: "+err.Error())
+			return
+		}
+	}
+	if imbalanceKey != "" {
+		if err := notify.SendZabbixTest(server, port, host, imbalanceKey); err != nil {
+			s.writeError(w, http.StatusBadGateway, "imbalance key: "+err.Error())
 			return
 		}
 	}

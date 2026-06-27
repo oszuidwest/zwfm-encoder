@@ -513,12 +513,13 @@ type APIConfigResponse struct {
 	WebhookHasURL bool               `json:"webhook_has_url"`
 	WebhookEvents EventSubscriptions `json:"webhook_events"`
 
-	ZabbixServer     string                   `json:"zabbix_server"`
-	ZabbixPort       int                      `json:"zabbix_port"`
-	ZabbixHost       string                   `json:"zabbix_host"`
-	ZabbixSilenceKey string                   `json:"zabbix_silence_key"`
-	ZabbixUploadKey  string                   `json:"zabbix_upload_key"`
-	ZabbixEvents     ZabbixEventSubscriptions `json:"zabbix_events"`
+	ZabbixServer       string                   `json:"zabbix_server"`
+	ZabbixPort         int                      `json:"zabbix_port"`
+	ZabbixHost         string                   `json:"zabbix_host"`
+	ZabbixSilenceKey   string                   `json:"zabbix_silence_key"`
+	ZabbixImbalanceKey string                   `json:"zabbix_imbalance_key"`
+	ZabbixUploadKey    string                   `json:"zabbix_upload_key"`
+	ZabbixEvents       ZabbixEventSubscriptions `json:"zabbix_events"`
 
 	GraphTenantID    string             `json:"graph_tenant_id"`
 	GraphClientID    string             `json:"graph_client_id"`
@@ -586,7 +587,7 @@ type GraphConfig struct {
 	Recipients   string `json:"recipients,omitempty"` // Comma-separated
 }
 
-// EventSubscriptions controls which silence events a notification channel receives.
+// EventSubscriptions controls which audio events a notification channel receives.
 type EventSubscriptions struct {
 	// SilenceStart enables notifications when silence is first detected.
 	SilenceStart bool `json:"silence_start"`
@@ -594,9 +595,13 @@ type EventSubscriptions struct {
 	SilenceEnd bool `json:"silence_end"`
 	// AudioDump enables notifications when the audio dump MP3 is ready.
 	AudioDump bool `json:"audio_dump"`
+	// ChannelImbalanceStart enables notifications when L/R imbalance is confirmed.
+	ChannelImbalanceStart bool `json:"channel_imbalance_start"`
+	// ChannelImbalanceEnd enables notifications when L/R balance is restored.
+	ChannelImbalanceEnd bool `json:"channel_imbalance_end"`
 }
 
-// ZabbixEventSubscriptions controls which silence events trigger Zabbix notifications.
+// ZabbixEventSubscriptions controls which audio events trigger Zabbix notifications.
 // Zabbix trapper items carry only numeric values and do not support file attachments,
 // so AudioDump is not available for this channel.
 type ZabbixEventSubscriptions struct {
@@ -604,13 +609,19 @@ type ZabbixEventSubscriptions struct {
 	SilenceStart bool `json:"silence_start"`
 	// SilenceEnd enables notifications when audio recovers from silence.
 	SilenceEnd bool `json:"silence_end"`
+	// ChannelImbalanceStart enables notifications when L/R imbalance is confirmed.
+	ChannelImbalanceStart bool `json:"channel_imbalance_start"`
+	// ChannelImbalanceEnd enables notifications when L/R balance is restored.
+	ChannelImbalanceEnd bool `json:"channel_imbalance_end"`
 }
 
 // ToEventSubscriptions converts the public Zabbix event shape to the internal unified event shape.
 func (s ZabbixEventSubscriptions) ToEventSubscriptions() EventSubscriptions {
 	return EventSubscriptions{
-		SilenceStart: s.SilenceStart,
-		SilenceEnd:   s.SilenceEnd,
+		SilenceStart:          s.SilenceStart,
+		SilenceEnd:            s.SilenceEnd,
+		ChannelImbalanceStart: s.ChannelImbalanceStart,
+		ChannelImbalanceEnd:   s.ChannelImbalanceEnd,
 	}
 }
 
@@ -618,22 +629,25 @@ func (s ZabbixEventSubscriptions) ToEventSubscriptions() EventSubscriptions {
 // AudioDump is deliberately omitted: Zabbix trapper items cannot carry file attachments.
 func (s EventSubscriptions) ToZabbixEventSubscriptions() ZabbixEventSubscriptions {
 	return ZabbixEventSubscriptions{
-		SilenceStart: s.SilenceStart,
-		SilenceEnd:   s.SilenceEnd,
+		SilenceStart:          s.SilenceStart,
+		SilenceEnd:            s.SilenceEnd,
+		ChannelImbalanceStart: s.ChannelImbalanceStart,
+		ChannelImbalanceEnd:   s.ChannelImbalanceEnd,
 	}
 }
 
 // ZabbixConfig holds settings for Zabbix trapper monitoring alerts.
 type ZabbixConfig struct {
-	Server     string `json:"server,omitempty"`
-	Port       int    `json:"port,omitempty"` // Default 10051
-	Host       string `json:"host,omitempty"`
-	SilenceKey string `json:"silence_key,omitempty"`
-	UploadKey  string `json:"upload_key,omitempty"`
-	// Events controls which silence events trigger Zabbix notifications.
+	Server       string `json:"server,omitempty"`
+	Port         int    `json:"port,omitempty"` // Default 10051
+	Host         string `json:"host,omitempty"`
+	SilenceKey   string `json:"silence_key,omitempty"`
+	ImbalanceKey string `json:"imbalance_key,omitempty"`
+	UploadKey    string `json:"upload_key,omitempty"`
+	// Events controls which audio events trigger Zabbix notifications.
 	// Value type (not pointer): JSON null and missing field both leave the
-	// preloaded default intact. To disable all events, set silence_start and
-	// silence_end to false explicitly.
+	// preloaded default intact. Omitted bool fields remain false so new event
+	// classes are not enabled by upgrades.
 	Events ZabbixEventSubscriptions `json:"events"`
 }
 
