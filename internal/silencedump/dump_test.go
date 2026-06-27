@@ -184,19 +184,3 @@ func TestCheckAndFinalizeRecoversAtZeroStart(t *testing.T) {
 		t.Fatal("capturer stuck capturing; recovery at byte position 0 never finalized")
 	}
 }
-func BenchmarkCopyFromRing(b *testing.B) {
-	c := newPatternedCapturer()
-	dst := make([]byte, afterSeconds*audio.BytesPerSecond) // Allocates a realistic 15s extract.
-	b.SetBytes(int64(len(dst)))
-	for i := 0; b.Loop(); i++ {
-		c.copyFromRing(dst, int64(i)*999983+7)
-	}
-}
-func BenchmarkWriteToRing(b *testing.B) {
-	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
-	src := make([]byte, audio.BytesPerSecond/10) // Matches a 100ms distributor chunk.
-	b.SetBytes(int64(len(src)))
-	for b.Loop() {
-		c.writePos = c.writeToRing(src)
-	}
-}

@@ -442,6 +442,50 @@ func TestWriteAudioListenerSkipsWhenNoEncoderRun(t *testing.T) {
 		t.Fatalf("WriteAudio() error = %v", err)
 	}
 }
+func TestWriteAudioListenerSkipsWithoutAllocatingWhenNoEncoderRun(t *testing.T) {
+	m := NewManager("ffmpeg")
+	m.streams["listener-1"] = &Stream{
+		state: types.ProcessRunning,
+		mode:  types.StreamModeListener,
+	}
+	pcm := make([]byte, 20*1024)
+
+	var writeErr error
+	allocs := testing.AllocsPerRun(1000, func() {
+		writeErr = m.WriteAudio("listener-1", pcm)
+	})
+	if writeErr != nil {
+		t.Fatalf("WriteAudio() error = %v", writeErr)
+	}
+	if allocs != 0 {
+		t.Fatalf("WriteAudio() allocations = %.1f, want 0", allocs)
+	}
+}
+func TestWriteAudioListenerCopiesQueuedChunk(t *testing.T) {
+	t.Parallel()
+	m := NewManager("ffmpeg")
+	run := &encoderRun{audioCh: make(chan []byte, 1)}
+	stream := &Stream{
+		state: types.ProcessRunning,
+		mode:  types.StreamModeListener,
+	}
+	stream.encoder = run
+	m.streams["listener-1"] = stream
+
+	src := []byte{1, 2, 3, 4}
+	if err := m.WriteAudio("listener-1", src); err != nil {
+		t.Fatalf("WriteAudio() error = %v", err)
+	}
+	src[0] = 99 // Simulate distributor buffer reuse after enqueue.
+
+	got := <-run.audioCh
+	if !bytes.Equal(got, []byte{1, 2, 3, 4}) {
+		t.Fatalf("queued listener chunk = %v, want original bytes", got)
+	}
+	if &got[0] == &src[0] {
+		t.Fatal("queued listener chunk aliases the source buffer")
+	}
+}
 func TestWriteAudioListenerUsesBoundedEncoderQueue(t *testing.T) {
 	t.Parallel()
 	m := NewManager("ffmpeg")

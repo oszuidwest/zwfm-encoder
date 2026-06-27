@@ -953,21 +953,9 @@ type Snapshot struct {
 	// AudioInput is the audio input device identifier (platform-specific).
 	AudioInput string
 
-	// SilenceThreshold is the audio level in dB below which silence is detected.
-	SilenceThreshold float64
-	// SilenceDurationMs is how long audio must be below threshold before alerting.
-	SilenceDurationMs int64
-	// SilenceRecoveryMs is how long audio must be above threshold before clearing the alert.
-	SilenceRecoveryMs int64
-	// PeakHoldMs is how long the VU meter holds peak values before decay.
-	PeakHoldMs int64
-
-	// ChannelImbalanceThreshold is the strict L/R difference threshold in dB.
-	ChannelImbalanceThreshold float64
-	// ChannelImbalanceDurationMs is how long the imbalance must persist before alerting.
-	ChannelImbalanceDurationMs int64
-	// ChannelImbalanceRecoveryMs is how long balance must hold before clearing the alert.
-	ChannelImbalanceRecoveryMs int64
+	// DetectorSettingsSnapshot holds the silence and channel-imbalance detector
+	// settings; its fields are promoted onto Snapshot.
+	DetectorSettingsSnapshot
 
 	// SilenceDumpEnabled reports whether silence audio dumping is enabled.
 	SilenceDumpEnabled bool
@@ -1019,6 +1007,46 @@ type Snapshot struct {
 	Recorders []types.Recorder
 }
 
+// DetectorSettingsSnapshot is the subset of config read on the PCM metering path.
+type DetectorSettingsSnapshot struct {
+	// SilenceThreshold is the audio level in dB below which silence is detected.
+	SilenceThreshold float64
+	// SilenceDurationMs is how long audio must be below threshold before alerting.
+	SilenceDurationMs int64
+	// SilenceRecoveryMs is how long audio must be above threshold before clearing the alert.
+	SilenceRecoveryMs int64
+	// PeakHoldMs is how long the VU meter holds peak values before decay.
+	PeakHoldMs int64
+
+	// ChannelImbalanceThreshold is the strict L/R difference threshold in dB.
+	ChannelImbalanceThreshold float64
+	// ChannelImbalanceDurationMs is how long the imbalance must persist before alerting.
+	ChannelImbalanceDurationMs int64
+	// ChannelImbalanceRecoveryMs is how long balance must hold before clearing the alert.
+	ChannelImbalanceRecoveryMs int64
+}
+
+// DetectorSettings returns a point-in-time copy of audio detector settings.
+func (c *Config) DetectorSettings() DetectorSettingsSnapshot {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	return c.detectorSettings()
+}
+
+// detectorSettings copies the detector settings; the caller must hold c.mu.
+func (c *Config) detectorSettings() DetectorSettingsSnapshot {
+	return DetectorSettingsSnapshot{
+		SilenceThreshold:           c.SilenceDetection.ThresholdDB,
+		SilenceDurationMs:          c.SilenceDetection.DurationMs,
+		SilenceRecoveryMs:          c.SilenceDetection.RecoveryMs,
+		PeakHoldMs:                 c.SilenceDetection.PeakHoldMs,
+		ChannelImbalanceThreshold:  c.ChannelImbalanceDetection.ThresholdDB,
+		ChannelImbalanceDurationMs: c.ChannelImbalanceDetection.DurationMs,
+		ChannelImbalanceRecoveryMs: c.ChannelImbalanceDetection.RecoveryMs,
+	}
+}
+
 // Snapshot returns a point-in-time copy of all configuration values.
 func (c *Config) Snapshot() Snapshot {
 	c.mu.RLock()
@@ -1038,16 +1066,8 @@ func (c *Config) Snapshot() Snapshot {
 		// Audio
 		AudioInput: c.Audio.Input,
 
-		// Silence Detection
-		SilenceThreshold:  c.SilenceDetection.ThresholdDB,
-		SilenceDurationMs: c.SilenceDetection.DurationMs,
-		SilenceRecoveryMs: c.SilenceDetection.RecoveryMs,
-		PeakHoldMs:        c.SilenceDetection.PeakHoldMs,
-
-		// Channel Imbalance Detection
-		ChannelImbalanceThreshold:  c.ChannelImbalanceDetection.ThresholdDB,
-		ChannelImbalanceDurationMs: c.ChannelImbalanceDetection.DurationMs,
-		ChannelImbalanceRecoveryMs: c.ChannelImbalanceDetection.RecoveryMs,
+		// Silence & Channel Imbalance Detection
+		DetectorSettingsSnapshot: c.detectorSettings(),
 
 		// Silence Dump
 		SilenceDumpEnabled:       c.SilenceDump.Enabled,

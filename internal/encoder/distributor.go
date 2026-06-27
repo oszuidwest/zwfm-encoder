@@ -59,8 +59,8 @@ func (d *Distributor) ProcessSamples(buf []byte) {
 
 		now := time.Now()
 
-		// Update peak hold duration from config (allows dynamic updates)
-		cfg := d.config.Snapshot()
+		// Update detector settings from config (allows dynamic updates).
+		cfg := d.config.DetectorSettings()
 		d.peakHolder.SetHoldDuration(time.Duration(cfg.PeakHoldMs) * time.Millisecond)
 
 		heldPeakL, heldPeakR := d.peakHolder.Update(levels.PeakLeft, levels.PeakRight, now)
