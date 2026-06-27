@@ -57,23 +57,48 @@ func TestSessionManagerDeleteRemovesToken(t *testing.T) {
 	}
 }
 
-func TestSessionManagerValidateRejectsExpiredSessionAndRemovesIt(t *testing.T) {
+func TestValidateRejectsAndRemovesExpiredTokens(t *testing.T) {
 	t.Parallel()
 
-	sm := NewSessionManager()
-	const token = "expired-session"
-	sm.mu.Lock()
-	sm.sessions[token] = &session{expiresAt: time.Now().Add(-time.Minute)}
-	sm.mu.Unlock()
-
-	if sm.Validate(token) {
-		t.Fatal("Validate(expired token) = true, want false")
+	tests := []struct {
+		name     string
+		seed     func(*SessionManager, string)
+		validate func(*SessionManager, string) bool
+		present  func(*SessionManager, string) bool
+	}{
+		{
+			name: "session",
+			seed: func(sm *SessionManager, tok string) {
+				sm.sessions[tok] = &session{expiresAt: time.Now().Add(-time.Minute)}
+			},
+			validate: (*SessionManager).Validate,
+			present:  func(sm *SessionManager, tok string) bool { _, ok := sm.sessions[tok]; return ok },
+		},
+		{
+			name: "csrf token",
+			seed: func(sm *SessionManager, tok string) {
+				sm.csrfTokens[tok] = &csrfToken{expiresAt: time.Now().Add(-time.Minute)}
+			},
+			validate: (*SessionManager).ValidateCSRFToken,
+			present:  func(sm *SessionManager, tok string) bool { _, ok := sm.csrfTokens[tok]; return ok },
+		},
 	}
-	sm.mu.RLock()
-	_, exists := sm.sessions[token]
-	sm.mu.RUnlock()
-	if exists {
-		t.Fatal("expired session still exists after Validate")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			sm := NewSessionManager()
+			const token = "expired-token"
+			tt.seed(sm, token)
+
+			if tt.validate(sm, token) {
+				t.Fatalf("validate(expired %s) = true, want false", tt.name)
+			}
+			if tt.present(sm, token) {
+				t.Fatalf("expired %s still present after validation", tt.name)
+			}
+		})
 	}
 }
 
@@ -106,26 +131,6 @@ func TestSessionManagerValidateCSRFTokenRejectsInvalidTokens(t *testing.T) {
 				t.Fatalf("ValidateCSRFToken(%q) = true, want false", tt.token)
 			}
 		})
-	}
-}
-
-func TestSessionManagerValidateCSRFTokenRejectsExpiredAndRemovesIt(t *testing.T) {
-	t.Parallel()
-
-	sm := NewSessionManager()
-	const token = "expired-request-token"
-	sm.mu.Lock()
-	sm.csrfTokens[token] = &csrfToken{expiresAt: time.Now().Add(-time.Minute)}
-	sm.mu.Unlock()
-
-	if sm.ValidateCSRFToken(token) {
-		t.Fatal("ValidateCSRFToken(expired token) = true, want false")
-	}
-	sm.mu.RLock()
-	_, exists := sm.csrfTokens[token]
-	sm.mu.RUnlock()
-	if exists {
-		t.Fatal("expired CSRF token still exists after ValidateCSRFToken")
 	}
 }
 
@@ -233,14 +238,7 @@ func TestSetSessionCookie(t *testing.T) {
 
 			setSessionCookie(rec, req, "session-token", 123)
 
-			cookies := rec.Result().Cookies()
-			if len(cookies) != 1 {
-				t.Fatalf("len(cookies) = %d, want 1", len(cookies))
-			}
-			cookie := cookies[0]
-			if cookie.Name != sessionCookieName {
-				t.Fatalf("cookie name = %q, want %q", cookie.Name, sessionCookieName)
-			}
+			cookie := requireOneSessionCookie(t, rec)
 			if cookie.Value != "session-token" {
 				t.Fatalf("cookie value = %q, want session-token", cookie.Value)
 			}
@@ -339,6 +337,21 @@ func TestSessionManagerLogoutClearsCookieAndDeletesSession(t *testing.T) {
 		t.Fatal("session validates after Logout, want deleted")
 	}
 
+	cookie := requireOneSessionCookie(t, rec)
+	if cookie.MaxAge != -1 {
+		t.Fatalf("cookie MaxAge = %d, want -1", cookie.MaxAge)
+	}
+}
+
+func requestSessionCookie(value string) *http.Cookie {
+	// Requests only carry the cookie name and value; other attributes are response-only.
+	//nolint:gosec // G124: request-side test cookie; Secure/HttpOnly/SameSite are response-only.
+	return &http.Cookie{Name: sessionCookieName, Value: value}
+}
+
+// requireOneSessionCookie asserts exactly one session cookie was set and returns it.
+func requireOneSessionCookie(t *testing.T, rec *httptest.ResponseRecorder) *http.Cookie {
+	t.Helper()
 	cookies := rec.Result().Cookies()
 	if len(cookies) != 1 {
 		t.Fatalf("len(cookies) = %d, want 1", len(cookies))
@@ -347,12 +360,5 @@ func TestSessionManagerLogoutClearsCookieAndDeletesSession(t *testing.T) {
 	if cookie.Name != sessionCookieName {
 		t.Fatalf("cookie name = %q, want %q", cookie.Name, sessionCookieName)
 	}
-	if cookie.MaxAge != -1 {
-		t.Fatalf("cookie MaxAge = %d, want -1", cookie.MaxAge)
-	}
-}
-
-func requestSessionCookie(value string) *http.Cookie {
-	// Requests only carry the cookie name and value; other attributes are response-only.
-	return &http.Cookie{Name: sessionCookieName, Value: value}
+	return cookie
 }
