@@ -902,6 +902,29 @@ func TestApplySettingsRoundTripsChannelImbalance(t *testing.T) {
 	assertEqual(t, "ChannelImbalanceDurationMs", snap.ChannelImbalanceDurationMs, int64(20000))
 	assertEqual(t, "ChannelImbalanceRecoveryMs", snap.ChannelImbalanceRecoveryMs, int64(4000))
 }
+func TestDetectorSettingsReflectsAppliedSettings(t *testing.T) {
+	t.Parallel()
+	cfg, _ := newLoadedConfig(t)
+	upd := minimalValidUpdate()
+	upd.SilenceThreshold = -22
+	upd.SilenceDurationMs = 1234
+	upd.SilenceRecoveryMs = 567
+	upd.PeakHoldMs = 2500
+	upd.ChannelImbalanceThreshold = 18
+	upd.ChannelImbalanceDurationMs = 2345
+	upd.ChannelImbalanceRecoveryMs = 678
+	if err := cfg.ApplySettings(upd); err != nil {
+		t.Fatalf("ApplySettings() error = %v", err)
+	}
+	got := cfg.DetectorSettings()
+	assertEqual(t, "SilenceThreshold", got.SilenceThreshold, -22.0)
+	assertEqual(t, "SilenceDurationMs", got.SilenceDurationMs, int64(1234))
+	assertEqual(t, "SilenceRecoveryMs", got.SilenceRecoveryMs, int64(567))
+	assertEqual(t, "PeakHoldMs", got.PeakHoldMs, int64(2500))
+	assertEqual(t, "ChannelImbalanceThreshold", got.ChannelImbalanceThreshold, 18.0)
+	assertEqual(t, "ChannelImbalanceDurationMs", got.ChannelImbalanceDurationMs, int64(2345))
+	assertEqual(t, "ChannelImbalanceRecoveryMs", got.ChannelImbalanceRecoveryMs, int64(678))
+}
 func TestSettingsUpdateValidate_ClearHiddenValueConflict(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

@@ -714,8 +714,6 @@ func (m *Manager) WriteAudio(streamID string, data []byte) error {
 }
 
 func (m *Manager) writeListenerAudio(streamID string, stream *Stream, data []byte) {
-	buf := bytes.Clone(data)
-
 	stream.encoderMu.RLock()
 	run := stream.encoder
 	if run == nil || run.audioCh == nil {
@@ -723,6 +721,7 @@ func (m *Manager) writeListenerAudio(streamID string, stream *Stream, data []byt
 		return
 	}
 	ch := run.audioCh
+	buf := bytes.Clone(data)
 	stream.offerAudio(streamID, ch, buf, "listener encoder audio buffer full, dropping chunk")
 	stream.encoderMu.RUnlock()
 }
