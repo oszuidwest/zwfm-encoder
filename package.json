@@ -9,7 +9,7 @@
     "test:js": "bun test tests/*.test.js"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.0",
+    "@biomejs/biome": "2.5.1",
     "htmlhint": "1.9.2"
   }
 }
