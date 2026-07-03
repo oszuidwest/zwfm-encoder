@@ -51,6 +51,13 @@ func NewDistributor(cfg DistributorConfig) *Distributor {
 
 // ProcessSamples processes a buffer of PCM audio samples.
 func (d *Distributor) ProcessSamples(buf []byte) {
+	// Feed the silence dump ring first (it copies buf into its own buffer),
+	// so the dump manager is wired in exactly one place: audio here, silence
+	// events below.
+	if d.silenceDumpManager != nil {
+		d.silenceDumpManager.WriteAudio(buf)
+	}
+
 	audio.ProcessSamples(buf, d.levelData)
 
 	// Update levels periodically

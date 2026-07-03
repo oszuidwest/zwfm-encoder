@@ -24,12 +24,14 @@ func buildLinuxArgs(device string) []string {
 	}
 }
 
+var linuxDevicePattern = regexp.MustCompile(`card\s+(\d+):\s+(\w+)\s+\[([^\]]+)\]`)
+
 // Devices returns the available audio input devices.
 func (cfg *CaptureConfig) Devices() []Device {
 	return parseDeviceList(DeviceListConfig{
 		Command:          []string{"arecord", "-l"},
 		AudioStartMarker: "", // No marker, parse all lines
-		DevicePattern:    regexp.MustCompile(`card\s+(\d+):\s+(\w+)\s+\[([^\]]+)\]`),
+		DevicePattern:    linuxDevicePattern,
 		ParseDevice: func(matches []string) *Device {
 			if len(matches) < 4 {
 				return nil

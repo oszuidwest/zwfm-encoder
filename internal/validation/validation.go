@@ -36,3 +36,8 @@ const (
 // Issues is a slice of Issue. Defined as a named type so future helpers can
 // hang off it without disturbing call sites.
 type Issues []Issue
+
+// ValidPort reports whether p is a usable TCP/UDP port number (1..65535).
+func ValidPort(p int) bool {
+	return p >= 1 && p <= 65535
+}

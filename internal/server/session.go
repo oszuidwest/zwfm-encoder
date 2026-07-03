@@ -62,31 +62,42 @@ func (sm *SessionManager) Create() string {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
+	now := time.Now()
+
+	// Sweep expired sessions here: expired tokens are otherwise only removed
+	// when the same token is presented again, so the map would slowly grow on
+	// a process that runs for months. Login is rare, making this cheap.
+	maps.DeleteFunc(sm.sessions, func(_ string, s *session) bool {
+		return now.After(s.expiresAt)
+	})
+
 	sm.sessions[token] = &session{
-		expiresAt: time.Now().Add(sessionDuration),
+		expiresAt: now.Add(sessionDuration),
 	}
 	return token
 }
 
-// Validate reports whether a session token is valid.
+// Validate reports whether a session token is valid. The common case (a live
+// session) takes only a read lock, since Validate runs on every authenticated
+// request; the write lock is needed only to delete an expired entry.
 func (sm *SessionManager) Validate(token string) bool {
 	if token == "" {
 		return false
 	}
 
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+	now := time.Now()
 
+	sm.mu.RLock()
 	sess, exists := sm.sessions[token]
+	sm.mu.RUnlock()
+
 	if !exists {
 		return false
 	}
-
-	if time.Now().After(sess.expiresAt) {
-		delete(sm.sessions, token)
+	if now.After(sess.expiresAt) {
+		sm.Delete(token)
 		return false
 	}
-
 	return true
 }
 

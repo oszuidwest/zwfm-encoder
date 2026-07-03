@@ -148,7 +148,7 @@ func TestWriteDropsOldestAndKeepsNewest(t *testing.T) {
 	if got := string(<-sub.ch); got != "three" {
 		t.Fatalf("second queued chunk = %q, want three", got)
 	}
-	if got := atomic.LoadInt64(&sub.drops); got != 1 {
+	if got := sub.drops.Load(); got != 1 {
 		t.Fatalf("drops = %d, want 1", got)
 	}
 	if got := server.DropCount(); got != 1 {

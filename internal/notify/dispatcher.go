@@ -102,24 +102,37 @@ func (d *Dispatcher) Channels() []AlertChannel {
 	return d.channels
 }
 
+// dispatch fans one event kind out to every channel in list that passes the
+// subscribes predicate, delivering via send on a per-channel goroutine. Each
+// goroutine receives its own Snapshot copy so channels can never observe each
+// other's mutations.
+//
+//nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
+func dispatch(
+	list []AlertChannel, cfg config.Snapshot, kind string,
+	subscribes func(AlertChannel, *config.Snapshot) bool,
+	send func(ch AlertChannel, cfg *config.Snapshot) error,
+) {
+	for _, ch := range list {
+		if !subscribes(ch, &cfg) {
+			continue
+		}
+		go func(ch AlertChannel, cfg config.Snapshot) {
+			logNotifyResult(func() error { return send(ch, &cfg) }, ch.Name(), kind)
+		}(ch, cfg)
+	}
+}
+
 // DispatchSilenceStart sends silence-start notifications to subscribed channels from the active set.
 //
 //nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
 func (d *Dispatcher) DispatchSilenceStart(
 	ctx context.Context, active []AlertChannel, cfg config.Snapshot, levelL, levelR float64,
 ) {
-	for _, ch := range active {
-		if !ch.SubscribesSilenceStart(&cfg) {
-			continue
-		}
-		go func(ch AlertChannel, cfg config.Snapshot) {
-			logNotifyResult(
-				func() error { return ch.SendSilenceStart(ctx, &cfg, levelL, levelR) },
-				ch.Name(),
-				"silence_start",
-			)
-		}(ch, cfg)
-	}
+	dispatch(active, cfg, "silence_start", AlertChannel.SubscribesSilenceStart,
+		func(ch AlertChannel, cfg *config.Snapshot) error {
+			return ch.SendSilenceStart(ctx, cfg, levelL, levelR)
+		})
 }
 
 // DispatchSilenceEnd sends silence-end notifications to the active channel subset.
@@ -128,18 +141,10 @@ func (d *Dispatcher) DispatchSilenceStart(
 func (d *Dispatcher) DispatchSilenceEnd(
 	ctx context.Context, active []AlertChannel, cfg config.Snapshot, durationMS int64, levelL, levelR float64,
 ) {
-	for _, ch := range active {
-		if !ch.SubscribesSilenceEnd(&cfg) {
-			continue
-		}
-		go func(ch AlertChannel, cfg config.Snapshot) {
-			logNotifyResult(
-				func() error { return ch.SendSilenceEnd(ctx, &cfg, durationMS, levelL, levelR) },
-				ch.Name(),
-				"silence_end",
-			)
-		}(ch, cfg)
-	}
+	dispatch(active, cfg, "silence_end", AlertChannel.SubscribesSilenceEnd,
+		func(ch AlertChannel, cfg *config.Snapshot) error {
+			return ch.SendSilenceEnd(ctx, cfg, durationMS, levelL, levelR)
+		})
 }
 
 // DispatchChannelImbalanceStart sends imbalance-start notifications to subscribed channels.
@@ -148,18 +153,10 @@ func (d *Dispatcher) DispatchSilenceEnd(
 func (d *Dispatcher) DispatchChannelImbalanceStart(
 	ctx context.Context, active []AlertChannel, cfg config.Snapshot, data ChannelImbalanceData,
 ) {
-	for _, ch := range active {
-		if !ch.SubscribesChannelImbalanceStart(&cfg) {
-			continue
-		}
-		go func(ch AlertChannel, cfg config.Snapshot) {
-			logNotifyResult(
-				func() error { return ch.SendChannelImbalanceStart(ctx, &cfg, data) },
-				ch.Name(),
-				"channel_imbalance_start",
-			)
-		}(ch, cfg)
-	}
+	dispatch(active, cfg, "channel_imbalance_start", AlertChannel.SubscribesChannelImbalanceStart,
+		func(ch AlertChannel, cfg *config.Snapshot) error {
+			return ch.SendChannelImbalanceStart(ctx, cfg, data)
+		})
 }
 
 // DispatchChannelImbalanceEnd sends imbalance-end notifications to the active channel subset.
@@ -168,18 +165,10 @@ func (d *Dispatcher) DispatchChannelImbalanceStart(
 func (d *Dispatcher) DispatchChannelImbalanceEnd(
 	ctx context.Context, active []AlertChannel, cfg config.Snapshot, data ChannelImbalanceData,
 ) {
-	for _, ch := range active {
-		if !ch.SubscribesChannelImbalanceEnd(&cfg) {
-			continue
-		}
-		go func(ch AlertChannel, cfg config.Snapshot) {
-			logNotifyResult(
-				func() error { return ch.SendChannelImbalanceEnd(ctx, &cfg, data) },
-				ch.Name(),
-				"channel_imbalance_end",
-			)
-		}(ch, cfg)
-	}
+	dispatch(active, cfg, "channel_imbalance_end", AlertChannel.SubscribesChannelImbalanceEnd,
+		func(ch AlertChannel, cfg *config.Snapshot) error {
+			return ch.SendChannelImbalanceEnd(ctx, cfg, data)
+		})
 }
 
 // DispatchAudioDump sends audio-dump notifications to the active channel subset.
@@ -189,34 +178,18 @@ func (d *Dispatcher) DispatchAudioDump(
 	ctx context.Context, active []AlertChannel, cfg config.Snapshot, durationMS int64,
 	levelL, levelR float64, result *silencedump.EncodeResult,
 ) {
-	for _, ch := range active {
-		if !ch.SubscribesAudioDump(&cfg) {
-			continue
-		}
-		go func(ch AlertChannel, cfg config.Snapshot) {
-			logNotifyResult(
-				func() error { return ch.SendAudioDump(ctx, &cfg, durationMS, levelL, levelR, result) },
-				ch.Name(),
-				"audio_dump_ready",
-			)
-		}(ch, cfg)
-	}
+	dispatch(active, cfg, "audio_dump_ready", AlertChannel.SubscribesAudioDump,
+		func(ch AlertChannel, cfg *config.Snapshot) error {
+			return ch.SendAudioDump(ctx, cfg, durationMS, levelL, levelR, result)
+		})
 }
 
 // DispatchUploadAbandoned sends upload-abandonment notifications to all configured channels.
 //
 //nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
 func (d *Dispatcher) DispatchUploadAbandoned(ctx context.Context, cfg config.Snapshot, params UploadAbandonedData) {
-	for _, ch := range d.channels {
-		if !ch.IsConfiguredForUpload(&cfg) {
-			continue
-		}
-		go func(ch AlertChannel, cfg config.Snapshot) {
-			logNotifyResult(
-				func() error { return ch.SendUploadAbandoned(ctx, &cfg, params) },
-				ch.Name(),
-				"upload_abandoned",
-			)
-		}(ch, cfg)
-	}
+	dispatch(d.channels, cfg, "upload_abandoned", AlertChannel.IsConfiguredForUpload,
+		func(ch AlertChannel, cfg *config.Snapshot) error {
+			return ch.SendUploadAbandoned(ctx, cfg, params)
+		})
 }

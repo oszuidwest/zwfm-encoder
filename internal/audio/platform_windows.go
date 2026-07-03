@@ -20,6 +20,9 @@ func buildWindowsArgs(device string) []string {
 	return buildFFmpegCaptureArgs("dshow", device)
 }
 
+// windowsDevicePattern matches lines like: [dshow @ addr] "Device Name" (audio)
+var windowsDevicePattern = regexp.MustCompile(`\[dshow[^\]]*\]\s*"([^"]+)"\s*\(audio\)`)
+
 // Devices returns the available audio input devices.
 func (cfg *CaptureConfig) Devices() []Device {
 	return parseDeviceList(DeviceListConfig{
@@ -29,8 +32,7 @@ func (cfg *CaptureConfig) Devices() []Device {
 		// Instead, we filter by lines ending with "(audio)".
 		AudioStartMarker: "",
 		AudioStopMarker:  "",
-		// Match lines like: [dshow @ addr] "Device Name" (audio)
-		DevicePattern: regexp.MustCompile(`\[dshow[^\]]*\]\s*"([^"]+)"\s*\(audio\)`),
+		DevicePattern:    windowsDevicePattern,
 		ParseDevice: func(matches []string) *Device {
 			if len(matches) < 2 {
 				return nil

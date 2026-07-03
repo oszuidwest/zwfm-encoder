@@ -17,13 +17,15 @@ func buildDarwinArgs(device string) []string {
 	return buildFFmpegCaptureArgs("avfoundation", device)
 }
 
+var darwinDevicePattern = regexp.MustCompile(`\[AVFoundation[^\]]*\]\s*\[(\d+)\]\s*(.+)`)
+
 // Devices returns the available audio input devices.
 func (cfg *CaptureConfig) Devices() []Device {
 	return parseDeviceList(DeviceListConfig{
 		Command:          []string{"ffmpeg", "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""},
 		AudioStartMarker: "AVFoundation audio devices:",
 		AudioStopMarker:  "AVFoundation video devices:",
-		DevicePattern:    regexp.MustCompile(`\[AVFoundation[^\]]*\]\s*\[(\d+)\]\s*(.+)`),
+		DevicePattern:    darwinDevicePattern,
 		ParseDevice: func(matches []string) *Device {
 			if len(matches) < 3 {
 				return nil

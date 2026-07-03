@@ -48,15 +48,11 @@ func TestRecorderCodecMetadata(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			recorder := &GenericRecorder{
-				id:     "recorder-test",
-				config: types.Recorder{Codec: tt.codec},
+			if got := tt.codec.FileExtension(); got != tt.wantExtension {
+				t.Fatalf("FileExtension() = %q, want %q", got, tt.wantExtension)
 			}
-			if got := recorder.getFileExtension(); got != tt.wantExtension {
-				t.Fatalf("getFileExtension() = %q, want %q", got, tt.wantExtension)
-			}
-			if got := recorder.getContentType(); got != tt.wantContentType {
-				t.Fatalf("getContentType() = %q, want %q", got, tt.wantContentType)
+			if got := tt.codec.ContentType(); got != tt.wantContentType {
+				t.Fatalf("ContentType() = %q, want %q", got, tt.wantContentType)
 			}
 		})
 	}
@@ -64,13 +60,10 @@ func TestRecorderCodecMetadata(t *testing.T) {
 func TestPrepareUploadRequestRejectsParentDirectoryReference(t *testing.T) {
 	t.Parallel()
 	cfg := testS3Recorder()
-	recorder, err := NewGenericRecorder(GenericRecorderConfig{
+	recorder := NewGenericRecorder(GenericRecorderConfig{
 		Recorder: cfg,
 		SpoolDir: t.TempDir(),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	path := filepath.FromSlash(t.TempDir() + "/../escape.mp3")
 	if _, ok := recorder.prepareUploadRequest(path); ok {
 		t.Fatal("prepareUploadRequest() ok = true, want false")
@@ -157,13 +150,10 @@ func TestProcessRetryQueueAbandonsExpiredUploadAndRemovesMetadata(t *testing.T) 
 	t.Parallel()
 	spoolDir := t.TempDir()
 	cfg := testS3Recorder()
-	recorder, err := NewGenericRecorder(GenericRecorderConfig{
+	recorder := NewGenericRecorder(GenericRecorderConfig{
 		Recorder: cfg,
 		SpoolDir: spoolDir,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	filePath := writeSpoolFile(t, spoolDir, cfg.ID, "expired.mp3", "audio")
 	pending := pendingUpload{
 		request: uploadRequest{
@@ -199,13 +189,10 @@ func TestProcessRetryQueueKeepsLocalFileForExpiredBothUpload(t *testing.T) {
 	cfg := testS3Recorder()
 	cfg.StorageMode = types.StorageBoth
 	cfg.LocalPath = localDir
-	recorder, err := NewGenericRecorder(GenericRecorderConfig{
+	recorder := NewGenericRecorder(GenericRecorderConfig{
 		Recorder: cfg,
 		SpoolDir: spoolDir,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	filePath := filepath.Join(localDir, "expired-both.mp3")
 	if err := os.WriteFile(filePath, []byte("audio"), 0o600); err != nil {
 		t.Fatalf("write local file: %v", err)
@@ -241,13 +228,10 @@ func TestProcessRetryQueueRemovesMetadataForMissingFile(t *testing.T) {
 	t.Parallel()
 	spoolDir := t.TempDir()
 	cfg := testS3Recorder()
-	recorder, err := NewGenericRecorder(GenericRecorderConfig{
+	recorder := NewGenericRecorder(GenericRecorderConfig{
 		Recorder: cfg,
 		SpoolDir: spoolDir,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	pending := pendingUpload{
 		request: uploadRequest{
 			localPath: filepath.Join(spoolDir, "missing.mp3"),
@@ -273,13 +257,10 @@ func TestProcessRetryQueueRemovesMetadataForMissingFile(t *testing.T) {
 func TestStopPreservesRetryQueue(t *testing.T) {
 	t.Parallel()
 	cfg := testS3Recorder()
-	recorder, err := NewGenericRecorder(GenericRecorderConfig{
+	recorder := NewGenericRecorder(GenericRecorderConfig{
 		Recorder: cfg,
 		SpoolDir: t.TempDir(),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	recorder.state = types.ProcessRunning
 	recorder.retryQueue = []pendingUpload{
 		{

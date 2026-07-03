@@ -5,12 +5,46 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 )
 
-// Devices returns available audio input devices for the current platform.
+// devicesCacheTTL bounds how often a device listing execs a subprocess: the
+// list is fetched by /api/config on every page load and virtually never
+// changes on the target hardware.
+const devicesCacheTTL = 30 * time.Second
+
+var (
+	devicesMu       sync.Mutex
+	devicesCached   []Device
+	devicesCachedAt time.Time
+)
+
+// Devices returns available audio input devices for the current platform,
+// served from a short-lived cache so routine config fetches do not fork a
+// device-listing subprocess per request.
 func Devices() []Device {
+	devicesMu.Lock()
+	defer devicesMu.Unlock()
+	if devicesCached != nil && time.Since(devicesCachedAt) < devicesCacheTTL {
+		return devicesCached
+	}
+	return refreshDevicesLocked()
+}
+
+// RefreshDevices bypasses the cache and refills it. Used by the explicit
+// device-refresh endpoint so a just-connected device shows up immediately.
+func RefreshDevices() []Device {
+	devicesMu.Lock()
+	defer devicesMu.Unlock()
+	return refreshDevicesLocked()
+}
+
+func refreshDevicesLocked() []Device {
 	cfg := getPlatformConfig()
-	return cfg.Devices()
+	devicesCached = cfg.Devices()
+	devicesCachedAt = time.Now()
+	return devicesCached
 }
 
 // DeviceListConfig defines how to list audio devices for a platform.
@@ -51,10 +85,9 @@ func parseDeviceList(cfg DeviceListConfig) []Device {
 	}
 
 	var devices []Device
-	lines := strings.Split(string(output), "\n")
 	inAudioSection := cfg.AudioStartMarker == "" // If no marker, always in section
 
-	for _, line := range lines {
+	for line := range strings.SplitSeq(string(output), "\n") {
 		// Check for section markers.
 		if cfg.AudioStartMarker != "" && strings.Contains(line, cfg.AudioStartMarker) {
 			inAudioSection = true

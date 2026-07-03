@@ -23,10 +23,11 @@ const (
 
 // SecretExpiryChecker checks client secret expiration.
 type SecretExpiryChecker struct {
-	mu         sync.RWMutex
+	mu         sync.Mutex
 	cfg        *types.GraphConfig
 	cached     types.SecretExpiryInfo
 	lastCheck  time.Time
+	refreshing bool
 	httpClient *http.Client
 }
 
@@ -38,18 +39,18 @@ func NewSecretExpiryChecker(cfg *types.GraphConfig) *SecretExpiryChecker {
 	}
 }
 
-// Info returns the secret expiry information.
+// Info returns the cached secret expiry information. When the cache is stale it
+// starts a single background refresh and serves the previous value, so callers
+// (the per-client WebSocket status tick) never block on Graph API latency.
 func (c *SecretExpiryChecker) Info() types.SecretExpiryInfo {
-	c.mu.RLock()
-	if time.Since(c.lastCheck) < expiryCacheTTL && c.lastCheck.After(time.Time{}) {
-		info := c.cached
-		c.mu.RUnlock()
-		return info
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	stale := c.lastCheck.IsZero() || time.Since(c.lastCheck) >= expiryCacheTTL
+	if stale && !c.refreshing {
+		c.refreshing = true
+		go c.refresh()
 	}
-	c.mu.RUnlock()
-
-	// Cache is stale, fetch fresh data
-	return c.refresh()
+	return c.cached
 }
 
 // UpdateConfig updates the configuration.
@@ -60,32 +61,32 @@ func (c *SecretExpiryChecker) UpdateConfig(cfg *types.GraphConfig) {
 	c.mu.Unlock()
 }
 
-// refresh fetches fresh expiry information.
-func (c *SecretExpiryChecker) refresh() types.SecretExpiryInfo {
+// refresh fetches fresh expiry information in the background and stores it,
+// unless the config was swapped while the fetch was in flight (then the next
+// Info call triggers a fresh refresh against the new config).
+func (c *SecretExpiryChecker) refresh() {
 	c.mu.Lock()
 	cfg := c.cfg
 	c.mu.Unlock()
 
+	var info types.SecretExpiryInfo
 	if cfg == nil || cfg.TenantID == "" || cfg.ClientID == "" || cfg.ClientSecret == "" {
-		info := types.SecretExpiryInfo{Error: "Graph API not configured"}
-		c.mu.Lock()
-		c.cached = info
-		c.lastCheck = time.Now()
-		c.mu.Unlock()
-		return info
-	}
-
-	info, err := c.fetchExpiryInfo(cfg)
-	if err != nil {
-		info = types.SecretExpiryInfo{Error: err.Error()}
+		info = types.SecretExpiryInfo{Error: "Graph API not configured"}
+	} else {
+		var err error
+		info, err = c.fetchExpiryInfo(cfg)
+		if err != nil {
+			info = types.SecretExpiryInfo{Error: err.Error()}
+		}
 	}
 
 	c.mu.Lock()
-	c.cached = info
-	c.lastCheck = time.Now()
+	if c.cfg == cfg {
+		c.cached = info
+		c.lastCheck = time.Now()
+	}
+	c.refreshing = false
 	c.mu.Unlock()
-
-	return info
 }
 
 // applicationResponse represents an application response.

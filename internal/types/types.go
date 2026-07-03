@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
+	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 )
 
 // EncoderState describes the encoder lifecycle phase.
@@ -65,20 +67,20 @@ type ProcessStatus struct {
 
 const (
 	// InitialRetryDelay is the starting delay between retry attempts.
-	InitialRetryDelay = 3000 * time.Millisecond
+	InitialRetryDelay = 3 * time.Second
 	// MaxRetryDelay is the maximum delay between retry attempts.
-	MaxRetryDelay = 60000 * time.Millisecond
+	MaxRetryDelay = 60 * time.Second
 	// MaxRetries is the maximum number of retry attempts for the audio source.
 	MaxRetries = 10
 	// SuccessThreshold is the duration after which retry count resets.
-	SuccessThreshold = 30000 * time.Millisecond
+	SuccessThreshold = 30 * time.Second
 	// StableThreshold is the duration after which a connection is considered stable.
-	StableThreshold = 10000 * time.Millisecond
+	StableThreshold = 10 * time.Second
 )
 
 const (
 	// ShutdownTimeout is the duration to wait for graceful shutdown.
-	ShutdownTimeout = 3000 * time.Millisecond
+	ShutdownTimeout = 3 * time.Second
 	// PollInterval is the interval for polling process state.
 	PollInterval = 50 * time.Millisecond
 )
@@ -204,10 +206,11 @@ func (s *Stream) ListenerBindHost() string {
 // Endpoint returns the host:port a stream uses: the remote address for caller
 // streams, or the local bind address for listener streams.
 func (s *Stream) Endpoint() string {
+	host := s.Host
 	if s.ModeOrDefault() == StreamModeListener {
-		return fmt.Sprintf("%s:%d", s.ListenerBindHost(), s.Port)
+		host = s.ListenerBindHost()
 	}
-	return fmt.Sprintf("%s:%d", s.Host, s.Port)
+	return net.JoinHostPort(host, strconv.Itoa(s.Port))
 }
 
 // MaxRetriesOrDefault returns MaxRetries, or [DefaultMaxRetries] if not set.
@@ -223,17 +226,19 @@ func (s *Stream) MaxRetriesOrDefault() int {
 type codecPreset struct {
 	encoder        string
 	format         string
+	fileExt        string
+	contentType    string
 	defaultBitrate int // kbit/s; 0 omits -b:a
 	extraArgs      []string
 }
 
 // codecPresets maps each codec to its FFmpeg encoding parameters.
 var codecPresets = map[Codec]codecPreset{
-	CodecMP3:  {encoder: "libmp3lame", format: "mp3", defaultBitrate: 320},
-	CodecOpus: {encoder: "libopus", format: "mpegts", defaultBitrate: 128, extraArgs: []string{"-frame_duration", "10"}},
+	CodecMP3:  {encoder: "libmp3lame", format: "mp3", fileExt: "mp3", contentType: "audio/mpeg", defaultBitrate: 320},
+	CodecOpus: {encoder: "libopus", format: "mpegts", fileExt: "ts", contentType: "audio/mp2t", defaultBitrate: 128, extraArgs: []string{"-frame_duration", "10"}},
 	// SMPTE 302M is the only PCM-in-MPEG-TS encoder Liquidsoap can decode.
 	// FFmpeg marks s302m as experimental, so -strict -2 is required.
-	CodecPCM: {encoder: "s302m", format: "mpegts", extraArgs: []string{"-strict", "-2"}},
+	CodecPCM: {encoder: "s302m", format: "mpegts", fileExt: "ts", contentType: "audio/mp2t", extraArgs: []string{"-strict", "-2"}},
 }
 
 // Format returns the output format for this codec.
@@ -243,6 +248,24 @@ func (c Codec) Format() string {
 	}
 	slog.Error("unknown codec format requested, falling back to PCM format", "codec", c)
 	return codecPresets[CodecPCM].format
+}
+
+// FileExtension returns the recording file extension (without dot) for this codec.
+func (c Codec) FileExtension() string {
+	if preset, ok := codecPresets[c]; ok {
+		return preset.fileExt
+	}
+	slog.Error("unknown codec extension requested, falling back to MPEG-TS extension", "codec", c)
+	return codecPresets[CodecPCM].fileExt
+}
+
+// ContentType returns the MIME type for recordings in this codec.
+func (c Codec) ContentType() string {
+	if preset, ok := codecPresets[c]; ok {
+		return preset.contentType
+	}
+	slog.Error("unknown codec content type requested, falling back to MPEG-TS content type", "codec", c)
+	return codecPresets[CodecPCM].contentType
 }
 
 // DefaultBitrate returns the codec's default bitrate in kbit/s.
@@ -308,7 +331,7 @@ func (s *Stream) Validate() error {
 	if err := validateCodec(s.Codec); err != nil {
 		return err
 	}
-	if s.Port <= 0 || s.Port > 65535 {
+	if !validation.ValidPort(s.Port) {
 		return fmt.Errorf("port: must be between 1 and 65535")
 	}
 	if s.MaxRetries < 0 {
@@ -430,6 +453,11 @@ type Recorder struct {
 
 	RetentionDays int   `json:"retention_days"` // 0 = forever
 	CreatedAt     int64 `json:"created_at"`     // Unix ms
+}
+
+// HasS3Credentials reports whether the bucket and both credential fields are set.
+func (r *Recorder) HasS3Credentials() bool {
+	return r.S3Bucket != "" && r.S3AccessKeyID != "" && r.S3SecretAccessKey != ""
 }
 
 // Validate reports an error if the recorder configuration is invalid.

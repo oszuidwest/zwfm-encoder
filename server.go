@@ -2,7 +2,7 @@ package main
 
 import (
 	"crypto/subtle"
-	"errors"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -15,7 +15,6 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
 	"github.com/oszuidwest/zwfm-encoder/internal/server"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
-	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 var loginTmpl = template.Must(template.New("login").Parse(loginHTML))
@@ -47,9 +46,14 @@ type Server struct {
 	ffmpegAvailable bool
 
 	// WebSocket broadcast channels
-	wsClients   map[chan any]struct{}
-	wsClientsMu sync.RWMutex
+	wsClients       map[chan any]struct{}
+	wsClientsMu     sync.RWMutex
+	wsBroadcastOnce sync.Once
 }
+
+// rawWSMessage carries pre-marshaled JSON so the broadcaster serializes each
+// periodic payload once instead of once per connected client.
+type rawWSMessage []byte
 
 // NewServer creates a Server with the given configuration and encoder.
 func NewServer(cfg *config.Config, enc *encoder.Encoder, ffmpegAvailable bool) *Server {
@@ -90,7 +94,16 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Reader goroutine - keeps connection alive
 	go s.runWebSocketReader(conn, done)
 
-	s.runWebSocketEventLoop(send, done)
+	// One process-wide broadcaster feeds all clients; started on first use.
+	s.wsBroadcastOnce.Do(func() { go s.runWSBroadcaster() })
+
+	// Send an initial status snapshot, then block until the reader detects
+	// disconnect; the broadcaster delivers all further periodic updates.
+	select {
+	case send <- s.buildWSRuntime():
+	case <-done:
+	}
+	<-done
 }
 
 func (s *Server) registerWSClient(send chan any) {
@@ -128,7 +141,13 @@ func (s *Server) runWebSocketWriter(conn server.WebSocketConn, send <-chan any) 
 		}
 	}()
 	for msg := range send {
-		if err := conn.WriteJSON(msg); err != nil {
+		var err error
+		if raw, ok := msg.(rawWSMessage); ok {
+			err = conn.WriteMessage(server.TextMessage, raw)
+		} else {
+			err = conn.WriteJSON(msg)
+		}
+		if err != nil {
 			return
 		}
 	}
@@ -145,40 +164,53 @@ func (s *Server) runWebSocketReader(conn server.WebSocketConn, done chan<- struc
 	}
 }
 
-// runWebSocketEventLoop sends periodic level and status updates to the client.
-func (s *Server) runWebSocketEventLoop(send chan any, done <-chan struct{}) {
-	levelsTicker := time.NewTicker(100 * time.Millisecond)  // 10 fps for VU meters
-	statusTicker := time.NewTicker(3000 * time.Millisecond) // Status updates every 3s
+// runWSBroadcaster builds each periodic WebSocket payload once and fans the
+// marshaled bytes out to every connected client, instead of every client
+// assembling and marshaling its own identical copy. Started lazily on the
+// first WebSocket connection and runs for the process lifetime; it idles
+// cheaply while no clients are connected.
+func (s *Server) runWSBroadcaster() {
+	levelsTicker := time.NewTicker(100 * time.Millisecond) // 10 fps for VU meters
+	statusTicker := time.NewTicker(3 * time.Second)        // Status updates every 3s
 	defer levelsTicker.Stop()
 	defer statusTicker.Stop()
 
-	// trySend attempts to send a message, returning false if done is closed
-	trySend := func(msg any) bool {
+	for {
 		select {
-		case send <- msg:
-			return true
-		case <-done:
-			return false
+		case <-levelsTicker.C:
+			s.broadcastShared(func() any {
+				return types.WSLevelsResponse{Type: "levels", Levels: s.encoder.AudioLevels()}
+			})
+		case <-statusTicker.C:
+			s.broadcastShared(func() any { return s.buildWSRuntime() })
 		}
 	}
+}
 
-	// Send initial status
-	if !trySend(s.buildWSRuntime()) {
+// broadcastShared marshals the payload once and queues the bytes on every
+// client channel. The payload is only built when at least one client is
+// connected. Full client channels are skipped, matching broadcastConfigChanged.
+func (s *Server) broadcastShared(build func() any) {
+	s.wsClientsMu.RLock()
+	clientCount := len(s.wsClients)
+	s.wsClientsMu.RUnlock()
+	if clientCount == 0 {
 		return
 	}
 
-	for {
+	data, err := json.Marshal(build())
+	if err != nil {
+		slog.Error("failed to marshal WebSocket payload", "error", err)
+		return
+	}
+
+	s.wsClientsMu.RLock()
+	defer s.wsClientsMu.RUnlock()
+	for ch := range s.wsClients {
 		select {
-		case <-done:
-			return
-		case <-levelsTicker.C:
-			if !trySend(types.WSLevelsResponse{Type: "levels", Levels: s.encoder.AudioLevels()}) {
-				return
-			}
-		case <-statusTicker.C:
-			if !trySend(s.buildWSRuntime()) {
-				return
-			}
+		case ch <- rawWSMessage(data):
+		default:
+			// Channel full, skip this client
 		}
 	}
 }
@@ -274,7 +306,7 @@ func securityHeaders(next http.Handler) http.Handler {
 
 // handlePublicStatic serves style.css and icons.js without authentication.
 func (s *Server) handlePublicStatic(w http.ResponseWriter, r *http.Request) {
-	if !serveStaticFile(w, r.URL.Path) {
+	if !serveStaticFile(w, r, r.URL.Path) {
 		http.NotFound(w, r)
 	}
 }
@@ -288,15 +320,34 @@ func (s *Server) handleFavicon(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// staticETag identifies the embedded asset build. Assets only change with a
+// new binary, so release builds let clients revalidate with a conditional
+// request instead of re-downloading ~100 KB of scripts on every page load.
+// Dev builds share one version string, so they skip caching entirely.
+var staticETag = func() string {
+	if Version == "dev" {
+		return ""
+	}
+	return `"` + Version + `"`
+}()
+
 // serveStaticFile reports whether the path was found and served.
-func serveStaticFile(w http.ResponseWriter, path string) bool {
+func serveStaticFile(w http.ResponseWriter, r *http.Request, path string) bool {
 	file, ok := staticFiles[path]
 	if !ok {
 		return false
 	}
 	w.Header().Set("Content-Type", file.contentType)
-	if _, err := w.Write([]byte(file.content)); err != nil {
-		slog.Error("failed to write static file", "file", file.name, "error", err)
+	if staticETag != "" {
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("ETag", staticETag)
+		if r.Header.Get("If-None-Match") == staticETag {
+			w.WriteHeader(http.StatusNotModified)
+			return true
+		}
+	}
+	if _, err := w.Write(file.content); err != nil {
+		slog.Error("failed to write static file", "file", path, "error", err)
 	}
 	return true
 }
@@ -317,7 +368,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		CSRFToken:   s.sessions.CreateCSRFToken(),
 		StationName: cfg.StationName,
 		//nolint:gosec // CSS from validated hex colors
-		PrimaryCSS: template.CSS(util.GenerateBrandCSS(cfg.StationColorLight, cfg.StationColorDark)),
+		PrimaryCSS: template.CSS(generateBrandCSS(cfg.StationColorLight, cfg.StationColorDark)),
 	}
 
 	if r.Method == http.MethodPost {
@@ -352,38 +403,18 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 // staticFile holds an embedded static file with its content type and data.
+// Content is converted to bytes once so serving does not copy per request.
 type staticFile struct {
 	contentType string
-	content     string
-	name        string
+	content     []byte
 }
 
 var staticFiles = map[string]staticFile{
-	"/style.css": {
-		contentType: "text/css",
-		content:     styleCSS,
-		name:        "style.css",
-	},
-	"/app.js": {
-		contentType: "application/javascript",
-		content:     appJS,
-		name:        "app.js",
-	},
-	"/eventHelpers.js": {
-		contentType: "application/javascript",
-		content:     eventHelpersJS,
-		name:        "eventHelpers.js",
-	},
-	"/icons.js": {
-		contentType: "application/javascript",
-		content:     iconsJS,
-		name:        "icons.js",
-	},
-	"/alpine.min.js": {
-		contentType: "application/javascript",
-		content:     alpineJS,
-		name:        "alpine.min.js",
-	},
+	"/style.css":       {contentType: "text/css", content: []byte(styleCSS)},
+	"/app.js":          {contentType: "application/javascript", content: []byte(appJS)},
+	"/eventHelpers.js": {contentType: "application/javascript", content: []byte(eventHelpersJS)},
+	"/icons.js":        {contentType: "application/javascript", content: []byte(iconsJS)},
+	"/alpine.min.js":   {contentType: "application/javascript", content: []byte(alpineJS)},
 	// favicon.svg is served dynamically via handleFavicon
 }
 
@@ -403,14 +434,14 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 			Year:        time.Now().Year(),
 			StationName: cfg.StationName,
 			//nolint:gosec // CSS from validated hex colors
-			PrimaryCSS: template.CSS(util.GenerateBrandCSS(cfg.StationColorLight, cfg.StationColorDark)),
+			PrimaryCSS: template.CSS(generateBrandCSS(cfg.StationColorLight, cfg.StationColorDark)),
 		}); err != nil {
 			slog.Error("failed to write index.html", "error", err)
 		}
 		return
 	}
 
-	if serveStaticFile(w, path) {
+	if serveStaticFile(w, r, path) {
 		return
 	}
 
@@ -445,32 +476,17 @@ func (s *Server) handleExternalRecordingAction(w http.ResponseWriter, r *http.Re
 	// Determine action from path
 	isStart := strings.HasSuffix(r.URL.Path, "/start")
 
-	var err error
-	var status string
-
-	if isStart {
-		if s.encoder.State() != types.StateRunning {
-			s.writeError(w, http.StatusBadRequest, "Encoder must be running to start recorder")
-			return
-		}
-		err = s.encoder.StartRecorder(recorderID)
-		status = "recording_started"
-	} else {
-		err = s.encoder.StopRecorder(recorderID)
-		status = "recording_stopped"
-	}
-
-	if err != nil {
-		if errors.Is(err, encoder.ErrRecordingNotAvailable) {
-			s.writeError(w, http.StatusServiceUnavailable, err.Error())
-			return
-		}
-		s.writeError(w, http.StatusBadRequest, err.Error())
+	if status, errMsg := s.doRecorderAction(recorderID, isStart); errMsg != "" {
+		s.writeError(w, status, errMsg)
 		return
 	}
 
+	result := "recording_stopped"
+	if isStart {
+		result = "recording_started"
+	}
 	s.writeJSON(w, http.StatusOK, map[string]string{
-		"status":      status,
+		"status":      result,
 		"recorder_id": recorderID,
 	})
 }

@@ -38,13 +38,10 @@ func TestManagerStopStopsRotatingRecorder(t *testing.T) {
 }
 
 func TestStopReusesUploadQueue(t *testing.T) {
-	r, err := NewGenericRecorder(GenericRecorderConfig{
+	r := NewGenericRecorder(GenericRecorderConfig{
 		Recorder: testS3Recorder(),
 		SpoolDir: t.TempDir(),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	before := r.uploadQueue
 	r.mu.Lock()
 	r.state = types.ProcessRunning
@@ -59,13 +56,10 @@ func TestStopReusesUploadQueue(t *testing.T) {
 
 func TestQueueForUploadAfterWorkerStopPersistsToRetryQueue(t *testing.T) {
 	spoolDir := t.TempDir()
-	r, err := NewGenericRecorder(GenericRecorderConfig{
+	r := NewGenericRecorder(GenericRecorderConfig{
 		Recorder: testS3Recorder(),
 		SpoolDir: spoolDir,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	r.mu.Lock()
 	r.state = types.ProcessRunning
 	r.uploadWorkerRunning = true

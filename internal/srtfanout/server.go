@@ -15,6 +15,8 @@ import (
 	"time"
 
 	srt "github.com/datarhei/gosrt"
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
+	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 )
 
 const (
@@ -73,7 +75,7 @@ type subscriber struct {
 
 	done      chan struct{}
 	closeOnce sync.Once
-	drops     int64
+	drops     atomic.Int64
 }
 
 // NewServer validates cfg, applies defaults, and returns a stopped fan-out server.
@@ -83,7 +85,7 @@ func NewServer(cfg Config) (*Server, error) {
 	if cfg.BindHost == "" {
 		cfg.BindHost = "0.0.0.0"
 	}
-	if cfg.Port <= 0 || cfg.Port > 65535 {
+	if !validation.ValidPort(cfg.Port) {
 		return nil, fmt.Errorf("port: must be between 1 and 65535")
 	}
 	if cfg.Latency <= 0 {
@@ -317,7 +319,7 @@ func (s *Server) removeSubscriber(sub *subscriber) {
 }
 
 func (s *Server) logSlowSubscriberDrop(sub *subscriber) {
-	drops := atomic.LoadInt64(&sub.drops)
+	drops := sub.drops.Load()
 	if drops == 1 || drops%100 == 0 {
 		s.cfg.Logger.Warn("srt subscriber queue full, dropping stale chunk",
 			"stream_id", s.cfg.StreamID,
@@ -327,27 +329,11 @@ func (s *Server) logSlowSubscriberDrop(sub *subscriber) {
 }
 
 func (sub *subscriber) enqueue(chunk []byte) bool {
-	// Server.Write has one producer per encoder run. Concurrent producers are
-	// memory-safe, but drop accounting may be lossy under contention.
-	select {
-	case sub.ch <- chunk:
-		return false
-	case <-sub.done:
-		return false
-	default:
-	}
-
-	dropped := false
-	select {
-	case <-sub.ch:
-		atomic.AddInt64(&sub.drops, 1)
-		dropped = true
-	default:
-	}
-
-	select {
-	case sub.ch <- chunk:
-	default:
+	// Server.Write has one producer per encoder run; see util.OfferDropOldest
+	// for the drop-accounting caveat under concurrent producers.
+	dropped := util.OfferDropOldest(sub.ch, chunk, sub.done)
+	if dropped {
+		sub.drops.Add(1)
 	}
 	return dropped
 }

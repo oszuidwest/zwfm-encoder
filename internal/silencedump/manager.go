@@ -12,13 +12,13 @@ import (
 )
 
 // Manager coordinates silence dump capture and file retention.
+// Enabled-state lives solely in the Capturer, which owns the ffmpeg rule.
 type Manager struct {
 	mu sync.RWMutex
 
 	capturer    *Capturer
 	ffmpegPath  string
 	outputDir   string
-	enabled     bool
 	onDumpReady DumpCallback
 
 	// Cleanup configuration
@@ -36,7 +36,6 @@ func NewManager(ffmpegPath string, port int, enabled bool, retentionDays int, on
 	m := &Manager{
 		ffmpegPath:    ffmpegPath,
 		outputDir:     outputDir,
-		enabled:       enabled && ffmpegPath != "",
 		onDumpReady:   onDumpReady,
 		retentionDays: retentionDays,
 	}
@@ -44,7 +43,7 @@ func NewManager(ffmpegPath string, port int, enabled bool, retentionDays int, on
 	// Create capturer if FFmpeg is available
 	if ffmpegPath != "" {
 		m.capturer = NewCapturer(ffmpegPath, outputDir, onDumpReady)
-		m.capturer.SetEnabled(m.enabled)
+		m.capturer.SetEnabled(enabled)
 	}
 
 	return m
@@ -63,7 +62,12 @@ func (m *Manager) Start() {
 	m.cleanupStopCh = make(chan struct{})
 	m.startCleanupScheduler(m.cleanupStopCh)
 
-	slog.Info("silence dump manager started", "enabled", m.enabled)
+	slog.Info("silence dump manager started", "enabled", m.Enabled())
+}
+
+// Enabled reports whether dump capture is active.
+func (m *Manager) Enabled() bool {
+	return m.capturer != nil && m.capturer.Enabled()
 }
 
 // IsRunning reports whether automatic cleanup is active.
@@ -123,10 +127,6 @@ func (m *Manager) HandleSilenceEvent(event audio.SilenceEvent) {
 
 // SetEnabled sets whether dump capture is active.
 func (m *Manager) SetEnabled(enabled bool) {
-	m.mu.Lock()
-	m.enabled = enabled && m.ffmpegPath != ""
-	m.mu.Unlock()
-
 	if m.capturer != nil {
 		m.capturer.SetEnabled(enabled)
 	}
@@ -142,21 +142,7 @@ func (m *Manager) SetRetentionDays(days int) {
 // startCleanupScheduler deletes old dump files until stopCh closes.
 // Capturing stopCh avoids racing Stop's field reset.
 func (m *Manager) startCleanupScheduler(stopCh <-chan struct{}) {
-	go func() {
-		for {
-			duration := util.TimeUntilNextHour(time.Now())
-
-			slog.Debug("silence dump cleanup: next run scheduled", "in", duration.Round(time.Second))
-
-			select {
-			case <-time.After(duration):
-				m.runCleanup()
-			case <-stopCh:
-				slog.Debug("silence dump cleanup scheduler stopped")
-				return
-			}
-		}
-	}()
+	util.RunHourly(stopCh, "silence dump cleanup", m.runCleanup)
 }
 
 // runCleanup removes dump files older than retention days.

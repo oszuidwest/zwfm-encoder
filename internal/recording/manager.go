@@ -1,12 +1,14 @@
 package recording
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
+	"slices"
 	"sync"
-	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
@@ -73,10 +75,7 @@ func (m *Manager) SetUploadAbandonedCallback(cb UploadAbandonedCallback) {
 func (m *Manager) SetMaxDurationMinutes(minutes int) {
 	m.mu.Lock()
 	m.maxDurationMinutes = minutes
-	recorders := make([]*GenericRecorder, 0, len(m.recorders))
-	for _, r := range m.recorders {
-		recorders = append(recorders, r)
-	}
+	recorders := slices.Collect(maps.Values(m.recorders))
 	m.mu.Unlock()
 
 	for _, r := range recorders {
@@ -97,7 +96,7 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 		return fmt.Errorf("recorder already exists: %s", cfg.ID)
 	}
 
-	recorder, err := NewGenericRecorder(GenericRecorderConfig{
+	recorder := NewGenericRecorder(GenericRecorderConfig{
 		Recorder:           cfg,
 		FFmpegPath:         m.ffmpegPath,
 		SpoolDir:           m.spoolDir,
@@ -105,9 +104,6 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 		EventLogger:        m.eventLogger,
 		OnUploadAbandoned:  m.onUploadAbandoned,
 	})
-	if err != nil {
-		return fmt.Errorf("create recorder: %w", err)
-	}
 	if err := recorder.reconcilePendingUploads(); err != nil {
 		return fmt.Errorf("reconcile pending uploads: %w", err)
 	}
@@ -259,10 +255,7 @@ func (m *Manager) Stop() error {
 	}
 
 	// Snapshot before blocking on FFmpeg shutdown.
-	recorders := make([]*GenericRecorder, 0, len(m.recorders))
-	for _, recorder := range m.recorders {
-		recorders = append(recorders, recorder)
-	}
+	recorders := slices.Collect(maps.Values(m.recorders))
 	m.mu.Unlock()
 
 	// Stop recorders concurrently so one process cannot stall the rest.
@@ -289,19 +282,28 @@ func (m *Manager) Stop() error {
 
 // WriteAudio fans out one PCM copy without blocking the distributor.
 func (m *Manager) WriteAudio(pcm []byte) {
+	var shared []byte
+	m.WriteAudioShared(func() []byte {
+		if shared == nil {
+			shared = bytes.Clone(pcm)
+		}
+		return shared
+	})
+}
+
+// WriteAudioShared queues one immutable chunk for every recording recorder,
+// obtaining it from copyChunk only when a recorder is live. The caller may
+// share the same copyChunk with the stream fan-out so one clone serves all
+// consumers; recorders must treat queued chunks as read-only.
+func (m *Manager) WriteAudioShared(copyChunk func() []byte) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	var shared []byte
 	for _, recorder := range m.recorders {
 		if !recorder.IsRecording() {
 			continue
 		}
-		if shared == nil {
-			shared = make([]byte, len(pcm))
-			copy(shared, pcm)
-		}
-		recorder.WriteAudio(shared)
+		recorder.WriteAudio(copyChunk())
 	}
 }
 
@@ -332,20 +334,10 @@ func (m *Manager) PendingUploadCount() int {
 // startHourlyRetryScheduler retries hourly recorders and uploads until stopCh closes.
 // Capturing stopCh avoids racing Stop's field reset.
 func (m *Manager) startHourlyRetryScheduler(stopCh <-chan struct{}) {
-	go func() {
-		for {
-			duration := util.TimeUntilNextHour(time.Now())
-			timer := time.NewTimer(duration)
-			select {
-			case <-stopCh:
-				timer.Stop()
-				return
-			case <-timer.C:
-				m.retryFailedHourlyRecorders()
-				m.processUploadRetryQueues()
-			}
-		}
-	}()
+	util.RunHourly(stopCh, "recorder retry", func() {
+		m.retryFailedHourlyRecorders()
+		m.processUploadRetryQueues()
+	})
 }
 
 func (m *Manager) retryFailedHourlyRecorders() {
@@ -370,10 +362,7 @@ func (m *Manager) retryFailedHourlyRecorders() {
 
 func (m *Manager) processUploadRetryQueues() {
 	m.mu.RLock()
-	recorders := make([]*GenericRecorder, 0, len(m.recorders))
-	for _, recorder := range m.recorders {
-		recorders = append(recorders, recorder)
-	}
+	recorders := slices.Collect(maps.Values(m.recorders))
 	m.mu.RUnlock()
 
 	for _, recorder := range recorders {

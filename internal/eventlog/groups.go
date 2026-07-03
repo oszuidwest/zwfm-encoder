@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -115,7 +116,7 @@ func GroupEvents(events []EventView) EventGroups {
 		}
 	}
 
-	asc := append([]groupedEvent(nil), grouped...)
+	asc := slices.Clone(grouped)
 	slices.SortStableFunc(asc, compareGroupedEvents)
 
 	state := &groupingState{
@@ -127,10 +128,7 @@ func GroupEvents(events []EventView) EventGroups {
 		state.process(asc[i])
 	}
 
-	ongoing := make([]*historicalIncident, 0, len(state.openByKey))
-	for _, incident := range state.openByKey {
-		ongoing = append(ongoing, incident)
-	}
+	ongoing := slices.Collect(maps.Values(state.openByKey))
 	consumed := consumedEventIDs(len(grouped), state.closed, state.failed, ongoing)
 
 	groups := EmptyEventGroups()
@@ -680,33 +678,19 @@ func groupedEventViews(events []groupedEvent) []EventView {
 }
 
 func incidentEventViews(events []groupedEvent) []EventView {
-	ordered := append([]groupedEvent(nil), events...)
+	ordered := slices.Clone(events)
 	slices.SortStableFunc(ordered, compareGroupedEvents)
 	return groupedEventViews(ordered)
 }
 
 // compareGroupedEvents orders events chronologically with stable ties.
 func compareGroupedEvents(a, b groupedEvent) int {
-	switch {
-	case a.view.Timestamp.Before(b.view.Timestamp):
-		return -1
-	case a.view.Timestamp.After(b.view.Timestamp):
-		return 1
-	default:
-		return a.id - b.id
-	}
+	return cmp.Or(a.view.Timestamp.Compare(b.view.Timestamp), a.id-b.id)
 }
 
 func sortItemsDesc(items []EventGroupItem) {
 	slices.SortStableFunc(items, func(a, b EventGroupItem) int {
-		switch {
-		case a.SortTs > b.SortTs:
-			return -1
-		case a.SortTs < b.SortTs:
-			return 1
-		default:
-			return strings.Compare(a.Key, b.Key)
-		}
+		return cmp.Or(cmp.Compare(b.SortTs, a.SortTs), strings.Compare(a.Key, b.Key))
 	})
 }
 

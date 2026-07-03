@@ -70,14 +70,12 @@ func sendWebhookSilenceEnd(ctx context.Context, webhookURL string, e silenceEven
 
 // sendWebhookChannelImbalanceStart notifies the configured webhook of confirmed L/R imbalance.
 func sendWebhookChannelImbalanceStart(ctx context.Context, webhookURL string, e ChannelImbalanceData) error {
-	balanceDB := e.BalanceDB
-	imbalanceDB := e.ImbalanceDB
 	return sendWebhook(ctx, webhookURL, &WebhookPayload{
 		Event:        "channel_imbalance_start",
 		LevelLeftDB:  e.LevelL,
 		LevelRightDB: e.LevelR,
-		BalanceDB:    &balanceDB,
-		ImbalanceDB:  &imbalanceDB,
+		BalanceDB:    &e.BalanceDB,
+		ImbalanceDB:  &e.ImbalanceDB,
 		Threshold:    e.ThresholdDB,
 		Timestamp:    timestampUTC(),
 	})
@@ -85,14 +83,12 @@ func sendWebhookChannelImbalanceStart(ctx context.Context, webhookURL string, e 
 
 // sendWebhookChannelImbalanceEnd notifies the configured webhook that L/R balance has recovered.
 func sendWebhookChannelImbalanceEnd(ctx context.Context, webhookURL string, e ChannelImbalanceData) error {
-	balanceDB := e.BalanceDB
-	imbalanceDB := e.ImbalanceDB
 	return sendWebhook(ctx, webhookURL, &WebhookPayload{
 		Event:        "channel_imbalance_end",
 		LevelLeftDB:  e.LevelL,
 		LevelRightDB: e.LevelR,
-		BalanceDB:    &balanceDB,
-		ImbalanceDB:  &imbalanceDB,
+		BalanceDB:    &e.BalanceDB,
+		ImbalanceDB:  &e.ImbalanceDB,
 		Threshold:    e.ThresholdDB,
 		DurationMs:   e.DurationMs,
 		Timestamp:    timestampUTC(),
@@ -184,7 +180,7 @@ func sendWebhook(ctx context.Context, webhookURL string, payload *WebhookPayload
 		return util.WrapError("marshal payload", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewReader(jsonData))
 	if err != nil {
 		return util.WrapError("create webhook request", err)
 	}

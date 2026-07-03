@@ -2,6 +2,7 @@ package util
 
 import (
 	"fmt"
+	"log/slog"
 	"regexp"
 	"time"
 )
@@ -31,6 +32,26 @@ func OldestToKeep(days int, now time.Time) time.Time {
 func TimeUntilNextHour(t time.Time) time.Duration {
 	nextHour := t.Truncate(time.Hour).Add(time.Hour)
 	return nextHour.Sub(t)
+}
+
+// RunHourly runs fn at every top-of-hour boundary on its own goroutine until
+// stopCh closes. The name identifies the scheduler in logs.
+func RunHourly(stopCh <-chan struct{}, name string, fn func()) {
+	go func() {
+		for {
+			d := TimeUntilNextHour(time.Now())
+			slog.Debug("hourly scheduler: next run scheduled", "scheduler", name, "in", d.Round(time.Second))
+			timer := time.NewTimer(d)
+			select {
+			case <-stopCh:
+				timer.Stop()
+				slog.Info("hourly scheduler stopped", "scheduler", name)
+				return
+			case <-timer.C:
+				fn()
+			}
+		}
+	}()
 }
 
 // FilenameTime extracts a timestamp from a filename.

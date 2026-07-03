@@ -1,4 +1,4 @@
-package util
+package main
 
 import (
 	"fmt"
@@ -26,8 +26,8 @@ func rgbToHex(r, g, b uint8) string {
 	return fmt.Sprintf("#%02X%02X%02X", r, g, b)
 }
 
-// DarkenColor darkens a hex color by a percentage (0-100).
-func DarkenColor(hex string, percent int) string {
+// darkenColor darkens a hex color by a percentage (0-100).
+func darkenColor(hex string, percent int) string {
 	r, g, b, err := parseHexColor(hex)
 	if err != nil {
 		return hex
@@ -42,10 +42,10 @@ func DarkenColor(hex string, percent int) string {
 	)
 }
 
-// GenerateBrandCSS generates CSS custom properties for branding.
-func GenerateBrandCSS(colorLight, colorDark string) string {
-	hoverLight := DarkenColor(colorLight, 10)
-	hoverDark := DarkenColor(colorDark, 10)
+// generateBrandCSS generates CSS custom properties for branding.
+func generateBrandCSS(colorLight, colorDark string) string {
+	hoverLight := darkenColor(colorLight, 10)
+	hoverDark := darkenColor(colorDark, 10)
 
 	return fmt.Sprintf(
 		":root{--brand-light:%s;--brand-dark:%s;--brand:%s;--brand-hover:%s}"+

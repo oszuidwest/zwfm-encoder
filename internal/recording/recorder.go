@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -92,8 +93,8 @@ type GenericRecorderConfig struct {
 }
 
 // NewGenericRecorder creates a new recorder instance.
-func NewGenericRecorder(cfg GenericRecorderConfig) (*GenericRecorder, error) {
-	r := &GenericRecorder{
+func NewGenericRecorder(cfg GenericRecorderConfig) *GenericRecorder {
+	return &GenericRecorder{
 		id:                 cfg.Recorder.ID,
 		config:             *cfg.Recorder,
 		ffmpegPath:         cfg.FFmpegPath,
@@ -105,8 +106,6 @@ func NewGenericRecorder(cfg GenericRecorderConfig) (*GenericRecorder, error) {
 		uploadQueue:        make(chan uploadRequest, 100),
 		uploadStopCh:       make(chan struct{}),
 	}
-
-	return r, nil
 }
 
 // ID returns the recorder ID.
@@ -133,29 +132,24 @@ func s3ConfigKeyFrom(cfg *types.Recorder) string {
 	return cfg.S3Endpoint + "|" + cfg.S3AccessKeyID + "|" + cfg.S3SecretAccessKey
 }
 
-func (r *GenericRecorder) getOrCreateS3Client() (*s3.Client, error) {
+// getOrCreateS3Client returns the cached S3 client, recreating it when the
+// config changed. It returns nil when S3 is not configured.
+func (r *GenericRecorder) getOrCreateS3Client() *s3.Client {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if !r.isS3Configured() {
-		return nil, nil
+		return nil
 	}
 
 	newKey := s3ConfigKeyFrom(&r.config)
 
 	// Reuse cached client if config unchanged
-	if r.s3Client != nil && r.s3ConfigKey == newKey {
-		return r.s3Client, nil
+	if r.s3Client == nil || r.s3ConfigKey != newKey {
+		r.s3Client = r.createS3Client()
+		r.s3ConfigKey = newKey
 	}
-
-	// Recreate client with new config
-	client, err := r.createS3Client()
-	if err != nil {
-		return nil, err
-	}
-	r.s3Client = client
-	r.s3ConfigKey = newKey
-	return client, nil
+	return r.s3Client
 }
 
 // IsCurrentFile reports whether the given path is the currently recording file.
@@ -276,15 +270,15 @@ func (r *GenericRecorder) setError(msg string) {
 }
 
 // Must be called with r.mu held.
-func (r *GenericRecorder) captureLogParamsLocked() *eventlog.RecorderEventParams {
-	return &eventlog.RecorderEventParams{
+func (r *GenericRecorder) captureLogParamsLocked() *eventlog.RecorderDetails {
+	return &eventlog.RecorderDetails{
 		RecorderName: r.config.Name,
 		Codec:        string(r.config.Codec),
 		StorageMode:  string(r.config.StorageMode),
 	}
 }
 
-func (r *GenericRecorder) logEvent(eventType eventlog.EventType, p *eventlog.RecorderEventParams) {
+func (r *GenericRecorder) logEvent(eventType eventlog.EventType, p *eventlog.RecorderDetails) {
 	if r.eventLogger == nil {
 		return
 	}
@@ -439,28 +433,16 @@ func (r *GenericRecorder) cleanupAfterWriteError(result *ffmpeg.StartResult, cur
 
 // drainProcess waits for FFmpeg, escalating through SIGTERM and SIGKILL.
 func (r *GenericRecorder) drainProcess(result *ffmpeg.StartResult) {
-	done := make(chan error, 1)
-	go func() {
-		done <- result.Wait()
-	}()
+	escalated := false // written and read in this goroutine only
+	err := result.WaitEscalating(processStopTimeout, processKillTimeout,
+		func() {
+			escalated = true
+			slog.Warn("recorder ffmpeg did not stop in time, sending signal", "id", r.id)
+		},
+		func() { slog.Error("recorder ffmpeg force killed", "id", r.id) })
 
-	select {
-	case err := <-done:
-		if err != nil {
-			r.recordStderr(result)
-		}
-	case <-time.After(processStopTimeout):
-		slog.Warn("recorder ffmpeg did not stop in time, sending signal", "id", r.id)
-		_ = result.Signal()
-
-		select {
-		case <-done:
-		case <-time.After(processKillTimeout):
-			slog.Error("recorder ffmpeg force killed", "id", r.id)
-			_ = result.Kill()
-			<-done
-		}
-		// After escalation, stderr is both safe to read and most useful.
+	// After escalation, stderr is both safe to read and most useful.
+	if err != nil || escalated {
 		r.recordStderr(result)
 	}
 }
@@ -547,10 +529,6 @@ func (r *GenericRecorder) startEncoderLocked() error {
 	// Get codec configuration
 	codecArgs := types.BuildCodecArgs(r.config.Codec, r.config.Bitrate)
 	format := r.config.Codec.Format()
-	ext := r.getFileExtension()
-
-	// Update filename with correct extension
-	r.currentFile = r.currentFile[:len(r.currentFile)-len(filepath.Ext(r.currentFile))] + "." + ext
 
 	// Build FFmpeg command args
 	args := ffmpeg.BaseInputArgs()
@@ -656,8 +634,11 @@ func (r *GenericRecorder) rotateFile() {
 	// Stop current encoder and upload
 	r.stopEncoderAndUpload()
 
-	// Process retry queue at hour boundary
-	r.processRetryQueue()
+	// Process the retry queue off the rotation path: a slow or unreachable S3
+	// endpoint may block for many minutes per pending file, and audio is
+	// discarded until the next encoder starts. Safe concurrently: the queue is
+	// snapshotted and cleared under r.mu, so an overlapping run sees it empty.
+	go r.processRetryQueue()
 
 	r.mu.Lock()
 	// Re-check state after reacquiring lock - Stop() may have been called
@@ -694,9 +675,8 @@ func (r *GenericRecorder) scheduleDurationLimitLocked() {
 }
 
 func (r *GenericRecorder) generateFilename(t time.Time) string {
-	ext := r.getFileExtension()
 	safeName := sanitizeFilename(r.config.Name)
-	return fmt.Sprintf("%s-%s.%s", safeName, t.Format("2006-01-02-15-04"), ext)
+	return fmt.Sprintf("%s-%s.%s", safeName, t.Format("2006-01-02-15-04"), r.config.Codec.FileExtension())
 }
 
 func s3ObjectKey(recorderName, filename string) string {
@@ -705,53 +685,30 @@ func s3ObjectKey(recorderName, filename string) string {
 	return fmt.Sprintf("recordings/%s/%s", safeName, filename)
 }
 
-func (r *GenericRecorder) getFileExtension() string {
-	switch r.config.Codec {
-	case types.CodecMP3:
-		return "mp3"
-	case types.CodecOpus, types.CodecPCM:
-		return "ts"
-	default:
-		slog.Error("unknown recorder codec extension requested, falling back to MPEG-TS extension", "codec", r.config.Codec, "id", r.id)
-		return "ts"
-	}
-}
-
-func (r *GenericRecorder) getContentType() string {
-	switch r.config.Codec {
-	case types.CodecOpus, types.CodecPCM:
-		return "audio/mp2t"
-	case types.CodecMP3:
-		return "audio/mpeg"
-	default:
-		slog.Error("unknown recorder codec content type requested, falling back to MPEG-TS content type", "codec", r.config.Codec, "id", r.id)
-		return "audio/mp2t"
-	}
-}
-
 // isS3Configured reports whether S3 is configured for this recorder.
 func (r *GenericRecorder) isS3Configured() bool {
-	return r.config.S3Bucket != "" && r.config.S3AccessKeyID != "" && r.config.S3SecretAccessKey != ""
+	return r.config.HasS3Credentials()
 }
 
-func (r *GenericRecorder) createS3Client() (*s3.Client, error) {
+func (r *GenericRecorder) createS3Client() *s3.Client {
 	return createS3Client(RecorderToS3Config(&r.config))
 }
 
 func sanitizeFilename(name string) string {
-	result := make([]byte, 0, len(name))
-	for i := 0; i < len(name); i++ {
-		c := name[i]
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' {
-			result = append(result, c)
-		} else if c == ' ' {
-			result = append(result, '-')
+	result := strings.Map(func(c rune) rune {
+		switch {
+		case (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_':
+			return c
+		case c == ' ':
+			return '-'
+		default:
+			return -1
 		}
-	}
-	if len(result) == 0 {
+	}, name)
+	if result == "" {
 		return "recording"
 	}
-	return string(result)
+	return result
 }
 
 // TestRecorderS3Connection tests S3 connectivity for a recorder configuration.

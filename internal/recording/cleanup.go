@@ -21,21 +21,7 @@ import (
 // startCleanupScheduler runs hourly retention cleanup until stopCh closes.
 // Capturing stopCh avoids racing Stop's field reset.
 func (m *Manager) startCleanupScheduler(stopCh <-chan struct{}) {
-	go func() {
-		for {
-			duration := util.TimeUntilNextHour(time.Now())
-
-			slog.Info("cleanup scheduler: next run scheduled", "in", duration.Round(time.Second))
-
-			select {
-			case <-time.After(duration):
-				m.runCleanup()
-			case <-stopCh:
-				slog.Info("cleanup scheduler stopped")
-				return
-			}
-		}
-	}()
+	util.RunHourly(stopCh, "recording cleanup", m.runCleanup)
 }
 
 func (m *Manager) runCleanup() {
@@ -134,11 +120,7 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 	}
 
 	// Get S3 client (recreates if config changed - same pattern as Graph client)
-	client, err := recorder.getOrCreateS3Client()
-	if err != nil {
-		slog.Error("cleanup: failed to create S3 client", "id", cfg.ID, "error", err)
-		return
-	}
+	client := recorder.getOrCreateS3Client()
 	if client == nil {
 		slog.Warn("cleanup: no S3 client available", "id", cfg.ID)
 		return
@@ -156,18 +138,13 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 	defer cancel()
 
 	var deleted int
-	var continuationToken *string
+	paginator := s3.NewListObjectsV2Paginator(client, &s3.ListObjectsV2Input{
+		Bucket: aws.String(cfg.S3Bucket),
+		Prefix: aws.String(prefix),
+	})
 
-	for {
-		input := &s3.ListObjectsV2Input{
-			Bucket: aws.String(cfg.S3Bucket),
-			Prefix: aws.String(prefix),
-		}
-		if continuationToken != nil {
-			input.ContinuationToken = continuationToken
-		}
-
-		output, err := client.ListObjectsV2(ctx, input)
+	for paginator.HasMorePages() {
+		output, err := paginator.NextPage(ctx)
 		if err != nil {
 			slog.Warn("cleanup: failed to list S3 objects", "id", cfg.ID, "bucket", cfg.S3Bucket, "error", err)
 			return
@@ -197,11 +174,6 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 				}
 			}
 		}
-
-		if !aws.ToBool(output.IsTruncated) {
-			break
-		}
-		continuationToken = output.NextContinuationToken
 	}
 
 	if deleted > 0 {
@@ -214,7 +186,7 @@ func (m *Manager) logCleanupEvent(recorderName string, filesDeleted int, storage
 	if m.eventLogger == nil {
 		return
 	}
-	if err := m.eventLogger.LogRecorder(eventlog.CleanupCompleted, &eventlog.RecorderEventParams{
+	if err := m.eventLogger.LogRecorder(eventlog.CleanupCompleted, &eventlog.RecorderDetails{
 		RecorderName: recorderName,
 		FilesDeleted: filesDeleted,
 		StorageType:  storageType,
