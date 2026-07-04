@@ -439,20 +439,8 @@ func (e *Encoder) Stop() error {
 	sourceCancel := e.sourceCancel
 	e.mu.Unlock()
 
-	// Collect all shutdown errors
-	var errs []error
-
-	// Stop all streams first
-	if err := e.streamManager.StopAll(); err != nil {
-		errs = append(errs, fmt.Errorf("stop streams: %w", err))
-	}
-
-	// Stop recording manager (note: compliance recording continues independently)
-	if e.recordingManager != nil {
-		if err := e.recordingManager.Stop(); err != nil {
-			errs = append(errs, fmt.Errorf("stop recording: %w", err))
-		}
-	}
+	// Stop all streams and recording first; collect all shutdown errors.
+	errs := e.stopConsumers()
 
 	// Send graceful termination signal to source.
 	if sourceProcess != nil && sourceProcess.Process != nil {
@@ -483,18 +471,7 @@ func (e *Encoder) Stop() error {
 		errs = append(errs, fmt.Errorf("source shutdown timeout"))
 	}
 
-	// Reset silence/imbalance detection and notification state
-	e.silenceDetect.Reset()
-	e.imbalanceDetect.Reset()
-	e.alertOrchestrator.Reset()
-
-	// Stop silence dump manager
-	if e.silenceDumpManager != nil {
-		e.silenceDumpManager.Stop()
-	}
-
-	// Drain any silence log entries queued before or during shutdown.
-	e.alertOrchestrator.DrainLogs()
+	e.resetDetection()
 
 	e.mu.Lock()
 	e.state = types.StateStopped
@@ -505,12 +482,43 @@ func (e *Encoder) Stop() error {
 	return errors.Join(errs...)
 }
 
+// stopConsumers stops the stream and recorder output processes and returns
+// any shutdown errors. Shared by Stop and the source-retry give-up path.
+// (Compliance recording continues independently of the recording manager.)
+func (e *Encoder) stopConsumers() []error {
+	var errs []error
+	if err := e.streamManager.StopAll(); err != nil {
+		errs = append(errs, fmt.Errorf("stop streams: %w", err))
+	}
+	if e.recordingManager != nil {
+		if err := e.recordingManager.Stop(); err != nil {
+			errs = append(errs, fmt.Errorf("stop recording: %w", err))
+		}
+	}
+	return errs
+}
+
+// resetDetection clears silence/imbalance detection and notification state,
+// stops the silence dump manager, and drains queued alert log entries.
+// Shared by Stop and the source-retry give-up path.
+func (e *Encoder) resetDetection() {
+	e.silenceDetect.Reset()
+	e.imbalanceDetect.Reset()
+	e.alertOrchestrator.Reset()
+
+	if e.silenceDumpManager != nil {
+		e.silenceDumpManager.Stop()
+	}
+
+	e.alertOrchestrator.DrainLogs()
+}
+
 // Restart stops and restarts the encoder.
 func (e *Encoder) Restart() error {
 	if err := e.Stop(); err != nil {
 		return fmt.Errorf("stop: %w", err)
 	}
-	time.Sleep(1000 * time.Millisecond)
+	time.Sleep(1 * time.Second)
 	return e.Start()
 }
 
@@ -530,6 +538,53 @@ func (e *Encoder) Close() error {
 // StartStream initiates a streaming process.
 func (e *Encoder) StartStream(streamID string) error {
 	return e.startStream(streamID, 0)
+}
+
+// RestartStream stops a stream and schedules its start after
+// types.StreamRestartDelay. The delayed start is bound to the current source
+// run, so a stale restarter cannot revive the stream after the encoder
+// stopped or restarted in the meantime. No-op when the encoder is not running.
+func (e *Encoder) RestartStream(streamID string) {
+	e.mu.RLock()
+	running := e.state == types.StateRunning
+	runID := e.sourceRunID
+	stopChan := e.stopChan
+	e.mu.RUnlock()
+	if !running {
+		return
+	}
+
+	if err := e.StopStream(streamID); err != nil {
+		slog.Warn("failed to stop stream for restart", "stream_id", streamID, "error", err)
+	}
+
+	go func() {
+		timer := time.NewTimer(types.StreamRestartDelay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-stopChan:
+			return
+		}
+		if !e.sourceRunActive(runID) {
+			return
+		}
+		if err := e.startStream(streamID, runID); err != nil {
+			slog.Warn("failed to restart stream", "stream_id", streamID, "error", err)
+		}
+	}()
+}
+
+// ApplySettingsEffects applies the runtime side effects of a settings save:
+// detector resets, silence dump and recording limits, and Graph secret expiry
+// cache invalidation. Keeping the list here means a new settings consumer only
+// needs a change in this method, not in the HTTP layer.
+func (e *Encoder) ApplySettingsEffects() {
+	e.UpdateSilenceConfig()
+	e.UpdateChannelImbalanceConfig()
+	e.UpdateSilenceDumpConfig()
+	e.UpdateRecordingMaxDuration()
+	e.InvalidateGraphSecretExpiryCache()
 }
 
 // startStream starts a stream, optionally bound to a specific source run.
@@ -576,12 +631,6 @@ func (e *Encoder) startStream(streamID string, runID uint64) error {
 // StopStream terminates the stream with the given ID.
 func (e *Encoder) StopStream(streamID string) error {
 	return e.streamManager.Stop(streamID)
-}
-
-// TriggerTestEmail sends a test email.
-func (e *Encoder) TriggerTestEmail() error {
-	cfg := e.config.Snapshot()
-	return notify.SendTestEmail(notify.BuildGraphConfig(&cfg), cfg.StationName)
 }
 
 // GraphSecretExpiry returns the current Graph API client secret expiry info.
@@ -634,18 +683,6 @@ func (e *Encoder) UpdateSilenceDumpConfig() {
 	}
 }
 
-// TriggerTestWebhook sends a test webhook.
-func (e *Encoder) TriggerTestWebhook() error {
-	cfg := e.config.Snapshot()
-	return notify.SendWebhookTest(cfg.WebhookURL, cfg.StationName)
-}
-
-// TriggerTestZabbix sends a test notification to the configured Zabbix server.
-func (e *Encoder) TriggerTestZabbix() error {
-	cfg := e.config.Snapshot()
-	return notify.SendZabbixTest(cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixSilenceKey)
-}
-
 // isStopping reports whether shutdown has begun. The caller must hold e.mu.
 func (e *Encoder) isStopping() bool {
 	return e.state == types.StateStopping || e.state == types.StateStopped
@@ -691,21 +728,10 @@ func (e *Encoder) runSourceLoop() {
 				e.state = types.StateStopping
 				e.lastError = fmt.Sprintf("Stopped after %d failed attempts: %s", types.MaxRetries, errMsg)
 				e.mu.Unlock()
-				if err := e.streamManager.StopAll(); err != nil {
-					slog.Error("failed to stop streams during source failure", "error", err)
+				for _, stopErr := range e.stopConsumers() {
+					slog.Error("failed to stop consumers during source failure", "error", stopErr)
 				}
-				if e.recordingManager != nil {
-					if err := e.recordingManager.Stop(); err != nil {
-						slog.Error("failed to stop recording during source failure", "error", err)
-					}
-				}
-				e.silenceDetect.Reset()
-				e.imbalanceDetect.Reset()
-				e.alertOrchestrator.Reset()
-				if e.silenceDumpManager != nil {
-					e.silenceDumpManager.Stop()
-				}
-				e.alertOrchestrator.DrainLogs()
+				e.resetDetection()
 				e.mu.Lock()
 				e.state = types.StateStopped
 				e.mu.Unlock()
@@ -923,20 +949,27 @@ func (e *Encoder) runDistributor(runID uint64) {
 			continue
 		}
 
-		// Feed audio to silence dump manager
-		if e.silenceDumpManager != nil {
-			e.silenceDumpManager.WriteAudio(buf[:n])
+		chunk := buf[:n]
+
+		// ProcessSamples also feeds the silence dump ring buffer.
+		distributor.ProcessSamples(chunk)
+
+		// One lazy clone shared by the stream and recorder queues: the capture
+		// buffer is reused, so consumers get an immutable copy, but never more
+		// than one per chunk. Cloning is skipped entirely when nothing can
+		// receive audio. All queue consumers treat chunks as read-only.
+		var shared []byte
+		copyChunk := func() []byte {
+			if shared == nil {
+				shared = bytes.Clone(chunk)
+			}
+			return shared
 		}
-
-		distributor.ProcessSamples(buf[:n])
-
-		// Let the stream manager clone lazily so running stream queues can share
-		// one PCM copy without retaining the reused capture buffer.
-		e.streamManager.WriteAudioFanOut(buf[:n])
+		e.streamManager.WriteAudioFanOutShared(copyChunk)
 
 		// Recording fan-out stays non-blocking; recorders own their queues.
 		if e.recordingManager != nil {
-			e.recordingManager.WriteAudio(buf[:n])
+			e.recordingManager.WriteAudioShared(copyChunk)
 		}
 	}
 }

@@ -18,10 +18,10 @@ import (
 const (
 	githubRepo           = "oszuidwest/zwfm-encoder"
 	versionCheckInterval = 24 * time.Hour
-	versionCheckDelay    = 30000 * time.Millisecond // Delay before first check to avoid blocking startup
-	versionCheckTimeout  = 30000 * time.Millisecond // HTTP request timeout
-	versionMaxRetries    = 3                        // Max retries per check cycle
-	versionRetryDelay    = 1 * time.Minute          // Delay between retries
+	versionCheckDelay    = 30 * time.Second // Delay before first check to avoid blocking startup
+	versionCheckTimeout  = 30 * time.Second // HTTP request timeout
+	versionMaxRetries    = 3                // Max retries per check cycle
+	versionRetryDelay    = 1 * time.Minute  // Delay between retries
 )
 
 // VersionChecker checks for new releases and reports update availability. It is safe for concurrent use.

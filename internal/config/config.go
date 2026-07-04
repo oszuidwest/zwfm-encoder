@@ -5,10 +5,10 @@ import (
 	"bytes"
 	"cmp"
 	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
 	"os"
 	"path/filepath"
 	"slices"
@@ -36,8 +36,6 @@ var (
 const (
 	// DefaultWebPort is the default HTTP server port (8080).
 	DefaultWebPort = 8080
-	// DefaultZabbixPort is the default Zabbix trapper port.
-	DefaultZabbixPort = 10051
 	// DefaultWebUsername is the default web interface username (admin).
 	DefaultWebUsername = "admin"
 	// DefaultWebPassword is the default web interface password (encoder).
@@ -490,7 +488,7 @@ func (c *Config) validateNotifications() error {
 }
 
 func (c *Config) validateSystem() error {
-	if c.System.Port <= 0 || c.System.Port > 65535 {
+	if !validation.ValidPort(c.System.Port) {
 		return fmt.Errorf("invalid system.port: must be between 1 and 65535")
 	}
 	if strings.TrimSpace(c.System.Username) == "" {
@@ -724,9 +722,7 @@ func (c *Config) Stream(id string) *types.Stream {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	idx := slices.IndexFunc(c.Streaming.Streams, func(s types.Stream) bool {
-		return s.ID == id
-	})
+	idx := c.findStreamIndex(id)
 	if idx == -1 {
 		return nil
 	}
@@ -812,9 +808,7 @@ func (c *Config) Recorder(id string) *types.Recorder {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	idx := slices.IndexFunc(c.Recording.Recorders, func(r types.Recorder) bool {
-		return r.ID == id
-	})
+	idx := c.findRecorderIndex(id)
 	if idx == -1 {
 		return nil
 	}
@@ -1318,18 +1312,8 @@ func (c *Config) ApplySettings(s *SettingsUpdate) error {
 // Utility functions.
 
 // GenerateAPIKey returns a new random API key.
-func GenerateAPIKey() (string, error) {
-	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	const length = 32
-	result := make([]byte, length)
-	for i := range result {
-		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(chars))))
-		if err != nil {
-			return "", err
-		}
-		result[i] = chars[n.Int64()]
-	}
-	return string(result), nil
+func GenerateAPIKey() string {
+	return rand.Text()
 }
 
 func generateShortID() (string, error) {
@@ -1337,5 +1321,5 @@ func generateShortID() (string, error) {
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%x", b), nil
+	return hex.EncodeToString(b), nil
 }

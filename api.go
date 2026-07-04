@@ -60,10 +60,6 @@ func (s *Server) writeConfigError(w http.ResponseWriter, err error) {
 	s.writeError(w, http.StatusInternalServerError, err.Error())
 }
 
-func (s *Server) readJSON(r *http.Request, v any) error {
-	return json.NewDecoder(r.Body).Decode(v)
-}
-
 // maxRequestBodySize limits JSON request bodies to 1MB.
 const maxRequestBodySize = 1 << 20
 
@@ -72,7 +68,7 @@ const maxRequestBodySize = 1 << 20
 func parseJSON[T any](s *Server, w http.ResponseWriter, r *http.Request) (T, bool) {
 	var v T
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
-	if err := s.readJSON(r, &v); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&v); err != nil {
 		s.writeError(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
 		return v, false
 	}
@@ -197,10 +193,11 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, resp)
 }
 
-// handleAPIDevices returns available audio devices.
+// handleAPIDevices returns available audio devices, bypassing the device
+// cache so an explicit refresh sees just-connected hardware.
 func (s *Server) handleAPIDevices(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"devices": audio.Devices(),
+		"devices": audio.RefreshDevices(),
 	})
 }
 
@@ -230,11 +227,7 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Side effects after successful save
-	s.encoder.UpdateSilenceConfig()
-	s.encoder.UpdateChannelImbalanceConfig()
-	s.encoder.UpdateSilenceDumpConfig()
-	s.encoder.UpdateRecordingMaxDuration()
-	s.encoder.InvalidateGraphSecretExpiryCache()
+	s.encoder.ApplySettingsEffects()
 
 	// Restart encoder if audio input changed
 	if audioInputChanged && s.ffmpegAvailable && s.encoder.State() == types.StateRunning {
@@ -329,8 +322,8 @@ func (s *Server) handleCreateStream(w http.ResponseWriter, r *http.Request) {
 	}
 	mode, codec, host := streamRequestDefaults(&req)
 
+	// AddStream stamps ID, CreatedAt, and Enabled.
 	stream := &types.Stream{
-		Enabled:    true,
 		Mode:       mode,
 		Host:       host,
 		Port:       req.Port,
@@ -411,22 +404,9 @@ func (s *Server) handleUpdateStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Restart stream if encoder is running
-	if s.encoder.State() == types.StateRunning {
-		if err := s.encoder.StopStream(id); err != nil {
-			//nolint:gosec // G706: structured logging of request-derived ID
-			slog.Warn("failed to stop stream for restart", "stream_id", id, "error", err)
-		}
-		go func() {
-			time.Sleep(types.StreamRestartDelay)
-			if s.encoder.State() == types.StateRunning {
-				if err := s.encoder.StartStream(id); err != nil {
-					//nolint:gosec // G706: structured logging of request-derived ID
-					slog.Warn("failed to restart stream", "stream_id", id, "error", err)
-				}
-			}
-		}()
-	}
+	// Restart stream if encoder is running; the encoder owns the delay and
+	// binds the delayed start to the current source run.
+	s.encoder.RestartStream(id)
 
 	s.broadcastConfigChanged()
 	s.writeJSON(w, http.StatusOK, redactStream(updated))
@@ -519,9 +499,9 @@ func (s *Server) handleCreateRecorder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// AddRecorder stamps ID, CreatedAt, and Enabled.
 	recorder := &types.Recorder{
 		Name:              req.Name,
-		Enabled:           true,
 		Codec:             req.Codec, // Already validated by UnmarshalJSON
 		Bitrate:           req.Bitrate,
 		RecordingMode:     req.RecordingMode, // Already validated by UnmarshalJSON
@@ -635,38 +615,48 @@ func (s *Server) handleDeleteRecorder(w http.ResponseWriter, r *http.Request) {
 	s.writeNoContent(w)
 }
 
+// doRecorderAction starts or stops a recorder and maps domain errors onto an
+// HTTP status: unavailable recording support is 503, everything else 400.
+// It returns 0 with an empty message on success. Shared by the session-auth
+// and API-key recorder endpoints so the mapping lives in one place.
+func (s *Server) doRecorderAction(id string, start bool) (status int, errMsg string) {
+	var err error
+	if start {
+		if s.encoder.State() != types.StateRunning {
+			return http.StatusBadRequest, "Encoder must be running to start recorder"
+		}
+		err = s.encoder.StartRecorder(id)
+	} else {
+		err = s.encoder.StopRecorder(id)
+	}
+	if err == nil {
+		return 0, ""
+	}
+	if errors.Is(err, encoder.ErrRecordingNotAvailable) {
+		return http.StatusServiceUnavailable, err.Error()
+	}
+	return http.StatusBadRequest, err.Error()
+}
+
 // handleRecorderAction handles start/stop actions for a recorder.
 func (s *Server) handleRecorderAction(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	action := r.PathValue("action")
 
-	switch action {
-	case "start":
-		if s.encoder.State() != types.StateRunning {
-			s.writeError(w, http.StatusBadRequest, "Encoder must be running to start recorder")
-			return
-		}
-		if err := s.encoder.StartRecorder(id); err != nil {
-			if errors.Is(err, encoder.ErrRecordingNotAvailable) {
-				s.writeError(w, http.StatusServiceUnavailable, err.Error())
-				return
-			}
-			s.writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		s.writeMessage(w, "Recorder started")
-	case "stop":
-		if err := s.encoder.StopRecorder(id); err != nil {
-			if errors.Is(err, encoder.ErrRecordingNotAvailable) {
-				s.writeError(w, http.StatusServiceUnavailable, err.Error())
-				return
-			}
-			s.writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		s.writeMessage(w, "Recorder stopped")
-	default:
+	if action != "start" && action != "stop" {
 		s.writeError(w, http.StatusBadRequest, "invalid action: must be start or stop")
+		return
+	}
+	start := action == "start"
+
+	if status, errMsg := s.doRecorderAction(id, start); errMsg != "" {
+		s.writeError(w, status, errMsg)
+		return
+	}
+	if start {
+		s.writeMessage(w, "Recorder started")
+	} else {
+		s.writeMessage(w, "Recorder stopped")
 	}
 }
 
@@ -863,21 +853,17 @@ func (s *Server) handleAPITestZabbix(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if silenceKey != "" {
-		if err := notify.SendZabbixTest(server, port, host, silenceKey); err != nil {
-			s.writeError(w, http.StatusBadGateway, "silence key: "+err.Error())
-			return
-		}
+	keys := []struct{ label, key string }{
+		{"silence key", silenceKey},
+		{"imbalance key", imbalanceKey},
+		{"upload key", uploadKey},
 	}
-	if imbalanceKey != "" {
-		if err := notify.SendZabbixTest(server, port, host, imbalanceKey); err != nil {
-			s.writeError(w, http.StatusBadGateway, "imbalance key: "+err.Error())
-			return
+	for _, k := range keys {
+		if k.key == "" {
+			continue
 		}
-	}
-	if uploadKey != "" {
-		if err := notify.SendZabbixTest(server, port, host, uploadKey); err != nil {
-			s.writeError(w, http.StatusBadGateway, "upload key: "+err.Error())
+		if err := notify.SendZabbixTest(server, port, host, k.key); err != nil {
+			s.writeError(w, http.StatusBadGateway, k.label+": "+err.Error())
 			return
 		}
 	}
@@ -887,12 +873,7 @@ func (s *Server) handleAPITestZabbix(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIRegenerateKey generates a new recording API key.
 func (s *Server) handleAPIRegenerateKey(w http.ResponseWriter, r *http.Request) {
-	newKey, err := config.GenerateAPIKey()
-	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
+	newKey := config.GenerateAPIKey()
 	if err := s.config.SetRecordingAPIKey(newKey); err != nil {
 		s.writeError(w, http.StatusInternalServerError, err.Error())
 		return

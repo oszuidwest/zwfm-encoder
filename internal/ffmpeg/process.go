@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
@@ -143,6 +144,41 @@ func (r *StartResult) Wait() error {
 	})
 	<-r.waitDone
 	return r.waitErr
+}
+
+// EscalateUntil waits for done to close, escalating shutdown when it lingers:
+// after signalTimeout it sends a graceful signal, after another killTimeout it
+// kills the process, then waits for done unconditionally. The onSignal and
+// onKill callbacks run in the caller's goroutine just before each escalation
+// so call sites can log their own context.
+func (r *StartResult) EscalateUntil(done <-chan struct{}, signalTimeout, killTimeout time.Duration, onSignal, onKill func()) {
+	select {
+	case <-done:
+		return
+	case <-time.After(signalTimeout):
+		onSignal()
+		_ = r.Signal()
+	}
+	select {
+	case <-done:
+		return
+	case <-time.After(killTimeout):
+		onKill()
+		_ = r.Kill()
+	}
+	<-done
+}
+
+// WaitEscalating waits for the process to exit with Signal/Kill escalation and
+// returns the process exit error. See [StartResult.EscalateUntil].
+func (r *StartResult) WaitEscalating(signalTimeout, killTimeout time.Duration, onSignal, onKill func()) error {
+	done := make(chan struct{})
+	go func() {
+		_ = r.Wait()
+		close(done)
+	}()
+	r.EscalateUntil(done, signalTimeout, killTimeout, onSignal, onKill)
+	return r.Wait() // returns the cached result immediately
 }
 
 // Signal sends SIGTERM (Unix) or soft termination (Windows) for graceful shutdown.

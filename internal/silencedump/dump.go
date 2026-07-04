@@ -82,10 +82,11 @@ type Capturer struct {
 	onDumpReady DumpCallback
 }
 
-// NewCapturer creates a new silence dump capturer.
+// NewCapturer creates a new silence dump capturer. The ~6.7 MB ring buffer is
+// allocated lazily on the first enabled WriteAudio so installs that never
+// enable silence dumps do not pay for it.
 func NewCapturer(ffmpegPath, outputDir string, onDumpReady DumpCallback) *Capturer {
 	return &Capturer{
-		buffer:      make([]byte, bufferCapacity),
 		ffmpegPath:  ffmpegPath,
 		outputDir:   outputDir,
 		enabled:     ffmpegPath != "",
@@ -93,11 +94,23 @@ func NewCapturer(ffmpegPath, outputDir string, onDumpReady DumpCallback) *Captur
 	}
 }
 
-// SetEnabled sets whether dump capture is active.
+// SetEnabled sets whether dump capture is active. Disabling releases the ring
+// buffer and clears any capture in progress.
 func (c *Capturer) SetEnabled(enabled bool) {
 	c.mu.Lock()
 	c.enabled = enabled && c.ffmpegPath != ""
+	if !c.enabled {
+		c.buffer = nil
+		c.resetLocked()
+	}
 	c.mu.Unlock()
+}
+
+// Enabled reports whether dump capture is active.
+func (c *Capturer) Enabled() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.enabled
 }
 
 // WriteAudio buffers incoming PCM data for potential silence dump capture.
@@ -107,6 +120,10 @@ func (c *Capturer) WriteAudio(pcm []byte) {
 
 	if !c.enabled || len(pcm) == 0 {
 		return
+	}
+
+	if c.buffer == nil {
+		c.buffer = make([]byte, bufferCapacity)
 	}
 
 	// Write to ring buffer with wrap-around
@@ -334,6 +351,13 @@ func (c *Capturer) Reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	c.resetLocked()
+
+	slog.Debug("silence dump capturer reset")
+}
+
+// resetLocked clears all capture state. The caller must hold c.mu.
+func (c *Capturer) resetLocked() {
 	c.writePos = 0
 	c.totalWritten = 0
 	c.silenceStartPos = 0
@@ -342,6 +366,4 @@ func (c *Capturer) Reset() {
 	c.capturing = false
 	c.recovered = false
 	c.savedBefore = nil // Free memory
-
-	slog.Debug("silence dump capturer reset")
 }

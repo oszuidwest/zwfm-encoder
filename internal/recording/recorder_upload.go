@@ -6,13 +6,14 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
+	"slices"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 // uploadRequest represents a file to be uploaded to S3.
@@ -82,8 +83,8 @@ func (r *GenericRecorder) uploadDirectly(filePath string) {
 // prepareUploadRequest validates and creates an upload request for the given file.
 // Returns false if the file should not be uploaded.
 func (r *GenericRecorder) prepareUploadRequest(filePath string) (uploadRequest, bool) {
-	if strings.Contains(filePath, "..") {
-		slog.Warn("recording upload path contains parent directory reference", "id", r.id, "path", filePath)
+	if err := util.ValidatePath("recording upload path", filePath); err != nil {
+		slog.Warn("invalid recording upload path", "id", r.id, "path", filePath, "error", err)
 		return uploadRequest{}, false
 	}
 
@@ -96,7 +97,7 @@ func (r *GenericRecorder) prepareUploadRequest(filePath string) (uploadRequest, 
 	r.mu.RLock()
 	storageMode := r.config.StorageMode
 	recorderName := r.config.Name
-	s3Configured := r.config.S3Bucket != "" && r.config.S3AccessKeyID != "" && r.config.S3SecretAccessKey != ""
+	s3Configured := r.config.HasS3Credentials()
 	r.mu.RUnlock()
 
 	// Local-only mode: no upload needed
@@ -185,10 +186,7 @@ func (r *GenericRecorder) doUpload(req uploadRequest) error {
 		}
 	}()
 
-	client, err := r.getOrCreateS3Client()
-	if err != nil {
-		return err
-	}
+	client := r.getOrCreateS3Client()
 	if client == nil {
 		return errNoS3Client
 	}
@@ -228,7 +226,7 @@ func (r *GenericRecorder) doUpload(req uploadRequest) error {
 		Key:           aws.String(req.s3Key),
 		Body:          file,
 		ContentLength: aws.Int64(req.fileSize),
-		ContentType:   aws.String(r.getContentType()),
+		ContentType:   aws.String(r.config.Codec.ContentType()),
 	})
 	return err
 }
@@ -316,8 +314,7 @@ func (r *GenericRecorder) processRetryQueue() {
 	}
 
 	// Copy and clear queue
-	pending := make([]pendingUpload, len(r.retryQueue))
-	copy(pending, r.retryQueue)
+	pending := slices.Clone(r.retryQueue)
 	r.retryQueue = nil
 	r.mu.Unlock()
 

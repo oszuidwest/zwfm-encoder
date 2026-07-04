@@ -30,7 +30,7 @@ const (
 // that, and runtime senders use ValidateZabbixTarget.
 func (c *ZabbixConfig) ValidationIssues() validation.Issues {
 	var issues validation.Issues
-	if c.Port != 0 && (c.Port < 1 || c.Port > 65535) {
+	if c.Port != 0 && !validation.ValidPort(c.Port) {
 		issues = append(issues, validation.Issue{Field: "port", Code: ZabbixPortRange})
 	}
 	return issues
@@ -69,7 +69,7 @@ func ValidateZabbixTarget(server string, port int, host, key string) validation.
 	if key == "" {
 		issues = append(issues, validation.Issue{Field: "key", Code: ZabbixKeyRequired})
 	}
-	if port < 1 || port > 65535 {
+	if !validation.ValidPort(port) {
 		issues = append(issues, validation.Issue{Field: "port", Code: ZabbixPortRange})
 	}
 	return issues

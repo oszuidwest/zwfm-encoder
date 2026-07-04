@@ -211,9 +211,15 @@ func (m *Manager) Start(stream *types.Stream) (bool, error) {
 	return m.startCaller(stream)
 }
 
-func (m *Manager) startCaller(stream *types.Stream) (bool, error) {
+// claimStream validates the stream and inserts a ProcessStarting placeholder
+// that carries over retry state from any existing entry, so concurrent
+// starters see the correct backoff. It returns claimed=false when another
+// path already runs or is starting this stream. Old-stream resources are
+// stopped outside the lock: the writer's error path acquires m.mu, and
+// waiting while holding the lock would deadlock.
+func (m *Manager) claimStream(stream *types.Stream, mode types.StreamMode) (placeholder *Stream, claimed bool, err error) {
 	if err := stream.Validate(); err != nil {
-		return false, err
+		return nil, false, err
 	}
 
 	m.mu.Lock()
@@ -221,7 +227,7 @@ func (m *Manager) startCaller(stream *types.Stream) (bool, error) {
 	existing, exists := m.streams[stream.ID]
 	if exists && (existing.state == types.ProcessRunning || existing.state == types.ProcessStarting) {
 		m.mu.Unlock()
-		return false, nil // Already running or being started
+		return nil, false, nil // Already running or being started
 	}
 
 	// Preserve retry state and capture old stream for writer cleanup
@@ -236,24 +242,30 @@ func (m *Manager) startCaller(stream *types.Stream) (bool, error) {
 		}
 	}
 
-	// Insert placeholder to claim this stream ID. Carries retry state
-	// so concurrent callers see the correct backoff. Has no result,
-	// audioCh, or writer - those are created after StartProcess succeeds.
-	placeholder := &Stream{
+	// The placeholder has no result, audioCh, or writer - those are created
+	// after the process or fanout starts successfully.
+	placeholder = &Stream{
 		state:      types.ProcessStarting,
-		mode:       stream.ModeOrDefault(),
+		mode:       mode,
 		retryCount: retryCount,
 		backoff:    backoff,
 	}
 	m.streams[stream.ID] = placeholder
 	m.mu.Unlock()
 
-	// Clean up old writer goroutine outside the lock.
-	// The writer's error path acquires m.mu - waiting while holding
-	// the lock would deadlock.
 	if oldStream != nil {
 		m.stopStreamResources(stream.ID, oldStream)
 	}
+
+	return placeholder, true, nil
+}
+
+func (m *Manager) startCaller(stream *types.Stream) (bool, error) {
+	placeholder, claimed, err := m.claimStream(stream, stream.ModeOrDefault())
+	if !claimed {
+		return false, err
+	}
+	retryCount, backoff := placeholder.retryCount, placeholder.backoff
 
 	args := BuildCallerArgs(stream)
 
@@ -315,41 +327,11 @@ func (m *Manager) startCaller(stream *types.Stream) (bool, error) {
 }
 
 func (m *Manager) startListenerFanout(stream *types.Stream) (bool, error) {
-	if err := stream.Validate(); err != nil {
+	placeholder, claimed, err := m.claimStream(stream, types.StreamModeListener)
+	if !claimed {
 		return false, err
 	}
-
-	m.mu.Lock()
-
-	existing, exists := m.streams[stream.ID]
-	if exists && (existing.state == types.ProcessRunning || existing.state == types.ProcessStarting) {
-		m.mu.Unlock()
-		return false, nil
-	}
-
-	var oldStream *Stream
-	retryCount := 0
-	backoff := util.NewBackoff(types.InitialRetryDelay, types.MaxRetryDelay)
-	if exists {
-		oldStream = existing
-		if existing.backoff != nil {
-			retryCount = existing.retryCount
-			backoff = existing.backoff
-		}
-	}
-
-	placeholder := &Stream{
-		state:      types.ProcessStarting,
-		mode:       types.StreamModeListener,
-		retryCount: retryCount,
-		backoff:    backoff,
-	}
-	m.streams[stream.ID] = placeholder
-	m.mu.Unlock()
-
-	if oldStream != nil {
-		m.stopStreamResources(stream.ID, oldStream)
-	}
+	retryCount, backoff := placeholder.retryCount, placeholder.backoff
 
 	fanout, err := srtfanout.NewServer(listenerFanoutConfig(stream))
 	if err != nil {
@@ -548,23 +530,9 @@ func (m *Manager) waitEncoderRunGoroutines(streamID string, run *encoderRun) {
 		close(done)
 	}()
 
-	select {
-	case <-done:
-		return
-	case <-time.After(encoderRunSignalTimeout):
-		slog.Warn("listener encoder did not stop in time, sending signal", "stream_id", streamID)
-		_ = run.result.Signal()
-	}
-
-	select {
-	case <-done:
-		return
-	case <-time.After(encoderRunKillTimeout):
-		slog.Error("listener encoder force killed", "stream_id", streamID)
-		_ = run.result.Kill()
-	}
-
-	<-done
+	run.result.EscalateUntil(done, encoderRunSignalTimeout, encoderRunKillTimeout,
+		func() { slog.Warn("listener encoder did not stop in time, sending signal", "stream_id", streamID) },
+		func() { slog.Error("listener encoder force killed", "stream_id", streamID) })
 }
 
 // Stop terminates a stream with proper graceful shutdown.
@@ -631,25 +599,9 @@ func (m *Manager) Stop(streamID string) error {
 	// 3. Wait for process exit with timeout escalation.
 	//    Must complete before writerWg.Wait - guarantees the process is
 	//    dead and the pipe is broken, so the writer can exit.
-	done := make(chan error, 1)
-	go func() {
-		done <- result.Wait()
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		slog.Warn("stream did not stop in time, sending signal", "stream_id", streamID)
-		_ = result.Signal()
-
-		select {
-		case <-done:
-		case <-time.After(2 * time.Second):
-			slog.Error("stream force killed", "stream_id", streamID)
-			_ = result.Kill()
-			<-done
-		}
-	}
+	_ = result.WaitEscalating(5*time.Second, 2*time.Second,
+		func() { slog.Warn("stream did not stop in time, sending signal", "stream_id", streamID) },
+		func() { slog.Error("stream force killed", "stream_id", streamID) })
 
 	// 4. Writer goroutine - process is dead, pipe is broken,
 	//    any blocked Write() has returned. This returns quickly.
@@ -667,18 +619,29 @@ func (m *Manager) Stop(streamID string) error {
 }
 
 // StopAll terminates all streams and returns any errors joined together.
+// Streams stop concurrently so one hung FFmpeg process (up to 7s of
+// signal/kill escalation) cannot stall shutdown of the others.
 func (m *Manager) StopAll() error {
 	m.mu.RLock()
 	ids := slices.Collect(maps.Keys(m.streams))
 	m.mu.RUnlock()
 
-	var errs []error
+	var (
+		wg    sync.WaitGroup
+		errMu sync.Mutex
+		errs  []error
+	)
 	for _, id := range ids {
-		if err := m.Stop(id); err != nil {
-			slog.Error("failed to stop stream", "stream_id", id, "error", err)
-			errs = append(errs, err)
-		}
+		wg.Go(func() {
+			if err := m.Stop(id); err != nil {
+				slog.Error("failed to stop stream", "stream_id", id, "error", err)
+				errMu.Lock()
+				errs = append(errs, err)
+				errMu.Unlock()
+			}
+		})
 	}
+	wg.Wait()
 
 	m.mu.Lock()
 	clear(m.streams)
@@ -694,16 +657,23 @@ func (m *Manager) StopAll() error {
 // queues for this fan-out pass. Stream writers must treat queued chunks as
 // read-only.
 func (m *Manager) WriteAudioFanOut(data []byte) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
 	var shared []byte
-	copyChunk := func() []byte {
+	m.WriteAudioFanOutShared(func() []byte {
 		if shared == nil {
 			shared = bytes.Clone(data)
 		}
 		return shared
-	}
+	})
+}
+
+// WriteAudioFanOutShared queues one immutable chunk for every running stream,
+// obtaining it from copyChunk only when a live destination exists. The caller
+// may share the same copyChunk across consumers (streams and recorders) so one
+// clone serves the whole fan-out pass.
+func (m *Manager) WriteAudioFanOutShared(copyChunk func() []byte) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	for id, stream := range m.streams {
 		if stream.state != types.ProcessRunning {
 			continue
@@ -730,25 +700,11 @@ func (s *Stream) offerAudioLazy(streamID string, copyChunk func() []byte) {
 }
 
 func (s *Stream) offerAudio(streamID string, ch chan []byte, buf []byte, logMessage string) {
-	// Each stream audio channel has one producer. Concurrent producers are
-	// memory-safe, but drop accounting may be lossy under contention.
-	// Drop-oldest: if full, discard one stale chunk, then enqueue fresh.
-	// Inner non-blocking selects handle a concurrent writer drain.
-	select {
-	case ch <- buf:
-	default:
-		select {
-		case <-ch:
-			drops := s.audioDrops.Add(1)
-			if drops == 1 || drops%100 == 0 {
-				slog.Warn(logMessage,
-					"stream_id", streamID, "total_drops", drops)
-			}
-		default:
-		}
-		select {
-		case ch <- buf:
-		default:
+	if util.OfferDropOldest(ch, buf, nil) {
+		drops := s.audioDrops.Add(1)
+		if drops == 1 || drops%100 == 0 {
+			slog.Warn(logMessage,
+				"stream_id", streamID, "total_drops", drops)
 		}
 	}
 }

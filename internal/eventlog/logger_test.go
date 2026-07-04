@@ -179,27 +179,15 @@ func TestLoggerSeqDoesNotIncrementOnFailedWrite(t *testing.T) {
 	}
 }
 
-func TestFilterAudioMatchesChannelImbalanceButIsSilenceDoesNot(t *testing.T) {
+func TestFilterAudioMatchesSilenceAndChannelImbalance(t *testing.T) {
 	t.Parallel()
-	imbalance := []EventType{ChannelImbalanceStart, ChannelImbalanceEnd}
-	for _, ty := range imbalance {
-		if !IsChannelImbalanceEvent(ty) {
-			t.Errorf("IsChannelImbalanceEvent(%s) = false, want true", ty)
-		}
-		if IsSilenceEvent(ty) {
-			t.Errorf("IsSilenceEvent(%s) = true, want false (must not pollute the silence filter)", ty)
-		}
+	audio := []EventType{ChannelImbalanceStart, ChannelImbalanceEnd, SilenceStart, SilenceEnd, AudioDumpReady}
+	for _, ty := range audio {
 		if !matchesFilter(ty, FilterAudio) {
 			t.Errorf("matchesFilter(%s, FilterAudio) = false, want true", ty)
 		}
-	}
-	silence := []EventType{SilenceStart, SilenceEnd, AudioDumpReady}
-	for _, ty := range silence {
-		if IsChannelImbalanceEvent(ty) {
-			t.Errorf("IsChannelImbalanceEvent(%s) = true, want false", ty)
-		}
-		if !matchesFilter(ty, FilterAudio) {
-			t.Errorf("matchesFilter(%s, FilterAudio) = false, want true", ty)
+		if matchesFilter(ty, FilterStream) || matchesFilter(ty, FilterRecorder) {
+			t.Errorf("matchesFilter(%s) matched a non-audio filter", ty)
 		}
 	}
 }

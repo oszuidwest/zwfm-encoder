@@ -14,7 +14,7 @@ import (
 )
 
 // createS3Client creates an S3 client with the given configuration.
-func createS3Client(cfg *S3Config) (*s3.Client, error) {
+func createS3Client(cfg *S3Config) *s3.Client {
 	creds := credentials.NewStaticCredentialsProvider(
 		cfg.AccessKeyID,
 		cfg.SecretAccessKey,
@@ -35,7 +35,7 @@ func createS3Client(cfg *S3Config) (*s3.Client, error) {
 		})
 	}
 
-	return s3.New(s3.Options{}, options...), nil
+	return s3.New(s3.Options{}, options...)
 }
 
 // TestS3Connection tests connectivity to an S3 bucket.
@@ -44,10 +44,7 @@ func TestS3Connection(cfg *S3Config) error {
 		return fmt.Errorf("S3 is not configured")
 	}
 
-	client, err := createS3Client(cfg)
-	if err != nil {
-		return fmt.Errorf("create S3 client: %w", err)
-	}
+	client := createS3Client(cfg)
 
 	ctx, cancel := context.WithTimeoutCause(
 		context.Background(),
@@ -59,7 +56,7 @@ func TestS3Connection(cfg *S3Config) error {
 	testKey := fmt.Sprintf("test-connection-%d.txt", time.Now().UnixNano())
 	testContent := []byte("ZuidWest FM encoder connection test")
 
-	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:        aws.String(cfg.Bucket),
 		Key:           aws.String(testKey),
 		Body:          bytes.NewReader(testContent),

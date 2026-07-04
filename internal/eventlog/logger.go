@@ -121,27 +121,27 @@ type RecorderDetails struct {
 	StorageType  string `json:"storage_type,omitempty"`
 }
 
-// RecorderEventParams provides optional fields for [Logger.LogRecorder].
-type RecorderEventParams struct {
-	RecorderName string
-	Filename     string
-	Codec        string
-	StorageMode  string
-	S3Key        string
-	Error        string
-	RetryCount   int
-	FilesDeleted int
-	StorageType  string
-}
-
 // Logger records events to a JSON lines file.
 type Logger struct {
 	mu           sync.Mutex
 	filePath     string
 	file         *os.File
+	counter      *countingFile
 	encoder      *json.Encoder
 	maxSizeBytes int64
 	seq          atomic.Uint64 // incremented on each written event; a change signal for live views
+}
+
+// countingFile tracks bytes written so rotation checks avoid a stat per event.
+type countingFile struct {
+	f *os.File
+	n int64
+}
+
+func (c *countingFile) Write(p []byte) (int, error) {
+	n, err := c.f.Write(p)
+	c.n += int64(n)
+	return n, err
 }
 
 const (
@@ -180,19 +180,11 @@ func newLogger(filePath string, maxSizeBytes int64) (*Logger, error) {
 		return nil, fmt.Errorf("create log directory: %w", err)
 	}
 
-	// Open file for appending
-	//nolint:gosec // Log file needs to be readable
-	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return nil, fmt.Errorf("open log file: %w", err)
+	l := &Logger{filePath: filePath, maxSizeBytes: maxSizeBytes}
+	if err := l.openLocked(); err != nil {
+		return nil, err
 	}
-
-	return &Logger{
-		filePath:     filePath,
-		file:         file,
-		encoder:      json.NewEncoder(file),
-		maxSizeBytes: maxSizeBytes,
-	}, nil
+	return l, nil
 }
 
 // Log writes an event, using the current time if Timestamp is zero.
@@ -216,12 +208,7 @@ func (l *Logger) rotateIfNeededLocked() error {
 	if l.maxSizeBytes <= 0 || l.file == nil {
 		return nil
 	}
-
-	info, err := l.file.Stat()
-	if err != nil {
-		return fmt.Errorf("stat log file: %w", err)
-	}
-	if info.Size() == 0 || info.Size() < l.maxSizeBytes {
+	if l.counter.n == 0 || l.counter.n < l.maxSizeBytes {
 		return nil
 	}
 
@@ -233,6 +220,7 @@ func (l *Logger) rotateLocked() error {
 		return fmt.Errorf("close log before rotation: %w", err)
 	}
 	l.file = nil
+	l.counter = nil
 	l.encoder = nil
 
 	rotatedPath := rotatedLogPath(l.filePath)
@@ -259,8 +247,14 @@ func (l *Logger) openLocked() error {
 	if err != nil {
 		return fmt.Errorf("open log file: %w", err)
 	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return fmt.Errorf("stat log file: %w", err)
+	}
 	l.file = file
-	l.encoder = json.NewEncoder(file)
+	l.counter = &countingFile{f: file, n: info.Size()}
+	l.encoder = json.NewEncoder(l.counter)
 	return nil
 }
 
@@ -370,21 +364,12 @@ func (l *Logger) LogChannelImbalanceEnd(t time.Time, durationMs int64, levelL, l
 	})
 }
 
-// LogRecorder records a recorder lifecycle or upload event.
-func (l *Logger) LogRecorder(eventType EventType, p *RecorderEventParams) error {
+// LogRecorder records a recorder lifecycle or upload event. The details are
+// stored on the event as-is; callers must not mutate them afterwards.
+func (l *Logger) LogRecorder(eventType EventType, d *RecorderDetails) error {
 	return l.Log(&Event{
-		Type: eventType,
-		Details: &RecorderDetails{
-			RecorderName: p.RecorderName,
-			Filename:     p.Filename,
-			Codec:        p.Codec,
-			StorageMode:  p.StorageMode,
-			S3Key:        p.S3Key,
-			Error:        p.Error,
-			RetryCount:   p.RetryCount,
-			FilesDeleted: p.FilesDeleted,
-			StorageType:  p.StorageType,
-		},
+		Type:    eventType,
+		Details: d,
 	})
 }
 
@@ -435,9 +420,7 @@ const MaxReadLimit = 500
 // The second return value reports whether more events are available.
 func ReadLast(filePath string, n, offset int, filter TypeFilter) ([]Event, bool, error) {
 	// Cap n to prevent excessive memory allocation (defense in depth)
-	if n > MaxReadLimit {
-		n = MaxReadLimit
-	}
+	n = min(n, MaxReadLimit)
 	if n <= 0 {
 		return []Event{}, false, nil
 	}
@@ -556,60 +539,18 @@ func parseEventLine(line []byte) (Event, bool) {
 	return event, true
 }
 
-// matchesFilter reports whether t matches the given filter.
+// matchesFilter reports whether t matches the given filter. Filters map
+// one-to-one onto the categories in eventClassifications, so a new event type
+// only needs a classification entry to be filterable.
 func matchesFilter(t EventType, filter TypeFilter) bool {
 	switch filter {
-	case FilterAll:
-		return true
 	case FilterStream:
-		return IsStreamEvent(t)
+		return t.Category() == CategoryStream
 	case FilterAudio:
-		return IsSilenceEvent(t) || IsChannelImbalanceEvent(t)
+		return t.Category() == CategoryAudio
 	case FilterRecorder:
-		return IsRecorderEvent(t)
-	default:
+		return t.Category() == CategoryRecorder
+	default: // FilterAll and unknown filters match everything
 		return true
-	}
-}
-
-// IsStreamEvent reports whether t is a stream event type.
-func IsStreamEvent(t EventType) bool {
-	switch t {
-	case StreamStarted, StreamStable, StreamError, StreamRetry, StreamStopped:
-		return true
-	default:
-		return false
-	}
-}
-
-// IsSilenceEvent reports whether t is a silence event type.
-func IsSilenceEvent(t EventType) bool {
-	switch t {
-	case SilenceStart, SilenceEnd, AudioDumpReady:
-		return true
-	default:
-		return false
-	}
-}
-
-// IsChannelImbalanceEvent reports whether t is a channel imbalance event type.
-func IsChannelImbalanceEvent(t EventType) bool {
-	switch t {
-	case ChannelImbalanceStart, ChannelImbalanceEnd:
-		return true
-	default:
-		return false
-	}
-}
-
-// IsRecorderEvent reports whether t is a recorder event type.
-func IsRecorderEvent(t EventType) bool {
-	switch t {
-	case RecorderStarted, RecorderStopped, RecorderError, RecorderFile,
-		UploadQueued, UploadCompleted, UploadFailed, UploadRetry, UploadAbandoned,
-		CleanupCompleted:
-		return true
-	default:
-		return false
 	}
 }
