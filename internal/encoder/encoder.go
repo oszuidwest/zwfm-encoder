@@ -776,6 +776,7 @@ func (e *Encoder) runSource() (string, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	//nolint:gosec // cmdName is from internal platform config (arecord/ffmpeg)
 	cmd := exec.CommandContext(ctx, cmdName, args...)
+	util.HideConsole(cmd)
 
 	// Go 1.20+: Declarative graceful shutdown - sends signal first, waits, then kills.
 	cmd.Cancel = func() error {

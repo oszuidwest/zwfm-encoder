@@ -15,6 +15,7 @@ import (
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/ffmpeg"
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 const (
@@ -319,6 +320,7 @@ func encodeToMP3(
 	)
 
 	cmd := exec.CommandContext(ctx, ffmpegPath, args...) //nolint:gosec // ffmpegPath is from internal config
+	util.HideConsole(cmd)
 	cmd.Stdin = bytes.NewReader(pcm)
 
 	var stderr bytes.Buffer

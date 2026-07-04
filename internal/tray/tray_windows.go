@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"fyne.io/systray"
+
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 // Run installs the tray icon and menu, then blocks until the user picks Quit
@@ -100,15 +102,18 @@ func pollStatus(cfg Config, startItem, stopItem *systray.MenuItem) {
 	}
 }
 
-// openBrowser launches the default browser via rundll32 so no console window
-// flashes even when the encoder itself was built with -H windowsgui.
+// openBrowser launches the default browser via rundll32.
 func openBrowser(url string) error {
 	//nolint:gosec // URL is our own http://localhost:<port>, not user input
-	return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+	cmd := exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	util.HideConsole(cmd)
+	return cmd.Start()
 }
 
 // openFolder opens the given directory in Explorer.
 func openFolder(dir string) error {
 	//nolint:gosec // dir is the fixed event-log directory, not user input
-	return exec.Command("explorer.exe", dir).Start()
+	cmd := exec.Command("explorer.exe", dir)
+	util.HideConsole(cmd)
+	return cmd.Start()
 }
