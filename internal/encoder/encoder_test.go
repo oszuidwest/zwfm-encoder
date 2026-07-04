@@ -47,15 +47,22 @@ func TestStartRejectsStateStopping(t *testing.T) {
 }
 func TestDelayedStarterDoesNotStartManagersAfterQuickSourceExit(t *testing.T) {
 	e := newSourceLifecycleTestEncoder(t, "exit")
+	// The wait budget is strictly smaller than the starter delay, so reaching
+	// the retry state proves the source exited before the delayed starter's
+	// timer fired: the starter is genuinely stale instead of racing a capture
+	// helper that outlives the delay (which would start the managers
+	// legitimately and flake this test).
+	const starterDelay = time.Second
+	e.streamRestartDelay = starterDelay
 	if err := e.Start(); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
-	waitForCondition(t, time.Second, "source retry after quick exit", func() bool {
+	waitForCondition(t, starterDelay/2, "source retry after quick exit", func() bool {
 		e.mu.RLock()
 		defer e.mu.RUnlock()
 		return e.state == types.StateStarting && e.retryCount > 0
 	})
-	time.Sleep(3 * testStreamRestartDelay)
+	time.Sleep(starterDelay + testStreamRestartDelay)
 	assertManagersStopped(t, e, "stale delayed source starter ran after a quick source exit")
 }
 func TestStaleStarterDoesNotStartManagersForNewRun(t *testing.T) {
