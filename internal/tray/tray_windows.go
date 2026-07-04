@@ -29,7 +29,7 @@ func Quit() {
 }
 
 func installMenu(cfg Config) {
-	systray.SetIcon(iconICO)
+	systray.SetIcon(iconFor(cfg.Status()))
 	systray.SetTitle(cfg.AppName)
 	systray.SetTooltip(cfg.AppName)
 
@@ -72,15 +72,19 @@ func handleClicks(cfg Config, openUI, startItem, stopItem, showLogs, quit *systr
 	}
 }
 
-// pollStatus grays out Start / Stop based on the current encoder state and
-// keeps the tooltip in sync. Polling is fine here — status changes are rare
-// and the tray is not on any hot path.
+// pollStatus grays out Start / Stop based on the current encoder state, keeps
+// the tooltip in sync, and swaps the tray icon whenever the status changes
+// (green = running, amber = stopped, red = FFmpeg missing). Polling is fine
+// here — status changes are rare and the tray is not on any hot path.
 func pollStatus(cfg Config, startItem, stopItem *systray.MenuItem) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
+	var last Status = -1
+
 	apply := func() {
-		switch cfg.Status() {
+		s := cfg.Status()
+		switch s {
 		case StatusRunning:
 			startItem.Disable()
 			stopItem.Enable()
@@ -93,6 +97,10 @@ func pollStatus(cfg Config, startItem, stopItem *systray.MenuItem) {
 			startItem.Disable()
 			stopItem.Disable()
 			systray.SetTooltip(cfg.AppName + " — FFmpeg missing")
+		}
+		if s != last {
+			systray.SetIcon(iconFor(s))
+			last = s
 		}
 	}
 
