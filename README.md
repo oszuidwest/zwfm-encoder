@@ -23,6 +23,8 @@ Audio streaming software for [ZuidWest FM](https://www.zuidwestfm.nl/) (Linux), 
 | macOS | Development only | FFmpeg (AVFoundation) |
 | Windows | Experimental | FFmpeg (DirectShow) |
 
+The Windows build launches as a systray application without a console window: right-click the tray icon for Open UI / Start / Stop / Show Logs / Quit. slog output is redirected to `%PROGRAMDATA%\encoder\encoder.log` when no console is attached; the event log at `%PROGRAMDATA%\encoder\logs\<port>\encoder.jsonl` is unchanged.
+
 ## Deployment Model
 
 This is bare-metal software for a Raspberry Pi with a HiFiBerry sound card - there is no Docker target. Audio capture goes directly through ALSA (`arecord`) on the host, which needs the kernel sound device, the HiFiBerry overlay, and predictable real-time scheduling. Containerizing it would add a layer without solving anything for this hardware path.

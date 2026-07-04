@@ -20,7 +20,7 @@ func buildWindowsArgs(device string) []string {
 	return buildFFmpegCaptureArgs("dshow", device)
 }
 
-// windowsDevicePattern matches lines like: [dshow @ addr] "Device Name" (audio)
+// windowsDevicePattern matches lines like: [dshow @ addr] "Device Name" (audio).
 var windowsDevicePattern = regexp.MustCompile(`\[dshow[^\]]*\]\s*"([^"]+)"\s*\(audio\)`)
 
 // Devices returns the available audio input devices.

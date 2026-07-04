@@ -13,8 +13,8 @@ import (
 	"context"
 	"flag"
 	"log/slog"
+	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"time"
 
@@ -22,6 +22,15 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
+
+// app bundles the runtime handles that the platform shell and shutdown need.
+type app struct {
+	cfg             *config.Config
+	encoder         *encoder.Encoder
+	server          *Server
+	httpServer      *http.Server
+	ffmpegAvailable bool
+}
 
 func main() {
 	configPath := flag.String("config", "", "Path to config file (default: config.json next to binary)")
@@ -42,15 +51,37 @@ func main() {
 		*configPath = filepath.Join(filepath.Dir(execPath), "config.json")
 	}
 
+	// Redirect slog to a file when stderr is not attached (Windows GUI build);
+	// no-op on Unix.
+	util.SetupLogging()
+
 	slog.Info("using config file", "path", *configPath)
 
-	cfg := config.New(*configPath)
-	if err := cfg.Load(); err != nil {
-		slog.Error("failed to load config", "error", err)
+	a, err := runApp(*configPath)
+	if err != nil {
+		slog.Error("startup failed", "error", err)
 		os.Exit(1)
 	}
 
-	// Check FFmpeg availability
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runShell(ctx, cancel, a)
+
+	slog.Info("shutting down")
+	shutdown(a)
+	slog.Info("shutdown complete")
+}
+
+// runApp wires config, encoder, and HTTP server. It starts the encoder (if
+// FFmpeg is available) and the HTTP listener, and returns the handles for the
+// platform shell and shutdown to use.
+func runApp(configPath string) (*app, error) {
+	cfg := config.New(configPath)
+	if err := cfg.Load(); err != nil {
+		return nil, err
+	}
+
 	ffmpegPath := util.ResolveFFmpegPath(cfg.FFmpegPath())
 	ffmpegAvailable := ffmpegPath != ""
 	if !ffmpegAvailable {
@@ -62,12 +93,10 @@ func main() {
 
 	enc, err := encoder.New(cfg, ffmpegPath)
 	if err != nil {
-		slog.Error("failed to create encoder", "error", err)
-		os.Exit(1)
+		return nil, err
 	}
 	srv := NewServer(cfg, enc, ffmpegAvailable)
 
-	// Initialize recording manager if configured
 	if err := enc.InitRecording(); err != nil {
 		slog.Error("failed to initialize recording", "error", err)
 	}
@@ -81,32 +110,32 @@ func main() {
 		slog.Warn("encoder not started - FFmpeg not available")
 	}
 
-	// Start web server.
 	httpServer := srv.Start()
 
-	ctx, stop := signal.NotifyContext(context.Background(), util.ShutdownSignals()...)
-	defer stop()
-	<-ctx.Done()
+	return &app{
+		cfg:             cfg,
+		encoder:         enc,
+		server:          srv,
+		httpServer:      httpServer,
+		ffmpegAvailable: ffmpegAvailable,
+	}, nil
+}
 
-	slog.Info("shutting down", "signal", context.Cause(ctx))
+// shutdown gracefully stops the HTTP server, encoder, and version checker.
+func shutdown(a *app) {
+	a.server.version.Stop()
 
-	// Stop version checker goroutine
-	srv.version.Stop()
-
-	// Shut down HTTP server.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+	if err := a.httpServer.Shutdown(shutdownCtx); err != nil {
 		slog.Error("HTTP server shutdown error", "error", err)
 	}
 
-	if err := enc.Stop(); err != nil {
+	if err := a.encoder.Stop(); err != nil {
 		slog.Error("error stopping encoder", "error", err)
 	}
-	if err := enc.Close(); err != nil {
+	if err := a.encoder.Close(); err != nil {
 		slog.Error("error closing encoder resources", "error", err)
 	}
-
-	slog.Info("shutdown complete")
 }
