@@ -60,9 +60,7 @@ func StartProcessWithStdout(ffmpegPath string, args []string) (*StartResult, err
 
 func startProcess(ffmpegPath string, args []string, captureStdout bool) (*StartResult, error) {
 	ctx, cancel := context.WithCancelCause(context.Background())
-	//nolint:gosec // G204: ffmpegPath is from config or PATH lookup, not user HTTP input
-	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
-	util.HideConsole(cmd)
+	cmd := util.CommandContext(ctx, ffmpegPath, args...)
 
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {

@@ -3,7 +3,6 @@
 package tray
 
 import (
-	"bytes"
 	_ "embed"
 	"encoding/binary"
 )
@@ -25,39 +24,15 @@ var iconICO = map[Status][]byte{
 	StatusFFmpegMissing: wrapPNGInICO(iconErrorPNG),
 }
 
-// iconFor returns the ICO bytes for the given status; falls back to the
-// stopped icon if the status is unknown.
-func iconFor(s Status) []byte {
-	if b, ok := iconICO[s]; ok {
-		return b
-	}
-	return iconICO[StatusStopped]
-}
-
 // wrapPNGInICO builds a single-image ICO around a PNG payload. Windows Vista
 // and later accept PNG-in-ICO natively, so no BMP conversion is needed.
 func wrapPNGInICO(png []byte) []byte {
-	const (
-		iconDirSize   = 6
-		iconEntrySize = 16
-	)
-
-	var buf bytes.Buffer
-	// ICONDIR.
-	_ = binary.Write(&buf, binary.LittleEndian, uint16(0)) // reserved
-	_ = binary.Write(&buf, binary.LittleEndian, uint16(1)) // type: icon
-	_ = binary.Write(&buf, binary.LittleEndian, uint16(1)) // image count
-
-	// ICONDIRENTRY width/height: 0 would mean 256; our icons are 64x64.
-	buf.WriteByte(64)
-	buf.WriteByte(64)
-	buf.WriteByte(0)                                              // color count
-	buf.WriteByte(0)                                              // reserved
-	_ = binary.Write(&buf, binary.LittleEndian, uint16(1))        // planes
-	_ = binary.Write(&buf, binary.LittleEndian, uint16(32))       // bitCount
-	_ = binary.Write(&buf, binary.LittleEndian, uint32(len(png))) //nolint:gosec // PNG length fits in uint32 for our embedded icons
-	_ = binary.Write(&buf, binary.LittleEndian, uint32(iconDirSize+iconEntrySize))
-
-	buf.Write(png)
-	return buf.Bytes()
+	// ICONDIR (reserved=0, type=1, count=1) + one ICONDIRENTRY (64x64,
+	// 32-bit, 1 plane, image size, payload offset 22 = 6+16).
+	hdr := []byte{
+		0, 0, 1, 0, 1, 0,
+		64, 64, 0, 0, 1, 0, 32, 0, 0, 0, 0, 0, 22, 0, 0, 0,
+	}
+	binary.LittleEndian.PutUint32(hdr[14:], uint32(len(png))) //nolint:gosec // PNG length fits in uint32 for our embedded icons
+	return append(hdr, png...)
 }

@@ -36,10 +36,7 @@ func ProbeFFmpegProtocol(ffmpegPath, protocol string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), ffmpegProtocolProbeTimeout)
 	defer cancel()
 
-	//nolint:gosec // ffmpegPath is resolved config/PATH.
-	cmd := exec.CommandContext(ctx, ffmpegPath, "-hide_banner", "-protocols")
-	HideConsole(cmd)
-	out, err := cmd.Output()
+	out, err := CommandContext(ctx, ffmpegPath, "-hide_banner", "-protocols").Output()
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return false, fmt.Errorf("probe ffmpeg protocols timed out after %s: %w", ffmpegProtocolProbeTimeout, ctx.Err())

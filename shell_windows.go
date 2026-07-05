@@ -4,14 +4,13 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"log/slog"
 	"os/signal"
 	"path/filepath"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/tray"
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
@@ -25,26 +24,19 @@ func runShell(a *app) {
 	logDir := filepath.Dir(eventlog.DefaultLogPath(cfg.WebPort))
 
 	trayCfg := tray.Config{
-		AppName: cfg.StationName,
-		URL:     fmt.Sprintf("http://localhost:%d", cfg.WebPort),
-		LogDir:  logDir,
-		StartEncoder: func() error {
-			// Guard here: encoder.Start does not check FFmpeg availability
-			// and would enter its retry loop on a doomed start.
-			if !a.server.ffmpegAvailable {
-				return errors.New("ffmpeg not available")
-			}
-			return a.encoder.Start()
-		},
-		StopEncoder: a.encoder.Stop,
+		AppName:      cfg.StationName,
+		URL:          fmt.Sprintf("http://localhost:%d", cfg.WebPort),
+		LogDir:       logDir,
+		StartEncoder: a.encoder.Start,
+		StopEncoder:  a.encoder.Stop,
 		Status: func() tray.Status {
-			if !a.server.ffmpegAvailable {
+			if !a.encoder.FFmpegAvailable() {
 				return tray.StatusFFmpegMissing
 			}
-			if a.encoder.IsRunning() {
-				return tray.StatusRunning
+			if a.encoder.State() == types.StateStopped {
+				return tray.StatusStopped
 			}
-			return tray.StatusStopped
+			return tray.StatusRunning // running, starting, or stopping
 		},
 	}
 
@@ -57,7 +49,5 @@ func runShell(a *app) {
 		tray.Quit()
 	}()
 
-	tray.Run(trayCfg, func() {
-		slog.Info("tray exit requested")
-	})
+	tray.Run(trayCfg)
 }

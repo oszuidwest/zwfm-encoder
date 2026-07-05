@@ -12,12 +12,17 @@ linters:
     - misspell
     # Code quality
     - errorlint
+    - forbidigo
     - gosec
     - nilerr
     - unparam
     - unconvert
     - bodyclose
   settings:
+    forbidigo:
+      forbid:
+        - pattern: ^exec\.(Command|CommandContext)$
+          msg: use util.Command / util.CommandContext so Windows GUI builds never flash console windows
     gocritic:
       enabled-tags:
         - diagnostic
@@ -27,3 +32,13 @@ linters:
       min-complexity: 20
     godot:
       scope: toplevel
+  exclusions:
+    rules:
+      # The util wrapper is the one sanctioned home for raw exec calls, and
+      # console-hiding is irrelevant in tests.
+      - path: internal/util/exec\.go
+        linters:
+          - forbidigo
+      - path: _test\.go
+        linters:
+          - forbidigo

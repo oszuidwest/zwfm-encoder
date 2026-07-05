@@ -36,6 +36,9 @@ const (
 // ErrNoAudioInput is returned when no audio input device is configured.
 var ErrNoAudioInput = errors.New("no audio input configured")
 
+// ErrFFmpegNotAvailable is returned when starting without a usable FFmpeg binary.
+var ErrFFmpegNotAvailable = errors.New("ffmpeg not available")
+
 // ErrAlreadyRunning is returned when the encoder is already running.
 var ErrAlreadyRunning = errors.New("encoder already running")
 
@@ -306,6 +309,12 @@ func (e *Encoder) Stream(streamID string) *types.Stream {
 	return e.config.Stream(streamID)
 }
 
+// FFmpegAvailable reports whether a usable FFmpeg binary was resolved at
+// startup. The path is immutable after New, so no locking is needed.
+func (e *Encoder) FFmpegAvailable() bool {
+	return e.ffmpegPath != ""
+}
+
 // IsRunning reports whether the encoder is in running state.
 func (e *Encoder) IsRunning() bool {
 	e.mu.RLock()
@@ -394,6 +403,9 @@ func (e *Encoder) StreamStatuses(streams []types.Stream) map[string]types.Proces
 
 // Start starts audio capture and stream processes.
 func (e *Encoder) Start() error {
+	if !e.FFmpegAvailable() {
+		return ErrFFmpegNotAvailable
+	}
 	if e.config.AudioInput() == "" {
 		return ErrNoAudioInput
 	}
@@ -774,9 +786,7 @@ func (e *Encoder) runSource() (string, error) {
 	slog.Info("starting audio capture", "command", cmdName, "input", audioInput)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	//nolint:gosec // cmdName is from internal platform config (arecord/ffmpeg)
-	cmd := exec.CommandContext(ctx, cmdName, args...)
-	util.HideConsole(cmd)
+	cmd := util.CommandContext(ctx, cmdName, args...)
 
 	// Go 1.20+: Declarative graceful shutdown - sends signal first, waits, then kills.
 	cmd.Cancel = func() error {

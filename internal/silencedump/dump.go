@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sync"
 	"time"
@@ -319,8 +318,7 @@ func encodeToMP3(
 		result.FilePath,
 	)
 
-	cmd := exec.CommandContext(ctx, ffmpegPath, args...) //nolint:gosec // ffmpegPath is from internal config
-	util.HideConsole(cmd)
+	cmd := util.CommandContext(ctx, ffmpegPath, args...)
 	cmd.Stdin = bytes.NewReader(pcm)
 
 	var stderr bytes.Buffer

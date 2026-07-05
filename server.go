@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -39,11 +40,11 @@ type indexData struct {
 
 // Server handles HTTP requests and WebSocket connections.
 type Server struct {
-	config          *config.Config
-	encoder         *encoder.Encoder
-	sessions        *server.SessionManager
-	version         *VersionChecker
-	ffmpegAvailable bool
+	config     *config.Config
+	encoder    *encoder.Encoder
+	sessions   *server.SessionManager
+	version    *VersionChecker
+	httpServer *http.Server
 
 	// WebSocket broadcast channels
 	wsClients       map[chan any]struct{}
@@ -56,14 +57,13 @@ type Server struct {
 type rawWSMessage []byte
 
 // NewServer creates a Server with the given configuration and encoder.
-func NewServer(cfg *config.Config, enc *encoder.Encoder, ffmpegAvailable bool) *Server {
+func NewServer(cfg *config.Config, enc *encoder.Encoder) *Server {
 	return &Server{
-		config:          cfg,
-		encoder:         enc,
-		sessions:        server.NewSessionManager(),
-		version:         NewVersionChecker(),
-		ffmpegAvailable: ffmpegAvailable,
-		wsClients:       make(map[chan any]struct{}),
+		config:    cfg,
+		encoder:   enc,
+		sessions:  server.NewSessionManager(),
+		version:   NewVersionChecker(),
+		wsClients: make(map[chan any]struct{}),
 	}
 }
 
@@ -222,7 +222,7 @@ func (s *Server) buildWSRuntime() types.WSRuntimeStatus {
 
 	return types.WSRuntimeStatus{
 		Type:               "status",
-		FFmpegAvailable:    s.ffmpegAvailable,
+		FFmpegAvailable:    s.encoder.FFmpegAvailable(),
 		SRTAvailable:       s.encoder.SRTAvailable(),
 		SRTError:           s.encoder.SRTErrorMessage(),
 		RecordingAvailable: s.encoder.RecordingAvailable(),
@@ -492,11 +492,11 @@ func (s *Server) handleExternalRecordingAction(w http.ResponseWriter, r *http.Re
 }
 
 // Start begins the HTTP server and returns it for graceful shutdown.
-func (s *Server) Start() *http.Server {
+func (s *Server) Start() {
 	addr := fmt.Sprintf(":%d", s.config.Snapshot().WebPort)
 	slog.Info("starting web server", "addr", addr)
 
-	srv := &http.Server{
+	s.httpServer = &http.Server{
 		Addr:           addr,
 		Handler:        s.SetupRoutes(),
 		ReadTimeout:    15 * time.Second,
@@ -506,10 +506,14 @@ func (s *Server) Start() *http.Server {
 	}
 
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("HTTP server error", "error", err)
 		}
 	}()
+}
 
-	return srv
+// Stop halts the version checker and gracefully shuts down the HTTP server.
+func (s *Server) Stop(ctx context.Context) error {
+	s.version.Stop()
+	return s.httpServer.Shutdown(ctx)
 }

@@ -11,9 +11,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log/slog"
-	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -25,10 +25,9 @@ import (
 
 // app bundles the runtime handles that the platform shell and shutdown need.
 type app struct {
-	cfg        *config.Config
-	encoder    *encoder.Encoder
-	server     *Server
-	httpServer *http.Server
+	cfg     *config.Config
+	encoder *encoder.Encoder
+	server  *Server
 }
 
 func main() {
@@ -79,8 +78,7 @@ func startApp(configPath string) (*app, error) {
 	}
 
 	ffmpegPath := util.ResolveFFmpegPath(cfg.FFmpegPath())
-	ffmpegAvailable := ffmpegPath != ""
-	if !ffmpegAvailable {
+	if ffmpegPath == "" {
 		slog.Warn("FFmpeg not found - running in degraded mode",
 			"configured_path", cfg.FFmpegPath())
 	} else {
@@ -91,39 +89,35 @@ func startApp(configPath string) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-	srv := NewServer(cfg, enc, ffmpegAvailable)
+	srv := NewServer(cfg, enc)
 
 	if err := enc.InitRecording(); err != nil {
 		slog.Error("failed to initialize recording", "error", err)
 	}
 
-	if ffmpegAvailable {
-		slog.Info("starting encoder")
-		if err := enc.Start(); err != nil {
+	if err := enc.Start(); err != nil {
+		if errors.Is(err, encoder.ErrFFmpegNotAvailable) {
+			slog.Warn("encoder not started - FFmpeg not available")
+		} else {
 			slog.Error("failed to start encoder", "error", err)
 		}
-	} else {
-		slog.Warn("encoder not started - FFmpeg not available")
 	}
 
-	httpServer := srv.Start()
+	srv.Start()
 
 	return &app{
-		cfg:        cfg,
-		encoder:    enc,
-		server:     srv,
-		httpServer: httpServer,
+		cfg:     cfg,
+		encoder: enc,
+		server:  srv,
 	}, nil
 }
 
 // shutdown gracefully stops the HTTP server, encoder, and version checker.
 func shutdown(a *app) {
-	a.server.version.Stop()
-
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := a.httpServer.Shutdown(shutdownCtx); err != nil {
+	if err := a.server.Stop(shutdownCtx); err != nil {
 		slog.Error("HTTP server shutdown error", "error", err)
 	}
 
