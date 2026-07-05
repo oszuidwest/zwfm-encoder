@@ -137,6 +137,7 @@
         --z-raised: 1;
         --z-toast: 100;
         --z-overlay: 1000;
+        --z-skip-link: 1001;
 
         /* Dark-surface overlays and accessible focus treatment. */
         --overlay-light: rgb(255 255 255 / 20%);
@@ -320,7 +321,7 @@
         position: fixed;
         top: var(--space-4);
         left: var(--space-4);
-        z-index: var(--z-overlay);
+        z-index: var(--z-skip-link);
         padding: 0.625rem 0.875rem;
         border-radius: var(--radius-md);
         background: var(--surface-card);
@@ -783,7 +784,7 @@
         }
 
         .header[data-theme="slate"] {
-            background: linear-gradient(180deg, #3f5065, var(--header-secondary));
+            background: linear-gradient(180deg, color-mix(in srgb, var(--header-secondary) 92%, white 8%), var(--header-secondary));
         }
 
         .header h2 {
@@ -2266,7 +2267,7 @@
         background: transparent;
         color: var(--text-secondary);
         cursor: pointer;
-        transition: background var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
+        transition: background var(--transition-fast), color var(--transition-fast);
     }
 
     .event-toggle:hover {
