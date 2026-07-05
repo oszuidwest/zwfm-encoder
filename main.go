@@ -25,14 +25,17 @@ import (
 
 // app bundles the runtime handles that the platform shell and shutdown need.
 type app struct {
-	cfg             *config.Config
-	encoder         *encoder.Encoder
-	server          *Server
-	httpServer      *http.Server
-	ffmpegAvailable bool
+	cfg        *config.Config
+	encoder    *encoder.Encoder
+	server     *Server
+	httpServer *http.Server
 }
 
 func main() {
+	// Redirect slog to a file when stderr is not attached (Windows GUI build);
+	// no-op on Unix. First thing in main so even startup errors are captured.
+	util.SetupLogging()
+
 	configPath := flag.String("config", "", "Path to config file (default: config.json next to binary)")
 	showVersion := flag.Bool("version", false, "Print version information and exit")
 	flag.Parse()
@@ -51,32 +54,25 @@ func main() {
 		*configPath = filepath.Join(filepath.Dir(execPath), "config.json")
 	}
 
-	// Redirect slog to a file when stderr is not attached (Windows GUI build);
-	// no-op on Unix.
-	util.SetupLogging()
-
 	slog.Info("using config file", "path", *configPath)
 
-	a, err := runApp(*configPath)
+	a, err := startApp(*configPath)
 	if err != nil {
 		slog.Error("startup failed", "error", err)
 		os.Exit(1)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	runShell(ctx, cancel, a)
+	runShell(a)
 
 	slog.Info("shutting down")
 	shutdown(a)
 	slog.Info("shutdown complete")
 }
 
-// runApp wires config, encoder, and HTTP server. It starts the encoder (if
+// startApp wires config, encoder, and HTTP server. It starts the encoder (if
 // FFmpeg is available) and the HTTP listener, and returns the handles for the
 // platform shell and shutdown to use.
-func runApp(configPath string) (*app, error) {
+func startApp(configPath string) (*app, error) {
 	cfg := config.New(configPath)
 	if err := cfg.Load(); err != nil {
 		return nil, err
@@ -113,11 +109,10 @@ func runApp(configPath string) (*app, error) {
 	httpServer := srv.Start()
 
 	return &app{
-		cfg:             cfg,
-		encoder:         enc,
-		server:          srv,
-		httpServer:      httpServer,
-		ffmpegAvailable: ffmpegAvailable,
+		cfg:        cfg,
+		encoder:    enc,
+		server:     srv,
+		httpServer: httpServer,
 	}, nil
 }
 

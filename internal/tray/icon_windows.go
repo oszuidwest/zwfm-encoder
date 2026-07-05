@@ -40,20 +40,7 @@ func wrapPNGInICO(png []byte) []byte {
 	const (
 		iconDirSize   = 6
 		iconEntrySize = 16
-		width         = 64
-		height        = 64
 	)
-
-	// The width/height bytes are 0 to mean 256; anything else is the literal
-	// value. 64 fits in one byte.
-	widthByte := byte(width)
-	if width >= 256 {
-		widthByte = 0
-	}
-	heightByte := byte(height)
-	if height >= 256 {
-		heightByte = 0
-	}
 
 	var buf bytes.Buffer
 	// ICONDIR.
@@ -61,9 +48,9 @@ func wrapPNGInICO(png []byte) []byte {
 	_ = binary.Write(&buf, binary.LittleEndian, uint16(1)) // type: icon
 	_ = binary.Write(&buf, binary.LittleEndian, uint16(1)) // image count
 
-	// ICONDIRENTRY.
-	buf.WriteByte(widthByte)
-	buf.WriteByte(heightByte)
+	// ICONDIRENTRY width/height: 0 would mean 256; our icons are 64x64.
+	buf.WriteByte(64)
+	buf.WriteByte(64)
 	buf.WriteByte(0)                                              // color count
 	buf.WriteByte(0)                                              // reserved
 	_ = binary.Write(&buf, binary.LittleEndian, uint16(1))        // planes

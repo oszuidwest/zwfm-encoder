@@ -34,6 +34,32 @@ jobs:
     with:
       golangci-lint-version: v2.12.1
 
+  # The shared template builds and tests on linux only; this job makes sure
+  # the //go:build windows files (systray, slog fallback) at least compile
+  # and vet on every PR instead of breaking at release time.
+  go-windows:
+    name: Go (windows cross-compile)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.head_ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build and vet for windows
+        env:
+          GOOS: windows
+        run: |
+          go build ./...
+          go vet ./...
+
   frontend:
     name: Frontend
     runs-on: ubuntu-latest

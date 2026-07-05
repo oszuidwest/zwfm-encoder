@@ -10,11 +10,10 @@ import (
 )
 
 // runShell blocks until a shutdown signal (SIGINT/SIGTERM) arrives, then
-// cancels ctx so main can proceed to shutdown.
-func runShell(ctx context.Context, cancel context.CancelFunc, _ *app) {
-	sigCtx, stop := signal.NotifyContext(ctx, util.ShutdownSignals()...)
+// returns so main can proceed to shutdown.
+func runShell(_ *app) {
+	ctx, stop := signal.NotifyContext(context.Background(), util.ShutdownSignals()...)
 	defer stop()
 
-	<-sigCtx.Done()
-	cancel()
+	<-ctx.Done()
 }

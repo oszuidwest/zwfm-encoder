@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os/signal"
@@ -14,10 +15,10 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// runShell installs the Windows systray and blocks until either a shutdown
-// signal or the tray Quit item cancels the context.
-func runShell(ctx context.Context, cancel context.CancelFunc, a *app) {
-	sigCtx, stop := signal.NotifyContext(ctx, util.ShutdownSignals()...)
+// runShell installs the Windows systray and blocks until the tray Quit item
+// (or an os.Interrupt bridged into a tray Quit) exits the tray loop.
+func runShell(a *app) {
+	sigCtx, stop := signal.NotifyContext(context.Background(), util.ShutdownSignals()...)
 	defer stop()
 
 	cfg := a.cfg.Snapshot()
@@ -28,14 +29,16 @@ func runShell(ctx context.Context, cancel context.CancelFunc, a *app) {
 		URL:     fmt.Sprintf("http://localhost:%d", cfg.WebPort),
 		LogDir:  logDir,
 		StartEncoder: func() error {
-			if !a.ffmpegAvailable {
-				return tray.ErrFFmpegMissing
+			// Guard here: encoder.Start does not check FFmpeg availability
+			// and would enter its retry loop on a doomed start.
+			if !a.server.ffmpegAvailable {
+				return errors.New("ffmpeg not available")
 			}
 			return a.encoder.Start()
 		},
 		StopEncoder: a.encoder.Stop,
 		Status: func() tray.Status {
-			if !a.ffmpegAvailable {
+			if !a.server.ffmpegAvailable {
 				return tray.StatusFFmpegMissing
 			}
 			if a.encoder.IsRunning() {
@@ -45,8 +48,10 @@ func runShell(ctx context.Context, cancel context.CancelFunc, a *app) {
 		},
 	}
 
-	// Bridge signal cancellation into a tray Quit so systray unblocks on
-	// SIGTERM / service stop as well as menu clicks.
+	// Bridge os.Interrupt (Ctrl+C when a console is attached) into a tray
+	// Quit so systray unblocks on interrupt as well as menu clicks. Windows
+	// delivers no SIGTERM, and a GUI build without console receives no
+	// interrupt at all - there the tray menu is the only exit path.
 	go func() {
 		<-sigCtx.Done()
 		tray.Quit()
@@ -54,6 +59,5 @@ func runShell(ctx context.Context, cancel context.CancelFunc, a *app) {
 
 	tray.Run(trayCfg, func() {
 		slog.Info("tray exit requested")
-		cancel()
 	})
 }

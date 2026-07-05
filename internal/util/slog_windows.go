@@ -3,27 +3,35 @@
 package util
 
 import (
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 )
 
-// slogLogPath is the fallback slog destination when stderr is not attached
-// (Windows GUI build). Kept fixed rather than per-port because SetupLogging
-// runs before config load. The event log at
+// slogLogCandidates returns fallback slog destinations, most preferred first.
+// %PROGRAMDATA% may not be writable for a non-admin user (e.g. when an
+// elevated first run created the file), so %LOCALAPPDATA% and the temp dir
+// serve as user-writable fallbacks. The path is fixed rather than per-port
+// because SetupLogging runs before config load; two encoder instances on one
+// machine would share (and fight over) the first file. The event log at
 // %PROGRAMDATA%\encoder\logs\<port>\encoder.jsonl remains the authoritative
 // operational record; this file only captures slog output.
-func slogLogPath() string {
-	base := os.Getenv("PROGRAMDATA")
-	if base == "" {
-		base = os.Getenv("LOCALAPPDATA")
+func slogLogCandidates() []string {
+	var dirs []string
+	if d := os.Getenv("PROGRAMDATA"); d != "" {
+		dirs = append(dirs, d)
 	}
-	if base == "" {
-		base = `C:\ProgramData`
+	if d := os.Getenv("LOCALAPPDATA"); d != "" {
+		dirs = append(dirs, d)
 	}
-	return filepath.Join(base, "encoder", "encoder.log")
+	dirs = append(dirs, os.TempDir())
+
+	paths := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		paths = append(paths, filepath.Join(d, "encoder", "encoder.log"))
+	}
+	return paths
 }
 
 const slogMaxSizeBytes int64 = 5 * 1024 * 1024
@@ -36,16 +44,17 @@ func SetupLogging() {
 		return
 	}
 
-	w, err := newRollingWriter(slogLogPath(), slogMaxSizeBytes)
-	if err != nil {
-		// No stderr and no writable log file — nothing to do. Errors would
-		// go nowhere anyway.
+	for _, path := range slogLogCandidates() {
+		w, err := newRollingWriter(path, slogMaxSizeBytes)
+		if err != nil {
+			continue
+		}
+		slog.SetDefault(slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{
+			Level: slog.LevelInfo,
+		})))
 		return
 	}
-
-	slog.SetDefault(slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})))
+	// No stderr and no writable location at all - nothing more we can do.
 }
 
 // stderrAttached reports whether os.Stderr points at a real handle. On a
@@ -58,45 +67,49 @@ func stderrAttached() bool {
 // rollingWriter is a small size-capped writer: when the active file reaches
 // maxSize bytes, it is renamed to path+".1" (replacing any previous rollover)
 // and a fresh file is opened. Concurrent Writes are serialized so the rotate
-// check is atomic relative to writes.
+// check is atomic relative to writes. Rotation and reopen failures are
+// tolerated: the writer marks the file broken and retries the open on the
+// next Write, so a transient lock (antivirus, indexer) can never silently
+// stop logging for good.
 type rollingWriter struct {
 	mu      sync.Mutex
 	path    string
 	maxSize int64
-	file    *os.File
-	written int64
+	file    *os.File // nil when the last (re)open failed; Write retries
+	written int64    // bytes since the last rotation attempt
 }
 
-func newRollingWriter(path string, maxSize int64) (io.Writer, error) {
+func newRollingWriter(path string, maxSize int64) (*rollingWriter, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { //nolint:gosec // Log directory needs to be readable
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644) //nolint:gosec // Log file needs to be readable
-	if err != nil {
+	w := &rollingWriter{path: path, maxSize: maxSize}
+	if err := w.openLocked(); err != nil {
 		return nil, err
 	}
-	info, err := f.Stat()
-	if err != nil {
-		_ = f.Close()
-		return nil, err
-	}
-	return &rollingWriter{
-		path:    path,
-		maxSize: maxSize,
-		file:    f,
-		written: info.Size(),
-	}, nil
+	return w, nil
 }
 
 func (w *rollingWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
+	if w.file == nil {
+		// A previous rotate or open failed; retry before giving up on this
+		// record.
+		if err := w.openLocked(); err != nil {
+			return 0, err
+		}
+	}
+
 	if w.written+int64(len(p)) > w.maxSize {
-		if err := w.rotateLocked(); err != nil {
-			// Best-effort: keep writing to the current file if rotation fails.
-			// Losing rotation is preferable to losing logs.
-			_ = err
+		// Best-effort: on rename failure the current file keeps growing and
+		// rotation is retried after another maxSize bytes; on reopen failure
+		// the next Write retries the open. Losing rotation is preferable to
+		// losing logs.
+		_ = w.rotateLocked()
+		if w.file == nil {
+			return 0, os.ErrClosed
 		}
 	}
 
@@ -105,26 +118,43 @@ func (w *rollingWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func (w *rollingWriter) rotateLocked() error {
-	if err := w.file.Close(); err != nil {
-		return err
-	}
-	rotated := w.path + ".1"
-	_ = os.Remove(rotated)
-	if err := os.Rename(w.path, rotated); err != nil {
-		// Reopen the original file so we don't lose logging entirely.
-		f, openErr := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644) //nolint:gosec // Log file needs to be readable
-		if openErr != nil {
-			return openErr
-		}
-		w.file = f
-		return err
-	}
+// openLocked opens the log file for appending and resumes the byte count
+// from its current size. On failure the writer stays marked broken
+// (file == nil).
+func (w *rollingWriter) openLocked() error {
 	f, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644) //nolint:gosec // Log file needs to be readable
 	if err != nil {
 		return err
 	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return err
+	}
 	w.file = f
-	w.written = 0
+	w.written = info.Size()
 	return nil
+}
+
+// rotateLocked renames the active file to path+".1" and opens a fresh one.
+// The old handle is discarded even if Close errors - a *File is unusable
+// after Close regardless - so this never leaves a dead handle behind.
+func (w *rollingWriter) rotateLocked() error {
+	_ = w.file.Close()
+	w.file = nil
+
+	rotated := w.path + ".1"
+	_ = os.Remove(rotated)
+	renameErr := os.Rename(w.path, rotated)
+
+	if err := w.openLocked(); err != nil {
+		return err
+	}
+	if renameErr != nil {
+		// The reopened file still holds the old content and exceeds maxSize;
+		// reset the counter so rotation is retried after another maxSize
+		// bytes instead of on every write.
+		w.written = 0
+	}
+	return renameErr
 }

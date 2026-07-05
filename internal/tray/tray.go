@@ -4,8 +4,6 @@
 // shell_windows.go.
 package tray
 
-import "errors"
-
 // Status represents the encoder's high-level state for tray display.
 type Status int
 
@@ -14,11 +12,12 @@ const (
 	StatusStopped Status = iota
 	// StatusRunning indicates the encoder is actively processing audio.
 	StatusRunning
-	// StatusFFmpegMissing indicates FFmpeg was not found — encoder cannot start.
+	// StatusFFmpegMissing indicates FFmpeg was not found - encoder cannot start.
 	StatusFFmpegMissing
 )
 
-// Config carries the callbacks and metadata that the tray menu needs.
+// Config carries the callbacks and metadata that the tray menu needs. All
+// callbacks must be non-nil.
 type Config struct {
 	// AppName is shown in the tray tooltip prefix.
 	AppName string
@@ -33,7 +32,3 @@ type Config struct {
 	// Status returns the current encoder status, polled to update menu items.
 	Status func() Status
 }
-
-// ErrFFmpegMissing is returned by StartEncoder callbacks when FFmpeg is not
-// available. The tray uses this sentinel to keep the Start item disabled.
-var ErrFFmpegMissing = errors.New("ffmpeg not available")
