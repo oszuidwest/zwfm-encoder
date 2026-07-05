@@ -40,6 +40,7 @@
     <script src="/alpine.min.js" defer="defer"></script>
 </head>
 <body x-data="encoderApp">
+    <a class="skip-link" href="#main-content">Skip to content</a>
     <!-- Connection overlay - blocks UI when WebSocket disconnected -->
     <div class="connection-overlay" x-show="encoder.state === 'connecting'" x-cloak>
         <div class="content">
@@ -96,7 +97,7 @@
         </template>
     </div>
 
-    <main class="container">
+    <main id="main-content" class="container" tabindex="-1">
         <noscript>
             <p class="noscript-message">This application requires JavaScript to function.</p>
         </noscript>

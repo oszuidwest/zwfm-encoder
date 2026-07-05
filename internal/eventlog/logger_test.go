@@ -9,6 +9,18 @@ import (
 	"time"
 )
 
+func TestDefaultLogPathUsesPlatformDefault(t *testing.T) {
+	t.Parallel()
+
+	got := DefaultLogPath(8080)
+	if !filepath.IsAbs(got) {
+		t.Errorf("DefaultLogPath() = %q, want an absolute path", got)
+	}
+	if want := filepath.Join("8080", "encoder.jsonl"); !strings.HasSuffix(got, want) {
+		t.Errorf("DefaultLogPath() = %q, want suffix %q", got, want)
+	}
+}
+
 func TestReadLastReturnsNewestWithLimitOffsetAndHasMore(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "encoder.jsonl")

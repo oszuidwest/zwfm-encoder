@@ -6,7 +6,8 @@ This document describes all events emitted by the encoder to the event log (`enc
 
 | Platform | Path |
 |----------|------|
-| Linux/macOS | `/var/log/encoder/{port}/encoder.jsonl` |
+| Linux | `/var/log/encoder/{port}/encoder.jsonl` |
+| macOS | `~/Library/Application Support/encoder/logs/{port}/encoder.jsonl` |
 | Windows | `%PROGRAMDATA%\encoder\logs\{port}\encoder.jsonl` |
 
 The active log rotates at 50 MiB and keeps one previous file at the same path
