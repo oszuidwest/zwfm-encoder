@@ -182,7 +182,8 @@ func (r *StartResult) WaitEscalating(signalTimeout, killTimeout time.Duration, o
 	return r.Wait() // returns the cached result immediately
 }
 
-// Signal sends SIGTERM (Unix) or soft termination (Windows) for graceful shutdown.
+// Signal requests graceful shutdown where supported. On Windows it returns
+// util.ErrGracefulNotSupported so callers can wait before escalating to Kill.
 func (r *StartResult) Signal() error {
 	if r.cmd.Process == nil {
 		return nil
