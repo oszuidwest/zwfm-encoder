@@ -155,6 +155,12 @@ const (
 func DefaultLogPath(port int) string {
 	portStr := strconv.Itoa(port)
 	switch runtime.GOOS {
+	case "darwin":
+		configDir, err := os.UserConfigDir()
+		if err == nil {
+			return filepath.Join(configDir, "encoder", "logs", portStr, "encoder.jsonl")
+		}
+		return filepath.Join(os.TempDir(), "encoder", "logs", portStr, "encoder.jsonl")
 	case "windows":
 		// %PROGRAMDATA% is typically C:\ProgramData
 		programData := os.Getenv("PROGRAMDATA")
@@ -162,7 +168,7 @@ func DefaultLogPath(port int) string {
 			programData = `C:\ProgramData`
 		}
 		return filepath.Join(programData, "encoder", "logs", portStr, "encoder.jsonl")
-	default: // linux, darwin
+	default:
 		//nolint:gocritic // Intentional absolute path for Unix systems
 		return filepath.Join("/var/log/encoder", portStr, "encoder.jsonl")
 	}
@@ -483,7 +489,7 @@ func ReadLast(filePath string, n, offset int, filter TypeFilter) ([]Event, bool,
 }
 
 func readLinesReverse(filePath string, handle func([]byte) (bool, error)) error {
-	file, err := os.Open(filePath) //nolint:gosec // filePath is from DefaultLogPath, not user input
+	file, err := os.Open(filePath) //nolint:gosec // Event log paths come from trusted application state, not request input.
 	if err != nil {
 		return err
 	}
