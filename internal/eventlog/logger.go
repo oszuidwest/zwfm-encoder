@@ -157,10 +157,10 @@ func DefaultLogPath(port int) string {
 	switch runtime.GOOS {
 	case "darwin":
 		configDir, err := os.UserConfigDir()
-		if err == nil {
-			return filepath.Join(configDir, "encoder", "logs", portStr, "encoder.jsonl")
+		if err != nil {
+			configDir = os.TempDir()
 		}
-		return filepath.Join(os.TempDir(), "encoder", "logs", portStr, "encoder.jsonl")
+		return filepath.Join(configDir, "encoder", "logs", portStr, "encoder.jsonl")
 	case "windows":
 		// %PROGRAMDATA% is typically C:\ProgramData
 		programData := os.Getenv("PROGRAMDATA")

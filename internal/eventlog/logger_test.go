@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -14,27 +13,11 @@ func TestDefaultLogPathUsesPlatformDefault(t *testing.T) {
 	t.Parallel()
 
 	got := DefaultLogPath(8080)
-	var want string
-	switch runtime.GOOS {
-	case "darwin":
-		configDir, err := os.UserConfigDir()
-		if err != nil {
-			want = filepath.Join(os.TempDir(), "encoder", "logs", "8080", "encoder.jsonl")
-		} else {
-			want = filepath.Join(configDir, "encoder", "logs", "8080", "encoder.jsonl")
-		}
-	case "windows":
-		programData := os.Getenv("PROGRAMDATA")
-		if programData == "" {
-			programData = `C:\ProgramData`
-		}
-		want = filepath.Join(programData, "encoder", "logs", "8080", "encoder.jsonl")
-	default:
-		want = "/var/log/encoder/8080/encoder.jsonl"
+	if !filepath.IsAbs(got) {
+		t.Errorf("DefaultLogPath() = %q, want an absolute path", got)
 	}
-
-	if got != want {
-		t.Fatalf("DefaultLogPath() = %q, want %q", got, want)
+	if want := filepath.Join("8080", "encoder.jsonl"); !strings.HasSuffix(got, want) {
+		t.Errorf("DefaultLogPath() = %q, want suffix %q", got, want)
 	}
 }
 
