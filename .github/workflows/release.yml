@@ -39,8 +39,8 @@ jobs:
         [{"os":"linux","arch":"arm64"},
          {"os":"darwin","arch":"arm64"},
          {"os":"darwin","arch":"amd64"},
-         {"os":"windows","arch":"amd64"},
-         {"os":"windows","arch":"arm64"}]
+         {"os":"windows","arch":"amd64","ldflags":"-H windowsgui"},
+         {"os":"windows","arch":"arm64","ldflags":"-H windowsgui"}]
       version: ${{ inputs.version }}
       allow-tag-rebuild: false
       release-body: |
