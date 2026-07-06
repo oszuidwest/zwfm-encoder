@@ -4,10 +4,19 @@ package streaming
 import (
 	"fmt"
 	"net/url"
+	"strconv"
+	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/ffmpeg"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
+
+// callerSRTLatency is the SRT receiver buffer for caller-mode streams. It bounds
+// how long the link can recover lost packets before audio must play out, so it
+// dominates end-to-end latency. SRT negotiates the effective value as the
+// maximum of both peers, so the receiving server must be configured at or below
+// this value to benefit.
+const callerSRTLatency = 2 * time.Second
 
 // buildEncodeArgs returns the shared FFmpeg input and codec arguments used by
 // both caller and listener encoding modes.
@@ -41,7 +50,7 @@ func BuildSRTURL(stream *types.Stream) string {
 	params.Set("oheadbw", "100")
 	params.Set("maxbw", "-1")
 	params.Set("transtype", "live")
-	params.Set("latency", "10000000")
+	params.Set("latency", strconv.FormatInt(callerSRTLatency.Microseconds(), 10))
 	params.Set("mode", string(types.StreamModeCaller))
 	params.Set("streamid", stream.StreamID)
 	if stream.Password != "" {

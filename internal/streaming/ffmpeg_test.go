@@ -18,7 +18,7 @@ func TestBuildSRTURLCaller(t *testing.T) {
 		absent     []string
 	}{
 		{
-			name: "caller keeps existing latency and stream id",
+			name: "caller sets 2s latency and stream id",
 			stream: types.Stream{
 				Host:     "stream.example.com",
 				Port:     9000,
@@ -27,7 +27,7 @@ func TestBuildSRTURLCaller(t *testing.T) {
 			},
 			wantHost: "stream.example.com:9000",
 			wantParams: map[string]string{
-				"latency":   "10000000",
+				"latency":   "2000000",
 				"mode":      "caller",
 				"streamid":  "studio",
 				"transtype": "live",
