@@ -198,7 +198,7 @@ func TestStreamStatusesReportsSRTUnsupported(t *testing.T) {
 		t.Fatalf("status error = %q, want %q", status.Error, ErrSRTUnsupported.Error())
 	}
 }
-func TestStreamStatusesReportsSRTProbeErrorSeparately(t *testing.T) {
+func TestStreamStatusesAllowsUnverifiedSRT(t *testing.T) {
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	stream := types.Stream{
 		ID:      "stream-1",
@@ -216,11 +216,17 @@ func TestStreamStatusesReportsSRTProbeErrorSeparately(t *testing.T) {
 	}
 	statuses := e.StreamStatuses([]types.Stream{stream})
 	status := statuses[stream.ID]
-	if status.State != types.ProcessError {
-		t.Fatalf("status state = %q, want error", status.State)
+	if status.State != types.ProcessStopped {
+		t.Fatalf("status state = %q, want stopped", status.State)
 	}
-	if status.Error != ErrSRTUnverified.Error() {
-		t.Fatalf("status error = %q, want %q", status.Error, ErrSRTUnverified.Error())
+	if status.Error != "" {
+		t.Fatalf("status error = %q, want empty", status.Error)
+	}
+	if !e.SRTAvailable() {
+		t.Fatal("SRTAvailable() = false, want true when the probe is inconclusive")
+	}
+	if got := e.SRTErrorMessage(); got != "" {
+		t.Fatalf("SRTErrorMessage() = %q, want empty", got)
 	}
 }
 func TestStreamStatusesDoesNotRequireSRTForListener(t *testing.T) {
@@ -248,7 +254,7 @@ func TestStreamStatusesDoesNotRequireSRTForListener(t *testing.T) {
 		t.Fatalf("listener status error = %q, want empty", status.Error)
 	}
 }
-func TestStartStreamReportsSRTProbeErrorSeparately(t *testing.T) {
+func TestStartStreamAttemptsUnverifiedSRT(t *testing.T) {
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	cfg.Streaming.Streams = []types.Stream{
 		{
@@ -261,14 +267,19 @@ func TestStartStreamReportsSRTProbeErrorSeparately(t *testing.T) {
 	}
 	e := &Encoder{
 		config:        cfg,
+		ffmpegPath:    "/nonexistent/ffmpeg-binary-for-test",
 		state:         types.StateRunning,
 		stopChan:      make(chan struct{}),
 		srtAvailable:  false,
 		srtProbeError: errors.New("probe timed out"),
-		streamManager: streaming.NewManager("ffmpeg"),
+		streamManager: streaming.NewManager("/nonexistent/ffmpeg-binary-for-test"),
 	}
-	if err := e.StartStream("stream-1"); !errors.Is(err, ErrSRTUnverified) {
-		t.Fatalf("StartStream() error = %v, want ErrSRTUnverified", err)
+	err := e.StartStream("stream-1")
+	if err == nil {
+		t.Fatal("StartStream() unexpectedly succeeded with nonexistent ffmpeg")
+	}
+	if errors.Is(err, ErrSRTUnsupported) {
+		t.Fatalf("StartStream() error = %v, want real FFmpeg start error instead of SRT sentinel", err)
 	}
 }
 func TestStartStreamDoesNotRequireSRTForListener(t *testing.T) {
@@ -295,7 +306,7 @@ func TestStartStreamDoesNotRequireSRTForListener(t *testing.T) {
 	if err == nil {
 		t.Fatal("StartStream() unexpectedly succeeded with nonexistent ffmpeg")
 	}
-	if errors.Is(err, ErrSRTUnsupported) || errors.Is(err, ErrSRTUnverified) {
+	if errors.Is(err, ErrSRTUnsupported) {
 		t.Fatalf("StartStream() error = %v, want real listener start error instead of SRT sentinel", err)
 	}
 }

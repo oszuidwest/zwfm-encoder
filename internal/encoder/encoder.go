@@ -51,9 +51,6 @@ var ErrStreamNotFound = errors.New("stream not found")
 // ErrSRTUnsupported is returned when the FFmpeg build lacks SRT protocol support.
 var ErrSRTUnsupported = errors.New("ffmpeg does not support srt protocol")
 
-// ErrSRTUnverified is returned when FFmpeg SRT support could not be verified.
-var ErrSRTUnverified = errors.New("could not verify ffmpeg srt protocol support")
-
 // ErrRecordingNotAvailable is returned when the recording manager is not initialized.
 var ErrRecordingNotAvailable = errors.New("recording not available")
 
@@ -125,7 +122,7 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 	srtAvailable, srtProbeErr := util.ProbeFFmpegProtocol(ffmpegPath, "srt")
 	switch {
 	case srtProbeErr != nil:
-		slog.Warn("could not verify FFmpeg SRT protocol support",
+		slog.Warn("could not verify FFmpeg SRT protocol support; SRT streams will still be attempted",
 			"path", ffmpegPath, "error", srtProbeErr)
 	case ffmpegPath != "" && !srtAvailable:
 		slog.Warn("FFmpeg found but SRT protocol is not available", "path", ffmpegPath)
@@ -161,27 +158,20 @@ func (e *Encoder) SRTAvailable() bool {
 	if e == nil {
 		return false
 	}
-	return e.srtAvailable
-}
-
-// srtSentinel returns ErrSRTUnverified when the capability probe failed;
-// otherwise it returns ErrSRTUnsupported.
-func (e *Encoder) srtSentinel() error {
-	if e.srtProbeError != nil {
-		return ErrSRTUnverified
-	}
-	return ErrSRTUnsupported
+	// A failed probe is inconclusive, not proof that SRT is unavailable. Keep
+	// SRT usable and let the real FFmpeg stream command report a definitive
+	// protocol error if necessary.
+	return e.srtAvailable || (e.ffmpegPath != "" && e.srtProbeError != nil)
 }
 
 // srtCapabilityError reports why SRT streams cannot run, or nil when SRT is usable
-// or unconfigured. It returns nil in degraded mode (no FFmpeg path), where SRT is
-// not the relevant failure; callers that must report SRT state regardless of FFmpeg
-// availability use srtSentinel directly.
+// or unconfigured. A probe error is inconclusive, so it also returns nil and lets
+// the real stream process determine whether SRT works.
 func (e *Encoder) srtCapabilityError() error {
-	if e == nil || e.srtAvailable || e.ffmpegPath == "" {
+	if e == nil || e.srtAvailable || e.srtProbeError != nil || e.ffmpegPath == "" {
 		return nil
 	}
-	return e.srtSentinel()
+	return ErrSRTUnsupported
 }
 
 // SRTErrorMessage returns the user-facing SRT capability error, if any.
@@ -610,8 +600,10 @@ func (e *Encoder) startStream(streamID string, runID uint64) error {
 	if !stream.Enabled {
 		return ErrStreamDisabled
 	}
-	if stream.RequiresFFmpegSRT() && !e.srtAvailable {
-		return e.srtSentinel()
+	if stream.RequiresFFmpegSRT() {
+		if err := e.srtCapabilityError(); err != nil {
+			return err
+		}
 	}
 
 	// Start preserves existing retry state automatically

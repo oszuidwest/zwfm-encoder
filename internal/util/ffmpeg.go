@@ -9,10 +9,10 @@ import (
 	"time"
 )
 
-const (
-	ffmpegProtocolProbeAttempts = 3
-	ffmpegProtocolProbeTimeout  = 5 * time.Second
-)
+// Give a cold FFmpeg process one uninterrupted startup window. Restarting the
+// command on shorter deadlines discards its progress loading binary and shared
+// library pages from slow storage.
+const ffmpegProtocolProbeTimeout = 15 * time.Second
 
 // ResolveFFmpegPath returns the path to the FFmpeg binary, or empty string if not found.
 func ResolveFFmpegPath(customPath string) string {
@@ -42,25 +42,19 @@ var probeFFmpegProtocols = func(ffmpegPath string) ([]byte, error) {
 	return out, err
 }
 
-// ProbeFFmpegProtocol checks whether "ffmpeg -protocols" lists protocol exactly,
-// retrying probe timeouts. Probe errors are returned separately from a clean
-// "protocol not listed" result so callers do not mislabel transient probe
-// failures as build support.
+// ProbeFFmpegProtocol checks whether "ffmpeg -protocols" lists protocol exactly.
+// Probe errors are returned separately from a clean "protocol not listed"
+// result so callers can treat an inconclusive probe differently from confirmed
+// missing build support.
 func ProbeFFmpegProtocol(ffmpegPath, protocol string) (bool, error) {
 	if ffmpegPath == "" || protocol == "" {
 		return false, nil
 	}
-	for range ffmpegProtocolProbeAttempts {
-		out, err := probeFFmpegProtocols(ffmpegPath)
-		if err == nil {
-			return FFmpegProtocolListContains(string(out), protocol), nil
-		}
-		if !errors.Is(err, context.DeadlineExceeded) {
-			return false, fmt.Errorf("probe ffmpeg protocols: %w", err)
-		}
+	out, err := probeFFmpegProtocols(ffmpegPath)
+	if err != nil {
+		return false, fmt.Errorf("probe ffmpeg protocols: %w", err)
 	}
-	return false, fmt.Errorf("probe ffmpeg protocols timed out after %d attempts of %s: %w",
-		ffmpegProtocolProbeAttempts, ffmpegProtocolProbeTimeout, context.DeadlineExceeded)
+	return FFmpegProtocolListContains(string(out), protocol), nil
 }
 
 // FFmpegProtocolListContains reports whether a protocol list contains protocol as a full token.
