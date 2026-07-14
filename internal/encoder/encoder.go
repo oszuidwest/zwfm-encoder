@@ -168,7 +168,7 @@ func (e *Encoder) SRTAvailable() bool {
 // or unconfigured. A probe error is inconclusive, so it also returns nil and lets
 // the real stream process determine whether SRT works.
 func (e *Encoder) srtCapabilityError() error {
-	if e == nil || e.srtAvailable || e.srtProbeError != nil || e.ffmpegPath == "" {
+	if e == nil || e.ffmpegPath == "" || e.SRTAvailable() {
 		return nil
 	}
 	return ErrSRTUnsupported
