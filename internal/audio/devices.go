@@ -2,11 +2,12 @@ package audio
 
 import (
 	"log/slog"
-	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 // devicesCacheTTL bounds how often a device listing execs a subprocess: the
@@ -76,8 +77,7 @@ func parseDeviceList(cfg DeviceListConfig) []Device {
 		return cfg.FallbackDevices
 	}
 
-	//nolint:gosec // Command is from internal platform config, not user input
-	cmd := exec.Command(cfg.Command[0], cfg.Command[1:]...)
+	cmd := util.Command(cfg.Command[0], cfg.Command[1:]...)
 	output, err := cmd.CombinedOutput()
 	if err != nil && len(output) == 0 {
 		slog.Error("failed to list audio devices", "error", err)

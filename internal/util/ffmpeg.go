@@ -34,7 +34,7 @@ var probeFFmpegProtocols = func(ffmpegPath string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), ffmpegProtocolProbeTimeout)
 	defer cancel()
 
-	out, err := exec.CommandContext(ctx, ffmpegPath, "-hide_banner", "-protocols").Output() //nolint:gosec // ffmpegPath is resolved config/PATH.
+	out, err := CommandContext(ctx, ffmpegPath, "-hide_banner", "-protocols").Output()
 	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		// Output reports "signal: killed" on timeout; surface the deadline error instead.
 		return nil, ctx.Err()

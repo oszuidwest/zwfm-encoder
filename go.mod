@@ -3,6 +3,7 @@ module github.com/oszuidwest/zwfm-encoder
 go 1.26.5
 
 require (
+	fyne.io/systray v1.12.2
 	github.com/aws/aws-sdk-go-v2 v1.42.1
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.29
 	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.3.2
@@ -11,6 +12,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	golang.org/x/mod v0.38.0
 	golang.org/x/oauth2 v0.36.0
+	golang.org/x/sys v0.46.0
 )
 
 require (
@@ -25,10 +27,10 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.31 // indirect
 	github.com/aws/smithy-go v1.27.3 // indirect
 	github.com/benburkert/openpgp v0.0.0-20160410205803-c2471f86866c // indirect
+	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20231108232855-2478ac86f678 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260625142307-59b4966ccb57 // indirect
 	golang.org/x/tools v0.47.0 // indirect
 	golang.org/x/vuln v1.3.0 // indirect

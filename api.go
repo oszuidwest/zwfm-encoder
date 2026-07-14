@@ -230,7 +230,7 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	s.encoder.ApplySettingsEffects()
 
 	// Restart encoder if audio input changed
-	if audioInputChanged && s.ffmpegAvailable && s.encoder.State() == types.StateRunning {
+	if audioInputChanged && s.encoder.State() == types.StateRunning {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
@@ -927,7 +927,7 @@ const readinessMaxPendingUploads = 0
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
 	resp, httpStatus := buildHealthResponse(&healthInputs{
-		ffmpegAvailable:  s.ffmpegAvailable,
+		ffmpegAvailable:  s.encoder.FFmpegAvailable(),
 		encoderStatus:    s.encoder.Status(),
 		streams:          cfg.Streams,
 		streamStatuses:   s.encoder.StreamStatuses(cfg.Streams),
@@ -978,7 +978,7 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config.Snapshot()
 	encoderStatus := s.encoder.Status()
 	resp, httpStatus := buildReadyResponse(&readyInputs{
-		ffmpegAvailable:    s.ffmpegAvailable,
+		ffmpegAvailable:    s.encoder.FFmpegAvailable(),
 		recordingAvailable: s.encoder.RecordingAvailable(),
 		encoderStatus:      encoderStatus,
 		streams:            cfg.Streams,

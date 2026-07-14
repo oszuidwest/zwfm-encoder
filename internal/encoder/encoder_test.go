@@ -40,8 +40,9 @@ func TestStartRejectsStateStopping(t *testing.T) {
 		t.Fatalf("ApplySettings: %v", err)
 	}
 	e := &Encoder{
-		config: cfg,
-		state:  types.StateStopping,
+		config:     cfg,
+		ffmpegPath: "ffmpeg",
+		state:      types.StateStopping,
 	}
 	if err := e.Start(); !errors.Is(err, ErrAlreadyRunning) {
 		t.Errorf("Start() in StateStopping = %v, want ErrAlreadyRunning", err)
@@ -339,6 +340,7 @@ func newSourceLifecycleTestEncoder(t *testing.T, helperMode string, helperArgs .
 	}
 	e := &Encoder{
 		config:              cfg,
+		ffmpegPath:          "ffmpeg",
 		buildCaptureCommand: helperCaptureCommand(helperMode, helperArgs...),
 		streamRestartDelay:  testStreamRestartDelay,
 		streamManager:       streaming.NewManager(""),
