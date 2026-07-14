@@ -6,11 +6,11 @@ Audio streaming software for [ZuidWest FM](https://www.zuidwestfm.nl/) (Linux), 
 
 ## Key features
 
-- **Multi-output streaming** - Push to multiple SRT servers or expose local SRT pull endpoints for monitoring
-- **Multi-recorder support** - Run multiple recording jobs with local and/or S3 storage, hourly rotation, retention cleanup, and on-demand control
-- **Configurable VU meters** - Peak/RMS metering with configurable peak hold, clip detection, and live WebSocket updates
+- **Multi-output streaming** - Push to SRT servers or expose local endpoints for monitoring
+- **Multi-recorder support** - Run multiple recording jobs with local and/or S3 storage, hourly rotation, retention cleanup and on-demand control
+- **Configurable VU meters** - Peak/RMS metering with configurable peak hold and clip detection
 - **Silence detection** - Alerts via webhook, email, file log, or Zabbix when audio drops below threshold
-- **Silence audio dumps** - Capture audio around silence events for troubleshooting and recovery notifications
+- **Silence audio dumps** - Capture audio around silence events for troubleshooting
 - **Channel imbalance detection** - Detects dead or mismatched L/R channels with webhook, email, file log, Zabbix, live UI, and readiness status
 - **Multiple codecs** - MP3, Opus, or uncompressed PCM per output
 - **Single binary** - Web interface embedded, minimal runtime dependencies
@@ -25,11 +25,9 @@ Audio streaming software for [ZuidWest FM](https://www.zuidwestfm.nl/) (Linux), 
 
 The Windows build launches as a systray application without a console window: right-click the tray icon for Open UI / Start / Stop / Show Logs / Quit. slog output is redirected to `%PROGRAMDATA%\encoder\encoder.log` when no console is attached, falling back to `%LOCALAPPDATA%\encoder\encoder.log` and then the system temp directory if that path is not writable; the operational event log stays at `%PROGRAMDATA%\encoder\logs\<port>\encoder.jsonl`.
 
-## Deployment Model
+## Deployment
 
-This is bare-metal software for a Raspberry Pi with a HiFiBerry sound card - there is no Docker target. Audio capture goes directly through ALSA (`arecord`) on the host, which needs the kernel sound device, the HiFiBerry overlay, and predictable real-time scheduling. Containerizing it would add a layer without solving anything for this hardware path.
-
-Install via the curl script in [Installation](#installation) below. CI publishes the binary as a GitHub release asset; no container image is published.
+This is bare-metal software for a Raspberry Pi with a HiFiBerry sound card. Audio capture goes directly through ALSA (`arecord`). Install via the curl script in [Installation](#installation) below. CI publishes the binary as a GitHub release asset; no container image is published.
 
 ## Requirements
 
@@ -71,13 +69,12 @@ The web interface shows a notification when updates are available.
 
 ## Audio Input
 
-Connect the digital output of your audio processor to the HiFiBerry input.
+Connect the audio output of your audio processor to the HiFiBerry input.
 
 **Requirements:**
 - 48 kHz sample rate
 - 16-bit depth
 - Stereo (2 channels)
-- S/PDIF format preferred (AES/EBU compatibility not guaranteed)
 
 ## Codecs
 
@@ -179,11 +176,12 @@ Streams support two SRT modes:
 - **Push to server** (`mode: "caller"`): the encoder connects to a remote SRT listener using the configured host, port, codec, password, stream ID, and retry settings.
 - **Local pull listener** (`mode: "listener"`): the encoder opens a local SRT port so clients can pull the stream, for example `srt://<encoder-ip>:9000?mode=caller`.
 
-Listener streams bind to `0.0.0.0` by default, use a separate port per stream, and accept up to 16 clients. They do not use `stream_id`; MP3 is the default codec, with Opus and PCM available for compatible clients. Client disconnects do not restart the encoder. SRT encryption is optional. Empty passwords allow unencrypted connections; non-empty passwords must be 10-64 characters. Caller mode requires FFmpeg with `srt` protocol support, while listener mode uses GoSRT and does not.
+Listener streams bind to `0.0.0.0` by default, use a separate port per stream, and accept up to 16 clients. They do not use `stream_id`. Client disconnects do not restart the encoder. SRT encryption is optional. Empty passwords allow unencrypted connections; non-empty passwords must be 10-64 characters. Caller mode requires FFmpeg with `srt` protocol support, while listener mode uses GoSRT and does not.
 
 ## Event Log
 
 The encoder logs all stream, audio, and recording events to a JSON Lines file for monitoring and debugging. Audio events include silence, audio dump, and channel imbalance events. Events are accessible via the web interface and REST API.
+
 The active log rotates at 50 MiB and keeps one previous file. The web interface and REST API read recent events from both files without loading the full log into memory.
 
 See [docs/events.md](docs/events.md) for the complete event reference.
