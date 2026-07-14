@@ -49,13 +49,8 @@ func (w *rollingWriter) Write(p []byte) (int, error) {
 	}
 
 	if w.written+int64(len(p)) > w.maxSize {
-		// Best-effort: on rename failure the current file keeps growing and
-		// rotation is retried after another maxSize bytes; on reopen failure
-		// the next Write retries the open. Losing rotation is preferable to
-		// losing logs.
-		_ = w.rotateLocked()
-		if w.file == nil {
-			return 0, os.ErrClosed
+		if err := w.rotateLocked(); err != nil {
+			return 0, err
 		}
 	}
 
@@ -82,9 +77,12 @@ func (w *rollingWriter) openLocked() error {
 	return nil
 }
 
-// rotateLocked renames the active file to path+".1" and opens a fresh one.
-// The old handle is discarded even if Close errors - a *File is unusable
-// after Close regardless - so this never leaves a dead handle behind.
+// rotateLocked renames the active file to path+".1" and opens a fresh one,
+// returning an error only when the reopen fails (file stays nil and the next
+// Write retries). The old handle is discarded even if Close errors - a *File
+// is unusable after Close regardless - so this never leaves a dead handle
+// behind. A rename failure is tolerated: losing rotation is preferable to
+// losing logs.
 func (w *rollingWriter) rotateLocked() error {
 	_ = w.file.Close()
 	w.file = nil
@@ -102,5 +100,5 @@ func (w *rollingWriter) rotateLocked() error {
 		// bytes instead of on every write.
 		w.written = 0
 	}
-	return renameErr
+	return nil
 }

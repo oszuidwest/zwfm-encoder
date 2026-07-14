@@ -1,7 +1,6 @@
 // Package tray provides a Windows systray for the encoder. On non-Windows
 // platforms the package compiles to just the shared type declarations; the
-// Run and Quit entry points only exist on Windows and are called from
-// shell_windows.go.
+// Run and Quit entry points only exist on Windows.
 package tray
 
 // Status represents the encoder's high-level state for tray display.
