@@ -2,18 +2,10 @@
 
 package main
 
-import (
-	"context"
-	"os/signal"
+import "context"
 
-	"github.com/oszuidwest/zwfm-encoder/internal/util"
-)
-
-// runShell blocks until a shutdown signal (SIGINT/SIGTERM) arrives, then
+// runShell blocks until the shutdown signal context is cancelled, then
 // returns so main can proceed to shutdown.
-func runShell(_ *app) {
-	ctx, stop := signal.NotifyContext(context.Background(), util.ShutdownSignals()...)
-	defer stop()
-
+func runShell(ctx context.Context, _ *app) {
 	<-ctx.Done()
 }

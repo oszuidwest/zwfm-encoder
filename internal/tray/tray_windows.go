@@ -4,11 +4,11 @@ package tray
 
 import (
 	"log/slog"
+	"sync"
 	"time"
 
 	"fyne.io/systray"
-
-	"github.com/oszuidwest/zwfm-encoder/internal/util"
+	"golang.org/x/sys/windows"
 )
 
 // Run installs the tray icon and menu, then blocks until the user picks Quit
@@ -19,10 +19,35 @@ func Run(cfg Config) {
 	// done stops the click and poll goroutines when the tray exits, so
 	// nothing calls into systray after its message loop has ended.
 	done := make(chan struct{})
+	var handlers sync.WaitGroup
+
+	// systray invokes onReady on its own goroutine and never waits for it
+	// on Windows, so a very early Quit can make systray.Run return before
+	// installMenu has run. The exited barrier closes that gap: by the time
+	// handlers.Wait() executes, the handler goroutine is either registered
+	// with the WaitGroup or will never be installed at all.
+	var mu sync.Mutex
+	exited := false
+
 	systray.Run(
-		func() { installMenu(cfg, done) },
+		func() {
+			mu.Lock()
+			defer mu.Unlock()
+			if !exited {
+				installMenu(cfg, done, &handlers)
+			}
+		},
 		func() { close(done) },
 	)
+
+	mu.Lock()
+	exited = true
+	mu.Unlock()
+	// An externally invoked Quit (signal bridge) can end the message loop
+	// while a click handler is still inside StartEncoder/StopEncoder. Wait
+	// for it, so the caller never runs shutdown concurrently with an
+	// in-flight encoder operation.
+	handlers.Wait()
 }
 
 // Quit signals the tray to exit; safe to call from any goroutine.
@@ -30,7 +55,7 @@ func Quit() {
 	systray.Quit()
 }
 
-func installMenu(cfg Config, done <-chan struct{}) {
+func installMenu(cfg Config, done <-chan struct{}, handlers *sync.WaitGroup) {
 	openUI := systray.AddMenuItem("Open UI", "Open the web interface in the default browser")
 	systray.AddSeparator()
 	startItem := systray.AddMenuItem("Start Encoder", "Start audio capture and streaming")
@@ -57,21 +82,24 @@ func installMenu(cfg Config, done <-chan struct{}) {
 			stopItem.Disable()
 			systray.SetTooltip(cfg.AppName + " - FFmpeg missing")
 		}
-		icon, ok := iconICO[s]
-		if !ok { // unknown future status: any icon beats none
-			icon = iconICO[StatusStopped]
-		}
-		systray.SetIcon(icon)
+		systray.SetIcon(iconICO[s])
 	}
 
 	last := cfg.Status()
 	apply(last)
 
-	go func() { // menu clicks
+	// Menu clicks. Handlers run synchronously on this goroutine: Stop can
+	// block for a few seconds (it waits out the process shutdown timeout)
+	// and queues later clicks behind it, but it guarantees no encoder
+	// operation is ever in flight once this goroutine exits and Run's
+	// handlers.Wait() unblocks into shutdown.
+	handlers.Add(1)
+	go func() {
+		defer handlers.Done()
 		for {
 			select {
 			case <-openUI.ClickedCh:
-				if err := openBrowser(cfg.URL); err != nil {
+				if err := shellOpen(cfg.URL); err != nil {
 					slog.Error("tray: open browser failed", "error", err, "url", cfg.URL)
 				}
 			case <-startItem.ClickedCh:
@@ -85,7 +113,7 @@ func installMenu(cfg Config, done <-chan struct{}) {
 					systray.SetTooltip(cfg.AppName + " - stop failed: " + err.Error())
 				}
 			case <-showLogs.ClickedCh:
-				if err := openFolder(cfg.LogDir); err != nil {
+				if err := shellOpen(cfg.LogDir); err != nil {
 					slog.Error("tray: open logs folder failed", "error", err, "dir", cfg.LogDir)
 				}
 			case <-quit.ClickedCh:
@@ -118,12 +146,17 @@ func installMenu(cfg Config, done <-chan struct{}) {
 	}()
 }
 
-// openBrowser launches the default browser via rundll32.
-func openBrowser(url string) error {
-	return util.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
-}
-
-// openFolder opens the given directory in Explorer.
-func openFolder(dir string) error {
-	return util.Command("explorer.exe", dir).Start()
+// shellOpen opens target (a URL or a folder) with its default handler - the
+// browser or Explorer - via ShellExecute, without spawning an intermediate
+// process.
+func shellOpen(target string) error {
+	verb, err := windows.UTF16PtrFromString("open")
+	if err != nil {
+		return err
+	}
+	t, err := windows.UTF16PtrFromString(target)
+	if err != nil {
+		return err
+	}
+	return windows.ShellExecute(0, verb, t, nil, nil, windows.SW_SHOWNORMAL)
 }

@@ -12,6 +12,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	golang.org/x/mod v0.37.0
 	golang.org/x/oauth2 v0.36.0
+	golang.org/x/sys v0.46.0
 )
 
 require (
@@ -30,7 +31,6 @@ require (
 	golang.org/x/exp/typeparams v0.0.0-20231108232855-2478ac86f678 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260508192327-42602be52be6 // indirect
 	golang.org/x/tools v0.45.0 // indirect
 	golang.org/x/vuln v1.3.0 // indirect

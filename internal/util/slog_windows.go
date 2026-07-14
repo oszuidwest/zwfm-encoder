@@ -17,18 +17,12 @@ import (
 // %PROGRAMDATA%\encoder\logs\<port>\encoder.jsonl remains the authoritative
 // operational record; this file only captures slog output.
 func slogLogCandidates() []string {
-	var dirs []string
-	if d := os.Getenv("PROGRAMDATA"); d != "" {
-		dirs = append(dirs, d)
-	}
-	if d := os.Getenv("LOCALAPPDATA"); d != "" {
-		dirs = append(dirs, d)
-	}
-	dirs = append(dirs, os.TempDir())
-
-	paths := make([]string, 0, len(dirs))
-	for _, d := range dirs {
-		paths = append(paths, filepath.Join(d, "encoder", "encoder.log"))
+	localAppData, _ := os.UserCacheDir() // %LOCALAPPDATA%
+	var paths []string
+	for _, dir := range []string{os.Getenv("PROGRAMDATA"), localAppData, os.TempDir()} {
+		if dir != "" {
+			paths = append(paths, filepath.Join(dir, "encoder", "encoder.log"))
+		}
 	}
 	return paths
 }

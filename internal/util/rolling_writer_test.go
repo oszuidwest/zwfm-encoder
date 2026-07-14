@@ -39,34 +39,24 @@ func readFile(t *testing.T, path string) string {
 	return string(b)
 }
 
-func TestRollingWriterRotatesAtCap(t *testing.T) {
-	t.Parallel()
-	w, path := newTestWriter(t)
-
-	first := strings.Repeat("a", 60)
-	second := strings.Repeat("b", 10)
-	mustWrite(t, w, first)
-	mustWrite(t, w, second) // 60+10 > 64: rotates before writing
-
-	if got := readFile(t, path+".1"); got != first {
-		t.Fatalf("rotated file = %q, want %q", got, first)
-	}
-	if got := readFile(t, path); got != second {
-		t.Fatalf("active file = %q, want %q", got, second)
-	}
-}
-
-func TestRollingWriterRolloverReplacesPrevious(t *testing.T) {
+func TestRollingWriterRotatesAtCapAndReplacesPrevious(t *testing.T) {
 	t.Parallel()
 	w, path := newTestWriter(t)
 
 	gen1 := strings.Repeat("1", 60)
 	gen2 := strings.Repeat("2", 60)
 	last := strings.Repeat("x", 5)
-	mustWrite(t, w, gen1)
-	mustWrite(t, w, gen2) // rotates gen1 to .1
-	mustWrite(t, w, last) // 60+5 > 64: rotates gen2, replacing .1
 
+	mustWrite(t, w, gen1)
+	mustWrite(t, w, gen2) // 60+60 > 64: rotates gen1 to .1 before writing
+	if got := readFile(t, path+".1"); got != gen1 {
+		t.Fatalf("rotated file = %q, want %q", got, gen1)
+	}
+	if got := readFile(t, path); got != gen2 {
+		t.Fatalf("active file = %q, want %q", got, gen2)
+	}
+
+	mustWrite(t, w, last) // 60+5 > 64: rotates gen2, replacing the previous .1
 	if got := readFile(t, path+".1"); got != gen2 {
 		t.Fatalf("rotated file = %q, want %q", got, gen2)
 	}

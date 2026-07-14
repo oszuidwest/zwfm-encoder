@@ -11,10 +11,10 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"time"
 
@@ -61,7 +61,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	runShell(a)
+	ctx, stop := signal.NotifyContext(context.Background(), util.ShutdownSignals()...)
+	runShell(ctx, a)
+	// Restore default signal handling so a second Ctrl+C during shutdown
+	// force-kills instead of being swallowed.
+	stop()
 
 	slog.Info("shutting down")
 	shutdown(a)
@@ -95,10 +99,9 @@ func startApp(configPath string) (*app, error) {
 		slog.Error("failed to initialize recording", "error", err)
 	}
 
-	if err := enc.Start(); err != nil {
-		if errors.Is(err, encoder.ErrFFmpegNotAvailable) {
-			slog.Warn("encoder not started - FFmpeg not available")
-		} else {
+	// The degraded-mode warning above already covers the FFmpeg-missing case.
+	if enc.FFmpegAvailable() {
+		if err := enc.Start(); err != nil {
 			slog.Error("failed to start encoder", "error", err)
 		}
 	}
