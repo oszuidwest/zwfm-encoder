@@ -61,7 +61,6 @@ type Encoder struct {
 	buildCaptureCommand func(device, ffmpegPath string) (string, []string, error)
 	streamRestartDelay  time.Duration
 	srtAvailable        bool
-	srtProbeError       error
 	streamManager       *streaming.Manager
 	recordingManager    *recording.Manager
 	silenceDumpManager  *silencedump.Manager
@@ -133,8 +132,7 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 		ffmpegPath:          ffmpegPath,
 		buildCaptureCommand: audio.BuildCaptureCommand,
 		streamRestartDelay:  types.StreamRestartDelay,
-		srtAvailable:        srtAvailable,
-		srtProbeError:       srtProbeErr,
+		srtAvailable:        srtUsable(srtAvailable, srtProbeErr),
 		streamManager:       streamMgr,
 		silenceDumpManager:  dumpManager,
 		eventLogger:         logger,
@@ -153,20 +151,23 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 	return e, nil
 }
 
-// SRTAvailable reports whether the configured FFmpeg binary supports SRT.
-func (e *Encoder) SRTAvailable() bool {
-	if e == nil {
-		return false
-	}
-	// A failed probe is inconclusive, not proof that SRT is unavailable. Keep
-	// SRT usable and let the real FFmpeg stream command report a definitive
-	// protocol error if necessary.
-	return e.srtAvailable || (e.ffmpegPath != "" && e.srtProbeError != nil)
+// srtUsable decides whether SRT streams may be attempted based on the probe
+// outcome. A failed probe is inconclusive, not proof that SRT is unavailable,
+// so SRT stays usable and the real FFmpeg stream command reports a definitive
+// protocol error if necessary.
+func srtUsable(supported bool, probeErr error) bool {
+	return supported || probeErr != nil
 }
 
-// srtCapabilityError reports why SRT streams cannot run, or nil when SRT is usable
-// or unconfigured. A probe error is inconclusive, so it also returns nil and lets
-// the real stream process determine whether SRT works.
+// SRTAvailable reports whether SRT streams may be attempted: SRT support is
+// confirmed or the capability probe was inconclusive.
+func (e *Encoder) SRTAvailable() bool {
+	return e != nil && e.srtAvailable
+}
+
+// srtCapabilityError reports why SRT streams cannot run, or nil when SRT is
+// usable or unconfigured. It returns nil in degraded mode (no FFmpeg path),
+// where SRT is not the relevant failure.
 func (e *Encoder) srtCapabilityError() error {
 	if e == nil || e.ffmpegPath == "" || e.SRTAvailable() {
 		return nil

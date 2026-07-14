@@ -22,6 +22,8 @@ import (
 
 const testStreamRestartDelay = 200 * time.Millisecond
 
+const nonexistentFFmpeg = "/nonexistent/ffmpeg-binary-for-test"
+
 func TestStartRejectsStateStopping(t *testing.T) {
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	if err := cfg.ApplySettings(&config.SettingsUpdate{
@@ -210,8 +212,7 @@ func TestStreamStatusesAllowsUnverifiedSRT(t *testing.T) {
 	e := &Encoder{
 		config:        cfg,
 		ffmpegPath:    "ffmpeg",
-		srtAvailable:  false,
-		srtProbeError: errors.New("probe timed out"),
+		srtAvailable:  srtUsable(false, errors.New("probe timed out")),
 		streamManager: streaming.NewManager("ffmpeg"),
 	}
 	statuses := e.StreamStatuses([]types.Stream{stream})
@@ -267,12 +268,11 @@ func TestStartStreamAttemptsUnverifiedSRT(t *testing.T) {
 	}
 	e := &Encoder{
 		config:        cfg,
-		ffmpegPath:    "/nonexistent/ffmpeg-binary-for-test",
+		ffmpegPath:    nonexistentFFmpeg,
 		state:         types.StateRunning,
 		stopChan:      make(chan struct{}),
-		srtAvailable:  false,
-		srtProbeError: errors.New("probe timed out"),
-		streamManager: streaming.NewManager("/nonexistent/ffmpeg-binary-for-test"),
+		srtAvailable:  srtUsable(false, errors.New("probe timed out")),
+		streamManager: streaming.NewManager(nonexistentFFmpeg),
 	}
 	err := e.StartStream("stream-1")
 	if err == nil {
@@ -299,8 +299,7 @@ func TestStartStreamDoesNotRequireSRTForListener(t *testing.T) {
 		state:         types.StateRunning,
 		stopChan:      make(chan struct{}),
 		srtAvailable:  false,
-		srtProbeError: errors.New("probe timed out"),
-		streamManager: streaming.NewManager("/nonexistent/ffmpeg-binary-for-test"),
+		streamManager: streaming.NewManager(nonexistentFFmpeg),
 	}
 	err := e.StartStream("listener-1")
 	if err == nil {

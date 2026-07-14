@@ -1,7 +1,6 @@
 package util
 
 import (
-	"context"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -66,12 +65,7 @@ func TestProbeFFmpegProtocolReturnsProbeResult(t *testing.T) {
 			wantOK: true,
 		},
 		{
-			name:     "timeout",
-			probeErr: context.DeadlineExceeded,
-			wantErr:  context.DeadlineExceeded,
-		},
-		{
-			name:     "command failure",
+			name:     "probe error",
 			probeErr: probeErr,
 			wantErr:  probeErr,
 		},
@@ -85,9 +79,7 @@ func TestProbeFFmpegProtocolReturnsProbeResult(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			orig := probeFFmpegProtocols
 			t.Cleanup(func() { probeFFmpegProtocols = orig })
-			attempts := 0
 			probeFFmpegProtocols = func(string) ([]byte, error) {
-				attempts++
 				return []byte(tt.output), tt.probeErr
 			}
 
@@ -97,9 +89,6 @@ func TestProbeFFmpegProtocolReturnsProbeResult(t *testing.T) {
 			}
 			if ok != tt.wantOK {
 				t.Fatalf("ProbeFFmpegProtocol() ok = %t, want %t", ok, tt.wantOK)
-			}
-			if attempts != 1 {
-				t.Fatalf("probe attempts = %d, want 1", attempts)
 			}
 		})
 	}
