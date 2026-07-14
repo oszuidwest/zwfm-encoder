@@ -38,6 +38,12 @@
   "tag-pair": true,
   "tagname-lowercase": true,
   "tagname-specialchars": true,
-  "tags-check": true,
+  "tags-check": {
+    "a": {
+      "selfclosing": false,
+      "attrsRequired": ["href"],
+      "redundantAttrs": ["alt"]
+    }
+  },
   "title-require": true
 }

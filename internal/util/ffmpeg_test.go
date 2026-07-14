@@ -1,6 +1,7 @@
 package util
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 )
@@ -39,7 +40,6 @@ Output:
 	}
 }
 func TestProbeFFmpegProtocolReturnsProbeError(t *testing.T) {
-	t.Parallel()
 	missing := filepath.Join(t.TempDir(), "missing-ffmpeg")
 	ok, err := ProbeFFmpegProtocol(missing, "srt")
 	if err == nil {
@@ -47,5 +47,49 @@ func TestProbeFFmpegProtocolReturnsProbeError(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("ProbeFFmpegProtocol() ok = true, want false on probe error")
+	}
+}
+
+func TestProbeFFmpegProtocolReturnsProbeResult(t *testing.T) {
+	probeErr := errors.New("exec failed")
+	tests := []struct {
+		name     string
+		output   string
+		probeErr error
+		wantOK   bool
+		wantErr  error
+	}{
+		{
+			name:   "supported protocol",
+			output: "Input:\n  srt\n",
+			wantOK: true,
+		},
+		{
+			name:     "probe error",
+			probeErr: probeErr,
+			wantErr:  probeErr,
+		},
+		{
+			name:   "protocol unsupported",
+			output: "Input:\n  srtp\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			orig := probeFFmpegProtocols
+			t.Cleanup(func() { probeFFmpegProtocols = orig })
+			probeFFmpegProtocols = func(string) ([]byte, error) {
+				return []byte(tt.output), tt.probeErr
+			}
+
+			ok, err := ProbeFFmpegProtocol("ffmpeg", "srt")
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("ProbeFFmpegProtocol() error = %v, want %v", err, tt.wantErr)
+			}
+			if ok != tt.wantOK {
+				t.Fatalf("ProbeFFmpegProtocol() ok = %t, want %t", ok, tt.wantOK)
+			}
+		})
 	}
 }
