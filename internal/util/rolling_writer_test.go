@@ -16,7 +16,22 @@ func newTestWriter(t *testing.T) (w *rollingWriter, path string) {
 	if err != nil {
 		t.Fatalf("newRollingWriter() error = %v", err)
 	}
+	closeOnCleanup(t, w)
 	return w, path
+}
+
+// closeOnCleanup closes the writer's open file when the test ends. On Windows
+// the log file is opened without FILE_SHARE_DELETE, so a still-open handle
+// makes t.TempDir's RemoveAll cleanup fail with a sharing violation.
+func closeOnCleanup(t *testing.T, w *rollingWriter) {
+	t.Helper()
+	t.Cleanup(func() {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		if w.file != nil {
+			_ = w.file.Close()
+		}
+	})
 }
 
 func mustWrite(t *testing.T, w *rollingWriter, s string) {
@@ -77,6 +92,7 @@ func TestRollingWriterResumesFromExistingSize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newRollingWriter() error = %v", err)
 	}
+	closeOnCleanup(t, w)
 	if w.written != 40 {
 		t.Fatalf("written = %d, want 40 (resumed from existing size)", w.written)
 	}

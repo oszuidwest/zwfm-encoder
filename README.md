@@ -23,7 +23,7 @@ Audio streaming software for [ZuidWest FM](https://www.zuidwestfm.nl/) (Linux), 
 | macOS | Development only | FFmpeg (AVFoundation) |
 | Windows | Experimental | FFmpeg (DirectShow) |
 
-The Windows build launches as a systray application without a console window: right-click the tray icon for Open UI / Start / Stop / Show Logs / Quit. slog output is redirected to `%PROGRAMDATA%\encoder\encoder.log` when no console is attached; the operational event log stays at `%PROGRAMDATA%\encoder\logs\<port>\encoder.jsonl`.
+The Windows build launches as a systray application without a console window: right-click the tray icon for Open UI / Start / Stop / Show Logs / Quit. slog output is redirected to `%PROGRAMDATA%\encoder\encoder.log` when no console is attached, falling back to `%LOCALAPPDATA%\encoder\encoder.log` and then the system temp directory if that path is not writable; the operational event log stays at `%PROGRAMDATA%\encoder\logs\<port>\encoder.jsonl`.
 
 ## Deployment Model
 

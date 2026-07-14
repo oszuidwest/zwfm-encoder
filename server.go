@@ -491,7 +491,8 @@ func (s *Server) handleExternalRecordingAction(w http.ResponseWriter, r *http.Re
 	})
 }
 
-// Start begins the HTTP server and returns it for graceful shutdown.
+// Start launches the HTTP server on the configured port in a background
+// goroutine. Call Stop for graceful shutdown.
 func (s *Server) Start() {
 	addr := fmt.Sprintf(":%d", s.config.Snapshot().WebPort)
 	slog.Info("starting web server", "addr", addr)
