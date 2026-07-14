@@ -51,9 +51,6 @@ var ErrStreamNotFound = errors.New("stream not found")
 // ErrSRTUnsupported is returned when the FFmpeg build lacks SRT protocol support.
 var ErrSRTUnsupported = errors.New("ffmpeg does not support srt protocol")
 
-// ErrSRTUnverified is returned when FFmpeg SRT support could not be verified.
-var ErrSRTUnverified = errors.New("could not verify ffmpeg srt protocol support")
-
 // ErrRecordingNotAvailable is returned when the recording manager is not initialized.
 var ErrRecordingNotAvailable = errors.New("recording not available")
 
@@ -64,7 +61,6 @@ type Encoder struct {
 	buildCaptureCommand func(device, ffmpegPath string) (string, []string, error)
 	streamRestartDelay  time.Duration
 	srtAvailable        bool
-	srtProbeError       error
 	streamManager       *streaming.Manager
 	recordingManager    *recording.Manager
 	silenceDumpManager  *silencedump.Manager
@@ -125,7 +121,7 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 	srtAvailable, srtProbeErr := util.ProbeFFmpegProtocol(ffmpegPath, "srt")
 	switch {
 	case srtProbeErr != nil:
-		slog.Warn("could not verify FFmpeg SRT protocol support",
+		slog.Warn("could not verify FFmpeg SRT protocol support; SRT streams will still be attempted",
 			"path", ffmpegPath, "error", srtProbeErr)
 	case ffmpegPath != "" && !srtAvailable:
 		slog.Warn("FFmpeg found but SRT protocol is not available", "path", ffmpegPath)
@@ -136,8 +132,7 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 		ffmpegPath:          ffmpegPath,
 		buildCaptureCommand: audio.BuildCaptureCommand,
 		streamRestartDelay:  types.StreamRestartDelay,
-		srtAvailable:        srtAvailable,
-		srtProbeError:       srtProbeErr,
+		srtAvailable:        srtUsable(srtAvailable, srtProbeErr),
 		streamManager:       streamMgr,
 		silenceDumpManager:  dumpManager,
 		eventLogger:         logger,
@@ -156,32 +151,28 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 	return e, nil
 }
 
-// SRTAvailable reports whether the configured FFmpeg binary supports SRT.
+// srtUsable decides whether SRT streams may be attempted based on the probe
+// outcome. A failed probe is inconclusive, not proof that SRT is unavailable,
+// so SRT stays usable and the real FFmpeg stream command reports a definitive
+// protocol error if necessary.
+func srtUsable(supported bool, probeErr error) bool {
+	return supported || probeErr != nil
+}
+
+// SRTAvailable reports whether SRT streams may be attempted: SRT support is
+// confirmed or the capability probe was inconclusive.
 func (e *Encoder) SRTAvailable() bool {
-	if e == nil {
-		return false
-	}
-	return e.srtAvailable
+	return e != nil && e.srtAvailable
 }
 
-// srtSentinel returns ErrSRTUnverified when the capability probe failed;
-// otherwise it returns ErrSRTUnsupported.
-func (e *Encoder) srtSentinel() error {
-	if e.srtProbeError != nil {
-		return ErrSRTUnverified
-	}
-	return ErrSRTUnsupported
-}
-
-// srtCapabilityError reports why SRT streams cannot run, or nil when SRT is usable
-// or unconfigured. It returns nil in degraded mode (no FFmpeg path), where SRT is
-// not the relevant failure; callers that must report SRT state regardless of FFmpeg
-// availability use srtSentinel directly.
+// srtCapabilityError reports why SRT streams cannot run, or nil when SRT is
+// usable or unconfigured. It returns nil in degraded mode (no FFmpeg path),
+// where SRT is not the relevant failure.
 func (e *Encoder) srtCapabilityError() error {
-	if e == nil || e.srtAvailable || e.ffmpegPath == "" {
+	if e == nil || e.ffmpegPath == "" || e.SRTAvailable() {
 		return nil
 	}
-	return e.srtSentinel()
+	return ErrSRTUnsupported
 }
 
 // SRTErrorMessage returns the user-facing SRT capability error, if any.
@@ -610,8 +601,10 @@ func (e *Encoder) startStream(streamID string, runID uint64) error {
 	if !stream.Enabled {
 		return ErrStreamDisabled
 	}
-	if stream.RequiresFFmpegSRT() && !e.srtAvailable {
-		return e.srtSentinel()
+	if stream.RequiresFFmpegSRT() {
+		if err := e.srtCapabilityError(); err != nil {
+			return err
+		}
 	}
 
 	// Start preserves existing retry state automatically

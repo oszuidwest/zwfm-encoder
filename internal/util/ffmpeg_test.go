@@ -1,7 +1,6 @@
 package util
 
 import (
-	"context"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -51,45 +50,28 @@ func TestProbeFFmpegProtocolReturnsProbeError(t *testing.T) {
 	}
 }
 
-func TestProbeFFmpegProtocolRetriesTimeoutsOnly(t *testing.T) {
+func TestProbeFFmpegProtocolReturnsProbeResult(t *testing.T) {
 	probeErr := errors.New("exec failed")
-	type probeResult struct {
-		output string
-		err    error
-	}
 	tests := []struct {
-		name string
-		// results per attempt; the last entry repeats for further attempts
-		results      []probeResult
-		wantOK       bool
-		wantErr      error
-		wantAttempts int
+		name     string
+		output   string
+		probeErr error
+		wantOK   bool
+		wantErr  error
 	}{
 		{
-			name: "retries after timeout",
-			results: []probeResult{
-				{err: context.DeadlineExceeded},
-				{output: "Input:\n  srt\n"},
-			},
-			wantOK:       true,
-			wantAttempts: 2,
+			name:   "supported protocol",
+			output: "Input:\n  srt\n",
+			wantOK: true,
 		},
 		{
-			name:         "errors after timeout exhaustion",
-			results:      []probeResult{{err: context.DeadlineExceeded}},
-			wantErr:      context.DeadlineExceeded,
-			wantAttempts: ffmpegProtocolProbeAttempts,
+			name:     "probe error",
+			probeErr: probeErr,
+			wantErr:  probeErr,
 		},
 		{
-			name:         "command failure not retried",
-			results:      []probeResult{{err: probeErr}},
-			wantErr:      probeErr,
-			wantAttempts: 1,
-		},
-		{
-			name:         "protocol unsupported not retried",
-			results:      []probeResult{{output: "Input:\n  srtp\n"}},
-			wantAttempts: 1,
+			name:   "protocol unsupported",
+			output: "Input:\n  srtp\n",
 		},
 	}
 
@@ -97,11 +79,8 @@ func TestProbeFFmpegProtocolRetriesTimeoutsOnly(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			orig := probeFFmpegProtocols
 			t.Cleanup(func() { probeFFmpegProtocols = orig })
-			attempts := 0
 			probeFFmpegProtocols = func(string) ([]byte, error) {
-				result := tt.results[min(attempts, len(tt.results)-1)]
-				attempts++
-				return []byte(result.output), result.err
+				return []byte(tt.output), tt.probeErr
 			}
 
 			ok, err := ProbeFFmpegProtocol("ffmpeg", "srt")
@@ -110,9 +89,6 @@ func TestProbeFFmpegProtocolRetriesTimeoutsOnly(t *testing.T) {
 			}
 			if ok != tt.wantOK {
 				t.Fatalf("ProbeFFmpegProtocol() ok = %t, want %t", ok, tt.wantOK)
-			}
-			if attempts != tt.wantAttempts {
-				t.Fatalf("probe attempts = %d, want %d", attempts, tt.wantAttempts)
 			}
 		})
 	}

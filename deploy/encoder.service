@@ -1,7 +1,7 @@
 [Unit]
 Description=ZuidWest FM Encoder
-After=network.target sound.target
-Wants=network.target
+After=network-online.target sound.target
+Wants=network-online.target
 
 [Service]
 Type=simple
