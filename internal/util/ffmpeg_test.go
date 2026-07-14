@@ -41,7 +41,6 @@ Output:
 	}
 }
 func TestProbeFFmpegProtocolReturnsProbeError(t *testing.T) {
-	t.Parallel()
 	missing := filepath.Join(t.TempDir(), "missing-ffmpeg")
 	ok, err := ProbeFFmpegProtocol(missing, "srt")
 	if err == nil {
@@ -52,88 +51,68 @@ func TestProbeFFmpegProtocolReturnsProbeError(t *testing.T) {
 	}
 }
 
-func TestProbeFFmpegProtocolRetriesAfterTimeout(t *testing.T) {
-	t.Parallel()
-	attempts := 0
-	probe := func(string) ([]byte, error) {
-		attempts++
-		if attempts == 1 {
-			return nil, context.DeadlineExceeded
-		}
-		return []byte("Input:\n  srt\n"), nil
-	}
-
-	ok, err := probeFFmpegProtocol("ffmpeg", "srt", probe)
-	if err != nil {
-		t.Fatalf("probeFFmpegProtocol() error = %v, want nil", err)
-	}
-	if !ok {
-		t.Fatal("probeFFmpegProtocol() ok = false, want true after retry")
-	}
-	if attempts != 2 {
-		t.Fatalf("probe attempts = %d, want 2", attempts)
-	}
-}
-
-func TestProbeFFmpegProtocolReturnsErrorAfterTimeouts(t *testing.T) {
-	t.Parallel()
-	attempts := 0
-	probe := func(string) ([]byte, error) {
-		attempts++
-		return nil, context.DeadlineExceeded
-	}
-
-	ok, err := probeFFmpegProtocol("ffmpeg", "srt", probe)
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("probeFFmpegProtocol() error = %v, want context deadline exceeded", err)
-	}
-	if ok {
-		t.Fatal("probeFFmpegProtocol() ok = true, want false after timeout exhaustion")
-	}
-	if attempts != ffmpegProtocolProbeAttempts {
-		t.Fatalf("probe attempts = %d, want %d", attempts, ffmpegProtocolProbeAttempts)
-	}
-}
-
-func TestProbeFFmpegProtocolDoesNotRetryDefinitiveResult(t *testing.T) {
-	t.Parallel()
+func TestProbeFFmpegProtocolRetriesTimeoutsOnly(t *testing.T) {
 	probeErr := errors.New("exec failed")
+	type probeResult struct {
+		output string
+		err    error
+	}
 	tests := []struct {
-		name    string
-		output  string
-		err     error
-		wantOK  bool
-		wantErr error
+		name string
+		// results per attempt; the last entry repeats for further attempts
+		results      []probeResult
+		wantOK       bool
+		wantErr      error
+		wantAttempts int
 	}{
 		{
-			name:    "command failure",
-			err:     probeErr,
-			wantErr: probeErr,
+			name: "retries after timeout",
+			results: []probeResult{
+				{err: context.DeadlineExceeded},
+				{output: "Input:\n  srt\n"},
+			},
+			wantOK:       true,
+			wantAttempts: 2,
 		},
 		{
-			name:   "protocol unsupported",
-			output: "Input:\n  srtp\n",
+			name:         "errors after timeout exhaustion",
+			results:      []probeResult{{err: context.DeadlineExceeded}},
+			wantErr:      context.DeadlineExceeded,
+			wantAttempts: ffmpegProtocolProbeAttempts,
+		},
+		{
+			name:         "command failure not retried",
+			results:      []probeResult{{err: probeErr}},
+			wantErr:      probeErr,
+			wantAttempts: 1,
+		},
+		{
+			name:         "protocol unsupported not retried",
+			results:      []probeResult{{output: "Input:\n  srtp\n"}},
+			wantAttempts: 1,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
+			orig := probeFFmpegProtocols
+			t.Cleanup(func() { probeFFmpegProtocols = orig })
 			attempts := 0
-			probe := func(string) ([]byte, error) {
+			probeFFmpegProtocols = func(string) ([]byte, error) {
+				result := tt.results[min(attempts, len(tt.results)-1)]
 				attempts++
-				return []byte(tt.output), tt.err
+				return []byte(result.output), result.err
 			}
 
-			ok, err := probeFFmpegProtocol("ffmpeg", "srt", probe)
+			ok, err := ProbeFFmpegProtocol("ffmpeg", "srt")
 			if !errors.Is(err, tt.wantErr) {
-				t.Fatalf("probeFFmpegProtocol() error = %v, want %v", err, tt.wantErr)
+				t.Fatalf("ProbeFFmpegProtocol() error = %v, want %v", err, tt.wantErr)
 			}
 			if ok != tt.wantOK {
-				t.Fatalf("probeFFmpegProtocol() ok = %t, want %t", ok, tt.wantOK)
+				t.Fatalf("ProbeFFmpegProtocol() ok = %t, want %t", ok, tt.wantOK)
 			}
-			if attempts != 1 {
-				t.Fatalf("probe attempts = %d, want 1", attempts)
+			if attempts != tt.wantAttempts {
+				t.Fatalf("probe attempts = %d, want %d", attempts, tt.wantAttempts)
 			}
 		})
 	}
