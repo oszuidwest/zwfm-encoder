@@ -146,11 +146,6 @@
         --overlay-strong: rgb(255 255 255 / 30%);
         --focus-ring: color-mix(in srgb, var(--brand) 40%, transparent);
         --brand-tint: color-mix(in srgb, var(--brand) 10%, transparent);
-
-        /* Page backdrop sheen and grid lines. */
-        --page-sheen: rgb(255 255 255 / 58%);
-        --page-grid-v: rgb(100 116 139 / 4%);
-        --page-grid-h: rgb(100 116 139 / 3%);
     }
 
     /* Only token values change for dark mode; selectors stay shared. */
@@ -174,9 +169,6 @@
             --tabs-bg: var(--neutral-700);
             --tab-text: var(--neutral-300);
             --tab-text-hover: var(--neutral-100);
-            --page-sheen: rgb(255 255 255 / 3%);
-            --page-grid-v: rgb(148 163 184 / 4%);
-            --page-grid-h: rgb(148 163 184 / 3%);
         }
 
         select {
@@ -189,11 +181,7 @@
 @layer base {
     body {
         font-family: "Avenir Next", Aptos, -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, Roboto, 'Helvetica Neue', Arial, sans-serif;
-        background:
-            linear-gradient(180deg, var(--page-sheen), transparent 18rem),
-            repeating-linear-gradient(90deg, var(--page-grid-v) 0 1px, transparent 1px 3rem),
-            repeating-linear-gradient(0deg, var(--page-grid-h) 0 1px, transparent 1px 3rem),
-            var(--surface-page);
+        background: var(--surface-page);
         color: var(--text-primary);
         min-height: 100dvh;
         -webkit-font-smoothing: antialiased;
