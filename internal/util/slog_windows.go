@@ -9,19 +9,21 @@ import (
 )
 
 // slogLogCandidates returns fallback slog destinations, most preferred first.
-// %PROGRAMDATA% may not be writable for a non-admin user (e.g. when an
-// elevated first run created the file), so %LOCALAPPDATA% and the temp dir
-// serve as user-writable fallbacks. The path is fixed rather than per-port
-// because SetupLogging runs before config load; two encoder instances on one
-// machine would share (and fight over) the first file. The event log at
-// %PROGRAMDATA%\encoder\logs\<port>\encoder.jsonl remains the authoritative
-// operational record; this file only captures slog output.
+// The preferred root is WindowsDataDir, the same derivation the event log
+// uses, so both land under one directory. That root may not be writable for
+// a non-admin user (e.g. when an elevated first run created the file), so
+// %LOCALAPPDATA% and the temp dir serve as user-writable fallbacks. The path
+// is fixed rather than per-port because SetupLogging runs before config
+// load; two encoder instances on one machine would share (and fight over)
+// the first file. The event log at <WindowsDataDir>\logs\<port>\encoder.jsonl
+// remains the authoritative operational record; this file only captures slog
+// output.
 func slogLogCandidates() []string {
 	localAppData, _ := os.UserCacheDir() // %LOCALAPPDATA%
-	var paths []string
-	for _, dir := range []string{os.Getenv("PROGRAMDATA"), localAppData, os.TempDir()} {
+	paths := []string{filepath.Join(WindowsDataDir(), "encoder.log")}
+	for _, dir := range []string{localAppData, os.TempDir()} {
 		if dir != "" {
-			paths = append(paths, filepath.Join(dir, "encoder", "encoder.log"))
+			paths = append(paths, filepath.Join(dir, windowsAppDirName, "encoder.log"))
 		}
 	}
 	return paths

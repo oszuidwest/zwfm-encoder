@@ -14,6 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 // EventType identifies the category of a logged event.
@@ -151,8 +153,9 @@ const (
 	tailReadChunkSize      int64 = 64 * 1024
 )
 
-// DefaultLogPath returns the platform-specific log file path.
-func DefaultLogPath(port int) string {
+// DefaultLogDir returns the platform-specific directory that holds the event
+// log for the instance on port.
+func DefaultLogDir(port int) string {
 	portStr := strconv.Itoa(port)
 	switch runtime.GOOS {
 	case "darwin":
@@ -160,18 +163,18 @@ func DefaultLogPath(port int) string {
 		if err != nil {
 			configDir = os.TempDir()
 		}
-		return filepath.Join(configDir, "encoder", "logs", portStr, "encoder.jsonl")
+		return filepath.Join(configDir, "encoder", "logs", portStr)
 	case "windows":
-		// %PROGRAMDATA% is typically C:\ProgramData
-		programData := os.Getenv("PROGRAMDATA")
-		if programData == "" {
-			programData = `C:\ProgramData`
-		}
-		return filepath.Join(programData, "encoder", "logs", portStr, "encoder.jsonl")
+		return filepath.Join(util.WindowsDataDir(), "logs", portStr)
 	default:
 		//nolint:gocritic // Intentional absolute path for Unix systems
-		return filepath.Join("/var/log/encoder", portStr, "encoder.jsonl")
+		return filepath.Join("/var/log/encoder", portStr)
 	}
+}
+
+// DefaultLogPath returns the platform-specific event log file path.
+func DefaultLogPath(port int) string {
+	return filepath.Join(DefaultLogDir(port), "encoder.jsonl")
 }
 
 // NewLogger creates a new event logger at the specified path.
