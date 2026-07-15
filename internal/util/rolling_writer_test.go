@@ -9,32 +9,28 @@ import (
 
 const testMaxSize int64 = 64
 
-func newTestWriter(t *testing.T) (w *rollingWriter, path string) {
+func newTestWriter(t *testing.T) (w *RollingWriter, path string) {
 	t.Helper()
 	path = filepath.Join(t.TempDir(), "encoder.log")
-	w, err := newRollingWriter(path, testMaxSize)
+	w, err := NewRollingWriter(path, testMaxSize)
 	if err != nil {
-		t.Fatalf("newRollingWriter() error = %v", err)
+		t.Fatalf("NewRollingWriter() error = %v", err)
 	}
 	closeOnCleanup(t, w)
 	return w, path
 }
 
-// closeOnCleanup closes the writer's open file when the test ends. On Windows
-// the log file is opened without FILE_SHARE_DELETE, so a still-open handle
-// makes t.TempDir's RemoveAll cleanup fail with a sharing violation.
-func closeOnCleanup(t *testing.T, w *rollingWriter) {
+// closeOnCleanup closes the writer when the test ends. On Windows the log
+// file is opened without FILE_SHARE_DELETE, so a still-open handle makes
+// t.TempDir's RemoveAll cleanup fail with a sharing violation.
+func closeOnCleanup(t *testing.T, w *RollingWriter) {
 	t.Helper()
 	t.Cleanup(func() {
-		w.mu.Lock()
-		defer w.mu.Unlock()
-		if w.file != nil {
-			_ = w.file.Close()
-		}
+		_ = w.Close()
 	})
 }
 
-func mustWrite(t *testing.T, w *rollingWriter, s string) {
+func mustWrite(t *testing.T, w *RollingWriter, s string) {
 	t.Helper()
 	n, err := w.Write([]byte(s))
 	if err != nil {
@@ -88,9 +84,9 @@ func TestRollingWriterResumesFromExistingSize(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	w, err := newRollingWriter(path, testMaxSize)
+	w, err := NewRollingWriter(path, testMaxSize)
 	if err != nil {
-		t.Fatalf("newRollingWriter() error = %v", err)
+		t.Fatalf("NewRollingWriter() error = %v", err)
 	}
 	closeOnCleanup(t, w)
 	if w.written != 40 {
@@ -166,6 +162,26 @@ func TestRollingWriterSurvivesRenameFailure(t *testing.T) {
 	}
 }
 
+func TestRollingWriterCloseIsIdempotentAndWriteReopens(t *testing.T) {
+	t.Parallel()
+	w, path := newTestWriter(t)
+	mustWrite(t, w, "before")
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("second Close() error = %v", err)
+	}
+
+	// Write after Close takes the same self-healing path as a failed
+	// rotation: reopen and append.
+	mustWrite(t, w, "+after")
+	if got := readFile(t, path); got != "before+after" {
+		t.Fatalf("active file = %q, want %q", got, "before+after")
+	}
+}
+
 func TestRollingWriterSelfHealsAfterReopenFailure(t *testing.T) {
 	t.Parallel()
 	w, path := newTestWriter(t)
@@ -173,8 +189,9 @@ func TestRollingWriterSelfHealsAfterReopenFailure(t *testing.T) {
 
 	// Simulate a failed rotate/reopen: the writer is marked broken and the
 	// path is temporarily unopenable (a directory in its place).
-	_ = w.file.Close()
-	w.file = nil
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
 	if err := os.Remove(path); err != nil {
 		t.Fatalf("Remove() error = %v", err)
 	}

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 func TestDefaultLogPathUsesPlatformDefault(t *testing.T) {
@@ -69,7 +71,7 @@ func TestReadLastFiltersAndSkipsMalformedLines(t *testing.T) {
 func TestReadLastIncludesRotatedLog(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "encoder.jsonl")
-	writeEvents(t, rotatedLogPath(path), []Event{
+	writeEvents(t, util.RotatedPath(path), []Event{
 		{Type: StreamStarted, Message: "oldest"},
 		{Type: StreamRetry, Message: "older"},
 	})
@@ -116,31 +118,72 @@ func TestLoggerRotatesWhenSizeLimitIsReached(t *testing.T) {
 			t.Fatalf("Close() error = %v", err)
 		}
 	}()
+	// The first event always lands (an empty log is never rotated); the
+	// second event pushes past the 1-byte cap and rotates the first one out.
 	if err := logger.Log(&Event{Type: StreamStarted, Message: "rotated"}); err != nil {
 		t.Fatalf("Log() error = %v", err)
 	}
-	rotatedInfo, err := os.Stat(rotatedLogPath(path))
+	if err := logger.Log(&Event{Type: StreamStopped, Message: "active"}); err != nil {
+		t.Fatalf("Log() error = %v", err)
+	}
+	rotatedInfo, err := os.Stat(util.RotatedPath(path))
 	if err != nil {
 		t.Fatalf("stat rotated log: %v", err)
 	}
 	if rotatedInfo.Size() == 0 {
 		t.Fatal("rotated log is empty")
 	}
-	activeInfo, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat active log: %v", err)
-	}
-	if activeInfo.Size() != 0 {
-		t.Fatalf("active log size = %d, want 0", activeInfo.Size())
-	}
-	got, hasMore, err := ReadLast(path, 1, 0, FilterAll)
+	got, hasMore, err := ReadLast(path, 2, 0, FilterAll)
 	if err != nil {
 		t.Fatalf("ReadLast() error = %v", err)
 	}
 	if hasMore {
 		t.Fatal("ReadLast() hasMore = true, want false")
 	}
-	assertMessages(t, got, []string{"rotated"})
+	assertMessages(t, got, []string{"active", "rotated"})
+}
+
+func TestLoggerToleratesRotationFailure(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "encoder.jsonl")
+
+	// A non-empty directory at the rollover path makes the rotation rename
+	// fail on every platform. Logging must carry on in the active file.
+	rotated := util.RotatedPath(path)
+	if err := os.Mkdir(rotated, 0o750); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(rotated, "block"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	logger, err := newLogger(path, 1)
+	if err != nil {
+		t.Fatalf("newLogger() error = %v", err)
+	}
+	defer func() {
+		if err := logger.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	}()
+	if err := logger.Log(&Event{Type: StreamStarted, Message: "first"}); err != nil {
+		t.Fatalf("Log() error = %v", err)
+	}
+	// This write triggers a rotation attempt that cannot rename; it must
+	// neither fail nor lose the event.
+	if err := logger.Log(&Event{Type: StreamStopped, Message: "second"}); err != nil {
+		t.Fatalf("Log() after blocked rotation error = %v", err)
+	}
+
+	//nolint:gosec // Test reads a controlled temp path.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read active log: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("active log has %d lines, want 2:\n%s", len(lines), data)
+	}
 }
 
 func TestLoggerSeqIncrementsOnEachWrite(t *testing.T) {
@@ -179,12 +222,19 @@ func TestLoggerSeqDoesNotIncrementOnFailedWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLogger() error = %v", err)
 	}
-	// Close the underlying file so the encode write fails before the counter is bumped.
-	if err := logger.file.Close(); err != nil {
-		t.Fatalf("closing underlying file: %v", err)
+	// Break the writer: close the handle and replace the path with a
+	// directory so the self-healing reopen fails as well.
+	if err := logger.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("Remove() error = %v", err)
+	}
+	if err := os.Mkdir(path, 0o750); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
 	}
 	if err := logger.Log(&Event{Type: StreamStarted, Message: "doomed"}); err == nil {
-		t.Fatal("Log() error = nil, want a write error after the file was closed")
+		t.Fatal("Log() error = nil, want a write error while the path is a directory")
 	}
 	if got := logger.Seq(); got != 0 {
 		t.Fatalf("Seq() after failed write = %d, want 0", got)

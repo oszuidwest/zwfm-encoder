@@ -14,6 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 // EventType identifies the category of a logged event.
@@ -121,33 +123,22 @@ type RecorderDetails struct {
 	StorageType  string `json:"storage_type,omitempty"`
 }
 
-// Logger records events to a JSON lines file.
+// Logger records events to a JSON lines file. Rotation is handled by a
+// util.RollingWriter and is best-effort: a rotation blocked by another
+// process (antivirus, indexer) never fails a Log call; only genuine write
+// failures surface. Each event is encoded as a single Write, so a record is
+// never split across the active and rotated file.
 type Logger struct {
-	mu           sync.Mutex
-	filePath     string
-	file         *os.File
-	counter      *countingFile
-	encoder      *json.Encoder
-	maxSizeBytes int64
-	seq          atomic.Uint64 // incremented on each written event; a change signal for live views
-}
-
-// countingFile tracks bytes written so rotation checks avoid a stat per event.
-type countingFile struct {
-	f *os.File
-	n int64
-}
-
-func (c *countingFile) Write(p []byte) (int, error) {
-	n, err := c.f.Write(p)
-	c.n += int64(n)
-	return n, err
+	mu       sync.Mutex
+	filePath string
+	writer   *util.RollingWriter
+	encoder  *json.Encoder
+	seq      atomic.Uint64 // incremented on each written event; a change signal for live views
 }
 
 const (
 	// DefaultMaxLogSizeBytes is the active JSONL log size that triggers rotation.
 	DefaultMaxLogSizeBytes int64 = 50 * 1024 * 1024
-	rotatedLogSuffix             = ".1"
 	tailReadChunkSize      int64 = 64 * 1024
 )
 
@@ -180,17 +171,15 @@ func NewLogger(filePath string) (*Logger, error) {
 }
 
 func newLogger(filePath string, maxSizeBytes int64) (*Logger, error) {
-	// Ensure directory exists
-	dir := filepath.Dir(filePath)
-	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // Log directory needs to be readable
-		return nil, fmt.Errorf("create log directory: %w", err)
+	writer, err := util.NewRollingWriter(filePath, maxSizeBytes)
+	if err != nil {
+		return nil, fmt.Errorf("open event log: %w", err)
 	}
-
-	l := &Logger{filePath: filePath, maxSizeBytes: maxSizeBytes}
-	if err := l.openLocked(); err != nil {
-		return nil, err
-	}
-	return l, nil
+	return &Logger{
+		filePath: filePath,
+		writer:   writer,
+		encoder:  json.NewEncoder(writer),
+	}, nil
 }
 
 // Log writes an event, using the current time if Timestamp is zero.
@@ -206,61 +195,6 @@ func (l *Logger) Log(event *Event) error {
 		return err
 	}
 	l.seq.Add(1)
-
-	return l.rotateIfNeededLocked()
-}
-
-func (l *Logger) rotateIfNeededLocked() error {
-	if l.maxSizeBytes <= 0 || l.file == nil {
-		return nil
-	}
-	if l.counter.n == 0 || l.counter.n < l.maxSizeBytes {
-		return nil
-	}
-
-	return l.rotateLocked()
-}
-
-func (l *Logger) rotateLocked() error {
-	if err := l.file.Close(); err != nil {
-		return fmt.Errorf("close log before rotation: %w", err)
-	}
-	l.file = nil
-	l.counter = nil
-	l.encoder = nil
-
-	rotatedPath := rotatedLogPath(l.filePath)
-	if err := os.Remove(rotatedPath); err != nil && !os.IsNotExist(err) {
-		if reopenErr := l.openLocked(); reopenErr != nil {
-			return fmt.Errorf("remove rotated log: %w; reopen log: %w", err, reopenErr)
-		}
-		return fmt.Errorf("remove rotated log: %w", err)
-	}
-
-	if err := os.Rename(l.filePath, rotatedPath); err != nil {
-		if reopenErr := l.openLocked(); reopenErr != nil {
-			return fmt.Errorf("rotate log: %w; reopen log: %w", err, reopenErr)
-		}
-		return fmt.Errorf("rotate log: %w", err)
-	}
-
-	return l.openLocked()
-}
-
-func (l *Logger) openLocked() error {
-	//nolint:gosec // Log file needs to be readable
-	file, err := os.OpenFile(l.filePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return fmt.Errorf("open log file: %w", err)
-	}
-	info, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return fmt.Errorf("stat log file: %w", err)
-	}
-	l.file = file
-	l.counter = &countingFile{f: file, n: info.Size()}
-	l.encoder = json.NewEncoder(l.counter)
 	return nil
 }
 
@@ -384,10 +318,7 @@ func (l *Logger) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.file != nil {
-		return l.file.Close()
-	}
-	return nil
+	return l.writer.Close()
 }
 
 // Path returns the log file location.
@@ -438,7 +369,7 @@ func ReadLast(filePath string, n, offset int, filter TypeFilter) ([]Event, bool,
 	events := make([]Event, 0, n+1)
 	skipped := 0
 
-	for _, path := range []string{filePath, rotatedLogPath(filePath)} {
+	for _, path := range []string{filePath, util.RotatedPath(filePath)} {
 		err := readLinesReverse(path, func(line []byte) (bool, error) {
 			if len(events) > n {
 				return false, nil
@@ -531,10 +462,6 @@ func readLinesReverse(filePath string, handle func([]byte) (bool, error)) error 
 
 	_, err = handle(tail)
 	return err
-}
-
-func rotatedLogPath(filePath string) string {
-	return filePath + rotatedLogSuffix
 }
 
 func parseEventLine(line []byte) (Event, bool) {
