@@ -239,6 +239,28 @@ func TestLoggerSeqDoesNotIncrementOnFailedWrite(t *testing.T) {
 	if got := logger.Seq(); got != 0 {
 		t.Fatalf("Seq() after failed write = %d, want 0", got)
 	}
+
+	// Blocker gone: a failed write must not poison the logger; the next Log
+	// self-heals through the writer's reopen path.
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("Remove() error = %v", err)
+	}
+	if err := logger.Log(&Event{Type: StreamStarted, Message: "recovered"}); err != nil {
+		t.Fatalf("Log() after blocker removed error = %v", err)
+	}
+	defer func() {
+		if err := logger.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	}()
+	if got := logger.Seq(); got != 1 {
+		t.Fatalf("Seq() after recovered write = %d, want 1", got)
+	}
+	got, _, err := ReadLast(path, 1, 0, FilterAll)
+	if err != nil {
+		t.Fatalf("ReadLast() error = %v", err)
+	}
+	assertMessages(t, got, []string{"recovered"})
 }
 
 func TestFilterAudioMatchesSilenceAndChannelImbalance(t *testing.T) {

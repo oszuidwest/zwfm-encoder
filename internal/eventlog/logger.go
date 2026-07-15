@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -126,13 +125,14 @@ type RecorderDetails struct {
 // Logger records events to a JSON lines file. Rotation is handled by a
 // util.RollingWriter and is best-effort: a rotation blocked by another
 // process (antivirus, indexer) never fails a Log call; only genuine write
-// failures surface. Each event is encoded as a single Write, so a record is
-// never split across the active and rotated file.
+// failures surface. Each event is marshaled up front and issued as a single
+// Write, so a record is never split across the active and rotated file, and
+// a failed write never poisons the logger: the writer self-heals and the
+// next event is attempted fresh. (A long-lived json.Encoder would cache the
+// first write error forever and defeat that recovery.)
 type Logger struct {
-	mu       sync.Mutex
 	filePath string
 	writer   *util.RollingWriter
-	encoder  *json.Encoder
 	seq      atomic.Uint64 // incremented on each written event; a change signal for live views
 }
 
@@ -178,20 +178,21 @@ func newLogger(filePath string, maxSizeBytes int64) (*Logger, error) {
 	return &Logger{
 		filePath: filePath,
 		writer:   writer,
-		encoder:  json.NewEncoder(writer),
 	}, nil
 }
 
 // Log writes an event, using the current time if Timestamp is zero.
+// Concurrent calls are safe: the writer serializes writes and seq is atomic.
 func (l *Logger) Log(event *Event) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now()
 	}
 
-	if err := l.encoder.Encode(event); err != nil {
+	data, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	if _, err := l.writer.Write(append(data, '\n')); err != nil {
 		return err
 	}
 	l.seq.Add(1)
@@ -315,9 +316,6 @@ func (l *Logger) LogRecorder(eventType EventType, d *RecorderDetails) error {
 
 // Close releases the log file handle.
 func (l *Logger) Close() error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
 	return l.writer.Close()
 }
 
