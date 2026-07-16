@@ -38,7 +38,7 @@ func SetupLogging() {
 	}
 
 	for _, path := range slogLogCandidates() {
-		w, err := newRollingWriter(path, slogMaxSizeBytes)
+		w, err := NewRollingWriter(path, slogMaxSizeBytes)
 		if err != nil {
 			continue
 		}
