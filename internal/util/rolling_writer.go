@@ -19,9 +19,10 @@ func RotatedPath(path string) string {
 // (replacing any previous rollover) and opens a fresh one, so a record is
 // never split across generations. An oversized record or a blocked rename
 // can leave the active file over the cap until a later write rotates it
-// out. Writes are serialized. Rotate, reopen, and write failures mark the
-// file broken and the next Write retries the open, so a transient lock
-// (antivirus, indexer) can never stop logging for good.
+// out. Writes are serialized. Close, reopen, and write failures mark the
+// file broken and the next Write retries the open; a rename blocked by a
+// transient lock (antivirus, indexer) is tolerated outright — the active
+// file is reopened and logging continues.
 //
 // Rotation closes the file before renaming it: Go's os.OpenFile on Windows
 // opens without FILE_SHARE_DELETE, so renaming a file this process holds
