@@ -1,6 +1,7 @@
 package util
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -162,7 +163,17 @@ func TestRollingWriterSurvivesRenameFailure(t *testing.T) {
 	}
 }
 
-func TestRollingWriterCloseIsIdempotentAndWriteReopens(t *testing.T) {
+func TestNewRollingWriterRejectsNonPositiveMaxSize(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "encoder.log")
+	for _, maxSize := range []int64{0, -1} {
+		if _, err := NewRollingWriter(path, maxSize); err == nil {
+			t.Errorf("NewRollingWriter(maxSize=%d) error = nil, want error", maxSize)
+		}
+	}
+}
+
+func TestRollingWriterCloseIsTerminalAndIdempotent(t *testing.T) {
 	t.Parallel()
 	w, path := newTestWriter(t)
 	mustWrite(t, w, "before")
@@ -174,8 +185,33 @@ func TestRollingWriterCloseIsIdempotentAndWriteReopens(t *testing.T) {
 		t.Fatalf("second Close() error = %v", err)
 	}
 
-	// Write after Close takes the same self-healing path as a failed
-	// rotation: reopen and append.
+	// Close is an owner decision, not a transient failure: a later Write
+	// must not resurrect the handle behind the owner's back.
+	if _, err := w.Write([]byte("+after")); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("Write() after Close error = %v, want os.ErrClosed", err)
+	}
+	if got := readFile(t, path); got != "before" {
+		t.Fatalf("active file = %q, want %q", got, "before")
+	}
+}
+
+func TestRollingWriterRecoversAfterWriteFailure(t *testing.T) {
+	t.Parallel()
+	w, path := newTestWriter(t)
+	mustWrite(t, w, "before")
+
+	// Sabotage the handle out from under the writer: it stays non-nil but
+	// every write on it fails, like a revoked or errored descriptor.
+	w.mu.Lock()
+	_ = w.file.Close()
+	w.mu.Unlock()
+
+	if _, err := w.Write([]byte("lost")); err == nil {
+		t.Fatal("Write() error = nil, want a failure on the dead handle")
+	}
+
+	// The failed write must have marked the writer broken so this write
+	// reopens a fresh handle instead of reusing the dead one.
 	mustWrite(t, w, "+after")
 	if got := readFile(t, path); got != "before+after" {
 		t.Fatalf("active file = %q, want %q", got, "before+after")
@@ -189,9 +225,10 @@ func TestRollingWriterSelfHealsAfterReopenFailure(t *testing.T) {
 
 	// Simulate a failed rotate/reopen: the writer is marked broken and the
 	// path is temporarily unopenable (a directory in its place).
-	if err := w.Close(); err != nil {
-		t.Fatalf("Close() error = %v", err)
-	}
+	w.mu.Lock()
+	_ = w.file.Close()
+	w.file = nil
+	w.mu.Unlock()
 	if err := os.Remove(path); err != nil {
 		t.Fatalf("Remove() error = %v", err)
 	}

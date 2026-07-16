@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -131,6 +132,7 @@ type RecorderDetails struct {
 // next event is attempted fresh. (A long-lived json.Encoder would cache the
 // first write error forever and defeat that recovery.)
 type Logger struct {
+	mu       sync.Mutex // serializes Log: timestamp fill, marshal, write, seq
 	filePath string
 	writer   *util.RollingWriter
 	seq      atomic.Uint64 // incremented on each written event; a change signal for live views
@@ -182,8 +184,12 @@ func newLogger(filePath string, maxSizeBytes int64) (*Logger, error) {
 }
 
 // Log writes an event, using the current time if Timestamp is zero.
-// Concurrent calls are safe: the writer serializes writes and seq is atomic.
+// Concurrent calls are safe, even with the same *Event: the logger mutex
+// covers the timestamp fill and marshal, not just the file write.
 func (l *Logger) Log(event *Event) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now()
 	}
@@ -314,7 +320,8 @@ func (l *Logger) LogRecorder(eventType EventType, d *RecorderDetails) error {
 	})
 }
 
-// Close releases the log file handle.
+// Close releases the log file handle. Close is terminal: subsequent Log
+// calls fail with [os.ErrClosed].
 func (l *Logger) Close() error {
 	return l.writer.Close()
 }

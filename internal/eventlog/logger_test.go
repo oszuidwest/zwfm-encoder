@@ -2,9 +2,11 @@ package eventlog
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -222,45 +224,52 @@ func TestLoggerSeqDoesNotIncrementOnFailedWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLogger() error = %v", err)
 	}
-	// Break the writer: close the handle and replace the path with a
-	// directory so the self-healing reopen fails as well.
+	// Close is terminal: a later Log is a failed write and must leave the
+	// change signal untouched. (Recovery from broken-but-open writers is
+	// covered by the util.RollingWriter tests.)
 	if err := logger.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
-	if err := os.Remove(path); err != nil {
-		t.Fatalf("Remove() error = %v", err)
-	}
-	if err := os.Mkdir(path, 0o750); err != nil {
-		t.Fatalf("Mkdir() error = %v", err)
-	}
-	if err := logger.Log(&Event{Type: StreamStarted, Message: "doomed"}); err == nil {
-		t.Fatal("Log() error = nil, want a write error while the path is a directory")
+	if err := logger.Log(&Event{Type: StreamStarted, Message: "doomed"}); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("Log() after Close error = %v, want os.ErrClosed", err)
 	}
 	if got := logger.Seq(); got != 0 {
 		t.Fatalf("Seq() after failed write = %d, want 0", got)
 	}
+}
 
-	// Blocker gone: a failed write must not poison the logger; the next Log
-	// self-heals through the writer's reopen path.
-	if err := os.Remove(path); err != nil {
-		t.Fatalf("Remove() error = %v", err)
-	}
-	if err := logger.Log(&Event{Type: StreamStarted, Message: "recovered"}); err != nil {
-		t.Fatalf("Log() after blocker removed error = %v", err)
+func TestLoggerLogIsSafeForConcurrentUseWithSharedEvent(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "encoder.jsonl")
+	logger, err := NewLogger(path)
+	if err != nil {
+		t.Fatalf("NewLogger() error = %v", err)
 	}
 	defer func() {
 		if err := logger.Close(); err != nil {
 			t.Fatalf("Close() error = %v", err)
 		}
 	}()
-	if got := logger.Seq(); got != 1 {
-		t.Fatalf("Seq() after recovered write = %d, want 1", got)
+
+	// All goroutines share one zero-timestamp event, so the timestamp fill
+	// in Log races unless the logger serializes the whole operation. The
+	// race detector turns any regression into a failure.
+	const writers = 8
+	event := &Event{Type: StreamStarted, Message: "shared"}
+	var wg sync.WaitGroup
+	for range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := logger.Log(event); err != nil {
+				t.Errorf("Log() error = %v", err)
+			}
+		}()
 	}
-	got, _, err := ReadLast(path, 1, 0, FilterAll)
-	if err != nil {
-		t.Fatalf("ReadLast() error = %v", err)
+	wg.Wait()
+	if got := logger.Seq(); got != writers {
+		t.Fatalf("Seq() = %d, want %d", got, writers)
 	}
-	assertMessages(t, got, []string{"recovered"})
 }
 
 func TestFilterAudioMatchesSilenceAndChannelImbalance(t *testing.T) {
