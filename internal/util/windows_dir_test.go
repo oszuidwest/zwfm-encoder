@@ -9,6 +9,7 @@ func TestWindowsDataDir(t *testing.T) {
 	// Variable rather than inline literal: gocritic's filepathJoin check
 	// rejects literal Join arguments containing a separator.
 	defaultRoot := `C:\ProgramData`
+	customRoot := filepath.FromSlash("D:/CustomData")
 
 	tests := []struct {
 		name        string
@@ -17,8 +18,8 @@ func TestWindowsDataDir(t *testing.T) {
 	}{
 		{
 			name:        "uses programdata environment variable",
-			programData: filepath.Join("D:", "CustomData"),
-			expected:    filepath.Join("D:", "CustomData", "encoder"),
+			programData: customRoot,
+			expected:    filepath.Join(customRoot, "encoder"),
 		},
 		{
 			name:        "defaults to programdata root when unset",
