@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/tray"
@@ -16,7 +15,7 @@ import (
 // (or a shutdown signal bridged into a tray Quit) exits the tray loop.
 func runShell(ctx context.Context, a *app) {
 	cfg := a.cfg.Snapshot()
-	logDir := filepath.Dir(eventlog.DefaultLogPath(cfg.WebPort))
+	logDir := eventlog.DefaultLogDir(cfg.WebPort)
 
 	trayCfg := tray.Config{
 		AppName:      cfg.StationName,

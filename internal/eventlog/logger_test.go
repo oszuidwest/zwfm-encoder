@@ -25,6 +25,16 @@ func TestDefaultLogPathUsesPlatformDefault(t *testing.T) {
 	}
 }
 
+func TestDefaultLogPathIsInsideDefaultLogDir(t *testing.T) {
+	t.Parallel()
+
+	// The tray's "Show Logs Folder" opens DefaultLogDir; the event log file
+	// must live directly inside it.
+	if got, want := DefaultLogPath(8080), filepath.Join(DefaultLogDir(8080), "encoder.jsonl"); got != want {
+		t.Errorf("DefaultLogPath() = %q, want %q", got, want)
+	}
+}
+
 func TestReadLastReturnsNewestWithLimitOffsetAndHasMore(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "encoder.jsonl")
