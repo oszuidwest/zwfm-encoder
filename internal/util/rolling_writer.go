@@ -7,14 +7,11 @@ import (
 	"sync"
 )
 
-// rotatedSuffix is appended to a log path to form its rollover destination.
-const rotatedSuffix = ".1"
-
 // RotatedPath returns the rollover destination a RollingWriter uses for path:
 // path plus a ".1" suffix. Readers that want to include rotated-out content
 // derive the location from this function rather than hardcoding the suffix.
 func RotatedPath(path string) string {
-	return path + rotatedSuffix
+	return path + ".1"
 }
 
 // RollingWriter is a small size-capped writer: when a write would push the

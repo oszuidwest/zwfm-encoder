@@ -123,14 +123,12 @@ type RecorderDetails struct {
 	StorageType  string `json:"storage_type,omitempty"`
 }
 
-// Logger records events to a JSON lines file. Rotation is handled by a
-// util.RollingWriter and is best-effort: a rotation blocked by another
-// process (antivirus, indexer) never fails a Log call; only genuine write
-// failures surface. Each event is marshaled up front and issued as a single
-// Write, so a record is never split across the active and rotated file, and
-// a failed write never poisons the logger: the writer self-heals and the
-// next event is attempted fresh. (A long-lived json.Encoder would cache the
-// first write error forever and defeat that recovery.)
+// Logger records events to a JSON lines file. Rotation and self-healing are
+// delegated to a [util.RollingWriter]; see its docs for the best-effort
+// semantics. Each event is marshaled up front and issued as a single Write,
+// so a record is never split across generations and a transient failure
+// never poisons the logger. (A long-lived json.Encoder would cache the
+// first write error forever and defeat the writer's recovery.)
 type Logger struct {
 	mu       sync.Mutex // serializes Log: timestamp fill, marshal, write, seq
 	filePath string
