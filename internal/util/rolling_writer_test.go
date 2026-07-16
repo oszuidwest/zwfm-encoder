@@ -210,8 +210,8 @@ func TestRollingWriterRecoversAfterWriteFailure(t *testing.T) {
 		t.Fatal("Write() error = nil, want a failure on the dead handle")
 	}
 
-	// The failed write must have marked the writer broken so this write
-	// reopens a fresh handle instead of reusing the dead one.
+	// The failed write marked the writer broken, so this reopens a fresh
+	// handle instead of reusing the dead one.
 	mustWrite(t, w, "+after")
 	if got := readFile(t, path); got != "before+after" {
 		t.Fatalf("active file = %q, want %q", got, "before+after")

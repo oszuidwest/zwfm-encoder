@@ -182,8 +182,8 @@ func newLogger(filePath string, maxSizeBytes int64) (*Logger, error) {
 }
 
 // Log writes an event, using the current time if Timestamp is zero.
-// Concurrent calls are safe, even with the same *Event: the logger mutex
-// covers the timestamp fill and marshal, not just the file write.
+// Concurrent calls are safe, even with a shared *Event: the mutex covers
+// the timestamp fill and marshal, not just the write.
 func (l *Logger) Log(event *Event) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -318,8 +318,8 @@ func (l *Logger) LogRecorder(eventType EventType, d *RecorderDetails) error {
 	})
 }
 
-// Close releases the log file handle. Close is terminal: subsequent Log
-// calls fail with [os.ErrClosed].
+// Close releases the log file; subsequent Log calls fail with
+// [os.ErrClosed].
 func (l *Logger) Close() error {
 	return l.writer.Close()
 }

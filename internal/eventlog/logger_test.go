@@ -224,9 +224,9 @@ func TestLoggerSeqDoesNotIncrementOnFailedWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLogger() error = %v", err)
 	}
-	// Close is terminal: a later Log is a failed write and must leave the
-	// change signal untouched. (Recovery from broken-but-open writers is
-	// covered by the util.RollingWriter tests.)
+	// Close is terminal: a later Log must fail and leave the change signal
+	// untouched. (Writer recovery is covered by the util.RollingWriter
+	// tests.)
 	if err := logger.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
@@ -251,9 +251,9 @@ func TestLoggerLogIsSafeForConcurrentUseWithSharedEvent(t *testing.T) {
 		}
 	}()
 
-	// All goroutines share one zero-timestamp event, so the timestamp fill
-	// in Log races unless the logger serializes the whole operation. The
-	// race detector turns any regression into a failure.
+	// All goroutines share one zero-timestamp event: the timestamp fill in
+	// Log races unless the logger serializes the whole operation, and the
+	// race detector flags any regression.
 	const writers = 8
 	event := &Event{Type: StreamStarted, Message: "shared"}
 	var wg sync.WaitGroup
