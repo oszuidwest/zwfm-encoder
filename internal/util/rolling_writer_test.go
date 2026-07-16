@@ -218,6 +218,32 @@ func TestRollingWriterRecoversAfterWriteFailure(t *testing.T) {
 	}
 }
 
+func TestRollingWriterRollsBackTornWriteBeforeNextRecord(t *testing.T) {
+	t.Parallel()
+	w, path := newTestWriter(t)
+	mustWrite(t, w, "good\n")
+
+	// Construct the state a partial write with a failed rollback leaves
+	// behind: a torn fragment on disk, the handle dropped, and the record
+	// boundary remembered for a deferred rollback.
+	w.mu.Lock()
+	if _, err := w.file.WriteString("frag"); err != nil {
+		w.mu.Unlock()
+		t.Fatalf("WriteString() error = %v", err)
+	}
+	_ = w.file.Close()
+	w.file = nil
+	w.pendingTrunc = int64(len("good\n"))
+	w.mu.Unlock()
+
+	// The next record must not be glued to the fragment: the writer rolls
+	// the file back to the remembered boundary before appending.
+	mustWrite(t, w, "next\n")
+	if got := readFile(t, path); got != "good\nnext\n" {
+		t.Fatalf("active file = %q, want %q", got, "good\nnext\n")
+	}
+}
+
 func TestRollingWriterSelfHealsAfterReopenFailure(t *testing.T) {
 	t.Parallel()
 	w, path := newTestWriter(t)

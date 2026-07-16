@@ -32,12 +32,13 @@ func RotatedPath(path string) string {
 // opens without FILE_SHARE_DELETE, so renaming a file this process holds
 // open fails with a sharing violation.
 type RollingWriter struct {
-	mu      sync.Mutex
-	path    string
-	maxSize int64
-	closed  bool     // set by Close; Write fails with os.ErrClosed
-	file    *os.File // nil when broken (failed open, rotate, or write); Write retries
-	written int64    // bytes since the last rotation attempt
+	mu           sync.Mutex
+	path         string
+	maxSize      int64
+	closed       bool     // set by Close; Write fails with os.ErrClosed
+	file         *os.File // nil when broken (failed open, rotate, or write); Write retries
+	written      int64    // bytes since the last rotation attempt
+	pendingTrunc int64    // -1 when none; else the record boundary a torn write must be rolled back to before the next append
 }
 
 // NewRollingWriter opens (creating if needed) the log file at path for
@@ -50,7 +51,7 @@ func NewRollingWriter(path string, maxSize int64) (*RollingWriter, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { //nolint:gosec // Log directory needs to be readable
 		return nil, err
 	}
-	w := &RollingWriter{path: path, maxSize: maxSize}
+	w := &RollingWriter{path: path, maxSize: maxSize, pendingTrunc: -1}
 	if err := w.openLocked(); err != nil {
 		return nil, err
 	}
@@ -77,6 +78,21 @@ func (w *RollingWriter) Write(p []byte) (int, error) {
 		}
 	}
 
+	if w.pendingTrunc >= 0 {
+		// A torn record from an earlier partial write is still on disk.
+		// Roll it back before appending anything, or refuse the record:
+		// gluing a new record to the fragment would make both unreadable.
+		if w.written > w.pendingTrunc {
+			if err := w.file.Truncate(w.pendingTrunc); err != nil {
+				_ = w.file.Close()
+				w.file = nil
+				return 0, err
+			}
+			w.written = w.pendingTrunc
+		}
+		w.pendingTrunc = -1
+	}
+
 	if w.written > 0 && w.written+int64(len(p)) > w.maxSize {
 		if err := w.rotateLocked(); err != nil {
 			return 0, err
@@ -86,11 +102,15 @@ func (w *RollingWriter) Write(p []byte) (int, error) {
 	n, err := w.file.Write(p)
 	if err != nil {
 		// The handle may be unusable; drop it so the next Write reopens
-		// fresh. A short write is truncated away when possible so a later
-		// record is not appended to a malformed fragment.
+		// fresh. A short write leaves a torn record on disk: roll it back
+		// now, or remember the boundary so no later record is appended to
+		// the fragment.
 		if n > 0 {
-			if info, statErr := w.file.Stat(); statErr == nil {
-				_ = w.file.Truncate(info.Size() - int64(n))
+			if size, ok := w.sizeLocked(); ok {
+				boundary := size - int64(n)
+				if w.file.Truncate(boundary) != nil {
+					w.pendingTrunc = boundary
+				}
 			}
 		}
 		_ = w.file.Close()
@@ -99,6 +119,18 @@ func (w *RollingWriter) Write(p []byte) (int, error) {
 	}
 	w.written += int64(n)
 	return n, nil
+}
+
+// sizeLocked reports the active file's current size, preferring the open
+// handle and falling back to the path.
+func (w *RollingWriter) sizeLocked() (int64, bool) {
+	if info, err := w.file.Stat(); err == nil {
+		return info.Size(), true
+	}
+	if info, err := os.Stat(w.path); err == nil {
+		return info.Size(), true
+	}
+	return 0, false
 }
 
 // Close releases the file handle and marks the writer closed: subsequent
