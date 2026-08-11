@@ -489,6 +489,62 @@ func TestAudioDumpUsesSnapshotFromSilenceEnd(t *testing.T) {
 	}
 }
 
+func TestAudioDumpMatchesSameTriggerRecoveriesByIncidentID(t *testing.T) {
+	t.Parallel()
+	ch := newTestChannel(true)
+	o := newTestOrchestrator(t, ch)
+
+	for _, incident := range []struct {
+		id       audio.IncidentID
+		duration int64
+	}{
+		{id: 1, duration: 1000},
+		{id: 2, duration: 2000},
+	} {
+		o.HandleSilenceEvent(audio.SilenceEvent{IncidentID: incident.id, JustEntered: true})
+		awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
+		o.HandleSilenceEvent(audio.SilenceEvent{
+			IncidentID: incident.id, JustRecovered: true, TotalDurationMs: incident.duration,
+		})
+		awaitCall(t, ch.silenceEndCalled, "SendSilenceEnd")
+	}
+
+	for _, want := range []struct {
+		id       audio.IncidentID
+		duration int64
+	}{
+		{id: 2, duration: 2000},
+		{id: 1, duration: 1000},
+	} {
+		result := &silencedump.EncodeResult{Trigger: silencedump.TriggerSilence, IncidentID: want.id}
+		o.OnDumpReady(result)
+		call := awaitCall(t, ch.audioDumpCalled, "SendAudioDump")
+		if call.data.Result.IncidentID != want.id || call.data.DurationMs != want.duration || call.data.Result != result {
+			t.Fatalf("dump callback = %+v, want incident %d duration %d", call.data, want.id, want.duration)
+		}
+	}
+}
+
+func TestPendingRecoveriesDropEntriesPastCallbackDeadline(t *testing.T) {
+	t.Parallel()
+	o := newTestOrchestrator(t, noopAlertChannel{})
+	now := time.Now()
+	staleKey := incidentKey{trigger: silencedump.TriggerSilence, incidentID: 1}
+	freshKey := incidentKey{trigger: silencedump.TriggerSilence, incidentID: 2}
+
+	o.mu.Lock()
+	o.pendingRecoveries[staleKey] = &pendingRecoveryData{recoveredAt: now.Add(-2 * pendingRecoveryTTL)}
+	o.addPendingRecoveryLocked(freshKey, &pendingRecoveryData{recoveredAt: now})
+	o.mu.Unlock()
+
+	if _, ok := o.pendingRecoveries[staleKey]; ok {
+		t.Fatal("stale pending recovery was not removed")
+	}
+	if _, ok := o.pendingRecoveries[freshKey]; !ok {
+		t.Fatal("fresh pending recovery was removed")
+	}
+}
+
 func TestChannelImbalanceStartDispatchesConfiguredSubscribedChannels(t *testing.T) {
 	t.Parallel()
 	send := newTestChannel(false)
@@ -593,6 +649,7 @@ func TestChannelImbalanceDumpUsesRecoveryContext(t *testing.T) {
 	o.SetEventLogger(logger)
 
 	o.HandleChannelImbalanceEvent(&audio.ImbalanceEvent{
+		IncidentID:    42,
 		JustEntered:   true,
 		CurrentLevelL: -10.8,
 		CurrentLevelR: -27.5,
@@ -601,6 +658,7 @@ func TestChannelImbalanceDumpUsesRecoveryContext(t *testing.T) {
 	})
 	awaitCall(t, ch.imbalanceStartCalled, "imbalance start")
 	o.HandleChannelImbalanceEvent(&audio.ImbalanceEvent{
+		IncidentID:      42,
 		JustRecovered:   true,
 		TotalDurationMs: 30000,
 		CurrentLevelL:   -12,
@@ -610,7 +668,7 @@ func TestChannelImbalanceDumpUsesRecoveryContext(t *testing.T) {
 	})
 	awaitCall(t, ch.imbalanceEndCalled, "imbalance end")
 
-	result := &silencedump.EncodeResult{Trigger: silencedump.TriggerChannelImbalance}
+	result := &silencedump.EncodeResult{Trigger: silencedump.TriggerChannelImbalance, IncidentID: 42}
 	o.OnDumpReady(result)
 	call := awaitCall(t, ch.audioDumpCalled, "imbalance audio dump")
 	if call.data.Trigger != silencedump.TriggerChannelImbalance {
@@ -639,6 +697,9 @@ func TestChannelImbalanceDumpUsesRecoveryContext(t *testing.T) {
 	details := eventDetailsMap(t, events[0].Details)
 	if details["trigger"] != "channel_imbalance" {
 		t.Fatalf("audio dump log trigger = %v, want channel_imbalance", details["trigger"])
+	}
+	if details["incident_id"] != float64(42) {
+		t.Fatalf("audio dump log incident_id = %v, want 42", details["incident_id"])
 	}
 	assertDetailFloat(t, details, "balance_db", 0)
 	assertDetailFloat(t, details, "imbalance_db", 0)

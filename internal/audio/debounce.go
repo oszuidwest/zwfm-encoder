@@ -2,6 +2,9 @@ package audio
 
 import "time"
 
+// IncidentID identifies one confirmed detector incident within a process.
+type IncidentID uint32
+
 // debouncer applies duration/recovery hysteresis for silence and imbalance detectors.
 // It preserves the original start through recovery so one confirmed event keeps
 // one duration even when the condition briefly clears.
@@ -12,10 +15,13 @@ type debouncer struct {
 	recoveryStart    time.Time // recovery-window start
 	active           bool      // confirmed active state
 	activeDurationMs int64     // last active duration for recovery reporting
+	incidentID       IncidentID
+	nextIncidentID   IncidentID
 }
 
 // debounceResult describes one transition from [debouncer.update].
 type debounceResult struct {
+	incidentID         IncidentID
 	active             bool  // confirmed active state, including recovery
 	justEntered        bool  // active state entered on this update
 	justRecovered      bool  // active state cleared on this update
@@ -33,7 +39,10 @@ func (d *debouncer) update(conditionActive bool, durationMs, recoveryMs int64, n
 
 		if d.start.IsZero() {
 			d.start = now
+			d.nextIncidentID++
+			d.incidentID = d.nextIncidentID
 		}
+		r.incidentID = d.incidentID
 
 		elapsed := now.Sub(d.start).Milliseconds()
 		d.activeDurationMs = elapsed
@@ -52,8 +61,10 @@ func (d *debouncer) update(conditionActive bool, durationMs, recoveryMs int64, n
 
 	if !d.active {
 		d.start = time.Time{}
+		d.incidentID = 0
 		return r
 	}
+	r.incidentID = d.incidentID
 
 	// Keep start during recovery so totalDurationMs spans the whole active event.
 	if d.recoveryStart.IsZero() {
@@ -68,6 +79,7 @@ func (d *debouncer) update(conditionActive bool, durationMs, recoveryMs int64, n
 
 		d.active = false
 		d.activeDurationMs = 0
+		d.incidentID = 0
 		d.start = time.Time{}
 		d.recoveryStart = time.Time{}
 		return r
@@ -83,4 +95,5 @@ func (d *debouncer) reset() {
 	d.recoveryStart = time.Time{}
 	d.active = false
 	d.activeDurationMs = 0
+	d.incidentID = 0
 }

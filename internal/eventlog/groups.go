@@ -50,6 +50,7 @@ type groupingState struct {
 
 type historicalIncident struct {
 	key        string
+	incidentID int64
 	closeType  EventType
 	firstType  EventType
 	first      groupedEvent
@@ -195,7 +196,11 @@ func (s *groupingState) process(event groupedEvent) {
 	}
 
 	if event.view.Type == AudioDumpReady {
-		if target := latestAudioIncident(s.closed, detailString(event.details, "trigger")); target != nil {
+		if target := audioIncidentForDump(
+			s.closed,
+			detailString(event.details, "trigger"),
+			detailInt64(event.details, "incident_id"),
+		); target != nil {
 			target.dump = true
 			target.add(event)
 		}
@@ -239,14 +244,15 @@ func consumedEventIDs(eventCount int, groups ...[]*historicalIncident) []bool {
 func newHistoricalIncident(event groupedEvent, key string, closeType EventType) *historicalIncident {
 	startTs := eventTimeValue(event.view.Timestamp)
 	return &historicalIncident{
-		key:       key,
-		closeType: closeType,
-		firstType: event.view.Type,
-		first:     event,
-		severity:  event.view.Severity,
-		startTs:   startTs,
-		endTs:     startTs,
-		events:    []groupedEvent{},
+		key:        key,
+		incidentID: detailInt64(event.details, "incident_id"),
+		closeType:  closeType,
+		firstType:  event.view.Type,
+		first:      event,
+		severity:   event.view.Severity,
+		startTs:    startTs,
+		endTs:      startTs,
+		events:     []groupedEvent{},
 	}
 }
 
@@ -268,13 +274,13 @@ func (i *historicalIncident) add(event groupedEvent) {
 // trigger value serialized into audio_dump_ready details.
 const dumpTriggerChannelImbalance = "channel_imbalance"
 
-func latestAudioIncident(incidents []*historicalIncident, trigger string) *historicalIncident {
+func audioIncidentForDump(incidents []*historicalIncident, trigger string, incidentID int64) *historicalIncident {
 	firstType := SilenceStart
 	if trigger == dumpTriggerChannelImbalance {
 		firstType = ChannelImbalanceStart
 	}
 	for i := len(incidents) - 1; i >= 0; i-- {
-		if incidents[i].firstType == firstType {
+		if incidents[i].firstType == firstType && (incidentID == 0 || incidents[i].incidentID == incidentID) {
 			return incidents[i]
 		}
 	}

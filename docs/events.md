@@ -194,6 +194,7 @@ imbalance). All of them are returned by the `audio` type filter.
 
 ```json
 {
+  "incident_id": 42,
   "level_left_db": -48.5,
   "level_right_db": -52.3,
   "threshold_db": -40.0,
@@ -203,6 +204,7 @@ imbalance). All of them are returned by the `audio` type filter.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `incident_id` | int | Process-local identity shared by an incident's start, recovery, and dump events |
 | `level_left_db` | float | Left channel RMS level in dB |
 | `level_right_db` | float | Right channel RMS level in dB |
 | `threshold_db` | float | Configured silence threshold in dB |
@@ -221,6 +223,7 @@ imbalance). All of them are returned by the `audio` type filter.
   "ts": "2024-01-15T14:31:00.000Z",
   "type": "silence_start",
   "details": {
+    "incident_id": 42,
     "level_left_db": -48.5,
     "level_right_db": -52.3,
     "threshold_db": -40.0
@@ -241,6 +244,7 @@ imbalance). All of them are returned by the `audio` type filter.
   "ts": "2024-01-15T14:32:05.000Z",
   "type": "silence_end",
   "details": {
+    "incident_id": 42,
     "level_left_db": -12.3,
     "level_right_db": -14.1,
     "threshold_db": -40.0,
@@ -259,16 +263,17 @@ imbalance). All of them are returned by the `audio` type filter.
 
 ```json
 {
-  "ts": "2024-01-15T14:32:08.000Z",
+  "ts": "2024-01-15T14:34:16.000Z",
   "type": "audio_dump_ready",
   "details": {
     "trigger": "channel_imbalance",
+    "incident_id": 43,
     "level_left_db": -8.0,
     "level_right_db": -9.5,
     "balance_db": 1.5,
     "imbalance_db": 1.5,
     "threshold_db": 12.0,
-    "duration_ms": 18000,
+    "duration_ms": 180000,
     "dump_path": "/var/log/encoder/8080/dumps",
     "dump_filename": "channel-imbalance-2024-01-15_14-31-00.mp3",
     "dump_size_bytes": 245760,
@@ -280,6 +285,7 @@ imbalance). All of them are returned by the `audio` type filter.
 | Field | Type | Description |
 |-------|------|-------------|
 | `trigger` | string | Incident source: `silence` or `channel_imbalance` |
+| `incident_id` | int | Process-local identity shared with the matching incident events |
 | `level_left_db` | float | Final left channel RMS level in dB |
 | `level_right_db` | float | Final right channel RMS level in dB |
 | `balance_db` | float | Final signed L/R difference; present for channel imbalance dumps |
@@ -308,17 +314,19 @@ and recovery settings.
 
 ```json
 {
+  "incident_id": 43,
   "level_left_db": -6.2,
   "level_right_db": -56.0,
   "balance_db": 49.8,
   "imbalance_db": 49.8,
   "threshold_db": 12.0,
-  "duration_ms": 18000
+  "duration_ms": 180000
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `incident_id` | int | Process-local identity shared by an incident's start, recovery, and dump events |
 | `level_left_db` | float | Left channel RMS level in dB |
 | `level_right_db` | float | Right channel RMS level in dB |
 | `balance_db` | float | Signed L/R difference in dB (positive = left louder) |
@@ -339,6 +347,7 @@ and recovery settings.
   "ts": "2024-01-15T14:31:00.000Z",
   "type": "channel_imbalance_start",
   "details": {
+    "incident_id": 43,
     "level_left_db": -6.2,
     "level_right_db": -56.0,
     "balance_db": 49.8,
@@ -361,12 +370,13 @@ and recovery settings.
   "ts": "2024-01-15T14:34:00.000Z",
   "type": "channel_imbalance_end",
   "details": {
+    "incident_id": 43,
     "level_left_db": -8.0,
     "level_right_db": -9.5,
     "balance_db": 1.5,
     "imbalance_db": 1.5,
     "threshold_db": 12.0,
-    "duration_ms": 18000
+    "duration_ms": 180000
   }
 }
 ```

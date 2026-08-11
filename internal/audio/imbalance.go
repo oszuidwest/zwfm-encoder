@@ -26,8 +26,9 @@ type ImbalanceEvent struct {
 	CurrentLevelL float64 // dB
 	CurrentLevelR float64 // dB
 
-	JustEntered        bool  // true only on entry
-	JustRecovered      bool  // true only on recovery
+	JustEntered        bool // true only on entry
+	JustRecovered      bool // true only on recovery
+	IncidentID         IncidentID
 	TotalDurationMs    int64 // final active duration on recovery
 	RecoveryDurationMs int64 // elapsed recovery time on recovery
 }
@@ -58,6 +59,7 @@ func (d *ImbalanceDetector) Update(dbL, dbR float64, cfg ImbalanceConfig, now ti
 	r := d.debounce.update(channelsImbalanced, cfg.DurationMs, cfg.RecoveryMs, now)
 
 	event := ImbalanceEvent{
+		IncidentID:         r.incidentID,
 		InImbalance:        r.active,
 		DurationMs:         r.durationMs,
 		BalanceDB:          balanceDB,

@@ -491,7 +491,7 @@
                             <span class="channel-chevron icon-container" x-html="icons.chevronDown" aria-hidden="true"></span>
                         </button>
                         <div class="channel-body" id="card-dumps" x-show="cardsOpen.dumps" x-cloak x-transition:enter="channel-body-enter" x-transition:leave="channel-body-leave">
-                        <p class="section-desc">Capture MP3 snippets around silence and channel imbalance incidents. These are attached to email notifications and included in webhooks.</p>
+                        <p class="section-desc">Capture MP3 snippets around silence and channel imbalance incidents. When the <code>audio_dump</code> event is enabled, email notifications include the MP3 and webhooks receive the dump-ready event.</p>
                         <div class="form">
                             <div class="group">
                                 <label>Capture</label>

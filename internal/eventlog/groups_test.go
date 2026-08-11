@@ -278,6 +278,45 @@ func TestGroupEventsAttachesImbalanceDumpToImbalanceIncident(t *testing.T) {
 	assertPartition(t, events, &groups)
 }
 
+func TestGroupEventsMatchesSameTriggerDumpsByIncidentID(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 8, 11, 20, 18, 0, 0, time.UTC)
+	events := decorateNewestFirst(
+		testEvent(base, 8, AudioDumpReady, map[string]any{
+			"trigger": "silence", "incident_id": 1, "dump_filename": "first.mp3",
+		}),
+		testEvent(base, 7, AudioDumpReady, map[string]any{
+			"trigger": "silence", "incident_id": 2, "dump_filename": "second.mp3",
+		}),
+		testEvent(base, 6, SilenceEnd, map[string]any{"incident_id": 2, "duration_ms": 2000}),
+		testEvent(base, 5, SilenceStart, map[string]any{"incident_id": 2}),
+		testEvent(base, 2, SilenceEnd, map[string]any{"incident_id": 1, "duration_ms": 1000}),
+		testEvent(base, 1, SilenceStart, map[string]any{"incident_id": 1}),
+	)
+
+	groups := GroupEvents(events)
+	if len(groups.Resolved) != 2 {
+		t.Fatalf("resolved len = %d, want 2", len(groups.Resolved))
+	}
+	for _, item := range groups.Resolved {
+		filename := detailString(eventDetails(item.Events[len(item.Events)-1].Details), "dump_filename")
+		switch item.Events[0].Timestamp {
+		case base.Add(time.Second):
+			if filename != "first.mp3" {
+				t.Fatalf("first incident dump = %q, want first.mp3", filename)
+			}
+		case base.Add(5 * time.Second):
+			if filename != "second.mp3" {
+				t.Fatalf("second incident dump = %q, want second.mp3", filename)
+			}
+		default:
+			t.Fatalf("unexpected incident start %s", item.Events[0].Timestamp)
+		}
+	}
+	assertPartition(t, events, &groups)
+}
+
 func TestGroupEventsSortsResolvedIncidentsByResolutionTime(t *testing.T) {
 	t.Parallel()
 

@@ -24,6 +24,10 @@ func newPatternedCapturer() *Capturer {
 	return c
 }
 
+func testCaptureKey(trigger Trigger) captureKey {
+	return captureKey{trigger: trigger}
+}
+
 func writePattern(c *Capturer, total int64) {
 	const chunk = 19200
 	var abs int64
@@ -104,8 +108,8 @@ func TestOnSilenceStartSavedBeforeWrap(t *testing.T) {
 	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
 	total := int64(bufferCapacity) + 500_000
 	writePattern(c, total)
-	c.OnIncidentStart(TriggerSilence)
-	state := c.captures[TriggerSilence]
+	c.OnIncidentStart(TriggerSilence, 0)
+	state := c.captures[testCaptureKey(TriggerSilence)]
 	if state == nil {
 		t.Fatal("silence capture state missing")
 	}
@@ -159,12 +163,12 @@ func TestOnSilenceRecoverClampsEndPos(t *testing.T) {
 				buffer:       make([]byte, bufferCapacity),
 				enabled:      true,
 				totalWritten: tt.totalWritten,
-				captures: map[Trigger]*captureState{
-					TriggerSilence: {startPos: tt.silenceStartPos},
+				captures: map[captureKey]*captureState{
+					testCaptureKey(TriggerSilence): {startPos: tt.silenceStartPos},
 				},
 			}
-			c.OnIncidentRecover(TriggerSilence, 0, tt.recovery)
-			state := c.captures[TriggerSilence]
+			c.OnIncidentRecover(TriggerSilence, 0, 0, tt.recovery)
+			state := c.captures[testCaptureKey(TriggerSilence)]
 			if state.endPos != tt.wantEndPos {
 				t.Fatalf("endPos = %d, want %d", state.endPos, tt.wantEndPos)
 			}
@@ -177,9 +181,9 @@ func TestOnSilenceRecoverClampsEndPos(t *testing.T) {
 
 func TestCheckAndFinalizeRecoversAtZeroStart(t *testing.T) {
 	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
-	c.OnIncidentStart(TriggerSilence)                       // Keeps silenceStartPos at 0.
-	c.OnIncidentRecover(TriggerSilence, 0, 100*time.Second) // Clamps wall-clock recovery to bytes written.
-	state := c.captures[TriggerSilence]
+	c.OnIncidentStart(TriggerSilence, 0)                       // Keeps silenceStartPos at 0.
+	c.OnIncidentRecover(TriggerSilence, 0, 0, 100*time.Second) // Clamps wall-clock recovery to bytes written.
+	state := c.captures[testCaptureKey(TriggerSilence)]
 	if !state.recovered {
 		t.Fatal("recovered not set after OnIncidentRecover")
 	}
@@ -187,7 +191,7 @@ func TestCheckAndFinalizeRecoversAtZeroStart(t *testing.T) {
 		t.Fatalf("endPos = %d, want 0 (clamped to start)", state.endPos)
 	}
 	writePattern(c, int64(afterSeconds*audio.BytesPerSecond))
-	if c.captures[TriggerSilence] != nil {
+	if c.captures[testCaptureKey(TriggerSilence)] != nil {
 		t.Fatal("capturer stuck capturing; recovery at byte position 0 never finalized")
 	}
 }
@@ -197,14 +201,14 @@ func TestCapturerTracksSilenceAndImbalanceIndependently(t *testing.T) {
 	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
 	writePattern(c, int64(audio.BytesPerSecond))
 
-	c.OnIncidentStart(TriggerSilence)
+	c.OnIncidentStart(TriggerSilence, 0)
 	writePattern(c, int64(audio.BytesPerSecond))
-	c.OnIncidentStart(TriggerChannelImbalance)
-	c.OnIncidentRecover(TriggerSilence, 2*time.Second, time.Second)
-	c.OnIncidentRecover(TriggerChannelImbalance, 3*time.Second, 500*time.Millisecond)
+	c.OnIncidentStart(TriggerChannelImbalance, 0)
+	c.OnIncidentRecover(TriggerSilence, 0, 2*time.Second, time.Second)
+	c.OnIncidentRecover(TriggerChannelImbalance, 0, 3*time.Second, 500*time.Millisecond)
 
-	silence := c.captures[TriggerSilence]
-	imbalance := c.captures[TriggerChannelImbalance]
+	silence := c.captures[testCaptureKey(TriggerSilence)]
+	imbalance := c.captures[testCaptureKey(TriggerChannelImbalance)]
 	if silence == nil || imbalance == nil {
 		t.Fatalf("capture states missing: silence=%v imbalance=%v", silence != nil, imbalance != nil)
 	}
@@ -219,12 +223,40 @@ func TestCapturerTracksSilenceAndImbalanceIndependently(t *testing.T) {
 	}
 }
 
+func TestSameTriggerReentryKeepsRecoveredCaptureUntilPostWindow(t *testing.T) {
+	t.Parallel()
+	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
+	writePattern(c, int64(audio.BytesPerSecond))
+
+	c.OnIncidentStart(TriggerSilence, 1)
+	first := c.captures[captureKey{trigger: TriggerSilence, incidentID: 1}]
+	c.OnIncidentRecover(TriggerSilence, 1, time.Second, 0)
+	writePattern(c, int64(audio.BytesPerSecond))
+	c.OnIncidentStart(TriggerSilence, 2)
+
+	if first.savedBefore == nil {
+		t.Fatal("first capture finalized before its post-recovery window was available")
+	}
+	if len(c.captures) != 2 {
+		t.Fatalf("captures = %d, want both same-trigger incidents", len(c.captures))
+	}
+
+	writePattern(c, int64((afterSeconds-1)*audio.BytesPerSecond))
+	if c.captures[captureKey{trigger: TriggerSilence, incidentID: 1}] != nil {
+		t.Fatal("first capture still active after its full post-recovery window")
+	}
+	if c.captures[captureKey{trigger: TriggerSilence, incidentID: 2}] == nil {
+		t.Fatal("second capture was removed while still active")
+	}
+}
+
 func TestManagerHandlesChannelImbalanceEvents(t *testing.T) {
 	t.Parallel()
 	capturer := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
 	manager := &Manager{capturer: capturer}
 	manager.HandleChannelImbalanceEvent(&audio.ImbalanceEvent{JustEntered: true})
-	if capturer.captures[TriggerChannelImbalance] == nil {
+	key := testCaptureKey(TriggerChannelImbalance)
+	if capturer.captures[key] == nil {
 		t.Fatal("imbalance start did not create capture state")
 	}
 
@@ -233,7 +265,7 @@ func TestManagerHandlesChannelImbalanceEvents(t *testing.T) {
 		TotalDurationMs:    10000,
 		RecoveryDurationMs: 5000,
 	})
-	if !capturer.captures[TriggerChannelImbalance].recovered {
+	if !capturer.captures[key].recovered {
 		t.Fatal("imbalance recovery did not update capture state")
 	}
 }

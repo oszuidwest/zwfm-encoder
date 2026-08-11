@@ -90,6 +90,7 @@ type StreamDetails struct {
 
 // SilenceDetails holds silence event information.
 type SilenceDetails struct {
+	IncidentID   uint32  `json:"incident_id,omitempty"`
 	LevelLeftDB  float64 `json:"level_left_db"`  // dB
 	LevelRightDB float64 `json:"level_right_db"` // dB
 	ThresholdDB  float64 `json:"threshold_db"`   // dB
@@ -99,6 +100,7 @@ type SilenceDetails struct {
 // AudioDumpDetails holds the incident measurements and encoded dump metadata.
 type AudioDumpDetails struct {
 	Trigger       string   `json:"trigger"`
+	IncidentID    uint32   `json:"incident_id,omitempty"`
 	LevelLeftDB   float64  `json:"level_left_db"`  // dB
 	LevelRightDB  float64  `json:"level_right_db"` // dB
 	BalanceDB     *float64 `json:"balance_db,omitempty"`
@@ -113,6 +115,7 @@ type AudioDumpDetails struct {
 
 // ImbalanceDetails holds channel imbalance event information.
 type ImbalanceDetails struct {
+	IncidentID   uint32  `json:"incident_id,omitempty"`
 	LevelLeftDB  float64 `json:"level_left_db"`  // dB
 	LevelRightDB float64 `json:"level_right_db"` // dB
 	BalanceDB    float64 `json:"balance_db"`     // dB; signed L-R
@@ -237,11 +240,12 @@ func (l *Logger) LogStream(
 // LogSilenceStart records when silence is first detected.
 // t must be captured at the moment the event occurs so the timestamp is
 // accurate even when the write is deferred to a background goroutine.
-func (l *Logger) LogSilenceStart(t time.Time, levelL, levelR, threshold float64) error {
+func (l *Logger) LogSilenceStart(t time.Time, incidentID uint32, levelL, levelR, threshold float64) error {
 	return l.Log(&Event{
 		Timestamp: t,
 		Type:      SilenceStart,
 		Details: &SilenceDetails{
+			IncidentID:   incidentID,
 			LevelLeftDB:  levelL,
 			LevelRightDB: levelR,
 			ThresholdDB:  threshold,
@@ -252,11 +256,14 @@ func (l *Logger) LogSilenceStart(t time.Time, levelL, levelR, threshold float64)
 // LogSilenceEnd records when silence ends with duration information.
 // t must be captured at the moment the event occurs so the timestamp is
 // accurate even when the write is deferred to a background goroutine.
-func (l *Logger) LogSilenceEnd(t time.Time, durationMs int64, levelL, levelR, threshold float64) error {
+func (l *Logger) LogSilenceEnd(
+	t time.Time, incidentID uint32, durationMs int64, levelL, levelR, threshold float64,
+) error {
 	return l.Log(&Event{
 		Timestamp: t,
 		Type:      SilenceEnd,
 		Details: &SilenceDetails{
+			IncidentID:   incidentID,
 			LevelLeftDB:  levelL,
 			LevelRightDB: levelR,
 			ThresholdDB:  threshold,
@@ -278,11 +285,14 @@ func (l *Logger) LogAudioDumpReady(t time.Time, details *AudioDumpDetails) error
 
 // LogChannelImbalanceStart records when an L/R imbalance is confirmed.
 // t must be the event time, even if the write is deferred.
-func (l *Logger) LogChannelImbalanceStart(t time.Time, levelL, levelR, balanceDB, imbalanceDB, threshold float64) error {
+func (l *Logger) LogChannelImbalanceStart(
+	t time.Time, incidentID uint32, levelL, levelR, balanceDB, imbalanceDB, threshold float64,
+) error {
 	return l.Log(&Event{
 		Timestamp: t,
 		Type:      ChannelImbalanceStart,
 		Details: &ImbalanceDetails{
+			IncidentID:   incidentID,
 			LevelLeftDB:  levelL,
 			LevelRightDB: levelR,
 			BalanceDB:    balanceDB,
@@ -294,11 +304,15 @@ func (l *Logger) LogChannelImbalanceStart(t time.Time, levelL, levelR, balanceDB
 
 // LogChannelImbalanceEnd records when an L/R imbalance clears.
 // t must be the event time, even if the write is deferred.
-func (l *Logger) LogChannelImbalanceEnd(t time.Time, durationMs int64, levelL, levelR, balanceDB, imbalanceDB, threshold float64) error {
+func (l *Logger) LogChannelImbalanceEnd(
+	t time.Time, incidentID uint32, durationMs int64,
+	levelL, levelR, balanceDB, imbalanceDB, threshold float64,
+) error {
 	return l.Log(&Event{
 		Timestamp: t,
 		Type:      ChannelImbalanceEnd,
 		Details: &ImbalanceDetails{
+			IncidentID:   incidentID,
 			LevelLeftDB:  levelL,
 			LevelRightDB: levelR,
 			BalanceDB:    balanceDB,

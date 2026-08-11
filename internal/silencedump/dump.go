@@ -53,13 +53,19 @@ func outputDirForPort(port int) string {
 
 // EncodeResult contains the result of encoding an audio incident dump.
 type EncodeResult struct {
-	Trigger   Trigger
-	FilePath  string
-	Filename  string
-	FileSize  int64
-	Duration  time.Duration
-	DumpStart time.Time
-	Error     error
+	Trigger    Trigger
+	IncidentID audio.IncidentID
+	FilePath   string
+	Filename   string
+	FileSize   int64
+	Duration   time.Duration
+	DumpStart  time.Time
+	Error      error
+}
+
+type captureKey struct {
+	trigger    Trigger
+	incidentID audio.IncidentID
 }
 
 type captureState struct {
@@ -82,10 +88,9 @@ type Capturer struct {
 	writePos     int   // current write position in buffer
 	totalWritten int64 // total bytes written (for position tracking)
 
-	// Incident captures share the continuous ring buffer. Keeping one state per
-	// trigger prevents overlapping silence and imbalance recovery windows from
-	// overwriting each other's context.
-	captures map[Trigger]*captureState
+	// Incident captures share the continuous ring buffer. The detector identity
+	// allows a recovered capture and a new capture of the same trigger to coexist.
+	captures map[captureKey]*captureState
 
 	// Configuration.
 	ffmpegPath  string
@@ -147,7 +152,7 @@ func (c *Capturer) WriteAudio(pcm []byte) {
 }
 
 // OnIncidentStart begins capturing audio context for a potential incident dump.
-func (c *Capturer) OnIncidentStart(trigger Trigger) {
+func (c *Capturer) OnIncidentStart(trigger Trigger, incidentID audio.IncidentID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -157,13 +162,7 @@ func (c *Capturer) OnIncidentStart(trigger Trigger) {
 
 	// The captures map is created lazily here, its only write site.
 	if c.captures == nil {
-		c.captures = map[Trigger]*captureState{}
-	}
-
-	// If the same incident type re-enters after recovery, finalize its current
-	// dump before starting a new capture. Other incident types remain intact.
-	if current := c.captures[trigger]; current != nil && current.recovered {
-		c.extractAndEncode(trigger, current)
+		c.captures = map[captureKey]*captureState{}
 	}
 
 	// Snapshot pre-incident audio to prevent loss when an incident outlives the ring.
@@ -176,10 +175,12 @@ func (c *Capturer) OnIncidentStart(trigger Trigger) {
 		state.savedBefore = make([]byte, beforeBytes)
 		c.copyFromRing(state.savedBefore, c.totalWritten-beforeBytes)
 	}
-	c.captures[trigger] = state
+	key := captureKey{trigger: trigger, incidentID: incidentID}
+	c.captures[key] = state
 
 	slog.Debug("audio dump capture started",
 		"trigger", trigger,
+		"incident_id", incidentID,
 		"position", state.startPos,
 		"saved_before_bytes", len(state.savedBefore),
 	)
@@ -189,11 +190,13 @@ func (c *Capturer) OnIncidentStart(trigger Trigger) {
 // recoveryDuration is how long audio was good before recovery was confirmed;
 // the incident end position is backdated by this amount to capture when audio
 // actually returned.
-func (c *Capturer) OnIncidentRecover(trigger Trigger, totalDuration, recoveryDuration time.Duration) {
+func (c *Capturer) OnIncidentRecover(
+	trigger Trigger, incidentID audio.IncidentID, totalDuration, recoveryDuration time.Duration,
+) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	state := c.captures[trigger]
+	state := c.captures[captureKey{trigger: trigger, incidentID: incidentID}]
 	if !c.enabled || state == nil {
 		return
 	}
@@ -210,6 +213,7 @@ func (c *Capturer) OnIncidentRecover(trigger Trigger, totalDuration, recoveryDur
 
 	slog.Debug("audio dump recovery detected",
 		"trigger", trigger,
+		"incident_id", incidentID,
 		"start_pos", state.startPos,
 		"end_pos", state.endPos,
 		"duration", totalDuration,
@@ -219,7 +223,7 @@ func (c *Capturer) OnIncidentRecover(trigger Trigger, totalDuration, recoveryDur
 
 // checkAndFinalize completes a dump capture if sufficient audio context is available.
 func (c *Capturer) checkAndFinalize() {
-	for trigger, state := range c.captures {
+	for key, state := range c.captures {
 		if !state.recovered {
 			continue
 		}
@@ -227,13 +231,13 @@ func (c *Capturer) checkAndFinalize() {
 		if c.totalWritten < requiredBytes {
 			continue
 		}
-		c.extractAndEncode(trigger, state)
-		delete(c.captures, trigger)
+		c.extractAndEncode(key, state)
+		delete(c.captures, key)
 	}
 }
 
 // extractAndEncode encodes buffered audio to an MP3 file.
-func (c *Capturer) extractAndEncode(trigger Trigger, state *captureState) {
+func (c *Capturer) extractAndEncode(key captureKey, state *captureState) {
 	// Calculate section sizes (the incident itself is capped to bound memory and output size).
 	incidentBytes := min(max(0, state.endPos-state.startPos), int64(maxIncidentSeconds*audio.BytesPerSecond))
 	afterBytes := int64(0)
@@ -261,7 +265,7 @@ func (c *Capturer) extractAndEncode(trigger Trigger, state *captureState) {
 	// Encode in background to not block audio processing.
 	// All values are captured above; goroutine doesn't access Capturer fields.
 	go func() {
-		result := encodeToMP3(ffmpegPath, outputDir, pcm, trigger, incidentStart, incidentDuration)
+		result := encodeToMP3(ffmpegPath, outputDir, pcm, key.trigger, key.incidentID, incidentStart, incidentDuration)
 		if callback != nil {
 			callback(result)
 		}
@@ -305,12 +309,13 @@ func dumpFilename(trigger Trigger, incidentStart time.Time) string {
 // encodeToMP3 encodes PCM audio to an MP3 file.
 func encodeToMP3(
 	ffmpegPath, outputDir string, pcm []byte,
-	trigger Trigger, incidentStart time.Time, duration time.Duration,
+	trigger Trigger, incidentID audio.IncidentID, incidentStart time.Time, duration time.Duration,
 ) *EncodeResult {
 	result := &EncodeResult{
-		Trigger:   trigger,
-		Duration:  duration,
-		DumpStart: incidentStart,
+		Trigger:    trigger,
+		IncidentID: incidentID,
+		Duration:   duration,
+		DumpStart:  incidentStart,
 	}
 
 	// Ensure output directory exists
@@ -361,6 +366,7 @@ func encodeToMP3(
 
 	slog.Info("audio dump encoded",
 		"trigger", trigger,
+		"incident_id", incidentID,
 		"file", result.Filename,
 		"size", result.FileSize,
 		"duration", duration,
