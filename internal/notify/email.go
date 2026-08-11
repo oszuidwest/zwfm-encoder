@@ -120,8 +120,6 @@ func buildChannelImbalanceStartEmail(
 	return subject, body
 }
 
-// channelImbalanceMeasurements formats the final measurement block shared by
-// the balanced-recovery and imbalance-dump emails.
 func channelImbalanceMeasurements(levelL, levelR, balanceDB, imbalanceDB, thresholdDB float64) string {
 	return fmt.Sprintf(
 		"Final level: Left %.1f dB / Right %.1f dB\n"+
@@ -184,7 +182,6 @@ func buildDumpReadyEmail(stationName, eventTime string, data *AudioDumpData) (su
 	return subject, body, incident
 }
 
-// sendDumpReadyEmailWithClient does not delegate to sendEmailWithClient because it needs to attach a file.
 func sendDumpReadyEmailWithClient(
 	ctx context.Context, cfg *GraphConfig, client *GraphClient, stationName string, data *AudioDumpData,
 ) error {
@@ -199,7 +196,6 @@ func sendDumpReadyEmailWithClient(
 		return fmt.Errorf("no valid recipients")
 	}
 
-	// Prepare attachment if dump is available.
 	var attachment *EmailAttachment
 	if data.Result != nil && data.Result.Error == nil && data.Result.FilePath != "" {
 		fileData, err := os.ReadFile(data.Result.FilePath)
