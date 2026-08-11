@@ -264,9 +264,13 @@ func (i *historicalIncident) add(event groupedEvent) {
 	}
 }
 
+// dumpTriggerChannelImbalance mirrors silencedump.TriggerChannelImbalance, the
+// trigger value serialized into audio_dump_ready details.
+const dumpTriggerChannelImbalance = "channel_imbalance"
+
 func latestAudioIncident(incidents []*historicalIncident, trigger string) *historicalIncident {
 	firstType := SilenceStart
-	if trigger == "channel_imbalance" {
+	if trigger == dumpTriggerChannelImbalance {
 		firstType = ChannelImbalanceStart
 	}
 	for i := len(incidents) - 1; i >= 0; i-- {
@@ -416,7 +420,7 @@ func eventSourceKey(event groupedEvent) string {
 		}
 		return fmt.Sprintf("stream-event:%d", event.id)
 	case CategoryAudio:
-		if event.view.Type == AudioDumpReady && detailString(event.details, "trigger") == "channel_imbalance" {
+		if event.view.Type == AudioDumpReady && detailString(event.details, "trigger") == dumpTriggerChannelImbalance {
 			return "audio:imbalance"
 		}
 		if strings.HasPrefix(string(event.view.Type), "channel_imbalance_") {

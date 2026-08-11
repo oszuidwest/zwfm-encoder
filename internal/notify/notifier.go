@@ -237,8 +237,9 @@ func (o *AlertOrchestrator) handleChannelImbalanceEnd(durationMS int64, levelL, 
 
 // OnDumpReady completes the recovery matching an encoded audio-incident dump.
 func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
+	// encodeToMP3 always sets Trigger; the nil default only serves tests.
 	trigger := silencedump.TriggerSilence
-	if result != nil && result.Trigger != "" {
+	if result != nil {
 		trigger = result.Trigger
 	}
 

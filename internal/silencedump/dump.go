@@ -103,7 +103,6 @@ func NewCapturer(ffmpegPath, outputDir string, onDumpReady DumpCallback) *Captur
 		outputDir:   outputDir,
 		enabled:     ffmpegPath != "",
 		onDumpReady: onDumpReady,
-		captures:    map[Trigger]*captureState{},
 	}
 }
 
@@ -147,17 +146,8 @@ func (c *Capturer) WriteAudio(pcm []byte) {
 	c.checkAndFinalize()
 }
 
-// OnSilenceStart begins capturing audio context for a potential silence dump.
-func (c *Capturer) OnSilenceStart() {
-	c.onIncidentStart(TriggerSilence)
-}
-
-// OnChannelImbalanceStart begins capturing context for a potential channel-imbalance dump.
-func (c *Capturer) OnChannelImbalanceStart() {
-	c.onIncidentStart(TriggerChannelImbalance)
-}
-
-func (c *Capturer) onIncidentStart(trigger Trigger) {
+// OnIncidentStart begins capturing audio context for a potential incident dump.
+func (c *Capturer) OnIncidentStart(trigger Trigger) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -165,6 +155,7 @@ func (c *Capturer) onIncidentStart(trigger Trigger) {
 		return
 	}
 
+	// The captures map is created lazily here, its only write site.
 	if c.captures == nil {
 		c.captures = map[Trigger]*captureState{}
 	}
@@ -194,19 +185,11 @@ func (c *Capturer) onIncidentStart(trigger Trigger) {
 	)
 }
 
-// OnSilenceRecover signals that audio has recovered from silence.
-// recoveryDuration is how long audio was good before recovery was confirmed.
-// We backdate silenceEndPos by this amount to capture when audio actually returned.
-func (c *Capturer) OnSilenceRecover(totalDuration, recoveryDuration time.Duration) {
-	c.onIncidentRecover(TriggerSilence, totalDuration, recoveryDuration)
-}
-
-// OnChannelImbalanceRecover marks the point where stereo balance returned.
-func (c *Capturer) OnChannelImbalanceRecover(totalDuration, recoveryDuration time.Duration) {
-	c.onIncidentRecover(TriggerChannelImbalance, totalDuration, recoveryDuration)
-}
-
-func (c *Capturer) onIncidentRecover(trigger Trigger, totalDuration, recoveryDuration time.Duration) {
+// OnIncidentRecover signals that audio has recovered from an incident.
+// recoveryDuration is how long audio was good before recovery was confirmed;
+// the incident end position is backdated by this amount to capture when audio
+// actually returned.
+func (c *Capturer) OnIncidentRecover(trigger Trigger, totalDuration, recoveryDuration time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -400,5 +383,5 @@ func (c *Capturer) Reset() {
 func (c *Capturer) resetLocked() {
 	c.writePos = 0
 	c.totalWritten = 0
-	c.captures = map[Trigger]*captureState{}
+	clear(c.captures)
 }

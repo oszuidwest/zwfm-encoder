@@ -120,31 +120,47 @@ func buildChannelImbalanceStartEmail(
 	return subject, body
 }
 
+// channelImbalanceMeasurements formats the final measurement block shared by
+// the balanced-recovery and imbalance-dump emails.
+func channelImbalanceMeasurements(levelL, levelR, balanceDB, imbalanceDB, thresholdDB float64) string {
+	return fmt.Sprintf(
+		"Final level: Left %.1f dB / Right %.1f dB\n"+
+			"Final balance: %.1f dB (%s)\n"+
+			"Final imbalance: %.1f dB\n"+
+			"Threshold: %.1f dB",
+		levelL,
+		levelR,
+		balanceDB,
+		channelImbalanceDirection(balanceDB),
+		imbalanceDB,
+		thresholdDB,
+	)
+}
+
 func buildChannelImbalanceEndEmail(
 	stationName, eventTime string, e ChannelImbalanceData,
 ) (subject, body string) {
 	subject = "[OK] Channels Balanced - " + stationName
 	body = fmt.Sprintf(
-		"Channels were balanced at %s.\n\n"+
-			"The imbalance lasted %s.\n"+
-			"Final level: Left %.1f dB / Right %.1f dB\n"+
-			"Final balance: %.1f dB (%s)\n"+
-			"Final imbalance: %.1f dB\n"+
-			"Threshold: %.1f dB",
+		"Channels were balanced at %s.\n\nThe imbalance lasted %s.\n",
 		eventTime,
 		util.FormatDuration(e.DurationMs),
-		e.LevelL,
-		e.LevelR,
-		e.BalanceDB,
-		channelImbalanceDirection(e.BalanceDB),
-		e.ImbalanceDB,
-		e.ThresholdDB,
-	)
+	) + channelImbalanceMeasurements(e.LevelL, e.LevelR, e.BalanceDB, e.ImbalanceDB, e.ThresholdDB)
 	return subject, body
 }
 
 func buildDumpReadyEmail(stationName, eventTime string, data AudioDumpData) (subject, body, incident string) {
 	subject = "[DUMP] Audio Recording - " + stationName
+	if data.Trigger == silencedump.TriggerChannelImbalance {
+		incident = "channel imbalance"
+		body = fmt.Sprintf(
+			"Audio dump ready at %s.\n\nThe channel imbalance lasted %s.\n",
+			eventTime,
+			util.FormatDuration(data.DurationMs),
+		) + channelImbalanceMeasurements(data.LevelL, data.LevelR, data.BalanceDB, data.ImbalanceDB, data.ThresholdDB)
+		return subject, body, incident
+	}
+
 	incident = "silence"
 	body = fmt.Sprintf(
 		"Audio dump ready at %s.\n\n"+
@@ -154,27 +170,6 @@ func buildDumpReadyEmail(stationName, eventTime string, data AudioDumpData) (sub
 		util.FormatDuration(data.DurationMs),
 		data.LevelL,
 		data.LevelR,
-		data.ThresholdDB,
-	)
-	if data.Trigger != silencedump.TriggerChannelImbalance {
-		return subject, body, incident
-	}
-
-	incident = "channel imbalance"
-	body = fmt.Sprintf(
-		"Audio dump ready at %s.\n\n"+
-			"The channel imbalance lasted %s.\n"+
-			"Final level: Left %.1f dB / Right %.1f dB\n"+
-			"Final balance: %.1f dB (%s)\n"+
-			"Final imbalance: %.1f dB\n"+
-			"Threshold: %.1f dB",
-		eventTime,
-		util.FormatDuration(data.DurationMs),
-		data.LevelL,
-		data.LevelR,
-		data.BalanceDB,
-		channelImbalanceDirection(data.BalanceDB),
-		data.ImbalanceDB,
 		data.ThresholdDB,
 	)
 	return subject, body, incident

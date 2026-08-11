@@ -145,12 +145,14 @@ func sendWebhookDumpReady(ctx context.Context, webhookURL string, data AudioDump
 		LevelLeftDB:  data.LevelL,
 		LevelRightDB: data.LevelR,
 		Threshold:    data.ThresholdDB,
-		DurationMs:   data.DurationMs,
 		Timestamp:    timestampUTC(),
 	}
+	// Silence dumps keep the legacy silence_duration_ms field; other incidents
+	// use the generic duration_ms.
 	if data.Trigger == silencedump.TriggerSilence {
 		payload.SilenceDurationMs = data.DurationMs
-		payload.DurationMs = 0
+	} else {
+		payload.DurationMs = data.DurationMs
 	}
 	if data.Trigger == silencedump.TriggerChannelImbalance {
 		payload.BalanceDB = &data.BalanceDB

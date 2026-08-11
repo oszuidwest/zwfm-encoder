@@ -109,36 +109,30 @@ func (m *Manager) WriteAudio(pcm []byte) {
 
 // HandleSilenceEvent processes silence detection events.
 func (m *Manager) HandleSilenceEvent(event audio.SilenceEvent) {
-	if m.capturer == nil {
-		return
-	}
-
-	if event.JustEntered {
-		m.capturer.OnSilenceStart()
-	}
-
-	if event.JustRecovered {
-		m.capturer.OnSilenceRecover(
-			time.Duration(event.TotalDurationMs)*time.Millisecond,
-			time.Duration(event.RecoveryDurationMs)*time.Millisecond,
-		)
-	}
+	m.handleIncident(TriggerSilence, event.JustEntered, event.JustRecovered,
+		event.TotalDurationMs, event.RecoveryDurationMs)
 }
 
 // HandleChannelImbalanceEvent processes channel-imbalance detection events.
 func (m *Manager) HandleChannelImbalanceEvent(event *audio.ImbalanceEvent) {
-	if m.capturer == nil || event == nil {
+	m.handleIncident(TriggerChannelImbalance, event.JustEntered, event.JustRecovered,
+		event.TotalDurationMs, event.RecoveryDurationMs)
+}
+
+// handleIncident forwards incident transitions to the capturer.
+func (m *Manager) handleIncident(trigger Trigger, justEntered, justRecovered bool, totalMs, recoveryMs int64) {
+	if m.capturer == nil {
 		return
 	}
 
-	if event.JustEntered {
-		m.capturer.OnChannelImbalanceStart()
+	if justEntered {
+		m.capturer.OnIncidentStart(trigger)
 	}
 
-	if event.JustRecovered {
-		m.capturer.OnChannelImbalanceRecover(
-			time.Duration(event.TotalDurationMs)*time.Millisecond,
-			time.Duration(event.RecoveryDurationMs)*time.Millisecond,
+	if justRecovered {
+		m.capturer.OnIncidentRecover(trigger,
+			time.Duration(totalMs)*time.Millisecond,
+			time.Duration(recoveryMs)*time.Millisecond,
 		)
 	}
 }
