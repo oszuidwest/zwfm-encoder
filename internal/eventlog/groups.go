@@ -223,7 +223,7 @@ func eventClosesIncident(open *historicalIncident, event groupedEvent) bool {
 	if open.closeType == event.view.Type {
 		return true
 	}
-	// Listener restarts resolve incidents; message fallback supports legacy logs.
+	// Listener starts resolve incidents even without a StreamStable event.
 	return open.closeType == StreamStable &&
 		event.view.Type == StreamStarted &&
 		isListenerStreamEvent(event)
@@ -270,8 +270,7 @@ func (i *historicalIncident) add(event groupedEvent) {
 	}
 }
 
-// dumpTriggerChannelImbalance mirrors silencedump.TriggerChannelImbalance, the
-// trigger value serialized into audio_dump_ready details.
+// dumpTriggerChannelImbalance is the serialized trigger for channel imbalance dumps.
 const dumpTriggerChannelImbalance = "channel_imbalance"
 
 func audioIncidentForDump(incidents []*historicalIncident, trigger string, incidentID int64) *historicalIncident {

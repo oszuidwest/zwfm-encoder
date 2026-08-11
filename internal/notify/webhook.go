@@ -147,8 +147,7 @@ func sendWebhookDumpReady(ctx context.Context, webhookURL string, data *AudioDum
 		Threshold:    data.ThresholdDB,
 		Timestamp:    timestampUTC(),
 	}
-	// Silence dumps keep the legacy silence_duration_ms field; other incidents
-	// use the generic duration_ms.
+	// Silence dumps use silence_duration_ms; other incidents use duration_ms.
 	if data.Trigger == silencedump.TriggerSilence {
 		payload.SilenceDurationMs = data.DurationMs
 	} else {

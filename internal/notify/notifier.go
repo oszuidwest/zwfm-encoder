@@ -16,8 +16,7 @@ import (
 // logQueueDepth buffers ordered event-log writes from audio cycle handlers.
 const logQueueDepth = 16
 
-// pendingRecoveryTTL exceeds the 15-second post window plus the 30-second
-// encoder timeout, and bounds stale entries when capture is disabled.
+// pendingRecoveryTTL keeps recovery context through capture and encoding delays.
 const pendingRecoveryTTL = time.Minute
 
 // logJob is a queued event-log write.
@@ -260,9 +259,8 @@ func (o *AlertOrchestrator) handleChannelImbalanceEnd(
 	})
 }
 
-// addPendingRecoveryLocked records a recovery under its incident identity and
-// removes callbacks that can no longer arrive within the capture and encoder
-// deadlines. The caller holds o.mu.
+// addPendingRecoveryLocked retains recovery context for dump callbacks and prunes stale entries.
+// The caller must hold o.mu.
 func (o *AlertOrchestrator) addPendingRecoveryLocked(pending *pendingRecoveryData) {
 	cutoff := pending.recoveredAt.Add(-pendingRecoveryTTL)
 	for existingKey, existing := range o.pendingRecoveries {

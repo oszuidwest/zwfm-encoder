@@ -99,6 +99,45 @@ func TestBuildChannelImbalanceDumpEmail(t *testing.T) {
 	}
 }
 
+func TestBuildChannelImbalanceDumpEmailOmitsIncompleteMeasurements(t *testing.T) {
+	t.Parallel()
+	balanceDB, imbalanceDB := 1.0, 1.0
+	tests := []struct {
+		name        string
+		balanceDB   *float64
+		imbalanceDB *float64
+	}{
+		{name: "missing balance", imbalanceDB: &imbalanceDB},
+		{name: "missing imbalance", balanceDB: &balanceDB},
+		{name: "missing both"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, body, incident := buildDumpReadyEmail(
+				"ZuidWest FM",
+				"11 Aug 2026 20:19:00 CEST",
+				&AudioDumpData{
+					Trigger:     silencedump.TriggerChannelImbalance,
+					BalanceDB:   tt.balanceDB,
+					ImbalanceDB: tt.imbalanceDB,
+					DurationMs:  30000,
+				},
+			)
+			if incident != "channel imbalance" {
+				t.Fatalf("incident = %q, want channel imbalance", incident)
+			}
+			if !strings.Contains(body, "The channel imbalance lasted 30s.") {
+				t.Fatalf("dump body missing duration:\n%s", body)
+			}
+			if strings.Contains(body, "Final level:") {
+				t.Fatalf("dump body unexpectedly contains incomplete measurements:\n%s", body)
+			}
+		})
+	}
+}
+
 func TestChannelImbalanceDirection(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

@@ -191,7 +191,7 @@ func (d *Dispatcher) DispatchAudioDump(
 ) {
 	dispatch(active, cfg, "audio_dump_ready", AlertChannel.SubscribesAudioDump,
 		func(ch AlertChannel, cfg *config.Snapshot) error {
-			data := data // per-channel copy, mirroring the Snapshot isolation
+			data := data // Give each channel its own struct value.
 			return ch.SendAudioDump(ctx, cfg, &data)
 		})
 }

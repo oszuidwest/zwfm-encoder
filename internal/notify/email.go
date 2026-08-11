@@ -157,7 +157,16 @@ func buildDumpReadyEmail(stationName, eventTime string, data *AudioDumpData) (su
 			"Audio dump ready at %s.\n\nThe channel imbalance lasted %s.\n",
 			eventTime,
 			util.FormatDuration(data.DurationMs),
-		) + channelImbalanceMeasurements(data.LevelL, data.LevelR, *data.BalanceDB, *data.ImbalanceDB, data.ThresholdDB)
+		)
+		if data.BalanceDB != nil && data.ImbalanceDB != nil {
+			body += channelImbalanceMeasurements(
+				data.LevelL,
+				data.LevelR,
+				*data.BalanceDB,
+				*data.ImbalanceDB,
+				data.ThresholdDB,
+			)
+		}
 		return subject, body, incident
 	}
 

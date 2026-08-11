@@ -35,11 +35,8 @@ const (
 	// Output subdirectory name prefix (inside system temp dir).
 	outputDirPrefix = "encoder-silence-dumps"
 
-	// maxRecoveredCaptures bounds recovered same-trigger captures awaiting
-	// their post window, so flapping audio cannot stack ring snapshots without
-	// bound. On overflow the oldest capture is finalized early with a
-	// truncated post window. Encoding itself stays one ffmpeg run per
-	// incident either way.
+	// maxRecoveredCaptures bounds post-recovery snapshots per trigger.
+	// The oldest snapshot is finalized with available audio when the limit is reached.
 	maxRecoveredCaptures = 2
 )
 
@@ -53,7 +50,6 @@ const (
 	TriggerChannelImbalance Trigger = "channel_imbalance"
 )
 
-// outputDirForPort returns the legacy output directory for audio incident dumps, unique per port.
 func outputDirForPort(port int) string {
 	return filepath.Join(os.TempDir(), fmt.Sprintf("%s-%d", outputDirPrefix, port))
 }
@@ -95,8 +91,7 @@ type Capturer struct {
 	writePos     int   // current write position in buffer
 	totalWritten int64 // total bytes written (for position tracking)
 
-	// Incident captures share the continuous ring buffer. The detector identity
-	// allows a recovered capture and a new capture of the same trigger to coexist.
+	// captures keeps overlapping post-recovery windows distinct by detector incident.
 	captures map[captureKey]*captureState
 
 	// Configuration.
@@ -106,9 +101,8 @@ type Capturer struct {
 	onDumpReady DumpCallback
 }
 
-// NewCapturer creates a new audio incident dump capturer. The ~6.7 MB ring buffer is
-// allocated lazily on the first enabled WriteAudio so installs that never
-// enable incident dumps do not pay for it.
+// NewCapturer creates an audio incident dump capturer.
+// Its ring buffer is allocated lazily while capture is enabled.
 func NewCapturer(ffmpegPath, outputDir string, onDumpReady DumpCallback) *Capturer {
 	return &Capturer{
 		ffmpegPath:  ffmpegPath,
@@ -150,11 +144,9 @@ func (c *Capturer) WriteAudio(pcm []byte) {
 		c.buffer = make([]byte, bufferCapacity)
 	}
 
-	// Write to ring buffer with wrap-around
 	c.writePos = c.writeToRing(pcm)
 	c.totalWritten += int64(len(pcm))
 
-	// Check if we have enough recovery audio to finalize
 	c.checkAndFinalize()
 }
 
@@ -167,15 +159,11 @@ func (c *Capturer) OnIncidentStart(trigger Trigger, incidentID audio.IncidentID)
 		return
 	}
 
-	// The captures map is created lazily here, its only write site.
 	if c.captures == nil {
 		c.captures = map[captureKey]*captureState{}
 	}
 
-	// The detector is serial per trigger, so a new incident supersedes any
-	// abandoned un-recovered capture of the same trigger (detector reset
-	// mid-incident); dropping it frees its ring snapshot. Recovered captures
-	// awaiting their post window are capped at maxRecoveredCaptures.
+	// Bound per-trigger memory when detectors reset or incidents flap.
 	var oldestKey captureKey
 	var oldest *captureState
 	recoveredCount := 0
@@ -218,10 +206,8 @@ func (c *Capturer) OnIncidentStart(trigger Trigger, incidentID audio.IncidentID)
 	)
 }
 
-// OnIncidentRecover signals that audio has recovered from an incident.
-// recoveryDuration is how long audio was good before recovery was confirmed;
-// the incident end position is backdated by this amount to capture when audio
-// actually returned.
+// OnIncidentRecover records a recovery at the time audio returned.
+// recoveryDuration compensates for the detector's confirmation delay.
 func (c *Capturer) OnIncidentRecover(
 	trigger Trigger, incidentID audio.IncidentID, totalDuration, recoveryDuration time.Duration,
 ) {
@@ -233,12 +219,7 @@ func (c *Capturer) OnIncidentRecover(
 		return
 	}
 
-	// Backdate silenceEndPos to when audio actually returned, not when recovery was confirmed.
-	// The JustRecovered event fires after recoveryDuration has elapsed, so we need to
-	// subtract that amount to capture the moment audio came back.
-	//
-	// Wall-clock recovery can outpace bytes written; clamp so copyFromRing never
-	// receives a start before the incident start position.
+	// Clamp because wall-clock recovery can advance faster than PCM input.
 	recoveryBytes := int64(recoveryDuration.Seconds() * float64(audio.BytesPerSecond))
 	state.endPos = max(state.startPos, c.totalWritten-recoveryBytes)
 	state.recovered = true
@@ -270,32 +251,25 @@ func (c *Capturer) checkAndFinalize() {
 
 // extractAndEncode encodes buffered audio to an MP3 file.
 func (c *Capturer) extractAndEncode(key captureKey, state *captureState) {
-	// Calculate section sizes (the incident itself is capped to bound memory and output size).
-	// Callers only finalize recovered captures. The post window is clamped to
-	// the audio actually written, so an early finalize yields a shorter file
-	// instead of a tail of stale ring data.
+	// Cap incident audio and prevent early finalization from reading stale ring data.
 	incidentBytes := min(max(0, state.endPos-state.startPos), int64(maxIncidentSeconds*audio.BytesPerSecond))
 	afterBytes := min(int64(afterSeconds*audio.BytesPerSecond), c.totalWritten-state.endPos)
 
-	// Build PCM: savedBefore (guaranteed intact) + incident (capped) + after.
 	beforeLen := int64(len(state.savedBefore))
 	pcm := make([]byte, beforeLen+incidentBytes+afterBytes)
 	copy(pcm, state.savedBefore)
 	c.copyFromRing(pcm[beforeLen:beforeLen+incidentBytes], state.startPos)
 	c.copyFromRing(pcm[beforeLen+incidentBytes:], state.endPos)
 
-	// Capture all values needed for encoding before releasing lock
+	// Snapshot shared state before encoding asynchronously.
 	incidentStart := state.startedAt
 	incidentDuration := time.Duration(state.endPos-state.startPos) * time.Second / time.Duration(audio.BytesPerSecond)
 	ffmpegPath := c.ffmpegPath
 	outputDir := c.outputDir
 	callback := c.onDumpReady
 
-	// Clear savedBefore to free memory (no longer needed after extraction).
 	state.savedBefore = nil
 
-	// Encode in background to not block audio processing.
-	// All values are captured above; goroutine doesn't access Capturer fields.
 	go func() {
 		result := encodeToMP3(ffmpegPath, outputDir, pcm, key.trigger, key.incidentID, incidentStart, incidentDuration)
 		if callback != nil {
@@ -350,17 +324,14 @@ func encodeToMP3(
 		DumpStart:  incidentStart,
 	}
 
-	// Ensure output directory exists
 	if err := os.MkdirAll(outputDir, 0o755); err != nil { //nolint:gosec // Dump directory needs to be readable
 		result.Error = fmt.Errorf("create output dir: %w", err)
 		return result
 	}
 
-	// Generate filename: 2024-01-15_14-32-05.mp3 (local time)
 	result.Filename = dumpFilename(trigger, incidentStart)
 	result.FilePath = filepath.Join(outputDir, result.Filename)
 
-	// Build FFmpeg command
 	ctx, cancel := context.WithTimeoutCause(
 		context.Background(),
 		encodeTimeout,
@@ -388,7 +359,6 @@ func encodeToMP3(
 		return result
 	}
 
-	// Get file size
 	info, err := os.Stat(result.FilePath)
 	if err != nil {
 		result.Error = fmt.Errorf("stat output file: %w", err)

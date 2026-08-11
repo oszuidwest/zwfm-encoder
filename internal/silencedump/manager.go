@@ -119,7 +119,6 @@ func (m *Manager) HandleChannelImbalanceEvent(event *audio.ImbalanceEvent) {
 		event.TotalDurationMs, event.RecoveryDurationMs)
 }
 
-// handleIncident forwards incident transitions to the capturer.
 func (m *Manager) handleIncident(
 	trigger Trigger, incidentID audio.IncidentID, justEntered, justRecovered bool, totalMs, recoveryMs int64,
 ) {

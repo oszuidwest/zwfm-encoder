@@ -15,9 +15,7 @@ type debouncer struct {
 	recoveryStart    time.Time // recovery-window start
 	active           bool      // confirmed active state
 	activeDurationMs int64     // last active duration for recovery reporting
-	// incidentSeq is the last minted incident ID; while an incident is tracked
-	// (start is set) it is that incident's ID. It survives reset so IDs stay
-	// unique across resets.
+	// incidentSeq survives detector resets to keep incident IDs monotonic.
 	incidentSeq IncidentID
 }
 

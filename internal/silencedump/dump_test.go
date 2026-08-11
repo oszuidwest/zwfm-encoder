@@ -255,7 +255,6 @@ func TestOnIncidentStartBoundsPerTriggerCaptures(t *testing.T) {
 	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
 	writePattern(c, int64(audio.BytesPerSecond))
 
-	// A new same-trigger incident supersedes an abandoned un-recovered capture.
 	c.OnIncidentStart(TriggerSilence, 1)
 	c.OnIncidentStart(TriggerSilence, 2)
 	if c.captures[captureKey{trigger: TriggerSilence, incidentID: 1}] != nil {
@@ -265,8 +264,6 @@ func TestOnIncidentStartBoundsPerTriggerCaptures(t *testing.T) {
 		t.Fatalf("captures = %d, want only the superseding capture", len(c.captures))
 	}
 
-	// Recovered captures awaiting their post window are capped; the oldest is
-	// finalized early when a new incident starts.
 	c.OnIncidentRecover(TriggerSilence, 2, time.Second, 0)
 	c.OnIncidentStart(TriggerSilence, 3)
 	c.OnIncidentRecover(TriggerSilence, 3, time.Second, 0)

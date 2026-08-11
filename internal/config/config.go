@@ -176,7 +176,7 @@ type ConfigData struct {
 	SilenceDetection SilenceDetectionConfig `json:"silence_detection"`
 	// ChannelImbalanceDetection contains L/R imbalance detector settings.
 	ChannelImbalanceDetection ChannelImbalanceDetectionConfig `json:"channel_imbalance_detection"`
-	// SilenceDump contains audio incident dump settings under its legacy key.
+	// SilenceDump contains audio incident dump settings.
 	SilenceDump types.SilenceDumpConfig `json:"silence_dump"`
 	// Notifications contains notification settings.
 	Notifications NotificationsConfig `json:"notifications"`
@@ -1063,7 +1063,7 @@ func (c *Config) Snapshot() Snapshot {
 		// Silence & Channel Imbalance Detection
 		DetectorSettingsSnapshot: c.detectorSettings(),
 
-		// Audio incident dumps (legacy silence_dump key).
+		// Audio incident dumps
 		SilenceDumpEnabled:       c.SilenceDump.Enabled,
 		SilenceDumpRetentionDays: c.SilenceDump.RetentionDays,
 
