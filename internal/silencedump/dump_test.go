@@ -177,7 +177,7 @@ func TestOnSilenceRecoverClampsEndPos(t *testing.T) {
 
 func TestCheckAndFinalizeRecoversAtZeroStart(t *testing.T) {
 	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
-	c.OnIncidentStart(TriggerSilence)                     // Keeps silenceStartPos at 0.
+	c.OnIncidentStart(TriggerSilence)                       // Keeps silenceStartPos at 0.
 	c.OnIncidentRecover(TriggerSilence, 0, 100*time.Second) // Clamps wall-clock recovery to bytes written.
 	state := c.captures[TriggerSilence]
 	if !state.recovered {
