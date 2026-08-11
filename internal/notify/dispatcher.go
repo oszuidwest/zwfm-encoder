@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 
+	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 )
@@ -50,7 +51,7 @@ type AlertChannel interface {
 	// SendAudioDump delivers an audio dump notification, or returns an error if
 	// the backend cannot carry attachments.
 	SendAudioDump(
-		ctx context.Context, cfg *config.Snapshot, data AudioDumpData,
+		ctx context.Context, cfg *config.Snapshot, data *AudioDumpData,
 	) error
 	// SendUploadAbandoned delivers an alert for a recording that exhausted upload retries.
 	SendUploadAbandoned(ctx context.Context, cfg *config.Snapshot, params UploadAbandonedData) error
@@ -79,10 +80,11 @@ type ChannelImbalanceData struct {
 // AudioDumpData contains the incident context sent with a completed audio dump.
 type AudioDumpData struct {
 	Trigger     silencedump.Trigger
+	IncidentID  audio.IncidentID
 	LevelL      float64
 	LevelR      float64
-	BalanceDB   float64
-	ImbalanceDB float64
+	BalanceDB   *float64 // set for channel-imbalance dumps
+	ImbalanceDB *float64 // set for channel-imbalance dumps
 	ThresholdDB float64
 	DurationMs  int64
 	Result      *silencedump.EncodeResult
@@ -189,7 +191,8 @@ func (d *Dispatcher) DispatchAudioDump(
 ) {
 	dispatch(active, cfg, "audio_dump_ready", AlertChannel.SubscribesAudioDump,
 		func(ch AlertChannel, cfg *config.Snapshot) error {
-			return ch.SendAudioDump(ctx, cfg, data)
+			data := data // per-channel copy, mirroring the Snapshot isolation
+			return ch.SendAudioDump(ctx, cfg, &data)
 		})
 }
 

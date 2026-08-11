@@ -52,7 +52,7 @@ func (noopAlertChannel) SendChannelImbalanceEnd(
 	return nil
 }
 func (noopAlertChannel) SendAudioDump(
-	_ context.Context, _ *config.Snapshot, _ AudioDumpData,
+	_ context.Context, _ *config.Snapshot, _ *AudioDumpData,
 ) error {
 	return nil
 }
@@ -245,9 +245,9 @@ func (c *testChannel) SendChannelImbalanceEnd(
 	return nil
 }
 func (c *testChannel) SendAudioDump(
-	_ context.Context, cfg *config.Snapshot, data AudioDumpData,
+	_ context.Context, cfg *config.Snapshot, data *AudioDumpData,
 ) error {
-	c.audioDumpCalled <- audioDumpCall{snap: cfg, data: data}
+	c.audioDumpCalled <- audioDumpCall{snap: cfg, data: *data}
 	return nil
 }
 
@@ -409,7 +409,7 @@ func TestOnDumpReadyNilPending(t *testing.T) {
 	t.Parallel()
 	ch := newTestChannel(true)
 	o := newTestOrchestrator(t, ch)
-	o.OnDumpReady(nil)
+	o.OnDumpReady(&silencedump.EncodeResult{Trigger: silencedump.TriggerSilence})
 	assertNoCall(t, ch.audioDumpCalled, "SendAudioDump")
 }
 
@@ -422,7 +422,7 @@ func TestOnDumpReadyNilPendingAfterReset(t *testing.T) {
 	o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 5000})
 	awaitCall(t, ch.silenceEndCalled, "SendSilenceEnd")
 	o.Reset()
-	o.OnDumpReady(nil)
+	o.OnDumpReady(&silencedump.EncodeResult{Trigger: silencedump.TriggerSilence})
 	assertNoCall(t, ch.audioDumpCalled, "SendAudioDump after Reset")
 }
 
@@ -481,7 +481,7 @@ func TestAudioDumpUsesSnapshotFromSilenceEnd(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("ApplySettings failed: %v", err)
 	}
-	o.OnDumpReady(nil)
+	o.OnDumpReady(&silencedump.EncodeResult{Trigger: silencedump.TriggerSilence})
 	audioDumpCall := awaitCall(t, ch.audioDumpCalled, "SendAudioDump")
 	if audioDumpCall.snap.SilenceThreshold != silenceEndSnap.SilenceThreshold {
 		t.Fatalf("SendAudioDump received threshold %.1f dB, want %.1f dB (from silence-end snapshot)",
@@ -534,7 +534,10 @@ func TestPendingRecoveriesDropEntriesPastCallbackDeadline(t *testing.T) {
 
 	o.mu.Lock()
 	o.pendingRecoveries[staleKey] = &pendingRecoveryData{recoveredAt: now.Add(-2 * pendingRecoveryTTL)}
-	o.addPendingRecoveryLocked(freshKey, &pendingRecoveryData{recoveredAt: now})
+	o.addPendingRecoveryLocked(&pendingRecoveryData{
+		dumpData:    AudioDumpData{Trigger: silencedump.TriggerSilence, IncidentID: 2},
+		recoveredAt: now,
+	})
 	o.mu.Unlock()
 
 	if _, ok := o.pendingRecoveries[staleKey]; ok {
@@ -678,7 +681,8 @@ func TestChannelImbalanceDumpUsesRecoveryContext(t *testing.T) {
 		t.Fatalf("audio dump timing/threshold = %+v, want duration=30000 threshold=12", call.data)
 	}
 	wrongLevels := call.data.LevelL != -12 || call.data.LevelR != -12
-	wrongBalance := call.data.BalanceDB != 0 || call.data.ImbalanceDB != 0
+	wrongBalance := call.data.BalanceDB == nil || *call.data.BalanceDB != 0 ||
+		call.data.ImbalanceDB == nil || *call.data.ImbalanceDB != 0
 	if wrongLevels || wrongBalance {
 		t.Fatalf("audio dump recovery measurements = %+v, want final imbalance measurements", call.data)
 	}
@@ -817,7 +821,7 @@ func TestHandleChannelImbalanceEventLogsAndKeepsDetails(t *testing.T) {
 func TestZabbixChannelSendAudioDumpReturnsError(t *testing.T) {
 	t.Parallel()
 	ch := &ZabbixChannel{}
-	err := ch.SendAudioDump(context.Background(), nil, AudioDumpData{})
+	err := ch.SendAudioDump(context.Background(), nil, &AudioDumpData{})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -968,7 +972,7 @@ func TestLogWriteOrderWithDump(t *testing.T) {
 	o.SetEventLogger(logger)
 	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
 	o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 5000})
-	o.OnDumpReady(nil)
+	o.OnDumpReady(&silencedump.EncodeResult{Trigger: silencedump.TriggerSilence})
 	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
 	awaitCall(t, ch.silenceEndCalled, "SendSilenceEnd")
 	awaitCall(t, ch.audioDumpCalled, "SendAudioDump")

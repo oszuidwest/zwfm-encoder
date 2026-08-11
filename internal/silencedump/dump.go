@@ -34,6 +34,13 @@ const (
 
 	// Output subdirectory name prefix (inside system temp dir).
 	outputDirPrefix = "encoder-silence-dumps"
+
+	// maxRecoveredCaptures bounds recovered same-trigger captures awaiting
+	// their post window, so flapping audio cannot stack ring snapshots without
+	// bound. On overflow the oldest capture is finalized early with a
+	// truncated post window. Encoding itself stays one ffmpeg run per
+	// incident either way.
+	maxRecoveredCaptures = 2
 )
 
 // Trigger identifies the audio incident that requested a dump.
@@ -165,6 +172,31 @@ func (c *Capturer) OnIncidentStart(trigger Trigger, incidentID audio.IncidentID)
 		c.captures = map[captureKey]*captureState{}
 	}
 
+	// The detector is serial per trigger, so a new incident supersedes any
+	// abandoned un-recovered capture of the same trigger (detector reset
+	// mid-incident); dropping it frees its ring snapshot. Recovered captures
+	// awaiting their post window are capped at maxRecoveredCaptures.
+	var oldestKey captureKey
+	var oldest *captureState
+	recoveredCount := 0
+	for k, s := range c.captures {
+		if k.trigger != trigger {
+			continue
+		}
+		if !s.recovered {
+			delete(c.captures, k)
+			continue
+		}
+		recoveredCount++
+		if oldest == nil || s.startedAt.Before(oldest.startedAt) {
+			oldestKey, oldest = k, s
+		}
+	}
+	if recoveredCount >= maxRecoveredCaptures {
+		c.extractAndEncode(oldestKey, oldest)
+		delete(c.captures, oldestKey)
+	}
+
 	// Snapshot pre-incident audio to prevent loss when an incident outlives the ring.
 	beforeBytes := min(c.totalWritten, int64(beforeSeconds*audio.BytesPerSecond))
 	state := &captureState{
@@ -239,11 +271,11 @@ func (c *Capturer) checkAndFinalize() {
 // extractAndEncode encodes buffered audio to an MP3 file.
 func (c *Capturer) extractAndEncode(key captureKey, state *captureState) {
 	// Calculate section sizes (the incident itself is capped to bound memory and output size).
+	// Callers only finalize recovered captures. The post window is clamped to
+	// the audio actually written, so an early finalize yields a shorter file
+	// instead of a tail of stale ring data.
 	incidentBytes := min(max(0, state.endPos-state.startPos), int64(maxIncidentSeconds*audio.BytesPerSecond))
-	afterBytes := int64(0)
-	if state.recovered {
-		afterBytes = int64(afterSeconds * audio.BytesPerSecond)
-	}
+	afterBytes := min(int64(afterSeconds*audio.BytesPerSecond), c.totalWritten-state.endPos)
 
 	// Build PCM: savedBefore (guaranteed intact) + incident (capped) + after.
 	beforeLen := int64(len(state.savedBefore))

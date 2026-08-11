@@ -138,7 +138,7 @@ func sendUploadAbandonedWebhook(ctx context.Context, webhookURL string, p Upload
 }
 
 // sendWebhookDumpReady notifies the configured webhook that an audio dump is ready.
-func sendWebhookDumpReady(ctx context.Context, webhookURL string, data AudioDumpData) error {
+func sendWebhookDumpReady(ctx context.Context, webhookURL string, data *AudioDumpData) error {
 	payload := &WebhookPayload{
 		Event:        "audio_dump_ready",
 		Trigger:      string(data.Trigger),
@@ -154,10 +154,8 @@ func sendWebhookDumpReady(ctx context.Context, webhookURL string, data AudioDump
 	} else {
 		payload.DurationMs = data.DurationMs
 	}
-	if data.Trigger == silencedump.TriggerChannelImbalance {
-		payload.BalanceDB = &data.BalanceDB
-		payload.ImbalanceDB = &data.ImbalanceDB
-	}
+	payload.BalanceDB = data.BalanceDB
+	payload.ImbalanceDB = data.ImbalanceDB
 
 	if data.Result != nil {
 		if data.Result.Error != nil {
@@ -288,7 +286,7 @@ func (c *WebhookChannel) SendChannelImbalanceEnd(
 
 // SendAudioDump posts a webhook payload and embeds the dump file when available.
 func (c *WebhookChannel) SendAudioDump(
-	ctx context.Context, cfg *config.Snapshot, data AudioDumpData,
+	ctx context.Context, cfg *config.Snapshot, data *AudioDumpData,
 ) error {
 	return sendWebhookDumpReady(ctx, cfg.WebhookURL, data)
 }

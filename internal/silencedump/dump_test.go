@@ -250,6 +250,38 @@ func TestSameTriggerReentryKeepsRecoveredCaptureUntilPostWindow(t *testing.T) {
 	}
 }
 
+func TestOnIncidentStartBoundsPerTriggerCaptures(t *testing.T) {
+	t.Parallel()
+	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
+	writePattern(c, int64(audio.BytesPerSecond))
+
+	// A new same-trigger incident supersedes an abandoned un-recovered capture.
+	c.OnIncidentStart(TriggerSilence, 1)
+	c.OnIncidentStart(TriggerSilence, 2)
+	if c.captures[captureKey{trigger: TriggerSilence, incidentID: 1}] != nil {
+		t.Fatal("abandoned un-recovered capture was not dropped")
+	}
+	if len(c.captures) != 1 {
+		t.Fatalf("captures = %d, want only the superseding capture", len(c.captures))
+	}
+
+	// Recovered captures awaiting their post window are capped; the oldest is
+	// finalized early when a new incident starts.
+	c.OnIncidentRecover(TriggerSilence, 2, time.Second, 0)
+	c.OnIncidentStart(TriggerSilence, 3)
+	c.OnIncidentRecover(TriggerSilence, 3, time.Second, 0)
+	c.OnIncidentStart(TriggerSilence, 4)
+	if c.captures[captureKey{trigger: TriggerSilence, incidentID: 2}] != nil {
+		t.Fatal("oldest recovered capture was not finalized on overflow")
+	}
+	if c.captures[captureKey{trigger: TriggerSilence, incidentID: 3}] == nil {
+		t.Fatal("newer recovered capture was removed")
+	}
+	if c.captures[captureKey{trigger: TriggerSilence, incidentID: 4}] == nil {
+		t.Fatal("new capture was not registered")
+	}
+}
+
 func TestManagerHandlesChannelImbalanceEvents(t *testing.T) {
 	t.Parallel()
 	capturer := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}

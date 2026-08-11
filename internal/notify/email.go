@@ -149,7 +149,7 @@ func buildChannelImbalanceEndEmail(
 	return subject, body
 }
 
-func buildDumpReadyEmail(stationName, eventTime string, data AudioDumpData) (subject, body, incident string) {
+func buildDumpReadyEmail(stationName, eventTime string, data *AudioDumpData) (subject, body, incident string) {
 	subject = "[DUMP] Audio Recording - " + stationName
 	if data.Trigger == silencedump.TriggerChannelImbalance {
 		incident = "channel imbalance"
@@ -157,7 +157,7 @@ func buildDumpReadyEmail(stationName, eventTime string, data AudioDumpData) (sub
 			"Audio dump ready at %s.\n\nThe channel imbalance lasted %s.\n",
 			eventTime,
 			util.FormatDuration(data.DurationMs),
-		) + channelImbalanceMeasurements(data.LevelL, data.LevelR, data.BalanceDB, data.ImbalanceDB, data.ThresholdDB)
+		) + channelImbalanceMeasurements(data.LevelL, data.LevelR, *data.BalanceDB, *data.ImbalanceDB, data.ThresholdDB)
 		return subject, body, incident
 	}
 
@@ -177,7 +177,7 @@ func buildDumpReadyEmail(stationName, eventTime string, data AudioDumpData) (sub
 
 // sendDumpReadyEmailWithClient does not delegate to sendEmailWithClient because it needs to attach a file.
 func sendDumpReadyEmailWithClient(
-	ctx context.Context, cfg *GraphConfig, client *GraphClient, stationName string, data AudioDumpData,
+	ctx context.Context, cfg *GraphConfig, client *GraphClient, stationName string, data *AudioDumpData,
 ) error {
 	subject, body, incident := buildDumpReadyEmail(stationName, util.HumanTime(), data)
 
@@ -337,7 +337,7 @@ func (c *EmailChannel) SendChannelImbalanceEnd(
 
 // SendAudioDump sends a Microsoft Graph email with an incident dump attached when available.
 func (c *EmailChannel) SendAudioDump(
-	ctx context.Context, cfg *config.Snapshot, data AudioDumpData,
+	ctx context.Context, cfg *config.Snapshot, data *AudioDumpData,
 ) error {
 	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client *GraphClient) error {
 		return sendDumpReadyEmailWithClient(ctx, graphCfg, client, cfg.StationName, data)

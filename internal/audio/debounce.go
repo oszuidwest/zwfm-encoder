@@ -15,8 +15,10 @@ type debouncer struct {
 	recoveryStart    time.Time // recovery-window start
 	active           bool      // confirmed active state
 	activeDurationMs int64     // last active duration for recovery reporting
-	incidentID       IncidentID
-	nextIncidentID   IncidentID
+	// incidentSeq is the last minted incident ID; while an incident is tracked
+	// (start is set) it is that incident's ID. It survives reset so IDs stay
+	// unique across resets.
+	incidentSeq IncidentID
 }
 
 // debounceResult describes one transition from [debouncer.update].
@@ -39,10 +41,9 @@ func (d *debouncer) update(conditionActive bool, durationMs, recoveryMs int64, n
 
 		if d.start.IsZero() {
 			d.start = now
-			d.nextIncidentID++
-			d.incidentID = d.nextIncidentID
+			d.incidentSeq++
 		}
-		r.incidentID = d.incidentID
+		r.incidentID = d.incidentSeq
 
 		elapsed := now.Sub(d.start).Milliseconds()
 		d.activeDurationMs = elapsed
@@ -61,10 +62,9 @@ func (d *debouncer) update(conditionActive bool, durationMs, recoveryMs int64, n
 
 	if !d.active {
 		d.start = time.Time{}
-		d.incidentID = 0
 		return r
 	}
-	r.incidentID = d.incidentID
+	r.incidentID = d.incidentSeq
 
 	// Keep start during recovery so totalDurationMs spans the whole active event.
 	if d.recoveryStart.IsZero() {
@@ -79,7 +79,6 @@ func (d *debouncer) update(conditionActive bool, durationMs, recoveryMs int64, n
 
 		d.active = false
 		d.activeDurationMs = 0
-		d.incidentID = 0
 		d.start = time.Time{}
 		d.recoveryStart = time.Time{}
 		return r
@@ -95,5 +94,4 @@ func (d *debouncer) reset() {
 	d.recoveryStart = time.Time{}
 	d.active = false
 	d.activeDurationMs = 0
-	d.incidentID = 0
 }

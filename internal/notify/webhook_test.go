@@ -110,16 +110,17 @@ func TestWebhookChannelImbalanceDumpPayload(t *testing.T) {
 	}))
 	defer server.Close()
 
+	balanceDB, imbalanceDB := 1.0, 1.0
 	data := AudioDumpData{
 		Trigger:     silencedump.TriggerChannelImbalance,
 		LevelL:      -12,
 		LevelR:      -13,
-		BalanceDB:   1,
-		ImbalanceDB: 1,
+		BalanceDB:   &balanceDB,
+		ImbalanceDB: &imbalanceDB,
 		ThresholdDB: 12,
 		DurationMs:  30000,
 	}
-	if err := sendWebhookDumpReady(context.Background(), server.URL, data); err != nil {
+	if err := sendWebhookDumpReady(context.Background(), server.URL, &data); err != nil {
 		t.Fatalf("send webhook dump: %v", err)
 	}
 

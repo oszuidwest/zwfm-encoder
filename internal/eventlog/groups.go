@@ -426,9 +426,6 @@ func eventSourceKey(event groupedEvent) string {
 		}
 		return fmt.Sprintf("stream-event:%d", event.id)
 	case CategoryAudio:
-		if event.view.Type == AudioDumpReady && detailString(event.details, "trigger") == dumpTriggerChannelImbalance {
-			return "audio:imbalance"
-		}
 		if strings.HasPrefix(string(event.view.Type), "channel_imbalance_") {
 			return "audio:imbalance"
 		}

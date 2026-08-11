@@ -295,7 +295,7 @@ func (c *ZabbixChannel) SendChannelImbalanceEnd(
 
 // SendAudioDump returns an error because Zabbix trapper items cannot carry attachments.
 func (c *ZabbixChannel) SendAudioDump(
-	_ context.Context, _ *config.Snapshot, _ AudioDumpData,
+	_ context.Context, _ *config.Snapshot, _ *AudioDumpData,
 ) error {
 	return fmt.Errorf("zabbix channel does not support audio dump delivery")
 }

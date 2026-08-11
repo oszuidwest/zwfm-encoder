@@ -66,15 +66,16 @@ func TestBuildChannelImbalanceEmails(t *testing.T) {
 
 func TestBuildChannelImbalanceDumpEmail(t *testing.T) {
 	t.Parallel()
+	balanceDB, imbalanceDB := 1.0, 1.0
 	subject, body, incident := buildDumpReadyEmail(
 		"ZuidWest FM",
 		"11 Aug 2026 20:19:00 CEST",
-		AudioDumpData{
+		&AudioDumpData{
 			Trigger:     silencedump.TriggerChannelImbalance,
 			LevelL:      -12,
 			LevelR:      -13,
-			BalanceDB:   1,
-			ImbalanceDB: 1,
+			BalanceDB:   &balanceDB,
+			ImbalanceDB: &imbalanceDB,
 			ThresholdDB: 12,
 			DurationMs:  30000,
 		},
