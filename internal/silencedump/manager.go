@@ -11,7 +11,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// Manager coordinates silence dump capture and file retention.
+// Manager coordinates audio-incident dump capture and file retention.
 // Enabled-state lives solely in the Capturer, which owns the ffmpeg rule.
 type Manager struct {
 	mu sync.RWMutex
@@ -29,7 +29,7 @@ type Manager struct {
 	running       bool
 }
 
-// NewManager creates a new silence dump manager.
+// NewManager creates a new audio incident dump manager.
 func NewManager(ffmpegPath string, port int, enabled bool, retentionDays int, onDumpReady DumpCallback) *Manager {
 	outputDir := outputDirForPort(port)
 
@@ -62,7 +62,7 @@ func (m *Manager) Start() {
 	m.cleanupStopCh = make(chan struct{})
 	m.startCleanupScheduler(m.cleanupStopCh)
 
-	slog.Info("silence dump manager started", "enabled", m.Enabled())
+	slog.Info("audio incident dump manager started", "enabled", m.Enabled())
 }
 
 // Enabled reports whether dump capture is active.
@@ -97,7 +97,7 @@ func (m *Manager) Stop() {
 		m.capturer.Reset()
 	}
 
-	slog.Info("silence dump manager stopped")
+	slog.Info("audio incident dump manager stopped")
 }
 
 // WriteAudio buffers PCM audio data for potential dump capture.
@@ -125,6 +125,24 @@ func (m *Manager) HandleSilenceEvent(event audio.SilenceEvent) {
 	}
 }
 
+// HandleChannelImbalanceEvent processes channel-imbalance detection events.
+func (m *Manager) HandleChannelImbalanceEvent(event *audio.ImbalanceEvent) {
+	if m.capturer == nil || event == nil {
+		return
+	}
+
+	if event.JustEntered {
+		m.capturer.OnChannelImbalanceStart()
+	}
+
+	if event.JustRecovered {
+		m.capturer.OnChannelImbalanceRecover(
+			time.Duration(event.TotalDurationMs)*time.Millisecond,
+			time.Duration(event.RecoveryDurationMs)*time.Millisecond,
+		)
+	}
+}
+
 // SetEnabled sets whether dump capture is active.
 func (m *Manager) SetEnabled(enabled bool) {
 	if m.capturer != nil {
@@ -142,7 +160,7 @@ func (m *Manager) SetRetentionDays(days int) {
 // startCleanupScheduler deletes old dump files until stopCh closes.
 // Capturing stopCh avoids racing Stop's field reset.
 func (m *Manager) startCleanupScheduler(stopCh <-chan struct{}) {
-	util.RunHourly(stopCh, "silence dump cleanup", m.runCleanup)
+	util.RunHourly(stopCh, "audio incident dump cleanup", m.runCleanup)
 }
 
 // runCleanup removes dump files older than retention days.
@@ -160,7 +178,7 @@ func (m *Manager) runCleanup() {
 	if err != nil {
 		// Directory might not exist yet, which is fine
 		if !os.IsNotExist(err) {
-			slog.Warn("silence dump cleanup: failed to read directory", "path", dir, "error", err)
+			slog.Warn("audio incident dump cleanup: failed to read directory", "path", dir, "error", err)
 		}
 		return
 	}
@@ -190,15 +208,15 @@ func (m *Manager) runCleanup() {
 		if fileDate.Before(cutoff) {
 			filePath := filepath.Join(dir, name)
 			if err := os.Remove(filePath); err != nil {
-				slog.Warn("silence dump cleanup: failed to delete file", "path", filePath, "error", err)
+				slog.Warn("audio incident dump cleanup: failed to delete file", "path", filePath, "error", err)
 			} else {
 				deleted++
-				slog.Debug("silence dump cleanup: deleted file", "file", name)
+				slog.Debug("audio incident dump cleanup: deleted file", "file", name)
 			}
 		}
 	}
 
 	if deleted > 0 {
-		slog.Info("silence dump cleanup: deleted old files", "count", deleted)
+		slog.Info("audio incident dump cleanup: deleted old files", "count", deleted)
 	}
 }

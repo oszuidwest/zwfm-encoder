@@ -355,7 +355,7 @@
             </div>
 
             <div class="panels">
-                <!-- Audio Panel: Silence Detection / Metering / Silence Dumps / Recording API -->
+                <!-- Audio Panel: Incident Detection / Metering / Audio Dumps / Recording API -->
                 <div class="panel" role="tabpanel" id="panel-audio" aria-labelledby="tab-audio" x-show="settingsTab === 'audio'">
                     <div class="channel" :class="{ 'channel--open': cardsOpen.silence }">
                         <button type="button" class="channel-head" @click="toggleCard('silence')" :aria-expanded="cardsOpen.silence" aria-controls="card-silence">
@@ -481,7 +481,7 @@
                         <button type="button" class="channel-head" @click="toggleCard('dumps')" :aria-expanded="cardsOpen.dumps" aria-controls="card-dumps">
                             <span class="channel-icon icon-container" x-html="icons.audioArchive"></span>
                             <span class="channel-titles">
-                                <span class="channel-name">Silence Dumps</span>
+                                <span class="channel-name">Audio Incident Dumps</span>
                                 <span class="channel-summary" x-text="audioCardStatus('dumps').summary"></span>
                             </span>
                             <span class="channel-status"
@@ -491,7 +491,7 @@
                             <span class="channel-chevron icon-container" x-html="icons.chevronDown" aria-hidden="true"></span>
                         </button>
                         <div class="channel-body" id="card-dumps" x-show="cardsOpen.dumps" x-cloak x-transition:enter="channel-body-enter" x-transition:leave="channel-body-leave">
-                        <p class="section-desc">Capture MP3 snippets around silence events. These are attached to email notifications and included in webhooks.</p>
+                        <p class="section-desc">Capture MP3 snippets around silence and channel imbalance incidents. These are attached to email notifications and included in webhooks.</p>
                         <div class="form">
                             <div class="group">
                                 <label>Capture</label>

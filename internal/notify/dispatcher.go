@@ -36,7 +36,7 @@ type AlertChannel interface {
 	// channel-imbalance recovery events.
 	SubscribesChannelImbalanceEnd(cfg *config.Snapshot) bool
 	// SubscribesAudioDump reports whether a configured backend wants audio-dump
-	// notifications after silence recovery.
+	// notifications after an audio incident recovers.
 	SubscribesAudioDump(cfg *config.Snapshot) bool
 
 	// SendSilenceStart delivers a silence-start alert with the current stereo levels.
@@ -50,8 +50,7 @@ type AlertChannel interface {
 	// SendAudioDump delivers an audio dump notification, or returns an error if
 	// the backend cannot carry attachments.
 	SendAudioDump(
-		ctx context.Context, cfg *config.Snapshot, durationMS int64, levelL, levelR float64,
-		result *silencedump.EncodeResult,
+		ctx context.Context, cfg *config.Snapshot, data AudioDumpData,
 	) error
 	// SendUploadAbandoned delivers an alert for a recording that exhausted upload retries.
 	SendUploadAbandoned(ctx context.Context, cfg *config.Snapshot, params UploadAbandonedData) error
@@ -77,14 +76,25 @@ type ChannelImbalanceData struct {
 	DurationMs  int64
 }
 
-// silenceEventData groups audio level and silence parameters shared across
-// silence-start, silence-end, and audio-dump notification functions.
+// AudioDumpData contains the incident context sent with a completed audio dump.
+type AudioDumpData struct {
+	Trigger     silencedump.Trigger
+	LevelL      float64
+	LevelR      float64
+	BalanceDB   float64
+	ImbalanceDB float64
+	ThresholdDB float64
+	DurationMs  int64
+	Result      *silencedump.EncodeResult
+}
+
+// silenceEventData groups audio level and silence parameters shared by the
+// silence-start and silence-end notification functions.
 type silenceEventData struct {
-	LevelL     float64                   // dB
-	LevelR     float64                   // dB
-	Threshold  float64                   // dB
-	DurationMs int64                     // ms; zero for silence-start events
-	Dump       *silencedump.EncodeResult // nil except for audio-dump events
+	LevelL     float64 // dB
+	LevelR     float64 // dB
+	Threshold  float64 // dB
+	DurationMs int64   // ms; zero for silence-start events
 }
 
 // Dispatcher routes alert events to alert channels.
@@ -175,12 +185,11 @@ func (d *Dispatcher) DispatchChannelImbalanceEnd(
 //
 //nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
 func (d *Dispatcher) DispatchAudioDump(
-	ctx context.Context, active []AlertChannel, cfg config.Snapshot, durationMS int64,
-	levelL, levelR float64, result *silencedump.EncodeResult,
+	ctx context.Context, active []AlertChannel, cfg config.Snapshot, data AudioDumpData,
 ) {
 	dispatch(active, cfg, "audio_dump_ready", AlertChannel.SubscribesAudioDump,
 		func(ch AlertChannel, cfg *config.Snapshot) error {
-			return ch.SendAudioDump(ctx, cfg, durationMS, levelL, levelR, result)
+			return ch.SendAudioDump(ctx, cfg, data)
 		})
 }
 

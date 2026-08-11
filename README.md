@@ -10,7 +10,7 @@ Audio streaming software for [ZuidWest FM](https://www.zuidwestfm.nl/) (Linux), 
 - **Multi-recorder support** - Run multiple recording jobs with local and/or S3 storage, hourly rotation, retention cleanup and on-demand control
 - **Configurable VU meters** - Peak/RMS metering with configurable peak hold and clip detection
 - **Silence detection** - Alerts via webhook, email, file log, or Zabbix when audio drops below threshold
-- **Silence audio dumps** - Capture audio around silence events for troubleshooting
+- **Audio incident dumps** - Capture audio around silence and channel imbalance events for troubleshooting
 - **Channel imbalance detection** - Detects dead or mismatched L/R channels with webhook, email, file log, Zabbix, live UI, and readiness status
 - **Multiple codecs** - MP3, Opus, or uncompressed PCM per output
 - **Single binary** - Web interface embedded, minimal runtime dependencies
@@ -104,7 +104,7 @@ Detects dead or mismatched stereo channels by comparing the left and right RMS l
 | Duration | 15 s | 0.5 to 300 | Seconds of imbalance before alerting |
 | Recovery | 5 s | 0.5 to 60 | Seconds of balanced audio, or dropped-away audio, before recovery |
 
-Channel imbalance events can trigger webhook, email, and Zabbix notifications, are written to the event log, and are exposed in the dashboard, `GET /health`, and `GET /ready`. A confirmed imbalance makes the `channel_imbalance` readiness component fail until the channels recover.
+Channel imbalance events can trigger webhook, email, and Zabbix notifications, are written to the event log, and are exposed in the dashboard, `GET /health`, and `GET /ready`. A confirmed imbalance makes the `channel_imbalance` readiness component fail until the channels recover. When audio incident dumps are enabled, recovery also produces an MP3 with 15 seconds of context before and after the imbalance; the existing `audio_dump` webhook/email subscription controls its delivery.
 
 ## Alerting
 
@@ -114,7 +114,7 @@ Channel imbalance events can trigger webhook, email, and Zabbix notifications, a
 - **File Log** - Appends JSON Lines for every audio event, including silence and channel imbalance events (always records all events, no per-event toggle).
 - **Zabbix** - Send trapper items to a Zabbix server; independently enable `silence_start`, `silence_end`, `channel_imbalance_start`, and `channel_imbalance_end` (no `audio_dump` - trapper items do not support file attachments).
 
-`silence_end` and `channel_imbalance_end` are sent immediately when recovery is confirmed; `audio_dump_ready` is dispatched as a separate event once the MP3 encoding completes. Abandoned S3 uploads always alert every configured channel, regardless of per-event toggles.
+`silence_end` and `channel_imbalance_end` are sent immediately when recovery is confirmed; `audio_dump_ready` is dispatched as a separate event once the MP3 context for either incident type finishes encoding. Its `trigger` field is `silence` or `channel_imbalance`. Abandoned S3 uploads always alert every configured channel, regardless of per-event toggles.
 
 Configure silence and channel imbalance detection under Settings -> Audio. Configure audio notifications under Settings -> Notifications.
 
@@ -258,9 +258,9 @@ flowchart LR
             CD[Clip<br>Detect]
         end
 
-        subgraph Silence["Silence Detection"]
+        subgraph Silence["Audio Incident Detection"]
             SD[Detector<br>Hysteresis]
-            SDM[Dump Manager<br>Ring Buffer]
+            SDM[Shared Dump Manager<br>Ring Buffer]
         end
 
         subgraph Imbalance["Channel Imbalance"]
@@ -317,6 +317,7 @@ flowchart LR
     %% Channel imbalance branch
     D -->|dB| ID
     ID -->|state JSON| WS
+    ID -->|events| SDM
 
     %% Alerting
     SD -->|event| SN
@@ -346,8 +347,8 @@ flowchart LR
 1. **Capture**: `arecord` (Linux) or FFmpeg (macOS/Windows) captures 48kHz 16-bit stereo PCM
 2. **Distributor**: Processes PCM in ~100ms chunks, fans out to all consumers
 3. **Metering**: Calculates RMS/peak levels in Go (no FFmpeg filters), holds peaks for a configurable duration (default 3000 ms), detects clipping at +/-32760
-4. **Silence Detection**: Hysteresis-based detection with configurable threshold/duration/recovery. Buffers 15s audio context before/after silence events
-5. **Channel Imbalance Detection**: Hysteresis-based L/R balance detection with configurable threshold/duration/recovery. Reuses the silence threshold as a presence floor and reports live balance/imbalance values.
+4. **Silence Detection**: Hysteresis-based detection with configurable threshold/duration/recovery. The shared dump manager buffers 15s audio context before/after silence events.
+5. **Channel Imbalance Detection**: Hysteresis-based L/R balance detection with configurable threshold/duration/recovery. Reuses the silence threshold as a presence floor, reports live balance/imbalance values, and uses the shared dump manager for recovery context.
 6. **Alerting**: Silence and channel imbalance events trigger webhook, email (MS Graph), log (JSON Lines), and/or Zabbix. Webhook and email support per-event subscriptions for `silence_start`, `silence_end`, `audio_dump`, `channel_imbalance_start`, and `channel_imbalance_end`; Zabbix supports the same set except `audio_dump`. `silence_end` and `channel_imbalance_end` fire immediately when recovery is confirmed; `audio_dump_ready` fires separately once the MP3 is ready. Abandoned S3 uploads also trigger notifications.
 7. **Streaming**: Per-output FFmpeg encoders; caller streams use FFmpeg SRT with retry/backoff, listener streams use a GoSRT multi-client fan-out around one FFmpeg stdout pipe
 8. **Recording**: Hourly rotation or on-demand, with optional S3 upload

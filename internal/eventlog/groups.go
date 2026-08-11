@@ -195,7 +195,7 @@ func (s *groupingState) process(event groupedEvent) {
 	}
 
 	if event.view.Type == AudioDumpReady {
-		if target := latestSilenceIncident(s.closed); target != nil {
+		if target := latestAudioIncident(s.closed, detailString(event.details, "trigger")); target != nil {
 			target.dump = true
 			target.add(event)
 		}
@@ -264,9 +264,13 @@ func (i *historicalIncident) add(event groupedEvent) {
 	}
 }
 
-func latestSilenceIncident(incidents []*historicalIncident) *historicalIncident {
+func latestAudioIncident(incidents []*historicalIncident, trigger string) *historicalIncident {
+	firstType := SilenceStart
+	if trigger == "channel_imbalance" {
+		firstType = ChannelImbalanceStart
+	}
 	for i := len(incidents) - 1; i >= 0; i-- {
-		if incidents[i].firstType == SilenceStart {
+		if incidents[i].firstType == firstType {
 			return incidents[i]
 		}
 	}
@@ -412,6 +416,9 @@ func eventSourceKey(event groupedEvent) string {
 		}
 		return fmt.Sprintf("stream-event:%d", event.id)
 	case CategoryAudio:
+		if event.view.Type == AudioDumpReady && detailString(event.details, "trigger") == "channel_imbalance" {
+			return "audio:imbalance"
+		}
 		if strings.HasPrefix(string(event.view.Type), "channel_imbalance_") {
 			return "audio:imbalance"
 		}

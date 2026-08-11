@@ -53,7 +53,7 @@ func TestCopyFromRingMatchesReference(t *testing.T) {
 		0, 1, 3, 100,
 		bufferCapacity - 1, bufferCapacity,
 		beforeSeconds * audio.BytesPerSecond,
-		maxSilenceSeconds * audio.BytesPerSecond,
+		maxIncidentSeconds * audio.BytesPerSecond,
 		afterSeconds * audio.BytesPerSecond,
 	}
 	for _, start := range starts {
@@ -105,15 +105,19 @@ func TestOnSilenceStartSavedBeforeWrap(t *testing.T) {
 	total := int64(bufferCapacity) + 500_000
 	writePattern(c, total)
 	c.OnSilenceStart()
+	state := c.captures[TriggerSilence]
+	if state == nil {
+		t.Fatal("silence capture state missing")
+	}
 	wantLen := int(min(total, int64(beforeSeconds*audio.BytesPerSecond)))
-	if len(c.savedBefore) != wantLen {
-		t.Fatalf("savedBefore len: got %d want %d", len(c.savedBefore), wantLen)
+	if len(state.savedBefore) != wantLen {
+		t.Fatalf("savedBefore len: got %d want %d", len(state.savedBefore), wantLen)
 	}
 	start := total - int64(wantLen)
-	for i := range c.savedBefore {
+	for i := range state.savedBefore {
 		want := byte((start + int64(i)) & 0xff)
-		if c.savedBefore[i] != want {
-			t.Fatalf("savedBefore[%d]=%d want %d (start=%d)", i, c.savedBefore[i], want, start)
+		if state.savedBefore[i] != want {
+			t.Fatalf("savedBefore[%d]=%d want %d (start=%d)", i, state.savedBefore[i], want, start)
 		}
 	}
 }
@@ -152,18 +156,20 @@ func TestOnSilenceRecoverClampsEndPos(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c := &Capturer{
-				buffer:          make([]byte, bufferCapacity),
-				enabled:         true,
-				capturing:       true,
-				silenceStartPos: tt.silenceStartPos,
-				totalWritten:    tt.totalWritten,
+				buffer:       make([]byte, bufferCapacity),
+				enabled:      true,
+				totalWritten: tt.totalWritten,
+				captures: map[Trigger]*captureState{
+					TriggerSilence: {startPos: tt.silenceStartPos},
+				},
 			}
 			c.OnSilenceRecover(0, tt.recovery)
-			if c.silenceEndPos != tt.wantEndPos {
-				t.Fatalf("silenceEndPos = %d, want %d", c.silenceEndPos, tt.wantEndPos)
+			state := c.captures[TriggerSilence]
+			if state.endPos != tt.wantEndPos {
+				t.Fatalf("endPos = %d, want %d", state.endPos, tt.wantEndPos)
 			}
-			if c.silenceEndPos < c.silenceStartPos {
-				t.Fatalf("silenceEndPos %d < silenceStartPos %d", c.silenceEndPos, c.silenceStartPos)
+			if state.endPos < state.startPos {
+				t.Fatalf("endPos %d < startPos %d", state.endPos, state.startPos)
 			}
 		})
 	}
@@ -173,14 +179,87 @@ func TestCheckAndFinalizeRecoversAtZeroStart(t *testing.T) {
 	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
 	c.OnSilenceStart()                     // Keeps silenceStartPos at 0.
 	c.OnSilenceRecover(0, 100*time.Second) // Clamps wall-clock recovery to bytes written.
-	if !c.recovered {
+	state := c.captures[TriggerSilence]
+	if !state.recovered {
 		t.Fatal("recovered not set after OnSilenceRecover")
 	}
-	if c.silenceEndPos != 0 {
-		t.Fatalf("silenceEndPos = %d, want 0 (clamped to start)", c.silenceEndPos)
+	if state.endPos != 0 {
+		t.Fatalf("endPos = %d, want 0 (clamped to start)", state.endPos)
 	}
 	writePattern(c, int64(afterSeconds*audio.BytesPerSecond))
-	if c.capturing {
+	if c.captures[TriggerSilence] != nil {
 		t.Fatal("capturer stuck capturing; recovery at byte position 0 never finalized")
+	}
+}
+
+func TestCapturerTracksSilenceAndImbalanceIndependently(t *testing.T) {
+	t.Parallel()
+	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
+	writePattern(c, int64(audio.BytesPerSecond))
+
+	c.OnSilenceStart()
+	writePattern(c, int64(audio.BytesPerSecond))
+	c.OnChannelImbalanceStart()
+	c.OnSilenceRecover(2*time.Second, time.Second)
+	c.OnChannelImbalanceRecover(3*time.Second, 500*time.Millisecond)
+
+	silence := c.captures[TriggerSilence]
+	imbalance := c.captures[TriggerChannelImbalance]
+	if silence == nil || imbalance == nil {
+		t.Fatalf("capture states missing: silence=%v imbalance=%v", silence != nil, imbalance != nil)
+	}
+	if silence == imbalance {
+		t.Fatal("silence and imbalance share capture state")
+	}
+	if !silence.recovered || !imbalance.recovered {
+		t.Fatalf("capture recovery state: silence=%v imbalance=%v", silence.recovered, imbalance.recovered)
+	}
+	if silence.startPos == imbalance.startPos {
+		t.Fatalf("capture start positions both %d, want independent incident positions", silence.startPos)
+	}
+}
+
+func TestManagerHandlesChannelImbalanceEvents(t *testing.T) {
+	t.Parallel()
+	capturer := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
+	manager := &Manager{capturer: capturer}
+	manager.HandleChannelImbalanceEvent(nil)
+	manager.HandleChannelImbalanceEvent(&audio.ImbalanceEvent{JustEntered: true})
+	if capturer.captures[TriggerChannelImbalance] == nil {
+		t.Fatal("imbalance start did not create capture state")
+	}
+
+	manager.HandleChannelImbalanceEvent(&audio.ImbalanceEvent{
+		JustRecovered:      true,
+		TotalDurationMs:    10000,
+		RecoveryDurationMs: 5000,
+	})
+	if !capturer.captures[TriggerChannelImbalance].recovered {
+		t.Fatal("imbalance recovery did not update capture state")
+	}
+}
+
+func TestDumpFilenameIdentifiesChannelImbalance(t *testing.T) {
+	t.Parallel()
+	startedAt := time.Date(2026, 8, 11, 20, 18, 26, 0, time.Local)
+	tests := []struct {
+		name    string
+		trigger Trigger
+		want    string
+	}{
+		{name: "silence keeps legacy filename", trigger: TriggerSilence, want: "2026-08-11_20-18-26.mp3"},
+		{
+			name:    "imbalance has source prefix",
+			trigger: TriggerChannelImbalance,
+			want:    "channel-imbalance-2026-08-11_20-18-26.mp3",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := dumpFilename(tt.trigger, startedAt); got != tt.want {
+				t.Fatalf("dumpFilename(%q) = %q, want %q", tt.trigger, got, tt.want)
+			}
+		})
 	}
 }

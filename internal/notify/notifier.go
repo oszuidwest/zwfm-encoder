@@ -33,7 +33,7 @@ type AlertOrchestrator struct {
 	mu                      sync.Mutex
 	activeChannels          []AlertChannel
 	imbalanceActiveChannels []AlertChannel
-	pendingRecovery         *pendingRecoveryData
+	pendingRecoveries       map[silencedump.Trigger]*pendingRecoveryData
 	notifyCtx               context.Context
 	notifyCancel            context.CancelFunc
 
@@ -45,10 +45,8 @@ type AlertOrchestrator struct {
 
 // pendingRecoveryData holds recovery event data while waiting for the audio dump.
 type pendingRecoveryData struct {
-	durationMS     int64
-	levelL         float64
-	levelR         float64
-	cfg            config.Snapshot // captured at silence-end time; reused for dump dispatch
+	dumpData       AudioDumpData
+	cfg            config.Snapshot // captured at recovery time; reused for dump dispatch
 	activeChannels []AlertChannel
 }
 
@@ -56,11 +54,12 @@ type pendingRecoveryData struct {
 func NewAlertOrchestrator(cfg *config.Config, dispatcher *Dispatcher) *AlertOrchestrator {
 	notifyCtx, notifyCancel := context.WithCancel(context.Background())
 	o := &AlertOrchestrator{
-		cfg:          cfg,
-		dispatcher:   dispatcher,
-		notifyCtx:    notifyCtx,
-		notifyCancel: notifyCancel,
-		logQueue:     make(chan logJob, logQueueDepth),
+		cfg:               cfg,
+		dispatcher:        dispatcher,
+		notifyCtx:         notifyCtx,
+		notifyCancel:      notifyCancel,
+		logQueue:          make(chan logJob, logQueueDepth),
+		pendingRecoveries: map[silencedump.Trigger]*pendingRecoveryData{},
 	}
 	go o.runLogWorker()
 	return o
@@ -137,10 +136,14 @@ func (o *AlertOrchestrator) handleSilenceEnd(durationMS int64, levelL, levelR fl
 	o.mu.Lock()
 	active := o.activeChannels
 	o.activeChannels = nil
-	o.pendingRecovery = &pendingRecoveryData{
-		durationMS:     durationMS,
-		levelL:         levelL,
-		levelR:         levelR,
+	o.pendingRecoveries[silencedump.TriggerSilence] = &pendingRecoveryData{
+		dumpData: AudioDumpData{
+			Trigger:     silencedump.TriggerSilence,
+			DurationMs:  durationMS,
+			LevelL:      levelL,
+			LevelR:      levelR,
+			ThresholdDB: cfg.SilenceThreshold,
+		},
 		cfg:            cfg,
 		activeChannels: active,
 	}
@@ -201,6 +204,19 @@ func (o *AlertOrchestrator) handleChannelImbalanceEnd(durationMS int64, levelL, 
 	o.mu.Lock()
 	active := o.imbalanceActiveChannels
 	o.imbalanceActiveChannels = nil
+	o.pendingRecoveries[silencedump.TriggerChannelImbalance] = &pendingRecoveryData{
+		dumpData: AudioDumpData{
+			Trigger:     silencedump.TriggerChannelImbalance,
+			DurationMs:  durationMS,
+			LevelL:      levelL,
+			LevelR:      levelR,
+			BalanceDB:   balanceDB,
+			ImbalanceDB: imbalanceDB,
+			ThresholdDB: cfg.ChannelImbalanceThreshold,
+		},
+		cfg:            cfg,
+		activeChannels: active,
+	}
 	ctx := o.notifyCtx
 	o.mu.Unlock()
 
@@ -219,29 +235,29 @@ func (o *AlertOrchestrator) handleChannelImbalanceEnd(durationMS int64, levelL, 
 	})
 }
 
-// OnDumpReady completes a pending silence recovery with an optional audio dump.
+// OnDumpReady completes the recovery matching an encoded audio-incident dump.
 func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
+	trigger := silencedump.TriggerSilence
+	if result != nil && result.Trigger != "" {
+		trigger = result.Trigger
+	}
+
 	o.mu.Lock()
-	pending := o.pendingRecovery
-	o.pendingRecovery = nil
+	pending := o.pendingRecoveries[trigger]
+	delete(o.pendingRecoveries, trigger)
 	ctx := o.notifyCtx
 	o.mu.Unlock()
 
 	if pending == nil {
-		slog.Debug("audio dump ready but no pending silence recovery; dump ignored")
+		slog.Debug("audio dump ready but no pending recovery; dump ignored", "trigger", trigger)
 		return
 	}
 
+	pending.dumpData.Result = result
 	now := time.Now()
-	o.dispatcher.DispatchAudioDump(
-		ctx, pending.activeChannels, pending.cfg, pending.durationMS,
-		pending.levelL, pending.levelR, result,
-	)
+	o.dispatcher.DispatchAudioDump(ctx, pending.activeChannels, pending.cfg, pending.dumpData)
 	o.enqueueLog("audio_dump_ready", func() {
-		o.logAudioDumpReady(
-			now, &pending.cfg, pending.durationMS,
-			pending.levelL, pending.levelR, result,
-		)
+		o.logAudioDumpReady(now, pending.dumpData)
 	})
 }
 
@@ -262,7 +278,7 @@ func (o *AlertOrchestrator) Reset() {
 	o.mu.Lock()
 	o.activeChannels = nil
 	o.imbalanceActiveChannels = nil
-	o.pendingRecovery = nil
+	clear(o.pendingRecoveries)
 	o.mu.Unlock()
 }
 
@@ -344,23 +360,34 @@ func (o *AlertOrchestrator) logChannelImbalanceEnd(t time.Time, cfg *config.Snap
 	}
 }
 
-func (o *AlertOrchestrator) logAudioDumpReady(
-	t time.Time, cfg *config.Snapshot, durationMS int64,
-	levelL, levelR float64, dump *silencedump.EncodeResult,
-) {
+func (o *AlertOrchestrator) logAudioDumpReady(t time.Time, data AudioDumpData) {
 	var dumpPath, dumpFilename, dumpError string
 	var dumpSize int64
 	switch {
-	case dump == nil:
-	case dump.Error != nil:
-		dumpError = dump.Error.Error()
+	case data.Result == nil:
+	case data.Result.Error != nil:
+		dumpError = data.Result.Error.Error()
 	default:
-		dumpPath, dumpFilename, dumpSize = dump.FilePath, dump.Filename, dump.FileSize
+		dumpPath = data.Result.FilePath
+		dumpFilename = data.Result.Filename
+		dumpSize = data.Result.FileSize
 	}
-	if err := o.eventLogger.LogAudioDumpReady(
-		t, durationMS, levelL, levelR, cfg.SilenceThreshold,
-		dumpPath, dumpFilename, dumpSize, dumpError,
-	); err != nil {
+	details := &eventlog.AudioDumpDetails{
+		Trigger:       string(data.Trigger),
+		LevelLeftDB:   data.LevelL,
+		LevelRightDB:  data.LevelR,
+		ThresholdDB:   data.ThresholdDB,
+		DurationMs:    data.DurationMs,
+		DumpPath:      dumpPath,
+		DumpFilename:  dumpFilename,
+		DumpSizeBytes: dumpSize,
+		DumpError:     dumpError,
+	}
+	if data.Trigger == silencedump.TriggerChannelImbalance {
+		details.BalanceDB = &data.BalanceDB
+		details.ImbalanceDB = &data.ImbalanceDB
+	}
+	if err := o.eventLogger.LogAudioDumpReady(t, details); err != nil {
 		slog.Warn("failed to log audio dump ready", "error", err)
 	}
 }

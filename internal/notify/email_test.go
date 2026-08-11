@@ -3,6 +3,8 @@ package notify
 import (
 	"strings"
 	"testing"
+
+	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 )
 
 func TestBuildChannelImbalanceEmails(t *testing.T) {
@@ -58,6 +60,40 @@ func TestBuildChannelImbalanceEmails(t *testing.T) {
 	} {
 		if !strings.Contains(endBody, want) {
 			t.Fatalf("end body missing %q:\n%s", want, endBody)
+		}
+	}
+}
+
+func TestBuildChannelImbalanceDumpEmail(t *testing.T) {
+	t.Parallel()
+	subject, body, incident := buildDumpReadyEmail(
+		"ZuidWest FM",
+		"11 Aug 2026 20:19:00 CEST",
+		AudioDumpData{
+			Trigger:     silencedump.TriggerChannelImbalance,
+			LevelL:      -12,
+			LevelR:      -13,
+			BalanceDB:   1,
+			ImbalanceDB: 1,
+			ThresholdDB: 12,
+			DurationMs:  30000,
+		},
+	)
+	if subject != "[DUMP] Audio Recording - ZuidWest FM" {
+		t.Fatalf("subject = %q", subject)
+	}
+	if incident != "channel imbalance" {
+		t.Fatalf("incident = %q, want channel imbalance", incident)
+	}
+	for _, want := range []string{
+		"The channel imbalance lasted 30s.",
+		"Final level: Left -12.0 dB / Right -13.0 dB",
+		"Final balance: 1.0 dB (left louder)",
+		"Final imbalance: 1.0 dB",
+		"Threshold: 12.0 dB",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dump body missing %q:\n%s", want, body)
 		}
 	}
 }

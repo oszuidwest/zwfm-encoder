@@ -426,10 +426,11 @@ func (m *StorageMode) UnmarshalJSON(data []byte) error {
 // DefaultRetentionDays is the default number of days to keep recordings.
 const DefaultRetentionDays = 90
 
-// DefaultSilenceDumpRetentionDays is the default number of days to keep silence dumps.
+// DefaultSilenceDumpRetentionDays is the default number of days to keep audio incident dumps.
 const DefaultSilenceDumpRetentionDays = 7
 
-// SilenceDumpConfig defines settings for capturing audio around silence events.
+// SilenceDumpConfig defines audio incident dump settings. Its name and JSON key
+// are retained for configuration compatibility.
 type SilenceDumpConfig struct {
 	Enabled       bool `json:"enabled"`
 	RetentionDays int  `json:"retention_days"` // 0 = forever

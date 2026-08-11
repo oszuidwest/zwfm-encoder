@@ -3,6 +3,7 @@ package eventlog
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 )
@@ -238,6 +239,41 @@ func TestGroupEventsKeepsOrphanAudioDumpInActivity(t *testing.T) {
 	}
 	if got := groups.Activity[0].Events[0].Type; got != AudioDumpReady {
 		t.Fatalf("activity event = %q, want %q", got, AudioDumpReady)
+	}
+	assertPartition(t, events, &groups)
+}
+
+func TestGroupEventsAttachesImbalanceDumpToImbalanceIncident(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 8, 11, 20, 18, 0, 0, time.UTC)
+	events := decorateNewestFirst(
+		testEvent(base, 6, AudioDumpReady, map[string]any{
+			"trigger":       "channel_imbalance",
+			"dump_filename": "channel-imbalance.mp3",
+		}),
+		testEvent(base, 5, ChannelImbalanceEnd, map[string]any{"duration_ms": 30000}),
+		testEvent(base, 4, ChannelImbalanceStart, nil),
+		testEvent(base, 3, SilenceEnd, map[string]any{"duration_ms": 20000}),
+		testEvent(base, 2, SilenceStart, nil),
+	)
+
+	groups := GroupEvents(events)
+	if len(groups.Resolved) != 2 {
+		t.Fatalf("resolved len = %d, want 2", len(groups.Resolved))
+	}
+	for _, item := range groups.Resolved {
+		hasDump := slices.Contains(item.Chips, "audio dump")
+		switch item.Title {
+		case "Channel imbalance":
+			if !hasDump || len(item.Events) != 3 {
+				t.Fatalf("imbalance incident dump grouping = chips %v, events %d", item.Chips, len(item.Events))
+			}
+		case "Silence on input":
+			if hasDump || len(item.Events) != 2 {
+				t.Fatalf("silence incident unexpectedly received dump: chips %v, events %d", item.Chips, len(item.Events))
+			}
+		}
 	}
 	assertPartition(t, events, &groups)
 }

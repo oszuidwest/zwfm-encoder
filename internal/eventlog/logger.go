@@ -39,7 +39,7 @@ const (
 	SilenceStart EventType = "silence_start"
 	// SilenceEnd indicates a silence end event.
 	SilenceEnd EventType = "silence_end"
-	// AudioDumpReady indicates an audio dump MP3 is ready after a silence event.
+	// AudioDumpReady indicates an audio incident context MP3 is ready.
 	AudioDumpReady EventType = "audio_dump_ready"
 	// ChannelImbalanceStart indicates an L/R channel imbalance start event.
 	ChannelImbalanceStart EventType = "channel_imbalance_start"
@@ -90,14 +90,25 @@ type StreamDetails struct {
 
 // SilenceDetails holds silence event information.
 type SilenceDetails struct {
-	LevelLeftDB   float64 `json:"level_left_db"`  // dB
-	LevelRightDB  float64 `json:"level_right_db"` // dB
-	ThresholdDB   float64 `json:"threshold_db"`   // dB
-	DurationMs    int64   `json:"duration_ms,omitempty"`
-	DumpPath      string  `json:"dump_path,omitempty"`
-	DumpFilename  string  `json:"dump_filename,omitempty"`
-	DumpSizeBytes int64   `json:"dump_size_bytes,omitempty"`
-	DumpError     string  `json:"dump_error,omitempty"`
+	LevelLeftDB  float64 `json:"level_left_db"`  // dB
+	LevelRightDB float64 `json:"level_right_db"` // dB
+	ThresholdDB  float64 `json:"threshold_db"`   // dB
+	DurationMs   int64   `json:"duration_ms,omitempty"`
+}
+
+// AudioDumpDetails holds the incident measurements and encoded dump metadata.
+type AudioDumpDetails struct {
+	Trigger       string   `json:"trigger"`
+	LevelLeftDB   float64  `json:"level_left_db"`  // dB
+	LevelRightDB  float64  `json:"level_right_db"` // dB
+	BalanceDB     *float64 `json:"balance_db,omitempty"`
+	ImbalanceDB   *float64 `json:"imbalance_db,omitempty"`
+	ThresholdDB   float64  `json:"threshold_db"` // dB
+	DurationMs    int64    `json:"duration_ms,omitempty"`
+	DumpPath      string   `json:"dump_path,omitempty"`
+	DumpFilename  string   `json:"dump_filename,omitempty"`
+	DumpSizeBytes int64    `json:"dump_size_bytes,omitempty"`
+	DumpError     string   `json:"dump_error,omitempty"`
 }
 
 // ImbalanceDetails holds channel imbalance event information.
@@ -254,26 +265,14 @@ func (l *Logger) LogSilenceEnd(t time.Time, durationMs int64, levelL, levelR, th
 	})
 }
 
-// LogAudioDumpReady records when the audio dump MP3 is ready after a silence event.
+// LogAudioDumpReady records when an audio incident context MP3 is ready.
 // t must be captured at the moment the event occurs so the timestamp is
 // accurate even when the write is deferred to a background goroutine.
-func (l *Logger) LogAudioDumpReady(
-	t time.Time, durationMs int64, levelL, levelR, threshold float64,
-	dumpPath, dumpFilename string, dumpSize int64, dumpError string,
-) error {
+func (l *Logger) LogAudioDumpReady(t time.Time, details *AudioDumpDetails) error {
 	return l.Log(&Event{
 		Timestamp: t,
 		Type:      AudioDumpReady,
-		Details: &SilenceDetails{
-			LevelLeftDB:   levelL,
-			LevelRightDB:  levelR,
-			ThresholdDB:   threshold,
-			DurationMs:    durationMs,
-			DumpPath:      dumpPath,
-			DumpFilename:  dumpFilename,
-			DumpSizeBytes: dumpSize,
-			DumpError:     dumpError,
-		},
+		Details:   details,
 	})
 }
 

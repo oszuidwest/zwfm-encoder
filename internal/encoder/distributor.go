@@ -51,8 +51,8 @@ func NewDistributor(cfg DistributorConfig) *Distributor {
 
 // ProcessSamples processes a buffer of PCM audio samples.
 func (d *Distributor) ProcessSamples(buf []byte) {
-	// Feed the silence dump ring first (it copies buf into its own buffer),
-	// so the dump manager is wired in exactly one place: audio here, silence
+	// Feed the audio incident dump ring first (it copies buf into its own buffer),
+	// so the dump manager is wired in exactly one place: audio here, incident
 	// events below.
 	if d.silenceDumpManager != nil {
 		d.silenceDumpManager.WriteAudio(buf)
@@ -94,9 +94,10 @@ func (d *Distributor) ProcessSamples(buf []byte) {
 		d.alertOrchestrator.HandleSilenceEvent(silenceEvent)
 		d.alertOrchestrator.HandleChannelImbalanceEvent(&imbalanceEvent)
 
-		// Forward silence events to dump manager for capture
+		// Forward audio-incident events to the shared dump manager for capture.
 		if d.silenceDumpManager != nil {
 			d.silenceDumpManager.HandleSilenceEvent(silenceEvent)
+			d.silenceDumpManager.HandleChannelImbalanceEvent(&imbalanceEvent)
 		}
 
 		if d.callback != nil {

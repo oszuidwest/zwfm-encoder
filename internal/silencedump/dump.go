@@ -1,4 +1,5 @@
-// Package silencedump captures audio around silence events and encodes to MP3.
+// Package silencedump captures audio around silence and channel-imbalance
+// incidents and encodes the context to MP3.
 package silencedump
 
 import (
@@ -19,10 +20,10 @@ import (
 
 const (
 	// Dump timing.
-	beforeSeconds     = 15
-	maxSilenceSeconds = 5
-	afterSeconds      = 15
-	bufferSeconds     = beforeSeconds + maxSilenceSeconds + afterSeconds // 35 seconds
+	beforeSeconds      = 15
+	maxIncidentSeconds = 5
+	afterSeconds       = 15
+	bufferSeconds      = beforeSeconds + maxIncidentSeconds + afterSeconds // 35 seconds
 
 	// Buffer capacity in bytes.
 	bufferCapacity = bufferSeconds * audio.BytesPerSecond // ~6.7 MB
@@ -35,13 +36,24 @@ const (
 	outputDirPrefix = "encoder-silence-dumps"
 )
 
-// outputDirForPort returns the output directory for silence dumps, unique per port.
+// Trigger identifies the audio incident that requested a dump.
+type Trigger string
+
+const (
+	// TriggerSilence identifies a dump captured around a silence incident.
+	TriggerSilence Trigger = "silence"
+	// TriggerChannelImbalance identifies a dump captured around an L/R imbalance incident.
+	TriggerChannelImbalance Trigger = "channel_imbalance"
+)
+
+// outputDirForPort returns the legacy output directory for audio incident dumps, unique per port.
 func outputDirForPort(port int) string {
 	return filepath.Join(os.TempDir(), fmt.Sprintf("%s-%d", outputDirPrefix, port))
 }
 
-// EncodeResult contains the result of encoding a silence dump.
+// EncodeResult contains the result of encoding an audio incident dump.
 type EncodeResult struct {
+	Trigger   Trigger
 	FilePath  string
 	Filename  string
 	FileSize  int64
@@ -50,10 +62,18 @@ type EncodeResult struct {
 	Error     error
 }
 
+type captureState struct {
+	startPos    int64
+	endPos      int64
+	startedAt   time.Time
+	recovered   bool
+	savedBefore []byte
+}
+
 // DumpCallback is called when a dump is ready.
 type DumpCallback func(result *EncodeResult)
 
-// Capturer captures audio context around silence events for debugging.
+// Capturer captures audio context around silence and channel-imbalance incidents.
 type Capturer struct {
 	mu sync.Mutex
 
@@ -62,18 +82,10 @@ type Capturer struct {
 	writePos     int   // current write position in buffer
 	totalWritten int64 // total bytes written (for position tracking)
 
-	// Silence event tracking (positions, not copies).
-	silenceStartPos int64     // byte position when silence started
-	silenceEndPos   int64     // byte position when recovery started
-	silenceStart    time.Time // time when silence started
-	// capturing reports whether we're waiting for recovery audio.
-	capturing bool
-	// recovered is separate from silenceEndPos because position 0 is valid.
-	recovered bool
-
-	// Saved pre-silence audio snapshot. Captured immediately on silence start
-	// to prevent data loss during long silences that exceed ring buffer capacity.
-	savedBefore []byte
+	// Incident captures share the continuous ring buffer. Keeping one state per
+	// trigger prevents overlapping silence and imbalance recovery windows from
+	// overwriting each other's context.
+	captures map[Trigger]*captureState
 
 	// Configuration.
 	ffmpegPath  string
@@ -82,15 +94,16 @@ type Capturer struct {
 	onDumpReady DumpCallback
 }
 
-// NewCapturer creates a new silence dump capturer. The ~6.7 MB ring buffer is
+// NewCapturer creates a new audio incident dump capturer. The ~6.7 MB ring buffer is
 // allocated lazily on the first enabled WriteAudio so installs that never
-// enable silence dumps do not pay for it.
+// enable incident dumps do not pay for it.
 func NewCapturer(ffmpegPath, outputDir string, onDumpReady DumpCallback) *Capturer {
 	return &Capturer{
 		ffmpegPath:  ffmpegPath,
 		outputDir:   outputDir,
 		enabled:     ffmpegPath != "",
 		onDumpReady: onDumpReady,
+		captures:    map[Trigger]*captureState{},
 	}
 }
 
@@ -113,7 +126,7 @@ func (c *Capturer) Enabled() bool {
 	return c.enabled
 }
 
-// WriteAudio buffers incoming PCM data for potential silence dump capture.
+// WriteAudio buffers incoming PCM data for potential audio-incident dumps.
 func (c *Capturer) WriteAudio(pcm []byte) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -136,6 +149,15 @@ func (c *Capturer) WriteAudio(pcm []byte) {
 
 // OnSilenceStart begins capturing audio context for a potential silence dump.
 func (c *Capturer) OnSilenceStart() {
+	c.onIncidentStart(TriggerSilence)
+}
+
+// OnChannelImbalanceStart begins capturing context for a potential channel-imbalance dump.
+func (c *Capturer) OnChannelImbalanceStart() {
+	c.onIncidentStart(TriggerChannelImbalance)
+}
+
+func (c *Capturer) onIncidentStart(trigger Trigger) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -143,38 +165,53 @@ func (c *Capturer) OnSilenceStart() {
 		return
 	}
 
-	// If already capturing with recovery detected, finalize current dump first.
-	// This prevents losing silence1 when silence2 starts before 15s post-recovery completes.
-	if c.capturing && c.recovered {
-		c.extractAndEncode()
+	if c.captures == nil {
+		c.captures = map[Trigger]*captureState{}
 	}
 
-	// Snapshot pre-silence audio to prevent loss during long silences
+	// If the same incident type re-enters after recovery, finalize its current
+	// dump before starting a new capture. Other incident types remain intact.
+	if current := c.captures[trigger]; current != nil && current.recovered {
+		c.extractAndEncode(trigger, current)
+	}
+
+	// Snapshot pre-incident audio to prevent loss when an incident outlives the ring.
 	beforeBytes := min(c.totalWritten, int64(beforeSeconds*audio.BytesPerSecond))
-	if beforeBytes > 0 {
-		c.savedBefore = make([]byte, beforeBytes)
-		c.copyFromRing(c.savedBefore, c.totalWritten-beforeBytes)
-	} else {
-		c.savedBefore = nil
+	state := &captureState{
+		startPos:  c.totalWritten,
+		startedAt: time.Now(),
 	}
+	if beforeBytes > 0 {
+		state.savedBefore = make([]byte, beforeBytes)
+		c.copyFromRing(state.savedBefore, c.totalWritten-beforeBytes)
+	}
+	c.captures[trigger] = state
 
-	c.silenceStartPos = c.totalWritten
-	c.silenceStart = time.Now()
-	c.silenceEndPos = 0
-	c.capturing = true
-	c.recovered = false
-
-	slog.Debug("silence dump capture started", "position", c.silenceStartPos, "saved_before_bytes", len(c.savedBefore))
+	slog.Debug("audio dump capture started",
+		"trigger", trigger,
+		"position", state.startPos,
+		"saved_before_bytes", len(state.savedBefore),
+	)
 }
 
 // OnSilenceRecover signals that audio has recovered from silence.
 // recoveryDuration is how long audio was good before recovery was confirmed.
 // We backdate silenceEndPos by this amount to capture when audio actually returned.
 func (c *Capturer) OnSilenceRecover(totalDuration, recoveryDuration time.Duration) {
+	c.onIncidentRecover(TriggerSilence, totalDuration, recoveryDuration)
+}
+
+// OnChannelImbalanceRecover marks the point where stereo balance returned.
+func (c *Capturer) OnChannelImbalanceRecover(totalDuration, recoveryDuration time.Duration) {
+	c.onIncidentRecover(TriggerChannelImbalance, totalDuration, recoveryDuration)
+}
+
+func (c *Capturer) onIncidentRecover(trigger Trigger, totalDuration, recoveryDuration time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if !c.enabled || !c.capturing {
+	state := c.captures[trigger]
+	if !c.enabled || state == nil {
 		return
 	}
 
@@ -183,14 +220,15 @@ func (c *Capturer) OnSilenceRecover(totalDuration, recoveryDuration time.Duratio
 	// subtract that amount to capture the moment audio came back.
 	//
 	// Wall-clock recovery can outpace bytes written; clamp so copyFromRing never
-	// receives a start before silenceStartPos.
+	// receives a start before the incident start position.
 	recoveryBytes := int64(recoveryDuration.Seconds() * float64(audio.BytesPerSecond))
-	c.silenceEndPos = max(c.silenceStartPos, c.totalWritten-recoveryBytes)
-	c.recovered = true
+	state.endPos = max(state.startPos, c.totalWritten-recoveryBytes)
+	state.recovered = true
 
-	slog.Debug("silence dump recovery detected",
-		"start_pos", c.silenceStartPos,
-		"end_pos", c.silenceEndPos,
+	slog.Debug("audio dump recovery detected",
+		"trigger", trigger,
+		"start_pos", state.startPos,
+		"end_pos", state.endPos,
 		"duration", totalDuration,
 		"recovery_duration", recoveryDuration,
 	)
@@ -198,57 +236,49 @@ func (c *Capturer) OnSilenceRecover(totalDuration, recoveryDuration time.Duratio
 
 // checkAndFinalize completes a dump capture if sufficient audio context is available.
 func (c *Capturer) checkAndFinalize() {
-	if !c.capturing || !c.recovered {
-		return
+	for trigger, state := range c.captures {
+		if !state.recovered {
+			continue
+		}
+		requiredBytes := state.endPos + int64(afterSeconds*audio.BytesPerSecond)
+		if c.totalWritten < requiredBytes {
+			continue
+		}
+		c.extractAndEncode(trigger, state)
+		delete(c.captures, trigger)
 	}
-
-	// Wait for 15 seconds of audio after recovery
-	requiredBytes := c.silenceEndPos + int64(afterSeconds*audio.BytesPerSecond)
-	if c.totalWritten < requiredBytes {
-		return
-	}
-
-	// Extract and encode the dump
-	c.extractAndEncode()
-
-	// Reset state for next silence event
-	c.capturing = false
-	c.recovered = false
-	c.silenceStartPos = 0
-	c.silenceEndPos = 0
-	c.silenceStart = time.Time{}
 }
 
 // extractAndEncode encodes buffered audio to an MP3 file.
-func (c *Capturer) extractAndEncode() {
-	// Calculate section sizes (silence capped at maxSilenceSeconds)
-	silenceBytes := min(max(0, c.silenceEndPos-c.silenceStartPos), int64(maxSilenceSeconds*audio.BytesPerSecond))
+func (c *Capturer) extractAndEncode(trigger Trigger, state *captureState) {
+	// Calculate section sizes (the incident itself is capped to bound memory and output size).
+	incidentBytes := min(max(0, state.endPos-state.startPos), int64(maxIncidentSeconds*audio.BytesPerSecond))
 	afterBytes := int64(0)
-	if c.recovered {
+	if state.recovered {
 		afterBytes = int64(afterSeconds * audio.BytesPerSecond)
 	}
 
-	// Build PCM: savedBefore (guaranteed intact) + silence (capped) + after
-	beforeLen := int64(len(c.savedBefore))
-	pcm := make([]byte, beforeLen+silenceBytes+afterBytes)
-	copy(pcm, c.savedBefore)
-	c.copyFromRing(pcm[beforeLen:beforeLen+silenceBytes], c.silenceStartPos)
-	c.copyFromRing(pcm[beforeLen+silenceBytes:], c.silenceEndPos)
+	// Build PCM: savedBefore (guaranteed intact) + incident (capped) + after.
+	beforeLen := int64(len(state.savedBefore))
+	pcm := make([]byte, beforeLen+incidentBytes+afterBytes)
+	copy(pcm, state.savedBefore)
+	c.copyFromRing(pcm[beforeLen:beforeLen+incidentBytes], state.startPos)
+	c.copyFromRing(pcm[beforeLen+incidentBytes:], state.endPos)
 
 	// Capture all values needed for encoding before releasing lock
-	silenceStart := c.silenceStart
-	silenceDuration := time.Duration(c.silenceEndPos-c.silenceStartPos) * time.Second / time.Duration(audio.BytesPerSecond)
+	incidentStart := state.startedAt
+	incidentDuration := time.Duration(state.endPos-state.startPos) * time.Second / time.Duration(audio.BytesPerSecond)
 	ffmpegPath := c.ffmpegPath
 	outputDir := c.outputDir
 	callback := c.onDumpReady
 
-	// Clear savedBefore to free memory (no longer needed after extraction)
-	c.savedBefore = nil
+	// Clear savedBefore to free memory (no longer needed after extraction).
+	state.savedBefore = nil
 
 	// Encode in background to not block audio processing.
 	// All values are captured above; goroutine doesn't access Capturer fields.
 	go func() {
-		result := encodeToMP3(ffmpegPath, outputDir, pcm, silenceStart, silenceDuration)
+		result := encodeToMP3(ffmpegPath, outputDir, pcm, trigger, incidentStart, incidentDuration)
 		if callback != nil {
 			callback(result)
 		}
@@ -281,14 +311,23 @@ func (c *Capturer) copyFromRing(dst []byte, startPos int64) {
 	copy(dst[n:], c.buffer) // continuation after a single wrap; no-op when the read fit before the end
 }
 
+func dumpFilename(trigger Trigger, incidentStart time.Time) string {
+	filename := incidentStart.Local().Format("2006-01-02_15-04-05") + ".mp3"
+	if trigger == TriggerChannelImbalance {
+		return "channel-imbalance-" + filename
+	}
+	return filename
+}
+
 // encodeToMP3 encodes PCM audio to an MP3 file.
 func encodeToMP3(
 	ffmpegPath, outputDir string, pcm []byte,
-	silenceStart time.Time, duration time.Duration,
+	trigger Trigger, incidentStart time.Time, duration time.Duration,
 ) *EncodeResult {
 	result := &EncodeResult{
+		Trigger:   trigger,
 		Duration:  duration,
-		DumpStart: silenceStart,
+		DumpStart: incidentStart,
 	}
 
 	// Ensure output directory exists
@@ -298,7 +337,7 @@ func encodeToMP3(
 	}
 
 	// Generate filename: 2024-01-15_14-32-05.mp3 (local time)
-	result.Filename = silenceStart.Local().Format("2006-01-02_15-04-05") + ".mp3"
+	result.Filename = dumpFilename(trigger, incidentStart)
 	result.FilePath = filepath.Join(outputDir, result.Filename)
 
 	// Build FFmpeg command
@@ -337,7 +376,8 @@ func encodeToMP3(
 	}
 	result.FileSize = info.Size()
 
-	slog.Info("silence dump encoded",
+	slog.Info("audio dump encoded",
+		"trigger", trigger,
 		"file", result.Filename,
 		"size", result.FileSize,
 		"duration", duration,
@@ -353,17 +393,12 @@ func (c *Capturer) Reset() {
 
 	c.resetLocked()
 
-	slog.Debug("silence dump capturer reset")
+	slog.Debug("audio incident dump capturer reset")
 }
 
 // resetLocked clears all capture state. The caller must hold c.mu.
 func (c *Capturer) resetLocked() {
 	c.writePos = 0
 	c.totalWritten = 0
-	c.silenceStartPos = 0
-	c.silenceEndPos = 0
-	c.silenceStart = time.Time{}
-	c.capturing = false
-	c.recovered = false
-	c.savedBefore = nil // Free memory
+	c.captures = map[Trigger]*captureState{}
 }
