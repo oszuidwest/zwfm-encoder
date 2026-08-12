@@ -240,35 +240,22 @@ func (l *Logger) LogStream(
 // LogSilenceStart records when silence is first detected.
 // t must be captured at the moment the event occurs so the timestamp is
 // accurate even when the write is deferred to a background goroutine.
-func (l *Logger) LogSilenceStart(t time.Time, incidentID uint32, levelL, levelR, threshold float64) error {
+func (l *Logger) LogSilenceStart(t time.Time, details *SilenceDetails) error {
 	return l.Log(&Event{
 		Timestamp: t,
 		Type:      SilenceStart,
-		Details: &SilenceDetails{
-			IncidentID:   incidentID,
-			LevelLeftDB:  levelL,
-			LevelRightDB: levelR,
-			ThresholdDB:  threshold,
-		},
+		Details:   details,
 	})
 }
 
 // LogSilenceEnd records when silence ends with duration information.
 // t must be captured at the moment the event occurs so the timestamp is
 // accurate even when the write is deferred to a background goroutine.
-func (l *Logger) LogSilenceEnd(
-	t time.Time, incidentID uint32, durationMs int64, levelL, levelR, threshold float64,
-) error {
+func (l *Logger) LogSilenceEnd(t time.Time, details *SilenceDetails) error {
 	return l.Log(&Event{
 		Timestamp: t,
 		Type:      SilenceEnd,
-		Details: &SilenceDetails{
-			IncidentID:   incidentID,
-			LevelLeftDB:  levelL,
-			LevelRightDB: levelR,
-			ThresholdDB:  threshold,
-			DurationMs:   durationMs,
-		},
+		Details:   details,
 	})
 }
 
@@ -285,41 +272,21 @@ func (l *Logger) LogAudioDumpReady(t time.Time, details *AudioDumpDetails) error
 
 // LogChannelImbalanceStart records when an L/R imbalance is confirmed.
 // t must be the event time, even if the write is deferred.
-func (l *Logger) LogChannelImbalanceStart(
-	t time.Time, incidentID uint32, levelL, levelR, balanceDB, imbalanceDB, threshold float64,
-) error {
+func (l *Logger) LogChannelImbalanceStart(t time.Time, details *ImbalanceDetails) error {
 	return l.Log(&Event{
 		Timestamp: t,
 		Type:      ChannelImbalanceStart,
-		Details: &ImbalanceDetails{
-			IncidentID:   incidentID,
-			LevelLeftDB:  levelL,
-			LevelRightDB: levelR,
-			BalanceDB:    balanceDB,
-			ImbalanceDB:  imbalanceDB,
-			ThresholdDB:  threshold,
-		},
+		Details:   details,
 	})
 }
 
 // LogChannelImbalanceEnd records when an L/R imbalance clears.
 // t must be the event time, even if the write is deferred.
-func (l *Logger) LogChannelImbalanceEnd(
-	t time.Time, incidentID uint32, durationMs int64,
-	levelL, levelR, balanceDB, imbalanceDB, threshold float64,
-) error {
+func (l *Logger) LogChannelImbalanceEnd(t time.Time, details *ImbalanceDetails) error {
 	return l.Log(&Event{
 		Timestamp: t,
 		Type:      ChannelImbalanceEnd,
-		Details: &ImbalanceDetails{
-			IncidentID:   incidentID,
-			LevelLeftDB:  levelL,
-			LevelRightDB: levelR,
-			BalanceDB:    balanceDB,
-			ImbalanceDB:  imbalanceDB,
-			ThresholdDB:  threshold,
-			DurationMs:   durationMs,
-		},
+		Details:   details,
 	})
 }
 

@@ -79,12 +79,17 @@ func sendSilenceEndEmailWithClient(
 ) error {
 	subject := "[OK] Audio Restored - " + stationName
 	body := fmt.Sprintf(
-		"Audio was restored at %s.\n\n"+
-			"The silence lasted %s.\n"+
-			"Level: Left %.1f dB / Right %.1f dB (threshold: %.1f dB)",
-		util.HumanTime(), util.FormatDuration(e.DurationMs), e.LevelL, e.LevelR, e.Threshold,
-	)
+		"Audio was restored at %s.\n\nThe silence lasted %s.\n",
+		util.HumanTime(), util.FormatDuration(e.DurationMs),
+	) + silenceMeasurements(e.LevelL, e.LevelR, e.Threshold)
 	return sendEmailWithClient(ctx, cfg, client, subject, body)
+}
+
+func silenceMeasurements(levelL, levelR, thresholdDB float64) string {
+	return fmt.Sprintf(
+		"Level: Left %.1f dB / Right %.1f dB (threshold: %.1f dB)",
+		levelL, levelR, thresholdDB,
+	)
 }
 
 func channelImbalanceDirection(balanceDB float64) string {
@@ -147,15 +152,23 @@ func buildChannelImbalanceEndEmail(
 	return subject, body
 }
 
-func buildDumpReadyEmail(stationName, eventTime string, data *AudioDumpData) (subject, body, incident string) {
+// incidentNoun names the dump's incident type in user-facing email copy.
+func incidentNoun(trigger silencedump.Trigger) string {
+	if trigger == silencedump.TriggerChannelImbalance {
+		return "channel imbalance"
+	}
+	return "silence"
+}
+
+func buildDumpReadyEmail(stationName, eventTime string, data *AudioDumpData) (subject, body string) {
 	subject = "[DUMP] Audio Recording - " + stationName
+	body = fmt.Sprintf(
+		"Audio dump ready at %s.\n\nThe %s lasted %s.\n",
+		eventTime,
+		incidentNoun(data.Trigger),
+		util.FormatDuration(data.DurationMs),
+	)
 	if data.Trigger == silencedump.TriggerChannelImbalance {
-		incident = "channel imbalance"
-		body = fmt.Sprintf(
-			"Audio dump ready at %s.\n\nThe channel imbalance lasted %s.\n",
-			eventTime,
-			util.FormatDuration(data.DurationMs),
-		)
 		if data.BalanceDB != nil && data.ImbalanceDB != nil {
 			body += channelImbalanceMeasurements(
 				data.LevelL,
@@ -165,27 +178,16 @@ func buildDumpReadyEmail(stationName, eventTime string, data *AudioDumpData) (su
 				data.ThresholdDB,
 			)
 		}
-		return subject, body, incident
+		return subject, body
 	}
-
-	incident = "silence"
-	body = fmt.Sprintf(
-		"Audio dump ready at %s.\n\n"+
-			"The silence lasted %s.\n"+
-			"Level: Left %.1f dB / Right %.1f dB (threshold: %.1f dB)",
-		eventTime,
-		util.FormatDuration(data.DurationMs),
-		data.LevelL,
-		data.LevelR,
-		data.ThresholdDB,
-	)
-	return subject, body, incident
+	body += silenceMeasurements(data.LevelL, data.LevelR, data.ThresholdDB)
+	return subject, body
 }
 
 func sendDumpReadyEmailWithClient(
 	ctx context.Context, cfg *GraphConfig, client *GraphClient, stationName string, data *AudioDumpData,
 ) error {
-	subject, body, incident := buildDumpReadyEmail(stationName, util.HumanTime(), data)
+	subject, body := buildDumpReadyEmail(stationName, util.HumanTime(), data)
 
 	if data.Result != nil && data.Result.Error != nil {
 		body += fmt.Sprintf("\n\nAudio recording: Failed to capture (%s)", data.Result.Error.Error())
@@ -205,7 +207,7 @@ func sendDumpReadyEmailWithClient(
 				ContentType: "audio/mpeg",
 				Data:        fileData,
 			}
-			body += fmt.Sprintf("\n\nAudio recording attached (15s before and after the %s).", incident)
+			body += fmt.Sprintf("\n\nAudio recording attached (15s before and after the %s).", incidentNoun(data.Trigger))
 		} else {
 			slog.Warn("audio dump file unreadable, sending email without attachment",
 				"path", data.Result.FilePath, "error", err)

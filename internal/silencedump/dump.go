@@ -235,6 +235,10 @@ func (c *Capturer) OnIncidentRecover(
 }
 
 // checkAndFinalize completes a dump capture if sufficient audio context is available.
+// At most one capture finalizes per call: each extract copies multiple MB while
+// holding the lock the audio path needs, and coinciding recoveries would otherwise
+// stack those copies into a single buffer write. Remaining recovered captures
+// finalize on the next writes.
 func (c *Capturer) checkAndFinalize() {
 	for key, state := range c.captures {
 		if !state.recovered {
@@ -246,6 +250,7 @@ func (c *Capturer) checkAndFinalize() {
 		}
 		c.extractAndEncode(key, state)
 		delete(c.captures, key)
+		return
 	}
 }
 

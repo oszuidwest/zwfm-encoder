@@ -67,7 +67,7 @@ func TestBuildChannelImbalanceEmails(t *testing.T) {
 func TestBuildChannelImbalanceDumpEmail(t *testing.T) {
 	t.Parallel()
 	balanceDB, imbalanceDB := 1.0, 1.0
-	subject, body, incident := buildDumpReadyEmail(
+	subject, body := buildDumpReadyEmail(
 		"ZuidWest FM",
 		"11 Aug 2026 20:19:00 CEST",
 		&AudioDumpData{
@@ -82,9 +82,6 @@ func TestBuildChannelImbalanceDumpEmail(t *testing.T) {
 	)
 	if subject != "[DUMP] Audio Recording - ZuidWest FM" {
 		t.Fatalf("subject = %q", subject)
-	}
-	if incident != "channel imbalance" {
-		t.Fatalf("incident = %q, want channel imbalance", incident)
 	}
 	for _, want := range []string{
 		"The channel imbalance lasted 30s.",
@@ -115,7 +112,7 @@ func TestBuildChannelImbalanceDumpEmailOmitsIncompleteMeasurements(t *testing.T)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			_, body, incident := buildDumpReadyEmail(
+			_, body := buildDumpReadyEmail(
 				"ZuidWest FM",
 				"11 Aug 2026 20:19:00 CEST",
 				&AudioDumpData{
@@ -125,9 +122,6 @@ func TestBuildChannelImbalanceDumpEmailOmitsIncompleteMeasurements(t *testing.T)
 					DurationMs:  30000,
 				},
 			)
-			if incident != "channel imbalance" {
-				t.Fatalf("incident = %q, want channel imbalance", incident)
-			}
 			if !strings.Contains(body, "The channel imbalance lasted 30s.") {
 				t.Fatalf("dump body missing duration:\n%s", body)
 			}

@@ -49,10 +49,9 @@ type AlertChannel interface {
 	// SendChannelImbalanceEnd delivers a channel-balance recovery alert.
 	SendChannelImbalanceEnd(ctx context.Context, cfg *config.Snapshot, data ChannelImbalanceData) error
 	// SendAudioDump delivers an audio dump notification, or returns an error if
-	// the backend cannot carry attachments.
-	SendAudioDump(
-		ctx context.Context, cfg *config.Snapshot, data *AudioDumpData,
-	) error
+	// the backend cannot carry attachments. The data is passed by pointer to
+	// satisfy hugeParam; implementations must treat it as read-only.
+	SendAudioDump(ctx context.Context, cfg *config.Snapshot, data *AudioDumpData) error
 	// SendUploadAbandoned delivers an alert for a recording that exhausted upload retries.
 	SendUploadAbandoned(ctx context.Context, cfg *config.Snapshot, params UploadAbandonedData) error
 }

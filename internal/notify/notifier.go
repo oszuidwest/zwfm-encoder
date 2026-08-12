@@ -4,6 +4,7 @@ package notify
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"sync"
 	"time"
 
@@ -263,11 +264,9 @@ func (o *AlertOrchestrator) handleChannelImbalanceEnd(
 // The caller must hold o.mu.
 func (o *AlertOrchestrator) addPendingRecoveryLocked(pending *pendingRecoveryData) {
 	cutoff := pending.recoveredAt.Add(-pendingRecoveryTTL)
-	for existingKey, existing := range o.pendingRecoveries {
-		if existing.recoveredAt.Before(cutoff) {
-			delete(o.pendingRecoveries, existingKey)
-		}
-	}
+	maps.DeleteFunc(o.pendingRecoveries, func(_ incidentKey, existing *pendingRecoveryData) bool {
+		return existing.recoveredAt.Before(cutoff)
+	})
 	key := incidentKey{trigger: pending.dumpData.Trigger, incidentID: pending.dumpData.IncidentID}
 	o.pendingRecoveries[key] = pending
 }
@@ -374,7 +373,12 @@ func BuildGraphConfig(cfg *config.Snapshot) *GraphConfig {
 func (o *AlertOrchestrator) logSilenceStart(
 	t time.Time, cfg *config.Snapshot, incidentID audio.IncidentID, levelL, levelR float64,
 ) {
-	if err := o.eventLogger.LogSilenceStart(t, uint32(incidentID), levelL, levelR, cfg.SilenceThreshold); err != nil {
+	if err := o.eventLogger.LogSilenceStart(t, &eventlog.SilenceDetails{
+		IncidentID:   uint32(incidentID),
+		LevelLeftDB:  levelL,
+		LevelRightDB: levelR,
+		ThresholdDB:  cfg.SilenceThreshold,
+	}); err != nil {
 		slog.Warn("failed to log silence start", "error", err)
 	}
 }
@@ -382,9 +386,13 @@ func (o *AlertOrchestrator) logSilenceStart(
 func (o *AlertOrchestrator) logSilenceEnd(
 	t time.Time, cfg *config.Snapshot, incidentID audio.IncidentID, durationMS int64, levelL, levelR float64,
 ) {
-	if err := o.eventLogger.LogSilenceEnd(
-		t, uint32(incidentID), durationMS, levelL, levelR, cfg.SilenceThreshold,
-	); err != nil {
+	if err := o.eventLogger.LogSilenceEnd(t, &eventlog.SilenceDetails{
+		IncidentID:   uint32(incidentID),
+		LevelLeftDB:  levelL,
+		LevelRightDB: levelR,
+		ThresholdDB:  cfg.SilenceThreshold,
+		DurationMs:   durationMS,
+	}); err != nil {
 		slog.Warn("failed to log silence end", "error", err)
 	}
 }
@@ -392,9 +400,14 @@ func (o *AlertOrchestrator) logSilenceEnd(
 func (o *AlertOrchestrator) logChannelImbalanceStart(
 	t time.Time, cfg *config.Snapshot, incidentID audio.IncidentID, levelL, levelR, balanceDB, imbalanceDB float64,
 ) {
-	if err := o.eventLogger.LogChannelImbalanceStart(
-		t, uint32(incidentID), levelL, levelR, balanceDB, imbalanceDB, cfg.ChannelImbalanceThreshold,
-	); err != nil {
+	if err := o.eventLogger.LogChannelImbalanceStart(t, &eventlog.ImbalanceDetails{
+		IncidentID:   uint32(incidentID),
+		LevelLeftDB:  levelL,
+		LevelRightDB: levelR,
+		BalanceDB:    balanceDB,
+		ImbalanceDB:  imbalanceDB,
+		ThresholdDB:  cfg.ChannelImbalanceThreshold,
+	}); err != nil {
 		slog.Warn("failed to log channel imbalance start", "error", err)
 	}
 }
@@ -403,9 +416,15 @@ func (o *AlertOrchestrator) logChannelImbalanceEnd(
 	t time.Time, cfg *config.Snapshot, incidentID audio.IncidentID,
 	durationMS int64, levelL, levelR, balanceDB, imbalanceDB float64,
 ) {
-	if err := o.eventLogger.LogChannelImbalanceEnd(
-		t, uint32(incidentID), durationMS, levelL, levelR, balanceDB, imbalanceDB, cfg.ChannelImbalanceThreshold,
-	); err != nil {
+	if err := o.eventLogger.LogChannelImbalanceEnd(t, &eventlog.ImbalanceDetails{
+		IncidentID:   uint32(incidentID),
+		LevelLeftDB:  levelL,
+		LevelRightDB: levelR,
+		BalanceDB:    balanceDB,
+		ImbalanceDB:  imbalanceDB,
+		ThresholdDB:  cfg.ChannelImbalanceThreshold,
+		DurationMs:   durationMS,
+	}); err != nil {
 		slog.Warn("failed to log channel imbalance end", "error", err)
 	}
 }

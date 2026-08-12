@@ -277,13 +277,20 @@ func (i *historicalIncident) add(event groupedEvent) {
 	}
 }
 
-// dumpTriggerChannelImbalance is the serialized trigger for channel imbalance dumps.
-const dumpTriggerChannelImbalance = "channel_imbalance"
+// dumpTriggerIncidentTypes maps a dump's serialized trigger to the
+// incident-start event it attaches to. The empty trigger covers events logged
+// before triggers existed, which were always silence dumps. Unknown triggers
+// match nothing rather than silently attaching to a silence incident.
+var dumpTriggerIncidentTypes = map[string]EventType{
+	"":                  SilenceStart,
+	"silence":           SilenceStart,
+	"channel_imbalance": ChannelImbalanceStart,
+}
 
 func audioIncidentForDump(incidents []*historicalIncident, trigger string, incidentID int64) *historicalIncident {
-	firstType := SilenceStart
-	if trigger == dumpTriggerChannelImbalance {
-		firstType = ChannelImbalanceStart
+	firstType, ok := dumpTriggerIncidentTypes[trigger]
+	if !ok {
+		return nil
 	}
 	for i := len(incidents) - 1; i >= 0; i-- {
 		if incidents[i].firstType == firstType && (incidentID == 0 || incidents[i].incidentID == incidentID) {
