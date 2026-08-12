@@ -278,6 +278,7 @@ func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
 		return
 	}
 	key := incidentKey{trigger: result.Trigger, incidentID: result.IncidentID}
+	now := time.Now()
 
 	o.mu.Lock()
 	pending := o.pendingRecoveries[key]
@@ -285,14 +286,13 @@ func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
 	ctx := o.notifyCtx
 	o.mu.Unlock()
 
-	if pending == nil {
+	if pending == nil || now.Sub(pending.recoveredAt) > pendingRecoveryTTL {
 		slog.Debug("audio dump ready but no pending recovery; dump ignored",
 			"trigger", key.trigger, "incident_id", key.incidentID)
 		return
 	}
 
 	pending.dumpData.Result = result
-	now := time.Now()
 	o.dispatcher.DispatchAudioDump(ctx, pending.activeChannels, pending.cfg, pending.dumpData)
 	o.enqueueLog("audio_dump_ready", func() {
 		o.logAudioDumpReady(now, &pending.dumpData)

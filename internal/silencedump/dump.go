@@ -34,10 +34,6 @@ const (
 
 	// Output subdirectory name prefix (inside system temp dir).
 	outputDirPrefix = "encoder-silence-dumps"
-
-	// maxRecoveredCaptures bounds post-recovery snapshots per trigger.
-	// The oldest snapshot is finalized with available audio when the limit is reached.
-	maxRecoveredCaptures = 2
 )
 
 // Trigger identifies the audio incident that requested a dump.
@@ -72,11 +68,12 @@ type captureKey struct {
 }
 
 type captureState struct {
-	startPos    int64
-	endPos      int64
-	startedAt   time.Time
-	recovered   bool
-	savedBefore []byte
+	startPos      int64
+	endPos        int64
+	startedAt     time.Time
+	recovered     bool
+	savedBefore   []byte
+	savedIncident []byte
 }
 
 // DumpCallback is called when a dump is ready.
@@ -143,6 +140,12 @@ func (c *Capturer) WriteAudio(pcm []byte) {
 	if c.buffer == nil {
 		c.buffer = make([]byte, bufferCapacity)
 	}
+	for _, state := range c.captures {
+		remaining := maxIncidentSeconds*audio.BytesPerSecond - len(state.savedIncident)
+		if !state.recovered && remaining > 0 {
+			state.savedIncident = append(state.savedIncident, pcm[:min(len(pcm), remaining)]...)
+		}
+	}
 
 	c.writePos = c.writeToRing(pcm)
 	c.totalWritten += int64(len(pcm))
@@ -163,26 +166,11 @@ func (c *Capturer) OnIncidentStart(trigger Trigger, incidentID audio.IncidentID)
 		c.captures = map[captureKey]*captureState{}
 	}
 
-	// Bound per-trigger memory when detectors reset or incidents flap.
-	var oldestKey captureKey
-	var oldest *captureState
-	recoveredCount := 0
+	// A detector reset can start a replacement before the old active capture recovers.
 	for k, s := range c.captures {
-		if k.trigger != trigger {
-			continue
-		}
-		if !s.recovered {
+		if k.trigger == trigger && !s.recovered {
 			delete(c.captures, k)
-			continue
 		}
-		recoveredCount++
-		if oldest == nil || s.startedAt.Before(oldest.startedAt) {
-			oldestKey, oldest = k, s
-		}
-	}
-	if recoveredCount >= maxRecoveredCaptures {
-		c.extractAndEncode(oldestKey, oldest)
-		delete(c.captures, oldestKey)
 	}
 
 	// Snapshot pre-incident audio to prevent loss when an incident outlives the ring.
@@ -256,14 +244,13 @@ func (c *Capturer) checkAndFinalize() {
 
 // extractAndEncode encodes buffered audio to an MP3 file.
 func (c *Capturer) extractAndEncode(key captureKey, state *captureState) {
-	// Cap incident audio and prevent early finalization from reading stale ring data.
-	incidentBytes := min(max(0, state.endPos-state.startPos), int64(maxIncidentSeconds*audio.BytesPerSecond))
+	incidentBytes := min(max(0, state.endPos-state.startPos), int64(len(state.savedIncident)))
 	afterBytes := min(int64(afterSeconds*audio.BytesPerSecond), c.totalWritten-state.endPos)
 
 	beforeLen := int64(len(state.savedBefore))
 	pcm := make([]byte, beforeLen+incidentBytes+afterBytes)
 	copy(pcm, state.savedBefore)
-	c.copyFromRing(pcm[beforeLen:beforeLen+incidentBytes], state.startPos)
+	copy(pcm[beforeLen:beforeLen+incidentBytes], state.savedIncident)
 	c.copyFromRing(pcm[beforeLen+incidentBytes:], state.endPos)
 
 	// Snapshot shared state before encoding asynchronously.
@@ -274,6 +261,7 @@ func (c *Capturer) extractAndEncode(key captureKey, state *captureState) {
 	callback := c.onDumpReady
 
 	state.savedBefore = nil
+	state.savedIncident = nil
 
 	go func() {
 		result := encodeToMP3(ffmpegPath, outputDir, pcm, key.trigger, key.incidentID, incidentStart, incidentDuration)

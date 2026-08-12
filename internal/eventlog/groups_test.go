@@ -250,30 +250,34 @@ func TestGroupEventsAttachesImbalanceDumpToImbalanceIncident(t *testing.T) {
 	events := decorateNewestFirst(
 		testEvent(base, 6, AudioDumpReady, map[string]any{
 			"trigger":       "channel_imbalance",
+			"incident_id":   1,
 			"dump_filename": "channel-imbalance.mp3",
 		}),
-		testEvent(base, 5, ChannelImbalanceEnd, map[string]any{"duration_ms": 30000}),
-		testEvent(base, 4, ChannelImbalanceStart, nil),
-		testEvent(base, 3, SilenceEnd, map[string]any{"duration_ms": 20000}),
-		testEvent(base, 2, SilenceStart, nil),
+		testEvent(base, 5, SilenceStart, map[string]any{"incident_id": 1}),
+		testEvent(base, 4, ChannelImbalanceEnd, map[string]any{
+			"incident_id": 1,
+			"duration_ms": 30000,
+		}),
+		testEvent(base, 3, ChannelImbalanceStart, map[string]any{"incident_id": 1}),
 	)
 
 	groups := GroupEvents(events)
-	if len(groups.Resolved) != 2 {
-		t.Fatalf("resolved len = %d, want 2", len(groups.Resolved))
+	if len(groups.Resolved) != 1 {
+		t.Fatalf("resolved len = %d, want 1", len(groups.Resolved))
 	}
-	for _, item := range groups.Resolved {
-		hasDump := slices.Contains(item.Chips, "audio dump")
-		switch item.Title {
-		case "Channel imbalance":
-			if !hasDump || len(item.Events) != 3 {
-				t.Fatalf("imbalance incident dump grouping = chips %v, events %d", item.Chips, len(item.Events))
-			}
-		case "Silence on input":
-			if hasDump || len(item.Events) != 2 {
-				t.Fatalf("silence incident unexpectedly received dump: chips %v, events %d", item.Chips, len(item.Events))
-			}
-		}
+	imbalance := groups.Resolved[0]
+	if imbalance.Title != "Channel imbalance" ||
+		!slices.Contains(imbalance.Chips, "audio dump") || len(imbalance.Events) != 3 {
+		t.Fatalf("imbalance incident dump grouping = title %q, chips %v, events %d",
+			imbalance.Title, imbalance.Chips, len(imbalance.Events))
+	}
+	if len(groups.Attention) != 1 {
+		t.Fatalf("attention len = %d, want 1", len(groups.Attention))
+	}
+	silence := groups.Attention[0]
+	if silence.Title != "Silence on input" || slices.Contains(silence.Chips, "audio dump") || len(silence.Events) != 1 {
+		t.Fatalf("open silence incident grouping = title %q, chips %v, events %d",
+			silence.Title, silence.Chips, len(silence.Events))
 	}
 	assertPartition(t, events, &groups)
 }

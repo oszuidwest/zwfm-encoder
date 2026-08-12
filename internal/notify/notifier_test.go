@@ -548,6 +548,31 @@ func TestPendingRecoveriesDropEntriesPastCallbackDeadline(t *testing.T) {
 	}
 }
 
+func TestOnDumpReadyRejectsCallbackPastDeadline(t *testing.T) {
+	t.Parallel()
+	ch := newTestChannel(true)
+	o := newTestOrchestrator(t, ch)
+	key := incidentKey{trigger: silencedump.TriggerSilence, incidentID: 1}
+
+	o.mu.Lock()
+	o.pendingRecoveries[key] = &pendingRecoveryData{
+		dumpData: AudioDumpData{
+			Trigger:    key.trigger,
+			IncidentID: key.incidentID,
+		},
+		activeChannels: []AlertChannel{ch},
+		recoveredAt:    time.Now().Add(-pendingRecoveryTTL - time.Second),
+	}
+	o.mu.Unlock()
+
+	o.OnDumpReady(&silencedump.EncodeResult{Trigger: key.trigger, IncidentID: key.incidentID})
+
+	assertNoCall(t, ch.audioDumpCalled, "SendAudioDump after callback deadline")
+	if _, ok := o.pendingRecoveries[key]; ok {
+		t.Fatal("expired pending recovery was not removed after callback")
+	}
+}
+
 func TestChannelImbalanceStartDispatchesConfiguredSubscribedChannels(t *testing.T) {
 	t.Parallel()
 	send := newTestChannel(false)

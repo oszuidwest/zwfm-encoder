@@ -250,7 +250,7 @@ func TestSameTriggerReentryKeepsRecoveredCaptureUntilPostWindow(t *testing.T) {
 	}
 }
 
-func TestOnIncidentStartBoundsPerTriggerCaptures(t *testing.T) {
+func TestOnIncidentStartKeepsRecoveredCapturesUntilPostWindow(t *testing.T) {
 	t.Parallel()
 	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
 	writePattern(c, int64(audio.BytesPerSecond))
@@ -265,17 +265,42 @@ func TestOnIncidentStartBoundsPerTriggerCaptures(t *testing.T) {
 	}
 
 	c.OnIncidentRecover(TriggerSilence, 2, time.Second, 0)
+	writePattern(c, int64(audio.BytesPerSecond))
 	c.OnIncidentStart(TriggerSilence, 3)
 	c.OnIncidentRecover(TriggerSilence, 3, time.Second, 0)
 	c.OnIncidentStart(TriggerSilence, 4)
-	if c.captures[captureKey{trigger: TriggerSilence, incidentID: 2}] != nil {
-		t.Fatal("oldest recovered capture was not finalized on overflow")
+	if c.captures[captureKey{trigger: TriggerSilence, incidentID: 2}] == nil {
+		t.Fatal("oldest recovered capture was finalized before its post window")
 	}
 	if c.captures[captureKey{trigger: TriggerSilence, incidentID: 3}] == nil {
 		t.Fatal("newer recovered capture was removed")
 	}
 	if c.captures[captureKey{trigger: TriggerSilence, incidentID: 4}] == nil {
 		t.Fatal("new capture was not registered")
+	}
+
+	writePattern(c, int64((afterSeconds-1)*audio.BytesPerSecond))
+	if c.captures[captureKey{trigger: TriggerSilence, incidentID: 2}] != nil {
+		t.Fatal("oldest recovered capture still active after its post window")
+	}
+	if c.captures[captureKey{trigger: TriggerSilence, incidentID: 3}] == nil {
+		t.Fatal("newer recovered capture finalized before its post window")
+	}
+}
+
+func TestLongIncidentPreservesCappedIncidentPCM(t *testing.T) {
+	t.Parallel()
+	c := &Capturer{buffer: make([]byte, bufferCapacity), enabled: true}
+	c.OnIncidentStart(TriggerSilence, 1)
+
+	want := bytes.Repeat([]byte{0xa5}, maxIncidentSeconds*audio.BytesPerSecond)
+	c.WriteAudio(want)
+	c.WriteAudio(bytes.Repeat([]byte{0x5a}, bufferCapacity))
+	c.OnIncidentRecover(TriggerSilence, 1, 40*time.Second, 0)
+
+	state := c.captures[captureKey{trigger: TriggerSilence, incidentID: 1}]
+	if !bytes.Equal(state.savedIncident, want) {
+		t.Fatal("capped incident PCM was overwritten with unrelated ring-buffer audio")
 	}
 }
 
