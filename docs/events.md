@@ -197,8 +197,7 @@ imbalance). All of them are returned by the `audio` type filter.
   "incident_id": 42,
   "level_left_db": -48.5,
   "level_right_db": -52.3,
-  "threshold_db": -40.0,
-  "duration_ms": 65000
+  "threshold_db": -40.0
 }
 ```
 
@@ -208,7 +207,7 @@ imbalance). All of them are returned by the `audio` type filter.
 | `level_left_db` | float | Left channel RMS level in dB |
 | `level_right_db` | float | Right channel RMS level in dB |
 | `threshold_db` | float | Configured silence threshold in dB |
-| `duration_ms` | int | Silence duration in milliseconds (`silence_end` only) |
+| `duration_ms` | int | Silence duration in milliseconds (`silence_end` and its `audio_dump_ready` event) |
 
 ---
 
@@ -319,8 +318,7 @@ and recovery settings.
   "level_right_db": -56.0,
   "balance_db": 49.8,
   "imbalance_db": 49.8,
-  "threshold_db": 12.0,
-  "duration_ms": 180000
+  "threshold_db": 12.0
 }
 ```
 
