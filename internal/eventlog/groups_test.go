@@ -317,6 +317,81 @@ func TestGroupEventsMatchesSameTriggerDumpsByIncidentID(t *testing.T) {
 	assertPartition(t, events, &groups)
 }
 
+func TestGroupEventsSeparatesAudioIncidentsAfterDetectorReset(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		startType EventType
+		endType   EventType
+		trigger   string
+	}{
+		{
+			name:      "silence",
+			startType: SilenceStart,
+			endType:   SilenceEnd,
+			trigger:   "silence",
+		},
+		{
+			name:      "channel imbalance",
+			startType: ChannelImbalanceStart,
+			endType:   ChannelImbalanceEnd,
+			trigger:   "channel_imbalance",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			base := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
+			events := decorateNewestFirst(
+				testEvent(base, 4, AudioDumpReady, map[string]any{
+					"trigger":       tt.trigger,
+					"incident_id":   2,
+					"dump_filename": "second.mp3",
+				}),
+				testEvent(base, 3, tt.endType, map[string]any{
+					"incident_id": 2,
+					"duration_ms": 1000,
+				}),
+				testEvent(base, 2, tt.startType, map[string]any{"incident_id": 2}),
+				testEvent(base, 1, tt.startType, map[string]any{"incident_id": 1}),
+			)
+
+			groups := GroupEvents(events)
+			if len(groups.Attention) != 1 {
+				t.Fatalf("attention len = %d, want 1", len(groups.Attention))
+			}
+			if len(groups.Resolved) != 1 {
+				t.Fatalf("resolved len = %d, want 1", len(groups.Resolved))
+			}
+			if len(groups.Activity) != 0 {
+				t.Fatalf("activity len = %d, want 0", len(groups.Activity))
+			}
+
+			attentionEvents := groups.Attention[0].Events
+			if len(attentionEvents) != 1 || detailInt64(eventDetails(attentionEvents[0].Details), "incident_id") != 1 {
+				t.Fatalf("ongoing incident events = %+v, want only incident 1 start", attentionEvents)
+			}
+
+			resolved := groups.Resolved[0]
+			if len(resolved.Events) != 3 {
+				t.Fatalf("resolved events len = %d, want 3", len(resolved.Events))
+			}
+			for _, event := range resolved.Events {
+				if got := detailInt64(eventDetails(event.Details), "incident_id"); got != 2 {
+					t.Fatalf("resolved event %q incident_id = %d, want 2", event.Type, got)
+				}
+			}
+			if !slices.Contains(resolved.Chips, "audio dump") {
+				t.Fatalf("resolved chips = %v, want audio dump", resolved.Chips)
+			}
+			assertPartition(t, events, &groups)
+		})
+	}
+}
+
 func TestGroupEventsSortsResolvedIncidentsByResolutionTime(t *testing.T) {
 	t.Parallel()
 

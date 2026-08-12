@@ -41,9 +41,16 @@ type groupedEvent struct {
 	details map[string]any
 }
 
+// incidentGroupKey separates identified audio incidents while retaining
+// source-only grouping for streams, recorders, and legacy audio events.
+type incidentGroupKey struct {
+	source     string
+	incidentID int64
+}
+
 // groupingState tracks incidents while events are processed oldest-first.
 type groupingState struct {
-	openByKey map[string]*historicalIncident
+	openByKey map[incidentGroupKey]*historicalIncident
 	closed    []*historicalIncident
 	failed    []*historicalIncident
 }
@@ -121,7 +128,7 @@ func GroupEvents(events []EventView) EventGroups {
 	slices.SortStableFunc(asc, compareGroupedEvents)
 
 	state := &groupingState{
-		openByKey: map[string]*historicalIncident{},
+		openByKey: map[incidentGroupKey]*historicalIncident{},
 		closed:    []*historicalIncident{},
 		failed:    []*historicalIncident{},
 	}
@@ -170,11 +177,11 @@ func GroupEvents(events []EventView) EventGroups {
 }
 
 func (s *groupingState) process(event groupedEvent) {
-	key := eventSourceKey(event)
+	key := incidentGroupKeyForEvent(event)
 	if event.view.Type == UploadAbandoned {
 		incident := s.openByKey[key]
 		if incident == nil {
-			incident = newHistoricalIncident(event, key, "")
+			incident = newHistoricalIncident(event, key.source, "")
 		} else {
 			delete(s.openByKey, key)
 		}
@@ -213,7 +220,7 @@ func (s *groupingState) process(event groupedEvent) {
 
 	incident := s.openByKey[key]
 	if incident == nil {
-		incident = newHistoricalIncident(event, key, eventCloses[event.view.Type])
+		incident = newHistoricalIncident(event, key.source, eventCloses[event.view.Type])
 		s.openByKey[key] = incident
 	}
 	incident.add(event)
@@ -412,6 +419,14 @@ func routineEventItem(events []groupedEvent) EventGroupItem {
 		SortTs:     eventTimeValue(first.view.Timestamp),
 		TrailLimit: 8,
 	}
+}
+
+func incidentGroupKeyForEvent(event groupedEvent) incidentGroupKey {
+	key := incidentGroupKey{source: eventSourceKey(event)}
+	if event.view.Category == CategoryAudio {
+		key.incidentID = detailInt64(event.details, "incident_id")
+	}
+	return key
 }
 
 func eventSourceKey(event groupedEvent) string {
