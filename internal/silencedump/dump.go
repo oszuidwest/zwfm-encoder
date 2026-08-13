@@ -236,6 +236,7 @@ func (c *Capturer) checkAndFinalize() {
 		if c.totalWritten < requiredBytes {
 			continue
 		}
+		// Production writes are 100 ms, below the ring's 20-second finalization margin.
 		c.extractAndEncode(key, state)
 		delete(c.captures, key)
 		return
