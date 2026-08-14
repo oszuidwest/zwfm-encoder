@@ -334,9 +334,13 @@ func incidentItem(incident *historicalIncident, status string) EventGroupItem {
 		// Open incidents sort by start; terminal incidents by final event.
 		sortTs = incident.endTs
 	}
+	key := fmt.Sprintf("incident:%s:%s:%d", status, incident.key, incident.startTs)
+	if incident.incidentID != 0 {
+		key += fmt.Sprintf(":%d", incident.incidentID)
+	}
 
 	return EventGroupItem{
-		Key:        fmt.Sprintf("incident:%s:%s:%d", status, incident.key, incident.startTs),
+		Key:        key,
 		Category:   display.view.Category,
 		Severity:   severity,
 		Title:      incidentTitle(display.view.Type),

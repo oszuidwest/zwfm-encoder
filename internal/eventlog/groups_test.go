@@ -321,6 +321,27 @@ func TestGroupEventsMatchesSameTriggerDumpsByIncidentID(t *testing.T) {
 	assertPartition(t, events, &groups)
 }
 
+func TestGroupEventsUsesIncidentIDInAudioIncidentKeys(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC)
+	events := decorateNewestFirst(
+		testEvent(base, 2, SilenceEnd, map[string]any{"incident_id": 2}),
+		testEvent(base, 1, SilenceEnd, map[string]any{"incident_id": 1}),
+		Event{Timestamp: base, Type: SilenceStart, Details: map[string]any{"incident_id": 2}},
+		Event{Timestamp: base, Type: SilenceStart, Details: map[string]any{"incident_id": 1}},
+	)
+
+	groups := GroupEvents(events)
+	if len(groups.Resolved) != 2 {
+		t.Fatalf("resolved len = %d, want 2", len(groups.Resolved))
+	}
+	if groups.Resolved[0].Key == groups.Resolved[1].Key {
+		t.Fatalf("distinct incidents share key %q", groups.Resolved[0].Key)
+	}
+	assertPartition(t, events, &groups)
+}
+
 func TestGroupEventsSeparatesAudioIncidentsAfterDetectorReset(t *testing.T) {
 	t.Parallel()
 

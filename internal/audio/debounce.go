@@ -39,7 +39,7 @@ func (d *debouncer) update(conditionActive bool, durationMs, recoveryMs int64, n
 
 		if d.start.IsZero() {
 			d.start = now
-			d.incidentSeq++
+			d.incidentSeq = max(1, d.incidentSeq+1)
 		}
 		r.incidentID = d.incidentSeq
 
