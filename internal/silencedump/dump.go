@@ -298,8 +298,8 @@ func (c *Capturer) copyFromRing(dst []byte, startPos int64) {
 	copy(dst[n:], c.buffer) // continuation after a single wrap; no-op when the read fit before the end
 }
 
-func dumpFilename(trigger Trigger, incidentStart time.Time) string {
-	filename := incidentStart.Local().Format("2006-01-02_15-04-05") + ".mp3"
+func dumpFilename(trigger Trigger, incidentID audio.IncidentID, incidentStart time.Time) string {
+	filename := fmt.Sprintf("%s-%d.mp3", incidentStart.Local().Format("2006-01-02_15-04-05"), incidentID)
 	if trigger == TriggerChannelImbalance {
 		return "channel-imbalance-" + filename
 	}
@@ -323,7 +323,7 @@ func encodeToMP3(
 		return result
 	}
 
-	result.Filename = dumpFilename(trigger, incidentStart)
+	result.Filename = dumpFilename(trigger, incidentID, incidentStart)
 	result.FilePath = filepath.Join(outputDir, result.Filename)
 
 	ctx, cancel := context.WithTimeoutCause(

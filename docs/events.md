@@ -274,7 +274,7 @@ imbalance). All of them are returned by the `audio` type filter.
     "threshold_db": 12.0,
     "duration_ms": 180000,
     "dump_path": "/var/log/encoder/8080/dumps",
-    "dump_filename": "channel-imbalance-2024-01-15_14-31-00.mp3",
+    "dump_filename": "channel-imbalance-2024-01-15_14-31-00-43.mp3",
     "dump_size_bytes": 245760,
     "dump_error": ""
   }

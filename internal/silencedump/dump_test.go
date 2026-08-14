@@ -328,23 +328,41 @@ func TestDumpFilenameIdentifiesChannelImbalance(t *testing.T) {
 	t.Parallel()
 	startedAt := time.Date(2026, 8, 11, 20, 18, 26, 0, time.Local)
 	tests := []struct {
-		name    string
-		trigger Trigger
-		want    string
+		name       string
+		trigger    Trigger
+		incidentID audio.IncidentID
+		want       string
 	}{
-		{name: "silence keeps legacy filename", trigger: TriggerSilence, want: "2026-08-11_20-18-26.mp3"},
 		{
-			name:    "imbalance has source prefix",
-			trigger: TriggerChannelImbalance,
-			want:    "channel-imbalance-2026-08-11_20-18-26.mp3",
+			name:       "silence includes incident ID",
+			trigger:    TriggerSilence,
+			incidentID: 41,
+			want:       "2026-08-11_20-18-26-41.mp3",
+		},
+		{
+			name:       "imbalance has source prefix and incident ID",
+			trigger:    TriggerChannelImbalance,
+			incidentID: 42,
+			want:       "channel-imbalance-2026-08-11_20-18-26-42.mp3",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := dumpFilename(tt.trigger, startedAt); got != tt.want {
-				t.Fatalf("dumpFilename(%q) = %q, want %q", tt.trigger, got, tt.want)
+			if got := dumpFilename(tt.trigger, tt.incidentID, startedAt); got != tt.want {
+				t.Fatalf("dumpFilename(%q, %d) = %q, want %q", tt.trigger, tt.incidentID, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestDumpFilenameSeparatesSameTriggerIncidents(t *testing.T) {
+	t.Parallel()
+	startedAt := time.Date(2026, 8, 14, 18, 0, 0, 0, time.Local)
+
+	first := dumpFilename(TriggerSilence, 1, startedAt)
+	second := dumpFilename(TriggerSilence, 2, startedAt)
+	if first == second {
+		t.Fatalf("same-trigger incident filenames collide: %q", first)
 	}
 }
