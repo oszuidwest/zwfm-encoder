@@ -23,6 +23,7 @@ var webhookClient = &http.Client{Timeout: 10 * time.Second}
 // Only the fields relevant to the event type are populated.
 type WebhookPayload struct {
 	Event             string   `json:"event"`
+	Trigger           string   `json:"trigger,omitempty"`
 	SilenceDurationMs int64    `json:"silence_duration_ms,omitempty"`
 	LevelLeftDB       float64  `json:"level_left_db,omitempty"`  // dB
 	LevelRightDB      float64  `json:"level_right_db,omitempty"` // dB
@@ -137,28 +138,36 @@ func sendUploadAbandonedWebhook(ctx context.Context, webhookURL string, p Upload
 }
 
 // sendWebhookDumpReady notifies the configured webhook that an audio dump is ready.
-func sendWebhookDumpReady(ctx context.Context, webhookURL string, e silenceEventData) error {
+func sendWebhookDumpReady(ctx context.Context, webhookURL string, data *AudioDumpData) error {
 	payload := &WebhookPayload{
-		Event:             "audio_dump_ready",
-		SilenceDurationMs: e.DurationMs,
-		LevelLeftDB:       e.LevelL,
-		LevelRightDB:      e.LevelR,
-		Threshold:         e.Threshold,
-		Timestamp:         timestampUTC(),
+		Event:        "audio_dump_ready",
+		Trigger:      string(data.Trigger),
+		LevelLeftDB:  data.LevelL,
+		LevelRightDB: data.LevelR,
+		Threshold:    data.ThresholdDB,
+		Timestamp:    timestampUTC(),
 	}
+	// Silence dumps use silence_duration_ms; other incidents use duration_ms.
+	if data.Trigger == silencedump.TriggerSilence {
+		payload.SilenceDurationMs = data.DurationMs
+	} else {
+		payload.DurationMs = data.DurationMs
+	}
+	payload.BalanceDB = data.BalanceDB
+	payload.ImbalanceDB = data.ImbalanceDB
 
-	if e.Dump != nil {
-		if e.Dump.Error != nil {
-			payload.AudioDumpError = e.Dump.Error.Error()
-		} else if e.Dump.FilePath != "" {
+	if data.Result != nil {
+		if data.Result.Error != nil {
+			payload.AudioDumpError = data.Result.Error.Error()
+		} else if data.Result.FilePath != "" {
 			// Read and encode the dump file
-			data, err := os.ReadFile(e.Dump.FilePath)
+			fileData, err := os.ReadFile(data.Result.FilePath)
 			if err != nil {
 				payload.AudioDumpError = err.Error()
 			} else {
-				payload.AudioDumpBase64 = base64.StdEncoding.EncodeToString(data)
-				payload.AudioDumpFilename = e.Dump.Filename
-				payload.AudioDumpSizeBytes = e.Dump.FileSize
+				payload.AudioDumpBase64 = base64.StdEncoding.EncodeToString(fileData)
+				payload.AudioDumpFilename = data.Result.Filename
+				payload.AudioDumpSizeBytes = data.Result.FileSize
 			}
 		}
 	}
@@ -276,16 +285,9 @@ func (c *WebhookChannel) SendChannelImbalanceEnd(
 
 // SendAudioDump posts a webhook payload and embeds the dump file when available.
 func (c *WebhookChannel) SendAudioDump(
-	ctx context.Context, cfg *config.Snapshot, durationMS int64, levelL, levelR float64,
-	result *silencedump.EncodeResult,
+	ctx context.Context, cfg *config.Snapshot, data *AudioDumpData,
 ) error {
-	return sendWebhookDumpReady(ctx, cfg.WebhookURL, silenceEventData{
-		DurationMs: durationMS,
-		LevelL:     levelL,
-		LevelR:     levelR,
-		Threshold:  cfg.SilenceThreshold,
-		Dump:       result,
-	})
+	return sendWebhookDumpReady(ctx, cfg.WebhookURL, data)
 }
 
 // SendUploadAbandoned posts a webhook payload after a recording upload exhausts retries.

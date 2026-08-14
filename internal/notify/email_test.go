@@ -3,6 +3,8 @@ package notify
 import (
 	"strings"
 	"testing"
+
+	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 )
 
 func TestBuildChannelImbalanceEmails(t *testing.T) {
@@ -59,6 +61,74 @@ func TestBuildChannelImbalanceEmails(t *testing.T) {
 		if !strings.Contains(endBody, want) {
 			t.Fatalf("end body missing %q:\n%s", want, endBody)
 		}
+	}
+}
+
+func TestBuildChannelImbalanceDumpEmail(t *testing.T) {
+	t.Parallel()
+	balanceDB, imbalanceDB := 1.0, 1.0
+	subject, body := buildDumpReadyEmail(
+		"ZuidWest FM",
+		"11 Aug 2026 20:19:00 CEST",
+		&AudioDumpData{
+			Trigger:     silencedump.TriggerChannelImbalance,
+			LevelL:      -12,
+			LevelR:      -13,
+			BalanceDB:   &balanceDB,
+			ImbalanceDB: &imbalanceDB,
+			ThresholdDB: 12,
+			DurationMs:  30000,
+		},
+	)
+	if subject != "[DUMP] Audio Recording - ZuidWest FM" {
+		t.Fatalf("subject = %q", subject)
+	}
+	for _, want := range []string{
+		"The channel imbalance lasted 30s.",
+		"Final level: Left -12.0 dB / Right -13.0 dB",
+		"Final balance: 1.0 dB (left louder)",
+		"Final imbalance: 1.0 dB",
+		"Threshold: 12.0 dB",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dump body missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestBuildChannelImbalanceDumpEmailOmitsIncompleteMeasurements(t *testing.T) {
+	t.Parallel()
+	balanceDB, imbalanceDB := 1.0, 1.0
+	tests := []struct {
+		name        string
+		balanceDB   *float64
+		imbalanceDB *float64
+	}{
+		{name: "missing balance", imbalanceDB: &imbalanceDB},
+		{name: "missing imbalance", balanceDB: &balanceDB},
+		{name: "missing both"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, body := buildDumpReadyEmail(
+				"ZuidWest FM",
+				"11 Aug 2026 20:19:00 CEST",
+				&AudioDumpData{
+					Trigger:     silencedump.TriggerChannelImbalance,
+					BalanceDB:   tt.balanceDB,
+					ImbalanceDB: tt.imbalanceDB,
+					DurationMs:  30000,
+				},
+			)
+			if !strings.Contains(body, "The channel imbalance lasted 30s.") {
+				t.Fatalf("dump body missing duration:\n%s", body)
+			}
+			if strings.Contains(body, "Final level:") {
+				t.Fatalf("dump body unexpectedly contains incomplete measurements:\n%s", body)
+			}
+		})
 	}
 }
 

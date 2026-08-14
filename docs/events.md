@@ -190,31 +190,24 @@ Audio events track periods when audio levels drop below the configured threshold
 (silence) and periods when the left and right channels differ by too much (channel
 imbalance). All of them are returned by the `audio` type filter.
 
-### Details Structure
+### Silence Details Structure
 
 ```json
 {
+  "incident_id": 42,
   "level_left_db": -48.5,
   "level_right_db": -52.3,
-  "threshold_db": -40.0,
-  "duration_ms": 65000,
-  "dump_path": "/var/log/encoder/8080/dumps",
-  "dump_filename": "silence-2024-01-15-143100.mp3",
-  "dump_size_bytes": 245760,
-  "dump_error": ""
+  "threshold_db": -40.0
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `incident_id` | int | Process-local identity shared by an incident's start, recovery, and dump events |
 | `level_left_db` | float | Left channel RMS level in dB |
 | `level_right_db` | float | Right channel RMS level in dB |
 | `threshold_db` | float | Configured silence threshold in dB |
-| `duration_ms` | int | Silence duration in milliseconds (`silence_end` and `audio_dump_ready` only) |
-| `dump_path` | string | Directory where dump file is saved (`audio_dump_ready` only) |
-| `dump_filename` | string | Name of the audio dump file (`audio_dump_ready` only) |
-| `dump_size_bytes` | int | Size of dump file in bytes (`audio_dump_ready` only) |
-| `dump_error` | string | Error if dump failed (`audio_dump_ready` only) |
+| `duration_ms` | int | Silence duration in milliseconds (`silence_end` and its `audio_dump_ready` event) |
 
 ---
 
@@ -229,6 +222,7 @@ imbalance). All of them are returned by the `audio` type filter.
   "ts": "2024-01-15T14:31:00.000Z",
   "type": "silence_start",
   "details": {
+    "incident_id": 42,
     "level_left_db": -48.5,
     "level_right_db": -52.3,
     "threshold_db": -40.0
@@ -249,6 +243,7 @@ imbalance). All of them are returned by the `audio` type filter.
   "ts": "2024-01-15T14:32:05.000Z",
   "type": "silence_end",
   "details": {
+    "incident_id": 42,
     "level_left_db": -12.3,
     "level_right_db": -14.1,
     "threshold_db": -40.0,
@@ -263,26 +258,45 @@ imbalance). All of them are returned by the `audio` type filter.
 
 - **Severity:** `info`
 - **UI Label:** Audio Dump
-- **Triggered:** When the MP3 audio context file (15s before + after the silence) has finished encoding. Fired as a separate event after `silence_end` because MP3 encoding takes additional time.
+- **Triggered:** When an MP3 audio context file (15s before + after a silence or channel imbalance) has finished encoding. Fired as a separate event after the matching recovery because MP3 encoding takes additional time.
 
 ```json
 {
-  "ts": "2024-01-15T14:32:08.000Z",
+  "ts": "2024-01-15T14:34:16.000Z",
   "type": "audio_dump_ready",
   "details": {
-    "level_left_db": -12.3,
-    "level_right_db": -14.1,
-    "threshold_db": -40.0,
-    "duration_ms": 65000,
+    "trigger": "channel_imbalance",
+    "incident_id": 43,
+    "level_left_db": -8.0,
+    "level_right_db": -9.5,
+    "balance_db": 1.5,
+    "imbalance_db": 1.5,
+    "threshold_db": 12.0,
+    "duration_ms": 180000,
     "dump_path": "/var/log/encoder/8080/dumps",
-    "dump_filename": "silence-2024-01-15-143100.mp3",
+    "dump_filename": "channel-imbalance-2024-01-15_14-31-00-43.mp3",
     "dump_size_bytes": 245760,
     "dump_error": ""
   }
 }
 ```
 
-If encoding fails, `dump_size_bytes` is `0` and `dump_error` contains the error message.
+| Field | Type | Description |
+|-------|------|-------------|
+| `trigger` | string | Incident source: `silence` or `channel_imbalance` |
+| `incident_id` | int | Process-local identity shared with the matching incident events |
+| `level_left_db` | float | Final left channel RMS level in dB |
+| `level_right_db` | float | Final right channel RMS level in dB |
+| `balance_db` | float | Final signed L/R difference; present for channel imbalance dumps |
+| `imbalance_db` | float | Final absolute L/R difference; present for channel imbalance dumps |
+| `threshold_db` | float | Configured threshold for the incident source |
+| `duration_ms` | int | Incident duration in milliseconds |
+| `dump_path` | string | Directory where the dump file is saved |
+| `dump_filename` | string | Name of the audio dump file |
+| `dump_size_bytes` | int | Size of the dump file in bytes |
+| `dump_error` | string | Encoding or capture error, when present |
+
+If encoding fails, `dump_size_bytes` is omitted and `dump_error` contains the error message. Webhook payloads use the same `audio_dump_ready` event and `trigger` field. The existing `audio_dump` subscription controls delivery for both incident sources.
 
 ---
 
@@ -299,23 +313,24 @@ and recovery settings.
 
 ```json
 {
+  "incident_id": 43,
   "level_left_db": -6.2,
   "level_right_db": -56.0,
   "balance_db": 49.8,
   "imbalance_db": 49.8,
-  "threshold_db": 12.0,
-  "duration_ms": 18000
+  "threshold_db": 12.0
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `incident_id` | int | Process-local identity shared by an incident's start, recovery, and dump events |
 | `level_left_db` | float | Left channel RMS level in dB |
 | `level_right_db` | float | Right channel RMS level in dB |
 | `balance_db` | float | Signed L/R difference in dB (positive = left louder) |
 | `imbalance_db` | float | Absolute L/R difference in dB (the alarm magnitude) |
 | `threshold_db` | float | Configured channel imbalance threshold in dB |
-| `duration_ms` | int | Imbalance duration in milliseconds (`channel_imbalance_end` only) |
+| `duration_ms` | int | Imbalance duration in milliseconds (`channel_imbalance_end` and its `audio_dump_ready` event) |
 
 ---
 
@@ -330,6 +345,7 @@ and recovery settings.
   "ts": "2024-01-15T14:31:00.000Z",
   "type": "channel_imbalance_start",
   "details": {
+    "incident_id": 43,
     "level_left_db": -6.2,
     "level_right_db": -56.0,
     "balance_db": 49.8,
@@ -352,12 +368,13 @@ and recovery settings.
   "ts": "2024-01-15T14:34:00.000Z",
   "type": "channel_imbalance_end",
   "details": {
+    "incident_id": 43,
     "level_left_db": -8.0,
     "level_right_db": -9.5,
     "balance_db": 1.5,
     "imbalance_db": 1.5,
     "threshold_db": 12.0,
-    "duration_ms": 18000
+    "duration_ms": 180000
   }
 }
 ```
@@ -373,6 +390,9 @@ existing `threshold` field, and `duration_ms` on `channel_imbalance_end`.
 Microsoft Graph email notifications include the same measurements in human
 readable form. Zabbix uses the dedicated imbalance trapper key with
 `event=CHANNEL_IMBALANCE` on start and `event=CHANNEL_BALANCED` on recovery.
+When audio incident dumps are enabled, the recovery also starts the 15-second
+post-incident capture; the resulting `audio_dump_ready` webhook or email uses
+the existing `audio_dump` subscription. Zabbix does not receive dump files.
 
 ---
 
@@ -719,7 +739,7 @@ paired within the same response.
 | `stream_stopped` | stream | info | lifecycle | Stopped | Stream intentionally stopped |
 | `silence_start` | audio | warning | problem | Silence | Audio below threshold |
 | `silence_end` | audio | success | recovery | Recovered | Audio returns above threshold |
-| `audio_dump_ready` | audio | info | lifecycle | Audio Dump | MP3 context file ready after silence |
+| `audio_dump_ready` | audio | info | lifecycle | Audio Dump | MP3 context file ready after silence or channel imbalance |
 | `channel_imbalance_start` | audio | warning | problem | Imbalance | L/R level difference above threshold |
 | `channel_imbalance_end` | audio | success | recovery | Balanced | L/R channels balanced again |
 | `recorder_started` | recorder | info | lifecycle | Started | Recorder begins recording |

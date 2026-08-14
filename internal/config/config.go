@@ -176,7 +176,7 @@ type ConfigData struct {
 	SilenceDetection SilenceDetectionConfig `json:"silence_detection"`
 	// ChannelImbalanceDetection contains L/R imbalance detector settings.
 	ChannelImbalanceDetection ChannelImbalanceDetectionConfig `json:"channel_imbalance_detection"`
-	// SilenceDump contains silence dump settings.
+	// SilenceDump contains audio incident dump settings.
 	SilenceDump types.SilenceDumpConfig `json:"silence_dump"`
 	// Notifications contains notification settings.
 	Notifications NotificationsConfig `json:"notifications"`
@@ -951,9 +951,9 @@ type Snapshot struct {
 	// settings; its fields are promoted onto Snapshot.
 	DetectorSettingsSnapshot
 
-	// SilenceDumpEnabled reports whether silence audio dumping is enabled.
+	// SilenceDumpEnabled reports whether audio incident dumping is enabled.
 	SilenceDumpEnabled bool
-	// SilenceDumpRetentionDays is how many days to keep silence dump files.
+	// SilenceDumpRetentionDays is how many days to keep audio incident dump files.
 	SilenceDumpRetentionDays int
 
 	// WebhookURL is the endpoint to POST audio alerts to.
@@ -1063,7 +1063,7 @@ func (c *Config) Snapshot() Snapshot {
 		// Silence & Channel Imbalance Detection
 		DetectorSettingsSnapshot: c.detectorSettings(),
 
-		// Silence Dump
+		// Audio incident dumps
 		SilenceDumpEnabled:       c.SilenceDump.Enabled,
 		SilenceDumpRetentionDays: c.SilenceDump.RetentionDays,
 
@@ -1144,9 +1144,9 @@ type SettingsUpdate struct {
 	ChannelImbalanceDurationMs int64 `json:"channel_imbalance_duration_ms"`
 	// ChannelImbalanceRecoveryMs is how long balance must hold before clearing the alert.
 	ChannelImbalanceRecoveryMs int64 `json:"channel_imbalance_recovery_ms"`
-	// SilenceDumpEnabled reports whether silence audio dumping is enabled.
+	// SilenceDumpEnabled reports whether audio incident dumping is enabled.
 	SilenceDumpEnabled bool `json:"silence_dump_enabled"`
-	// SilenceDumpRetentionDays is how many days to keep silence dump files.
+	// SilenceDumpRetentionDays is how many days to keep audio incident dump files.
 	SilenceDumpRetentionDays int `json:"silence_dump_retention_days"`
 	// WebhookURL is the endpoint to POST audio alerts to.
 	WebhookURL string `json:"webhook_url"`

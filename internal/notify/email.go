@@ -79,12 +79,17 @@ func sendSilenceEndEmailWithClient(
 ) error {
 	subject := "[OK] Audio Restored - " + stationName
 	body := fmt.Sprintf(
-		"Audio was restored at %s.\n\n"+
-			"The silence lasted %s.\n"+
-			"Level: Left %.1f dB / Right %.1f dB (threshold: %.1f dB)",
-		util.HumanTime(), util.FormatDuration(e.DurationMs), e.LevelL, e.LevelR, e.Threshold,
-	)
+		"Audio was restored at %s.\n\nThe silence lasted %s.\n",
+		util.HumanTime(), util.FormatDuration(e.DurationMs),
+	) + silenceMeasurements(e.LevelL, e.LevelR, e.Threshold)
 	return sendEmailWithClient(ctx, cfg, client, subject, body)
+}
+
+func silenceMeasurements(levelL, levelR, thresholdDB float64) string {
+	return fmt.Sprintf(
+		"Level: Left %.1f dB / Right %.1f dB (threshold: %.1f dB)",
+		levelL, levelR, thresholdDB,
+	)
 }
 
 func channelImbalanceDirection(balanceDB float64) string {
@@ -120,44 +125,72 @@ func buildChannelImbalanceStartEmail(
 	return subject, body
 }
 
+func channelImbalanceMeasurements(levelL, levelR, balanceDB, imbalanceDB, thresholdDB float64) string {
+	return fmt.Sprintf(
+		"Final level: Left %.1f dB / Right %.1f dB\n"+
+			"Final balance: %.1f dB (%s)\n"+
+			"Final imbalance: %.1f dB\n"+
+			"Threshold: %.1f dB",
+		levelL,
+		levelR,
+		balanceDB,
+		channelImbalanceDirection(balanceDB),
+		imbalanceDB,
+		thresholdDB,
+	)
+}
+
 func buildChannelImbalanceEndEmail(
 	stationName, eventTime string, e ChannelImbalanceData,
 ) (subject, body string) {
 	subject = "[OK] Channels Balanced - " + stationName
 	body = fmt.Sprintf(
-		"Channels were balanced at %s.\n\n"+
-			"The imbalance lasted %s.\n"+
-			"Final level: Left %.1f dB / Right %.1f dB\n"+
-			"Final balance: %.1f dB (%s)\n"+
-			"Final imbalance: %.1f dB\n"+
-			"Threshold: %.1f dB",
+		"Channels were balanced at %s.\n\nThe imbalance lasted %s.\n",
 		eventTime,
 		util.FormatDuration(e.DurationMs),
-		e.LevelL,
-		e.LevelR,
-		e.BalanceDB,
-		channelImbalanceDirection(e.BalanceDB),
-		e.ImbalanceDB,
-		e.ThresholdDB,
-	)
+	) + channelImbalanceMeasurements(e.LevelL, e.LevelR, e.BalanceDB, e.ImbalanceDB, e.ThresholdDB)
 	return subject, body
 }
 
-// sendDumpReadyEmailWithClient does not delegate to sendEmailWithClient because it needs to attach a file.
-func sendDumpReadyEmailWithClient(
-	ctx context.Context, cfg *GraphConfig, client *GraphClient, stationName string, e silenceEventData,
-) error {
-	subject := "[DUMP] Audio Recording - " + stationName
+// incidentNoun names the dump's incident type in user-facing email copy.
+func incidentNoun(trigger silencedump.Trigger) string {
+	if trigger == silencedump.TriggerChannelImbalance {
+		return "channel imbalance"
+	}
+	return "silence"
+}
 
-	body := fmt.Sprintf(
-		"Audio dump ready at %s.\n\n"+
-			"The silence lasted %s.\n"+
-			"Level: Left %.1f dB / Right %.1f dB (threshold: %.1f dB)",
-		util.HumanTime(), util.FormatDuration(e.DurationMs), e.LevelL, e.LevelR, e.Threshold,
+func buildDumpReadyEmail(stationName, eventTime string, data *AudioDumpData) (subject, body string) {
+	subject = "[DUMP] Audio Recording - " + stationName
+	body = fmt.Sprintf(
+		"Audio dump ready at %s.\n\nThe %s lasted %s.\n",
+		eventTime,
+		incidentNoun(data.Trigger),
+		util.FormatDuration(data.DurationMs),
 	)
+	if data.Trigger == silencedump.TriggerChannelImbalance {
+		if data.BalanceDB != nil && data.ImbalanceDB != nil {
+			body += channelImbalanceMeasurements(
+				data.LevelL,
+				data.LevelR,
+				*data.BalanceDB,
+				*data.ImbalanceDB,
+				data.ThresholdDB,
+			)
+		}
+		return subject, body
+	}
+	body += silenceMeasurements(data.LevelL, data.LevelR, data.ThresholdDB)
+	return subject, body
+}
 
-	if e.Dump != nil && e.Dump.Error != nil {
-		body += fmt.Sprintf("\n\nAudio recording: Failed to capture (%s)", e.Dump.Error.Error())
+func sendDumpReadyEmailWithClient(
+	ctx context.Context, cfg *GraphConfig, client *GraphClient, stationName string, data *AudioDumpData,
+) error {
+	subject, body := buildDumpReadyEmail(stationName, util.HumanTime(), data)
+
+	if data.Result != nil && data.Result.Error != nil {
+		body += fmt.Sprintf("\n\nAudio recording: Failed to capture (%s)", data.Result.Error.Error())
 	}
 
 	recipients := ParseRecipients(cfg.Recipients)
@@ -165,20 +198,19 @@ func sendDumpReadyEmailWithClient(
 		return fmt.Errorf("no valid recipients")
 	}
 
-	// Prepare attachment if dump is available.
 	var attachment *EmailAttachment
-	if e.Dump != nil && e.Dump.Error == nil && e.Dump.FilePath != "" {
-		data, err := os.ReadFile(e.Dump.FilePath)
+	if data.Result != nil && data.Result.Error == nil && data.Result.FilePath != "" {
+		fileData, err := os.ReadFile(data.Result.FilePath)
 		if err == nil {
 			attachment = &EmailAttachment{
-				Filename:    e.Dump.Filename,
+				Filename:    data.Result.Filename,
 				ContentType: "audio/mpeg",
-				Data:        data,
+				Data:        fileData,
 			}
-			body += "\n\nAudio recording attached (15s before and after the silence)."
+			body += fmt.Sprintf("\n\nAudio recording attached (15s before and after the %s).", incidentNoun(data.Trigger))
 		} else {
 			slog.Warn("audio dump file unreadable, sending email without attachment",
-				"path", e.Dump.FilePath, "error", err)
+				"path", data.Result.FilePath, "error", err)
 			body += fmt.Sprintf("\n\nAudio recording unavailable (file could not be read: %s).", err)
 		}
 	}
@@ -310,19 +342,12 @@ func (c *EmailChannel) SendChannelImbalanceEnd(
 	})
 }
 
-// SendAudioDump sends a Microsoft Graph email with the silence dump attached when available.
+// SendAudioDump sends a Microsoft Graph email with an incident dump attached when available.
 func (c *EmailChannel) SendAudioDump(
-	ctx context.Context, cfg *config.Snapshot, durationMs int64, levelL, levelR float64,
-	result *silencedump.EncodeResult,
+	ctx context.Context, cfg *config.Snapshot, data *AudioDumpData,
 ) error {
 	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client *GraphClient) error {
-		return sendDumpReadyEmailWithClient(ctx, graphCfg, client, cfg.StationName, silenceEventData{
-			DurationMs: durationMs,
-			LevelL:     levelL,
-			LevelR:     levelR,
-			Threshold:  cfg.SilenceThreshold,
-			Dump:       result,
-		})
+		return sendDumpReadyEmailWithClient(ctx, graphCfg, client, cfg.StationName, data)
 	})
 }
 

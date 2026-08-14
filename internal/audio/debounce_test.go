@@ -64,6 +64,17 @@ func TestDebouncerRetriggerCancelsRecovery(t *testing.T) {
 		t.Fatalf("stale recoveryStart caused premature recovery: %+v", r)
 	}
 }
+
+func TestDebouncerSkipsZeroIncidentIDAfterSequenceWrap(t *testing.T) {
+	t.Parallel()
+	d := debouncer{incidentSeq: ^IncidentID(0)}
+
+	r := d.update(true, 1000, 500, time.Now())
+	if r.incidentID != 1 {
+		t.Fatalf("incident ID after sequence wrap = %d, want 1", r.incidentID)
+	}
+}
+
 func TestDebouncerResetClearsState(t *testing.T) {
 	t.Parallel()
 	var d debouncer

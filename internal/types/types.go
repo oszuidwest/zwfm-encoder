@@ -141,7 +141,7 @@ const (
 	maxSRTPasswordLength    = 64
 )
 
-// OrDefault returns caller when mode is empty for backwards-compatible legacy configs.
+// OrDefault returns StreamModeCaller when mode is empty.
 func (m StreamMode) OrDefault() StreamMode {
 	if m == "" {
 		return StreamModeCaller
@@ -179,7 +179,7 @@ const DefaultMaxRetries = 99
 // StreamRestartDelay is the delay between stopping and starting a stream during restart.
 const StreamRestartDelay = 2000 * time.Millisecond
 
-// ModeOrDefault returns the configured stream mode, defaulting legacy empty values to caller.
+// ModeOrDefault returns the stream mode, using StreamModeCaller for nil or empty values.
 func (s *Stream) ModeOrDefault() StreamMode {
 	if s == nil {
 		return StreamModeCaller
@@ -426,10 +426,10 @@ func (m *StorageMode) UnmarshalJSON(data []byte) error {
 // DefaultRetentionDays is the default number of days to keep recordings.
 const DefaultRetentionDays = 90
 
-// DefaultSilenceDumpRetentionDays is the default number of days to keep silence dumps.
+// DefaultSilenceDumpRetentionDays is the default number of days to keep audio incident dumps.
 const DefaultSilenceDumpRetentionDays = 7
 
-// SilenceDumpConfig defines settings for capturing audio around silence events.
+// SilenceDumpConfig defines audio incident dump settings stored under the "silence_dump" key.
 type SilenceDumpConfig struct {
 	Enabled       bool `json:"enabled"`
 	RetentionDays int  `json:"retention_days"` // 0 = forever

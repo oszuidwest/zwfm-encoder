@@ -41,15 +41,23 @@ type groupedEvent struct {
 	details map[string]any
 }
 
+// incidentGroupKey separates identified audio incidents while retaining
+// source-only grouping for streams, recorders, and legacy audio events.
+type incidentGroupKey struct {
+	source     string
+	incidentID int64
+}
+
 // groupingState tracks incidents while events are processed oldest-first.
 type groupingState struct {
-	openByKey map[string]*historicalIncident
+	openByKey map[incidentGroupKey]*historicalIncident
 	closed    []*historicalIncident
 	failed    []*historicalIncident
 }
 
 type historicalIncident struct {
 	key        string
+	incidentID int64
 	closeType  EventType
 	firstType  EventType
 	first      groupedEvent
@@ -120,7 +128,7 @@ func GroupEvents(events []EventView) EventGroups {
 	slices.SortStableFunc(asc, compareGroupedEvents)
 
 	state := &groupingState{
-		openByKey: map[string]*historicalIncident{},
+		openByKey: map[incidentGroupKey]*historicalIncident{},
 		closed:    []*historicalIncident{},
 		failed:    []*historicalIncident{},
 	}
@@ -169,11 +177,11 @@ func GroupEvents(events []EventView) EventGroups {
 }
 
 func (s *groupingState) process(event groupedEvent) {
-	key := eventSourceKey(event)
+	key := incidentGroupKeyForEvent(event)
 	if event.view.Type == UploadAbandoned {
 		incident := s.openByKey[key]
 		if incident == nil {
-			incident = newHistoricalIncident(event, key, "")
+			incident = newHistoricalIncident(event, key.source, "")
 		} else {
 			delete(s.openByKey, key)
 		}
@@ -195,7 +203,11 @@ func (s *groupingState) process(event groupedEvent) {
 	}
 
 	if event.view.Type == AudioDumpReady {
-		if target := latestSilenceIncident(s.closed); target != nil {
+		if target := audioIncidentForDump(
+			s.closed,
+			detailString(event.details, "trigger"),
+			detailInt64(event.details, "incident_id"),
+		); target != nil {
 			target.dump = true
 			target.add(event)
 		}
@@ -208,7 +220,7 @@ func (s *groupingState) process(event groupedEvent) {
 
 	incident := s.openByKey[key]
 	if incident == nil {
-		incident = newHistoricalIncident(event, key, eventCloses[event.view.Type])
+		incident = newHistoricalIncident(event, key.source, eventCloses[event.view.Type])
 		s.openByKey[key] = incident
 	}
 	incident.add(event)
@@ -218,7 +230,7 @@ func eventClosesIncident(open *historicalIncident, event groupedEvent) bool {
 	if open.closeType == event.view.Type {
 		return true
 	}
-	// Listener restarts resolve incidents; message fallback supports legacy logs.
+	// Listener starts resolve incidents even without a StreamStable event.
 	return open.closeType == StreamStable &&
 		event.view.Type == StreamStarted &&
 		isListenerStreamEvent(event)
@@ -239,14 +251,15 @@ func consumedEventIDs(eventCount int, groups ...[]*historicalIncident) []bool {
 func newHistoricalIncident(event groupedEvent, key string, closeType EventType) *historicalIncident {
 	startTs := eventTimeValue(event.view.Timestamp)
 	return &historicalIncident{
-		key:       key,
-		closeType: closeType,
-		firstType: event.view.Type,
-		first:     event,
-		severity:  event.view.Severity,
-		startTs:   startTs,
-		endTs:     startTs,
-		events:    []groupedEvent{},
+		key:        key,
+		incidentID: detailInt64(event.details, "incident_id"),
+		closeType:  closeType,
+		firstType:  event.view.Type,
+		first:      event,
+		severity:   event.view.Severity,
+		startTs:    startTs,
+		endTs:      startTs,
+		events:     []groupedEvent{},
 	}
 }
 
@@ -264,9 +277,23 @@ func (i *historicalIncident) add(event groupedEvent) {
 	}
 }
 
-func latestSilenceIncident(incidents []*historicalIncident) *historicalIncident {
+// dumpTriggerIncidentTypes maps a dump's serialized trigger to the
+// incident-start event it attaches to. The empty trigger covers events logged
+// before triggers existed, which were always silence dumps. Unknown triggers
+// match nothing rather than silently attaching to a silence incident.
+var dumpTriggerIncidentTypes = map[string]EventType{
+	"":                  SilenceStart,
+	"silence":           SilenceStart,
+	"channel_imbalance": ChannelImbalanceStart,
+}
+
+func audioIncidentForDump(incidents []*historicalIncident, trigger string, incidentID int64) *historicalIncident {
+	firstType, ok := dumpTriggerIncidentTypes[trigger]
+	if !ok {
+		return nil
+	}
 	for i := len(incidents) - 1; i >= 0; i-- {
-		if incidents[i].firstType == SilenceStart {
+		if incidents[i].firstType == firstType && (incidentID == 0 || incidents[i].incidentID == incidentID) {
 			return incidents[i]
 		}
 	}
@@ -307,9 +334,13 @@ func incidentItem(incident *historicalIncident, status string) EventGroupItem {
 		// Open incidents sort by start; terminal incidents by final event.
 		sortTs = incident.endTs
 	}
+	key := fmt.Sprintf("incident:%s:%s:%d", status, incident.key, incident.startTs)
+	if incident.incidentID != 0 {
+		key += fmt.Sprintf(":%d", incident.incidentID)
+	}
 
 	return EventGroupItem{
-		Key:        fmt.Sprintf("incident:%s:%s:%d", status, incident.key, incident.startTs),
+		Key:        key,
 		Category:   display.view.Category,
 		Severity:   severity,
 		Title:      incidentTitle(display.view.Type),
@@ -399,6 +430,14 @@ func routineEventItem(events []groupedEvent) EventGroupItem {
 		SortTs:     eventTimeValue(first.view.Timestamp),
 		TrailLimit: 8,
 	}
+}
+
+func incidentGroupKeyForEvent(event groupedEvent) incidentGroupKey {
+	key := incidentGroupKey{source: eventSourceKey(event)}
+	if event.view.Category == CategoryAudio {
+		key.incidentID = detailInt64(event.details, "incident_id")
+	}
+	return key
 }
 
 func eventSourceKey(event groupedEvent) string {

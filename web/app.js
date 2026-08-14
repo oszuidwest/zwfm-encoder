@@ -1243,7 +1243,7 @@ document.addEventListener('alpine:init', () => {
         // { summary, pill } (see notifChannelStatus). Always-on monitors
         // (detection, imbalance, metering) carry no chip - their summary is the
         // tuned value. Only the genuinely toggleable cards surface a chip, and
-        // only when off: silence dumps disabled, or the recording API has no key.
+        // only when off: audio incident dumps disabled, or the recording API has no key.
         audioCardStatus(name) {
             const f = this.settingsForm;
             if (name === 'silence') {

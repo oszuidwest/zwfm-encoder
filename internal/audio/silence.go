@@ -23,6 +23,7 @@ type SilenceEvent struct {
 
 	JustEntered        bool
 	JustRecovered      bool
+	IncidentID         IncidentID
 	TotalDurationMs    int64
 	RecoveryDurationMs int64
 }
@@ -48,6 +49,7 @@ func (d *SilenceDetector) Update(dbL, dbR float64, cfg SilenceConfig, now time.T
 	r := d.debounce.update(audioIsSilent, cfg.DurationMs, cfg.RecoveryMs, now)
 
 	event := SilenceEvent{
+		IncidentID:         r.incidentID,
 		InSilence:          r.active,
 		DurationMs:         r.durationMs,
 		CurrentLevelL:      dbL,

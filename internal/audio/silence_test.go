@@ -52,6 +52,27 @@ func TestSilenceDetectorRecoversAfterRecovery(t *testing.T) {
 		t.Fatalf("TotalDurationMs = 0, want the confirmed silence duration")
 	}
 }
+
+func TestSilenceDetectorKeepsUniqueIncidentIDThroughRecovery(t *testing.T) {
+	t.Parallel()
+	d := NewSilenceDetector()
+	cfg := testSilenceConfig()
+	base := time.Now()
+
+	d.Update(-50, -55, cfg, base)
+	entered := d.Update(-50, -55, cfg, base.Add(15*time.Second))
+	d.Update(-10, -12, cfg, base.Add(16*time.Second))
+	recovered := d.Update(-10, -12, cfg, base.Add(21*time.Second))
+	if entered.IncidentID == 0 || recovered.IncidentID != entered.IncidentID {
+		t.Fatalf("first incident IDs = entered %d recovered %d", entered.IncidentID, recovered.IncidentID)
+	}
+
+	d.Update(-50, -55, cfg, base.Add(22*time.Second))
+	next := d.Update(-50, -55, cfg, base.Add(37*time.Second))
+	if next.IncidentID == 0 || next.IncidentID == entered.IncidentID {
+		t.Fatalf("next incident ID = %d, want non-zero and different from %d", next.IncidentID, entered.IncidentID)
+	}
+}
 func TestSilenceDetectorResetClearsState(t *testing.T) {
 	t.Parallel()
 	d := NewSilenceDetector()

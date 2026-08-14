@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 )
 
 func TestWebhookChannelImbalancePayloads(t *testing.T) {
@@ -51,14 +53,16 @@ func TestWebhookChannelImbalancePayloads(t *testing.T) {
 			payloadCh := make(chan map[string]any, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodPost {
-					t.Fatalf("method = %s, want POST", r.Method)
+					t.Errorf("method = %s, want POST", r.Method)
 				}
 				if got := r.Header.Get("Content-Type"); got != "application/json" {
-					t.Fatalf("Content-Type = %q, want application/json", got)
+					t.Errorf("Content-Type = %q, want application/json", got)
 				}
 				var payload map[string]any
 				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-					t.Fatalf("decode webhook payload: %v", err)
+					t.Errorf("decode webhook payload: %v", err)
+					payloadCh <- nil
+					return
 				}
 				payloadCh <- payload
 			}))
@@ -92,5 +96,48 @@ func TestWebhookChannelImbalancePayloads(t *testing.T) {
 				t.Fatalf("duration_ms = %v, want %.0f", payload["duration_ms"], tt.wantDuration)
 			}
 		})
+	}
+}
+
+func TestWebhookChannelImbalanceDumpPayload(t *testing.T) {
+	t.Parallel()
+	payloadCh := make(chan map[string]any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode webhook payload: %v", err)
+			payloadCh <- nil
+			return
+		}
+		payloadCh <- payload
+	}))
+	defer server.Close()
+
+	balanceDB, imbalanceDB := 1.0, 1.0
+	data := AudioDumpData{
+		Trigger:     silencedump.TriggerChannelImbalance,
+		LevelL:      -12,
+		LevelR:      -13,
+		BalanceDB:   &balanceDB,
+		ImbalanceDB: &imbalanceDB,
+		ThresholdDB: 12,
+		DurationMs:  30000,
+	}
+	if err := sendWebhookDumpReady(context.Background(), server.URL, &data); err != nil {
+		t.Fatalf("send webhook dump: %v", err)
+	}
+
+	payload := <-payloadCh
+	if payload["event"] != "audio_dump_ready" || payload["trigger"] != "channel_imbalance" {
+		t.Fatalf("event identity = %v/%v, want audio_dump_ready/channel_imbalance", payload["event"], payload["trigger"])
+	}
+	if payload["duration_ms"] != float64(30000) || payload["threshold"] != float64(12) {
+		t.Fatalf("dump timing/threshold payload = %+v", payload)
+	}
+	if payload["balance_db"] != float64(1) || payload["imbalance_db"] != float64(1) {
+		t.Fatalf("dump imbalance payload = %+v", payload)
+	}
+	if _, ok := payload["silence_duration_ms"]; ok {
+		t.Fatal("imbalance dump unexpectedly contains silence_duration_ms")
 	}
 }

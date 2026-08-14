@@ -4,6 +4,7 @@ package notify
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"sync"
 	"time"
 
@@ -15,6 +16,9 @@ import (
 
 // logQueueDepth buffers ordered event-log writes from audio cycle handlers.
 const logQueueDepth = 16
+
+// pendingRecoveryTTL keeps recovery context through capture and encoding delays.
+const pendingRecoveryTTL = time.Minute
 
 // logJob is a queued event-log write.
 // eventType keeps queue-full diagnostics specific without inspecting the closure.
@@ -33,7 +37,7 @@ type AlertOrchestrator struct {
 	mu                      sync.Mutex
 	activeChannels          []AlertChannel
 	imbalanceActiveChannels []AlertChannel
-	pendingRecovery         *pendingRecoveryData
+	pendingRecoveries       map[incidentKey]*pendingRecoveryData
 	notifyCtx               context.Context
 	notifyCancel            context.CancelFunc
 
@@ -45,22 +49,27 @@ type AlertOrchestrator struct {
 
 // pendingRecoveryData holds recovery event data while waiting for the audio dump.
 type pendingRecoveryData struct {
-	durationMS     int64
-	levelL         float64
-	levelR         float64
-	cfg            config.Snapshot // captured at silence-end time; reused for dump dispatch
+	dumpData       AudioDumpData
+	cfg            config.Snapshot // captured at recovery time; reused for dump dispatch
 	activeChannels []AlertChannel
+	recoveredAt    time.Time
+}
+
+type incidentKey struct {
+	trigger    silencedump.Trigger
+	incidentID audio.IncidentID
 }
 
 // NewAlertOrchestrator wires notification dispatch and starts the ordered event-log worker.
 func NewAlertOrchestrator(cfg *config.Config, dispatcher *Dispatcher) *AlertOrchestrator {
 	notifyCtx, notifyCancel := context.WithCancel(context.Background())
 	o := &AlertOrchestrator{
-		cfg:          cfg,
-		dispatcher:   dispatcher,
-		notifyCtx:    notifyCtx,
-		notifyCancel: notifyCancel,
-		logQueue:     make(chan logJob, logQueueDepth),
+		cfg:               cfg,
+		dispatcher:        dispatcher,
+		notifyCtx:         notifyCtx,
+		notifyCancel:      notifyCancel,
+		logQueue:          make(chan logJob, logQueueDepth),
+		pendingRecoveries: map[incidentKey]*pendingRecoveryData{},
 	}
 	go o.runLogWorker()
 	return o
@@ -101,15 +110,15 @@ func (o *AlertOrchestrator) SetEventLogger(logger *eventlog.Logger) {
 // HandleSilenceEvent translates detector transitions into silence notification lifecycles.
 func (o *AlertOrchestrator) HandleSilenceEvent(event audio.SilenceEvent) {
 	if event.JustEntered {
-		o.handleSilenceStart(event.CurrentLevelL, event.CurrentLevelR)
+		o.handleSilenceStart(event.IncidentID, event.CurrentLevelL, event.CurrentLevelR)
 	}
 
 	if event.JustRecovered {
-		o.handleSilenceEnd(event.TotalDurationMs, event.CurrentLevelL, event.CurrentLevelR)
+		o.handleSilenceEnd(event.IncidentID, event.TotalDurationMs, event.CurrentLevelL, event.CurrentLevelR)
 	}
 }
 
-func (o *AlertOrchestrator) handleSilenceStart(levelL, levelR float64) {
+func (o *AlertOrchestrator) handleSilenceStart(incidentID audio.IncidentID, levelL, levelR float64) {
 	cfg := o.cfg.Snapshot()
 
 	o.mu.Lock()
@@ -128,43 +137,58 @@ func (o *AlertOrchestrator) handleSilenceStart(levelL, levelR float64) {
 
 	now := time.Now()
 	o.dispatcher.DispatchSilenceStart(ctx, active, cfg, levelL, levelR)
-	o.enqueueLog("silence_start", func() { o.logSilenceStart(now, &cfg, levelL, levelR) })
+	o.enqueueLog("silence_start", func() { o.logSilenceStart(now, &cfg, incidentID, levelL, levelR) })
 }
 
-func (o *AlertOrchestrator) handleSilenceEnd(durationMS int64, levelL, levelR float64) {
+func (o *AlertOrchestrator) handleSilenceEnd(
+	incidentID audio.IncidentID, durationMS int64, levelL, levelR float64,
+) {
 	cfg := o.cfg.Snapshot()
 
 	o.mu.Lock()
 	active := o.activeChannels
 	o.activeChannels = nil
-	o.pendingRecovery = &pendingRecoveryData{
-		durationMS:     durationMS,
-		levelL:         levelL,
-		levelR:         levelR,
+	now := time.Now()
+	o.addPendingRecoveryLocked(&pendingRecoveryData{
+		dumpData: AudioDumpData{
+			Trigger:     silencedump.TriggerSilence,
+			IncidentID:  incidentID,
+			DurationMs:  durationMS,
+			LevelL:      levelL,
+			LevelR:      levelR,
+			ThresholdDB: cfg.SilenceThreshold,
+		},
 		cfg:            cfg,
 		activeChannels: active,
-	}
+		recoveredAt:    now,
+	})
 	ctx := o.notifyCtx
 	o.mu.Unlock()
 
-	now := time.Now()
 	o.dispatcher.DispatchSilenceEnd(ctx, active, cfg, durationMS, levelL, levelR)
-	o.enqueueLog("silence_end", func() { o.logSilenceEnd(now, &cfg, durationMS, levelL, levelR) })
+	o.enqueueLog("silence_end", func() { o.logSilenceEnd(now, &cfg, incidentID, durationMS, levelL, levelR) })
 }
 
 // HandleChannelImbalanceEvent translates detector transitions into imbalance notifications.
 // It leaves silence notification state untouched.
 func (o *AlertOrchestrator) HandleChannelImbalanceEvent(event *audio.ImbalanceEvent) {
 	if event.JustEntered {
-		o.handleChannelImbalanceStart(event.CurrentLevelL, event.CurrentLevelR, event.BalanceDB, event.ImbalanceDB)
+		o.handleChannelImbalanceStart(
+			event.IncidentID, event.CurrentLevelL, event.CurrentLevelR, event.BalanceDB, event.ImbalanceDB,
+		)
 	}
 
 	if event.JustRecovered {
-		o.handleChannelImbalanceEnd(event.TotalDurationMs, event.CurrentLevelL, event.CurrentLevelR, event.BalanceDB, event.ImbalanceDB)
+		o.handleChannelImbalanceEnd(
+			event.IncidentID, event.TotalDurationMs, event.CurrentLevelL, event.CurrentLevelR,
+			event.BalanceDB, event.ImbalanceDB,
+		)
 	}
 }
 
-func (o *AlertOrchestrator) handleChannelImbalanceStart(levelL, levelR, balanceDB, imbalanceDB float64) {
+func (o *AlertOrchestrator) handleChannelImbalanceStart(
+	incidentID audio.IncidentID, levelL, levelR, balanceDB, imbalanceDB float64,
+) {
 	cfg := o.cfg.Snapshot()
 
 	o.mu.Lock()
@@ -191,16 +215,34 @@ func (o *AlertOrchestrator) handleChannelImbalanceStart(levelL, levelR, balanceD
 	now := time.Now()
 	o.dispatcher.DispatchChannelImbalanceStart(ctx, active, cfg, data)
 	o.enqueueLog("channel_imbalance_start", func() {
-		o.logChannelImbalanceStart(now, &cfg, levelL, levelR, balanceDB, imbalanceDB)
+		o.logChannelImbalanceStart(now, &cfg, incidentID, levelL, levelR, balanceDB, imbalanceDB)
 	})
 }
 
-func (o *AlertOrchestrator) handleChannelImbalanceEnd(durationMS int64, levelL, levelR, balanceDB, imbalanceDB float64) {
+func (o *AlertOrchestrator) handleChannelImbalanceEnd(
+	incidentID audio.IncidentID, durationMS int64, levelL, levelR, balanceDB, imbalanceDB float64,
+) {
 	cfg := o.cfg.Snapshot()
 
 	o.mu.Lock()
 	active := o.imbalanceActiveChannels
 	o.imbalanceActiveChannels = nil
+	now := time.Now()
+	o.addPendingRecoveryLocked(&pendingRecoveryData{
+		dumpData: AudioDumpData{
+			Trigger:     silencedump.TriggerChannelImbalance,
+			IncidentID:  incidentID,
+			DurationMs:  durationMS,
+			LevelL:      levelL,
+			LevelR:      levelR,
+			BalanceDB:   &balanceDB,
+			ImbalanceDB: &imbalanceDB,
+			ThresholdDB: cfg.ChannelImbalanceThreshold,
+		},
+		cfg:            cfg,
+		activeChannels: active,
+		recoveredAt:    now,
+	})
 	ctx := o.notifyCtx
 	o.mu.Unlock()
 
@@ -212,36 +254,48 @@ func (o *AlertOrchestrator) handleChannelImbalanceEnd(durationMS int64, levelL, 
 		ThresholdDB: cfg.ChannelImbalanceThreshold,
 		DurationMs:  durationMS,
 	}
-	now := time.Now()
 	o.dispatcher.DispatchChannelImbalanceEnd(ctx, active, cfg, data)
 	o.enqueueLog("channel_imbalance_end", func() {
-		o.logChannelImbalanceEnd(now, &cfg, durationMS, levelL, levelR, balanceDB, imbalanceDB)
+		o.logChannelImbalanceEnd(now, &cfg, incidentID, durationMS, levelL, levelR, balanceDB, imbalanceDB)
 	})
 }
 
-// OnDumpReady completes a pending silence recovery with an optional audio dump.
+// addPendingRecoveryLocked retains recovery context for dump callbacks and prunes stale entries.
+// The caller must hold o.mu.
+func (o *AlertOrchestrator) addPendingRecoveryLocked(pending *pendingRecoveryData) {
+	cutoff := pending.recoveredAt.Add(-pendingRecoveryTTL)
+	maps.DeleteFunc(o.pendingRecoveries, func(_ incidentKey, existing *pendingRecoveryData) bool {
+		return existing.recoveredAt.Before(cutoff)
+	})
+	key := incidentKey{trigger: pending.dumpData.Trigger, incidentID: pending.dumpData.IncidentID}
+	o.pendingRecoveries[key] = pending
+}
+
+// OnDumpReady completes the recovery matching an encoded audio-incident dump.
 func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
+	if result == nil {
+		slog.Warn("audio dump callback delivered no result; dump ignored")
+		return
+	}
+	key := incidentKey{trigger: result.Trigger, incidentID: result.IncidentID}
+	now := time.Now()
+
 	o.mu.Lock()
-	pending := o.pendingRecovery
-	o.pendingRecovery = nil
+	pending := o.pendingRecoveries[key]
+	delete(o.pendingRecoveries, key)
 	ctx := o.notifyCtx
 	o.mu.Unlock()
 
-	if pending == nil {
-		slog.Debug("audio dump ready but no pending silence recovery; dump ignored")
+	if pending == nil || now.Sub(pending.recoveredAt) > pendingRecoveryTTL {
+		slog.Debug("audio dump ready but no pending recovery; dump ignored",
+			"trigger", key.trigger, "incident_id", key.incidentID)
 		return
 	}
 
-	now := time.Now()
-	o.dispatcher.DispatchAudioDump(
-		ctx, pending.activeChannels, pending.cfg, pending.durationMS,
-		pending.levelL, pending.levelR, result,
-	)
+	pending.dumpData.Result = result
+	o.dispatcher.DispatchAudioDump(ctx, pending.activeChannels, pending.cfg, pending.dumpData)
 	o.enqueueLog("audio_dump_ready", func() {
-		o.logAudioDumpReady(
-			now, &pending.cfg, pending.durationMS,
-			pending.levelL, pending.levelR, result,
-		)
+		o.logAudioDumpReady(now, &pending.dumpData)
 	})
 }
 
@@ -262,7 +316,7 @@ func (o *AlertOrchestrator) Reset() {
 	o.mu.Lock()
 	o.activeChannels = nil
 	o.imbalanceActiveChannels = nil
-	o.pendingRecovery = nil
+	clear(o.pendingRecoveries)
 	o.mu.Unlock()
 }
 
@@ -316,51 +370,84 @@ func BuildGraphConfig(cfg *config.Snapshot) *GraphConfig {
 	}
 }
 
-func (o *AlertOrchestrator) logSilenceStart(t time.Time, cfg *config.Snapshot, levelL, levelR float64) {
-	if err := o.eventLogger.LogSilenceStart(t, levelL, levelR, cfg.SilenceThreshold); err != nil {
+func (o *AlertOrchestrator) logSilenceStart(
+	t time.Time, cfg *config.Snapshot, incidentID audio.IncidentID, levelL, levelR float64,
+) {
+	if err := o.eventLogger.LogSilenceStart(t, &eventlog.SilenceDetails{
+		IncidentID:   uint32(incidentID),
+		LevelLeftDB:  levelL,
+		LevelRightDB: levelR,
+		ThresholdDB:  cfg.SilenceThreshold,
+	}); err != nil {
 		slog.Warn("failed to log silence start", "error", err)
 	}
 }
 
-func (o *AlertOrchestrator) logSilenceEnd(t time.Time, cfg *config.Snapshot, durationMS int64, levelL, levelR float64) {
-	if err := o.eventLogger.LogSilenceEnd(t, durationMS, levelL, levelR, cfg.SilenceThreshold); err != nil {
+func (o *AlertOrchestrator) logSilenceEnd(
+	t time.Time, cfg *config.Snapshot, incidentID audio.IncidentID, durationMS int64, levelL, levelR float64,
+) {
+	if err := o.eventLogger.LogSilenceEnd(t, &eventlog.SilenceDetails{
+		IncidentID:   uint32(incidentID),
+		LevelLeftDB:  levelL,
+		LevelRightDB: levelR,
+		ThresholdDB:  cfg.SilenceThreshold,
+		DurationMs:   durationMS,
+	}); err != nil {
 		slog.Warn("failed to log silence end", "error", err)
 	}
 }
 
-func (o *AlertOrchestrator) logChannelImbalanceStart(t time.Time, cfg *config.Snapshot, levelL, levelR, balanceDB, imbalanceDB float64) {
-	if err := o.eventLogger.LogChannelImbalanceStart(
-		t, levelL, levelR, balanceDB, imbalanceDB, cfg.ChannelImbalanceThreshold,
-	); err != nil {
+func (o *AlertOrchestrator) logChannelImbalanceStart(
+	t time.Time, cfg *config.Snapshot, incidentID audio.IncidentID, levelL, levelR, balanceDB, imbalanceDB float64,
+) {
+	if err := o.eventLogger.LogChannelImbalanceStart(t, &eventlog.ImbalanceDetails{
+		IncidentID:   uint32(incidentID),
+		LevelLeftDB:  levelL,
+		LevelRightDB: levelR,
+		BalanceDB:    balanceDB,
+		ImbalanceDB:  imbalanceDB,
+		ThresholdDB:  cfg.ChannelImbalanceThreshold,
+	}); err != nil {
 		slog.Warn("failed to log channel imbalance start", "error", err)
 	}
 }
 
-func (o *AlertOrchestrator) logChannelImbalanceEnd(t time.Time, cfg *config.Snapshot, durationMS int64, levelL, levelR, balanceDB, imbalanceDB float64) {
-	if err := o.eventLogger.LogChannelImbalanceEnd(
-		t, durationMS, levelL, levelR, balanceDB, imbalanceDB, cfg.ChannelImbalanceThreshold,
-	); err != nil {
+func (o *AlertOrchestrator) logChannelImbalanceEnd(
+	t time.Time, cfg *config.Snapshot, incidentID audio.IncidentID,
+	durationMS int64, levelL, levelR, balanceDB, imbalanceDB float64,
+) {
+	if err := o.eventLogger.LogChannelImbalanceEnd(t, &eventlog.ImbalanceDetails{
+		IncidentID:   uint32(incidentID),
+		LevelLeftDB:  levelL,
+		LevelRightDB: levelR,
+		BalanceDB:    balanceDB,
+		ImbalanceDB:  imbalanceDB,
+		ThresholdDB:  cfg.ChannelImbalanceThreshold,
+		DurationMs:   durationMS,
+	}); err != nil {
 		slog.Warn("failed to log channel imbalance end", "error", err)
 	}
 }
 
-func (o *AlertOrchestrator) logAudioDumpReady(
-	t time.Time, cfg *config.Snapshot, durationMS int64,
-	levelL, levelR float64, dump *silencedump.EncodeResult,
-) {
-	var dumpPath, dumpFilename, dumpError string
-	var dumpSize int64
-	switch {
-	case dump == nil:
-	case dump.Error != nil:
-		dumpError = dump.Error.Error()
-	default:
-		dumpPath, dumpFilename, dumpSize = dump.FilePath, dump.Filename, dump.FileSize
+func (o *AlertOrchestrator) logAudioDumpReady(t time.Time, data *AudioDumpData) {
+	details := &eventlog.AudioDumpDetails{
+		Trigger:      string(data.Trigger),
+		IncidentID:   uint32(data.IncidentID),
+		LevelLeftDB:  data.LevelL,
+		LevelRightDB: data.LevelR,
+		BalanceDB:    data.BalanceDB,
+		ImbalanceDB:  data.ImbalanceDB,
+		ThresholdDB:  data.ThresholdDB,
+		DurationMs:   data.DurationMs,
 	}
-	if err := o.eventLogger.LogAudioDumpReady(
-		t, durationMS, levelL, levelR, cfg.SilenceThreshold,
-		dumpPath, dumpFilename, dumpSize, dumpError,
-	); err != nil {
+	if data.Result.Error != nil {
+		details.DumpError = data.Result.Error.Error()
+	} else {
+		details.DumpPath = data.Result.FilePath
+		details.DumpFilename = data.Result.Filename
+		details.DumpSizeBytes = data.Result.FileSize
+	}
+	if err := o.eventLogger.LogAudioDumpReady(t, details); err != nil {
 		slog.Warn("failed to log audio dump ready", "error", err)
 	}
 }
