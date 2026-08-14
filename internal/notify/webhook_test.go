@@ -53,14 +53,16 @@ func TestWebhookChannelImbalancePayloads(t *testing.T) {
 			payloadCh := make(chan map[string]any, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodPost {
-					t.Fatalf("method = %s, want POST", r.Method)
+					t.Errorf("method = %s, want POST", r.Method)
 				}
 				if got := r.Header.Get("Content-Type"); got != "application/json" {
-					t.Fatalf("Content-Type = %q, want application/json", got)
+					t.Errorf("Content-Type = %q, want application/json", got)
 				}
 				var payload map[string]any
 				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-					t.Fatalf("decode webhook payload: %v", err)
+					t.Errorf("decode webhook payload: %v", err)
+					payloadCh <- nil
+					return
 				}
 				payloadCh <- payload
 			}))
@@ -104,6 +106,7 @@ func TestWebhookChannelImbalanceDumpPayload(t *testing.T) {
 		var payload map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Errorf("decode webhook payload: %v", err)
+			payloadCh <- nil
 			return
 		}
 		payloadCh <- payload
