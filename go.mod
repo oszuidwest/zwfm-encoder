@@ -1,6 +1,6 @@
 module github.com/oszuidwest/zwfm-encoder
 
-go 1.26.5
+go 1.26.6
 
 require (
 	fyne.io/systray v1.12.2
