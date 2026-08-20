@@ -801,9 +801,9 @@ func waitForStreamEventCount(
 }
 
 func lastStreamEvent(events []streamEventForTest, eventName string) streamEventForTest {
-	for i := len(events) - 1; i >= 0; i-- {
-		if events[i].event == eventName {
-			return events[i]
+	for _, event := range slices.Backward(events) {
+		if event.event == eventName {
+			return event
 		}
 	}
 	return streamEventForTest{}

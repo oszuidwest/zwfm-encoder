@@ -48,17 +48,13 @@ func TestWriteAudioConcurrentWithTeardownNoPanic(t *testing.T) {
 		}()
 		var wg sync.WaitGroup
 		for range 8 {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				for range 200 {
 					r.WriteAudio([]byte{1, 2, 3, 4})
 				}
-			}()
+			})
 		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			r.mu.Lock()
 			audioCh := r.audioCh
 			r.audioCh = nil
@@ -66,7 +62,7 @@ func TestWriteAudioConcurrentWithTeardownNoPanic(t *testing.T) {
 			if audioCh != nil {
 				close(audioCh)
 			}
-		}()
+		})
 		wg.Wait()
 		<-drained
 	}

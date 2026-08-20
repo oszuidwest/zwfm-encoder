@@ -2,6 +2,7 @@ package util
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -19,8 +20,8 @@ func WrapError(operation string, err error) error {
 // ExtractLastError extracts the last meaningful line from stderr output.
 func ExtractLastError(stderr string) string {
 	lines := strings.Split(strings.TrimSpace(stderr), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
+	for _, line := range slices.Backward(lines) {
+		line := strings.TrimSpace(line)
 		if line != "" {
 			if len(line) > maxErrorLineLength {
 				return line[:maxErrorLineLength] + "..."

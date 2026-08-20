@@ -11,7 +11,7 @@ import (
 
 func deadRightChannelPCM(frames int) []byte {
 	buf := make([]byte, frames*4)
-	for i := 0; i < frames; i++ {
+	for i := range frames {
 		binary.LittleEndian.PutUint16(buf[i*4:], 16000) // Left channel is approximately -6 dBFS.
 		binary.LittleEndian.PutUint16(buf[i*4+2:], 0)   // Right channel is silent.
 	}

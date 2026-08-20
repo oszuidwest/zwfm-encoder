@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 )
@@ -59,10 +60,5 @@ func ProbeFFmpegProtocol(ffmpegPath, protocol string) (bool, error) {
 
 // FFmpegProtocolListContains reports whether a protocol list contains protocol as a full token.
 func FFmpegProtocolListContains(output, protocol string) bool {
-	for _, field := range strings.Fields(output) {
-		if field == protocol {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Fields(output), protocol)
 }

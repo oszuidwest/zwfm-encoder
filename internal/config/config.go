@@ -203,32 +203,30 @@ func New(filePath string) *Config {
 
 func defaultConfig(filePath string) *Config {
 	return &Config{
-		ConfigData: ConfigData{
-			System: SystemConfig{
-				Port:     DefaultWebPort,
-				Username: DefaultWebUsername,
-				Password: DefaultWebPassword,
-			},
-			Web: WebConfig{
-				StationName: DefaultStationName,
-				ColorLight:  DefaultStationColorLight,
-				ColorDark:   DefaultStationColorDark,
-			},
-			SilenceDetection: SilenceDetectionConfig{
-				ThresholdDB: DefaultSilenceThreshold,
-				DurationMs:  DefaultSilenceDurationMs,
-				RecoveryMs:  DefaultSilenceRecoveryMs,
-				PeakHoldMs:  DefaultPeakHoldMs,
-			},
-			ChannelImbalanceDetection: ChannelImbalanceDetectionConfig{
-				ThresholdDB: DefaultChannelImbalanceThreshold,
-				DurationMs:  DefaultChannelImbalanceDurationMs,
-				RecoveryMs:  DefaultChannelImbalanceRecoveryMs,
-			},
-			Streaming: StreamingConfig{Streams: []types.Stream{}},
-			Recording: RecordingConfig{Recorders: []types.Recorder{}},
+		System: SystemConfig{
+			Port:     DefaultWebPort,
+			Username: DefaultWebUsername,
+			Password: DefaultWebPassword,
 		},
-		filePath: filePath,
+		Web: WebConfig{
+			StationName: DefaultStationName,
+			ColorLight:  DefaultStationColorLight,
+			ColorDark:   DefaultStationColorDark,
+		},
+		SilenceDetection: SilenceDetectionConfig{
+			ThresholdDB: DefaultSilenceThreshold,
+			DurationMs:  DefaultSilenceDurationMs,
+			RecoveryMs:  DefaultSilenceRecoveryMs,
+			PeakHoldMs:  DefaultPeakHoldMs,
+		},
+		ChannelImbalanceDetection: ChannelImbalanceDetectionConfig{
+			ThresholdDB: DefaultChannelImbalanceThreshold,
+			DurationMs:  DefaultChannelImbalanceDurationMs,
+			RecoveryMs:  DefaultChannelImbalanceRecoveryMs,
+		},
+		Streaming: StreamingConfig{Streams: []types.Stream{}},
+		Recording: RecordingConfig{Recorders: []types.Recorder{}},
+		filePath:  filePath,
 	}
 }
 

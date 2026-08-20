@@ -292,9 +292,9 @@ func audioIncidentForDump(incidents []*historicalIncident, trigger string, incid
 	if !ok {
 		return nil
 	}
-	for i := len(incidents) - 1; i >= 0; i-- {
-		if incidents[i].firstType == firstType && (incidentID == 0 || incidents[i].incidentID == incidentID) {
-			return incidents[i]
+	for _, incident := range slices.Backward(incidents) {
+		if incident.firstType == firstType && (incidentID == 0 || incident.incidentID == incidentID) {
+			return incident
 		}
 	}
 	return nil
@@ -655,8 +655,8 @@ func firstEventError(events []groupedEvent) string {
 }
 
 func lastEventError(events []groupedEvent) string {
-	for i := len(events) - 1; i >= 0; i-- {
-		if errMsg := detailString(events[i].details, "error"); errMsg != "" {
+	for _, event := range slices.Backward(events) {
+		if errMsg := detailString(event.details, "error"); errMsg != "" {
 			return errMsg
 		}
 	}
@@ -673,8 +673,8 @@ func incidentDetail(incident *historicalIncident, status string) string {
 }
 
 func incidentLastDetailInt64(events []groupedEvent, key string) int64 {
-	for i := len(events) - 1; i >= 0; i-- {
-		if value := detailInt64(events[i].details, key); value > 0 {
+	for _, event := range slices.Backward(events) {
+		if value := detailInt64(event.details, key); value > 0 {
 			return value
 		}
 	}
