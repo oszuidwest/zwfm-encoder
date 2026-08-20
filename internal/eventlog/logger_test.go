@@ -268,13 +268,11 @@ func TestLoggerLogIsSafeForConcurrentUseWithSharedEvent(t *testing.T) {
 	event := &Event{Type: StreamStarted, Message: "shared"}
 	var wg sync.WaitGroup
 	for range writers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if err := logger.Log(event); err != nil {
 				t.Errorf("Log() error = %v", err)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if got := logger.Seq(); got != writers {

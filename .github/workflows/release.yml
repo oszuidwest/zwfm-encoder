@@ -20,7 +20,6 @@ jobs:
     name: Checks
     uses: oszuidwest/.github-templates/.github/workflows/go-ci.yml@v2
     with:
-      golangci-lint-version: v2.12.1
       enable-frontend: true
 
   shell-quality:
