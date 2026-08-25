@@ -711,12 +711,7 @@ func itemsByStreamID(items []EventGroupItem) map[string]EventGroupItem {
 }
 
 func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, target)
 }
 
 func eventTestKey(event *EventView) string {

@@ -870,7 +870,7 @@ func TestDispatchSilenceStartGivesEachGoroutineItsOwnSnapshotCopy(t *testing.T) 
 		releaseMu: releaseObserver,
 	}
 	dispatcher := NewDispatcher(mutator, observer)
-	cfg := config.Snapshot{DetectorSettingsSnapshot: config.DetectorSettingsSnapshot{SilenceThreshold: -40}}
+	cfg := config.Snapshot{SilenceThreshold: -40}
 	dispatcher.DispatchSilenceStart(context.Background(), []AlertChannel{mutator, observer}, cfg, 0, 0)
 	select {
 	case got := <-observed:

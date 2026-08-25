@@ -164,7 +164,7 @@ func TestWriteToleratesBurstWithinQueueDepth(t *testing.T) {
 	}
 	sub := server.addQueueOnlySubscriber(t)
 	// Filling the codec-sized queue must not drop.
-	for i := 0; i < depth; i++ {
+	for i := range depth {
 		server.Write([]byte{byte(i)})
 	}
 	if got := server.DropCount(); got != 0 {

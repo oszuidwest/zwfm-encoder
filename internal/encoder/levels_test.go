@@ -66,9 +66,7 @@ func TestAudioLevelsConcurrent(t *testing.T) {
 	const iterations = 5000
 	var wg sync.WaitGroup
 	for p := range publishers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for i := range iterations {
 				if i%64 == 0 {
 					e.resetAudioLevels()
@@ -80,17 +78,15 @@ func TestAudioLevelsConcurrent(t *testing.T) {
 					Silence: i%2 == 0,
 				})
 			}
-		}()
+		})
 	}
 	for range readers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range iterations {
 				levels := e.AudioLevels()
 				_ = levels.Left + levels.Right + levels.PeakLeft + levels.PeakRight
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

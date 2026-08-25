@@ -1,6 +1,6 @@
 module github.com/oszuidwest/zwfm-encoder
 
-go 1.26.6
+go 1.27.0
 
 require (
 	fyne.io/systray v1.12.2
@@ -34,7 +34,7 @@ require (
 	golang.org/x/telemetry v0.0.0-20260811182544-a038080d80e5 // indirect
 	golang.org/x/tools v0.49.0 // indirect
 	golang.org/x/vuln v1.3.0 // indirect
-	honnef.co/go/tools v0.7.0 // indirect
+	honnef.co/go/tools v0.8.0-rc.1 // indirect
 )
 
 tool (
