@@ -30,7 +30,7 @@ jobs:
     needs:
       - checks
       - shell-quality
-    uses: oszuidwest/.github-templates/.github/workflows/go-release.yml@v2
+    uses: oszuidwest/.github-templates/.github/workflows/go-release.yml@v3
     with:
       project-name: encoder
       ldflags-target: main
