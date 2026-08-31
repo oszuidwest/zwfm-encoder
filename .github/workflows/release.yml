@@ -18,7 +18,7 @@ permissions:
 jobs:
   checks:
     name: Checks
-    uses: oszuidwest/.github-templates/.github/workflows/go-ci.yml@v2
+    uses: oszuidwest/.github-templates/.github/workflows/go-ci.yml@v3
     with:
       enable-frontend: true
 
