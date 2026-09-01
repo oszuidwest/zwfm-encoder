@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   go:
-    uses: oszuidwest/.github-templates/.github/workflows/go-ci.yml@v2
+    uses: oszuidwest/.github-templates/.github/workflows/go-ci.yml@v3
 
   # The shared template builds and tests on linux only; this job makes sure
   # the //go:build windows files (systray, slog fallback) at least compile
