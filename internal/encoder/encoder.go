@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os/exec"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -62,7 +63,7 @@ type Encoder struct {
 	config              *config.Config
 	ffmpegPath          string
 	buildCaptureCommand func(device, ffmpegPath string) (string, []string, error)
-	openDanteSource     func(context.Context, string) (danteSource, error)
+	openDanteSource     func(context.Context, string) (source, error)
 	streamRestartDelay  time.Duration
 	srtAvailable        bool
 	streamManager       *streaming.Manager
@@ -70,7 +71,7 @@ type Encoder struct {
 	silenceDumpManager  *silencedump.Manager
 	eventLogger         *eventlog.Logger
 	sourceCancel        context.CancelFunc
-	sourceStdout        io.ReadCloser
+	sourceStdout        io.Reader
 	sourceRunID         uint64
 	state               types.EncoderState
 	stopChan            chan struct{}
@@ -89,9 +90,27 @@ type Encoder struct {
 	secretExpiryChecker *notify.SecretExpiryChecker
 }
 
-type danteSource interface {
-	io.ReadCloser
+// source is a running audio input: S16LE stereo PCM plus a Wait that blocks
+// until the input has fully shut down.
+type source interface {
+	io.Reader
 	Wait() error
+}
+
+// captureProcess adapts a platform capture command to source.
+type captureProcess struct {
+	io.Reader
+	cmd    *exec.Cmd
+	stderr bytes.Buffer
+}
+
+// Wait waits for the process and reports its last stderr error line, if any.
+func (p *captureProcess) Wait() error {
+	err := p.cmd.Wait()
+	if msg := util.ExtractLastError(p.stderr.String()); err != nil && msg != "" {
+		return errors.New(msg)
+	}
+	return err
 }
 
 // New creates a new Encoder with the given configuration and FFmpeg binary path.
@@ -139,7 +158,7 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 		config:              cfg,
 		ffmpegPath:          ffmpegPath,
 		buildCaptureCommand: audio.BuildCaptureCommand,
-		openDanteSource: func(ctx context.Context, input string) (danteSource, error) {
+		openDanteSource: func(ctx context.Context, input string) (source, error) {
 			return dante.Open(ctx, input)
 		},
 		streamRestartDelay:  types.StreamRestartDelay,
@@ -477,10 +496,9 @@ func (e *Encoder) Stop() error {
 
 	e.resetDetection()
 
+	e.finishSource()
 	e.mu.Lock()
 	e.state = types.StateStopped
-	e.sourceCancel = nil
-	e.sourceStdout = nil
 	e.mu.Unlock()
 
 	return errors.Join(errs...)
@@ -705,7 +723,7 @@ func (e *Encoder) runSourceLoop() {
 		e.mu.Unlock()
 
 		startTime := time.Now()
-		stderrOutput, err := e.runSource()
+		err := e.runSource()
 		runDuration := time.Since(startTime)
 
 		e.mu.Lock()
@@ -716,9 +734,6 @@ func (e *Encoder) runSourceLoop() {
 
 		if err != nil {
 			errMsg := err.Error()
-			if stderrOutput != "" {
-				errMsg = stderrOutput
-			}
 			e.lastError = errMsg
 			slog.Error("source capture error", "error", errMsg)
 
@@ -770,92 +785,65 @@ func (e *Encoder) runSourceLoop() {
 }
 
 // runSource starts the configured audio source and blocks until it exits.
-func (e *Encoder) runSource() (string, error) {
-	audioInput := e.config.Snapshot().AudioInput
-	if dante.IsInput(audioInput) {
-		return e.runDanteSource(audioInput)
+func (e *Encoder) runSource() error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// Register cancel before opening: Dante discovery and flow setup can take
+	// seconds and Stop must be able to abort them.
+	if !e.reserveSource(cancel) {
+		return context.Canceled
 	}
-	return e.runProcessSource(audioInput)
+	defer e.finishSource()
+
+	src, err := e.openSource(ctx, e.config.Snapshot().AudioInput)
+	if err != nil {
+		return err
+	}
+	runID, stopChan, published := e.publishSource(src)
+	if !published {
+		cancel()
+		return src.Wait()
+	}
+
+	e.resetAudioLevels() // start each run silent until the first metered chunk
+	go e.runDistributor(runID)
+	go e.startEnabledStreamsAfterDelay(runID, stopChan, e.streamRestartDelay)
+
+	// runDistributor publishes final silence after its last live level.
+	return src.Wait()
 }
 
-// runProcessSource starts a platform audio capture process and blocks until it exits.
-func (e *Encoder) runProcessSource(audioInput string) (string, error) {
-	cmdName, args, err := e.buildCaptureCommand(audioInput, e.ffmpegPath)
-	if err != nil {
-		return "", err
+// openSource opens a native Dante receiver for dante:// inputs and starts a
+// platform capture process otherwise. Cancelling ctx stops the source.
+func (e *Encoder) openSource(ctx context.Context, audioInput string) (source, error) {
+	if dante.IsInput(audioInput) {
+		slog.Info("starting native Dante audio capture", "input", audioInput)
+		return e.openDanteSource(ctx, audioInput)
 	}
 
+	cmdName, args, err := e.buildCaptureCommand(audioInput, e.ffmpegPath)
+	if err != nil {
+		return nil, err
+	}
 	slog.Info("starting audio capture", "command", cmdName, "input", audioInput)
 
-	ctx, cancel := context.WithCancel(context.Background())
 	cmd := util.CommandContext(ctx, cmdName, args...)
-
-	// Go 1.20+: Declarative graceful shutdown - sends signal first, waits, then kills.
+	// Declarative graceful shutdown: signal first, kill after WaitDelay.
 	cmd.Cancel = func() error {
 		return util.GracefulSignal(cmd.Process)
 	}
 	cmd.WaitDelay = types.ShutdownTimeout
 
-	stdoutPipe, err := cmd.StdoutPipe()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		cancel()
-		return "", err
+		return nil, err
 	}
-
-	var stderrBuf bytes.Buffer
-	cmd.Stderr = &stderrBuf
-
+	process := &captureProcess{Reader: stdout, cmd: cmd}
+	cmd.Stderr = &process.stderr
 	if err := cmd.Start(); err != nil {
-		cancel()
-		return "", err
+		return nil, err
 	}
-
-	runID, stopChan, published := e.publishSource(cancel, stdoutPipe)
-	if !published {
-		cancel()
-		err := cmd.Wait()
-		return util.ExtractLastError(stderrBuf.String()), err
-	}
-
-	e.resetAudioLevels() // start each run silent until the first metered chunk
-
-	go e.runDistributor(runID)
-	go e.startEnabledStreamsAfterDelay(runID, stopChan, e.streamRestartDelay)
-
-	err = cmd.Wait()
-	e.finishSource()
-	// runDistributor publishes final silence after its last live level.
-
-	return util.ExtractLastError(stderrBuf.String()), err
-}
-
-// runDanteSource starts the native Dante receiver and blocks until it exits.
-func (e *Encoder) runDanteSource(audioInput string) (string, error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	// Register cancel before opening: discovery and flow setup can take
-	// seconds and Stop must be able to abort them.
-	if !e.reserveSource(cancel) {
-		cancel()
-		return "", context.Canceled
-	}
-	defer e.finishSource()
-	defer cancel() // also closes the receiver
-
-	receiver, err := e.openDanteSource(ctx, audioInput)
-	if err != nil {
-		return "", err
-	}
-	runID, stopChan, published := e.publishSource(cancel, receiver)
-	if !published {
-		return "", context.Canceled
-	}
-
-	slog.Info("starting native Dante audio capture", "input", audioInput)
-	e.resetAudioLevels()
-	go e.runDistributor(runID)
-	go e.startEnabledStreamsAfterDelay(runID, stopChan, e.streamRestartDelay)
-
-	return "", receiver.Wait()
+	return process, nil
 }
 
 // reserveSource registers cancel as the active source's stop function unless
@@ -878,22 +866,17 @@ func (e *Encoder) finishSource() {
 	e.sourceStdout = nil
 }
 
-// publishSource records a freshly started capture source as the active source
-// run and returns its run ID and stop channel. It returns ok=false without
-// recording anything if shutdown began before the source could be published, so
-// the caller can tear the source back down.
-func (e *Encoder) publishSource(
-	cancel context.CancelFunc,
-	stdout io.ReadCloser,
-) (runID uint64, stopChan <-chan struct{}, ok bool) {
+// publishSource records a freshly opened source as the active source run and
+// returns its run ID and stop channel. It returns ok=false without recording
+// anything if shutdown began first, so the caller can tear the source down.
+func (e *Encoder) publishSource(src io.Reader) (runID uint64, stopChan <-chan struct{}, ok bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.isStopping() {
 		return 0, nil, false
 	}
 	e.sourceRunID++
-	e.sourceCancel = cancel
-	e.sourceStdout = stdout
+	e.sourceStdout = src
 	e.state = types.StateRunning
 	e.startTime = time.Now()
 	e.lastError = ""

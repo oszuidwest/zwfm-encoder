@@ -78,7 +78,6 @@ func newTestReceiver(
 	t.Helper()
 	mediaConn := listenLoopbackUDP(t)
 	controlServer := listenLoopbackUDP(t)
-	var err error
 	controlConn, err := net.DialUDP("udp4", nil, controlServer.LocalAddr().(*net.UDPAddr))
 	if err != nil {
 		_ = mediaConn.Close()

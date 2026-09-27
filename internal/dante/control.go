@@ -1,6 +1,7 @@
 package dante
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -17,6 +18,7 @@ const (
 	stopFlowOpcode      = 0x0101
 	requestFlowSequence = 1
 	stopFlowSequence    = 2
+	flowName            = "encoder_1"
 )
 
 type flowParameters struct {
@@ -41,57 +43,34 @@ func chooseFPP(maximum, minimum, bytesPerSample uint16) (uint16, error) {
 	return chosen, nil
 }
 
+// receiverName returns the hostname reduced to at most 31 printable ASCII bytes.
 func receiverName() string {
-	name, err := os.Hostname()
-	if err != nil {
-		return "ZWFM Encoder"
-	}
-	name = strings.TrimSpace(name)
+	name, _ := os.Hostname()
+	name = strings.Map(func(r rune) rune {
+		if r < 0x20 || r > 0x7e {
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(name))
 	if name == "" {
 		return "ZWFM Encoder"
 	}
-	result := make([]byte, 0, min(len(name), 31))
-	for i := 0; i < len(name) && len(result) < 31; i++ {
-		if name[i] >= 0x20 && name[i] <= 0x7e {
-			result = append(result, name[i])
-		}
-	}
-	if len(result) == 0 {
-		return "ZWFM Encoder"
-	}
-	return string(result)
+	return name[:min(len(name), 31)]
 }
 
-func buildFlowRequest(parameters *flowParameters) ([]byte, error) {
-	localIP := parameters.localIP.To4()
-	if localIP == nil {
-		return nil, errors.New("flow request requires a local IPv4 address")
-	}
-	name := []byte(parameters.receiver)
-	if len(name) > 31 {
-		return nil, fmt.Errorf("receiver name is %d bytes; maximum is 31", len(name))
-	}
-
+func buildFlowRequest(parameters *flowParameters) []byte {
 	const stringOffset uint16 = controlHeaderSize + 38 + 2*mediaChannels
-	flowName := []byte("encoder_1")
-	flowNameOffset := stringOffset + 1
-	for range name {
-		flowNameOffset++
-	}
-	const flowNameLength uint16 = 9
-	addressOffset := flowNameOffset + flowNameLength + 1
-	if remainder := addressOffset % 8; remainder != 0 {
-		addressOffset += 8 - remainder
-	}
+	flowNameOffset := stringOffset + 1 + uint16(len(parameters.receiver))  //nolint:gosec // receiverName caps the name at 31 bytes.
+	addressOffset := (flowNameOffset + uint16(len(flowName)) + 1 + 7) &^ 7 // 8-byte aligned
 	totalLength := addressOffset + 8
 
-	message := make([]byte, int(totalLength))
+	message := make([]byte, totalLength)
 	binary.BigEndian.PutUint16(message[0:2], 0x1102)
 	binary.BigEndian.PutUint16(message[2:4], totalLength)
 	binary.BigEndian.PutUint16(message[4:6], requestFlowSequence)
 	binary.BigEndian.PutUint16(message[6:8], requestFlowOpcode)
 
-	body := message[controlHeaderSize:int(stringOffset)]
+	body := message[controlHeaderSize:stringOffset]
 	binary.BigEndian.PutUint16(body[0:2], stringOffset)
 	binary.BigEndian.PutUint32(body[2:6], sampleRate)
 	binary.BigEndian.PutUint32(body[6:10], uint32(parameters.bits))
@@ -109,12 +88,12 @@ func buildFlowRequest(parameters *flowParameters) ([]byte, error) {
 	binary.BigEndian.PutUint16(body[afterChannels+6:afterChannels+8], parameters.fpp)
 	binary.BigEndian.PutUint16(body[afterChannels+8:afterChannels+10], flowNameOffset)
 
-	copy(message[int(stringOffset):], name)
-	copy(message[int(flowNameOffset):], flowName)
-	binary.BigEndian.PutUint16(message[int(addressOffset):int(addressOffset)+2], 0x0802)
-	binary.BigEndian.PutUint16(message[int(addressOffset)+2:int(addressOffset)+4], parameters.mediaPort)
-	copy(message[int(addressOffset)+4:int(addressOffset)+8], localIP)
-	return message, nil
+	copy(message[stringOffset:], parameters.receiver)
+	copy(message[flowNameOffset:], flowName)
+	binary.BigEndian.PutUint16(message[addressOffset:addressOffset+2], 0x0802)
+	binary.BigEndian.PutUint16(message[addressOffset+2:addressOffset+4], parameters.mediaPort)
+	copy(message[addressOffset+4:addressOffset+8], parameters.localIP.To4())
+	return message
 }
 
 func buildStopRequest(handle [6]byte) []byte {
@@ -127,25 +106,16 @@ func buildStopRequest(handle [6]byte) []byte {
 	return message
 }
 
-func exchangeControl(
-	ctx context.Context,
-	conn *net.UDPConn,
-	request []byte,
-	sequence uint16,
-	opcode uint16,
-	timeout time.Duration,
-) ([]byte, error) {
+// exchangeControl sends request and returns the body of the first successful
+// response that echoes its sequence number and opcode.
+func exchangeControl(ctx context.Context, conn *net.UDPConn, request []byte, timeout time.Duration) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if _, err := conn.Write(request); err != nil {
 		return nil, fmt.Errorf("send control request: %w", err)
 	}
-	deadline := time.Now().Add(timeout)
-	if contextDeadline, ok := ctx.Deadline(); ok {
-		deadline = earlierTime(deadline, contextDeadline)
-	}
-	if err := conn.SetReadDeadline(deadline); err != nil {
+	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
 		return nil, fmt.Errorf("set control deadline: %w", err)
 	}
 	stopInterrupt := context.AfterFunc(ctx, func() {
@@ -160,30 +130,22 @@ func exchangeControl(
 			if contextErr := ctx.Err(); contextErr != nil {
 				return nil, contextErr
 			}
-			var networkError net.Error
-			if errors.As(err, &networkError) && networkError.Timeout() {
+			if errors.Is(err, os.ErrDeadlineExceeded) {
 				return nil, errors.New("control response timed out")
 			}
 			return nil, fmt.Errorf("read control response: %w", err)
-		}
-		if err := ctx.Err(); err != nil {
-			return nil, err
 		}
 		if n < controlHeaderSize {
 			continue
 		}
 		length := int(binary.BigEndian.Uint16(buffer[2:4]))
-		if length < controlHeaderSize || length > n {
+		if length < controlHeaderSize || length > n || !bytes.Equal(buffer[4:8], request[4:8]) {
 			continue
 		}
-		if binary.BigEndian.Uint16(buffer[4:6]) != sequence ||
-			binary.BigEndian.Uint16(buffer[6:8]) != opcode {
-			continue
-		}
-		status := binary.BigEndian.Uint16(buffer[8:10])
-		if status != 0x0001 {
+		if status := binary.BigEndian.Uint16(buffer[8:10]); status != 0x0001 {
+			opcode := binary.BigEndian.Uint16(request[6:8])
 			return nil, fmt.Errorf("control request opcode 0x%04x failed with status 0x%04x", opcode, status)
 		}
-		return append([]byte(nil), buffer[controlHeaderSize:length]...), nil
+		return bytes.Clone(buffer[controlHeaderSize:length]), nil
 	}
 }

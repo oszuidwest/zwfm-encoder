@@ -17,7 +17,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 )
@@ -138,10 +137,10 @@ func TestStopBeforeStreamDelayCancelsDelayedStarter(t *testing.T) {
 func TestNativeDanteSourceUsesEncoderLifecycle(t *testing.T) {
 	e := newSourceLifecycleTestEncoder(t, "exit")
 	e.config.Audio.Input = "dante://studio-tx/Left/Right"
-	source := newFakeDanteSource()
-	e.openDanteSource = func(ctx context.Context, _ string) (danteSource, error) {
-		context.AfterFunc(ctx, func() { _ = source.Close() }) // mirrors dante.Open
-		return source, nil
+	e.openDanteSource = func(ctx context.Context, _ string) (source, error) {
+		reader, writer := io.Pipe()
+		context.AfterFunc(ctx, func() { _ = writer.Close() }) // mirrors dante.Open
+		return fakeDanteSource{reader, ctx.Done()}, nil
 	}
 
 	if err := e.Start(); err != nil {
@@ -400,35 +399,12 @@ func helperCaptureCommand(mode string, extraArgs ...string) func(string, string)
 }
 
 type fakeDanteSource struct {
-	reader    *io.PipeReader
-	writer    *io.PipeWriter
-	done      chan error
-	closeOnce sync.Once
+	*io.PipeReader
+	done <-chan struct{}
 }
 
-func newFakeDanteSource() *fakeDanteSource {
-	reader, writer := io.Pipe()
-	return &fakeDanteSource{
-		reader: reader,
-		writer: writer,
-		done:   make(chan error, 1),
-	}
-}
-
-func (s *fakeDanteSource) Read(buffer []byte) (int, error) {
-	return s.reader.Read(buffer)
-}
-
-func (s *fakeDanteSource) Wait() error {
-	return <-s.done
-}
-
-func (s *fakeDanteSource) Close() error {
-	s.closeOnce.Do(func() {
-		_ = s.writer.Close()
-		_ = s.reader.Close()
-		s.done <- nil
-	})
+func (s fakeDanteSource) Wait() error {
+	<-s.done
 	return nil
 }
 func TestEncoderCaptureHelperProcess(t *testing.T) {

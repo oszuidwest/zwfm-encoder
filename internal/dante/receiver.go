@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"sync"
 	"time"
 )
 
@@ -19,7 +18,6 @@ type Receiver struct {
 	controlConn *net.UDPConn
 	cancel      context.CancelFunc
 	done        chan struct{}
-	closeOnce   sync.Once
 	terminal    error
 	flowHandle  [6]byte
 	bits        uint16
@@ -27,101 +25,61 @@ type Receiver struct {
 
 // Open discovers the requested channels, requests a stereo flow, and starts
 // receiving it. The supplied context controls setup and the receiver lifetime.
-func Open(ctx context.Context, input string) (*Receiver, error) {
+func Open(ctx context.Context, input string) (_ *Receiver, err error) {
 	config, err := parseInput(input)
 	if err != nil {
-		return nil, err
-	}
-	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	interfaces, err := discoveryInterfaces(config.interfaceID)
 	if err != nil {
 		return nil, err
 	}
-
-	left, err := discoverChannel(
-		ctx,
-		interfaces,
-		config.transmitter,
-		config.left,
-		nil,
-	)
+	left, err := discoverChannel(ctx, interfaces, config.transmitter, config.left, nil)
 	if err != nil {
 		return nil, err
 	}
-	right, err := discoverChannel(
-		ctx,
-		interfaces,
-		config.transmitter,
-		config.right,
-		left.address,
-	)
+	right, err := discoverChannel(ctx, interfaces, config.transmitter, config.right, left.address)
 	if err != nil {
 		return nil, err
 	}
 	if err := validateChannels(left, right); err != nil {
 		return nil, err
 	}
-	localIP, err := selectLocalAddress(config.interfaceID, interfaces, left.address, left.port)
+	fpp, err := chooseFPP(min(left.fppMax, right.fppMax), max(left.fppMin, right.fppMin), left.bits/8)
+	if err != nil {
+		return nil, err
+	}
+	transmitter := &net.UDPAddr{IP: left.address, Port: int(left.port)}
+	localIP, err := selectLocalAddress(config.interfaceID, interfaces, transmitter)
 	if err != nil {
 		return nil, err
 	}
 
-	var mediaConn *net.UDPConn
-	var controlConn *net.UDPConn
-	success := false
+	mediaConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: localIP})
+	if err != nil {
+		return nil, fmt.Errorf("open media socket: %w", err)
+	}
+	controlConn, err := net.DialUDP("udp4", &net.UDPAddr{IP: localIP}, transmitter)
+	if err != nil {
+		_ = mediaConn.Close()
+		return nil, fmt.Errorf("open control socket: %w", err)
+	}
 	defer func() {
-		if success {
-			return
-		}
-		if controlConn != nil {
+		if err != nil {
 			_ = controlConn.Close()
-		}
-		if mediaConn != nil {
 			_ = mediaConn.Close()
 		}
 	}()
 
-	mediaConn, err = net.ListenUDP("udp4", &net.UDPAddr{IP: localIP, Port: 0})
-	if err != nil {
-		return nil, fmt.Errorf("open media socket: %w", err)
-	}
-	mediaAddress := mediaConn.LocalAddr().(*net.UDPAddr)
-	controlConn, err = net.DialUDP(
-		"udp4",
-		&net.UDPAddr{IP: localIP, Port: 0},
-		&net.UDPAddr{IP: left.address, Port: int(left.port)},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("open control socket: %w", err)
-	}
-
-	fppMaximum := min(left.fppMax, right.fppMax)
-	fppMinimum := max(left.fppMin, right.fppMin)
-	fpp, err := chooseFPP(fppMaximum, fppMinimum, left.bits/8)
-	if err != nil {
-		return nil, err
-	}
-	request, err := buildFlowRequest(&flowParameters{
+	request := buildFlowRequest(&flowParameters{
 		bits:       left.bits,
 		channelIDs: [mediaChannels]uint16{left.id, right.id},
 		fpp:        fpp,
 		receiver:   receiverName(),
-		mediaPort:  mediaAddress.AddrPort().Port(),
+		mediaPort:  mediaConn.LocalAddr().(*net.UDPAddr).AddrPort().Port(),
 		localIP:    localIP,
 	})
-	if err != nil {
-		return nil, err
-	}
-	body, err := exchangeControl(
-		ctx,
-		controlConn,
-		request,
-		requestFlowSequence,
-		requestFlowOpcode,
-		3*time.Second,
-	)
+	body, err := exchangeControl(ctx, controlConn, request, 3*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("request flow: %w", err)
 	}
@@ -138,10 +96,9 @@ func Open(ctx context.Context, input string) (*Receiver, error) {
 		controlConn: controlConn,
 		cancel:      cancelReceive,
 		done:        make(chan struct{}),
+		flowHandle:  [6]byte(body),
 		bits:        left.bits,
 	}
-	copy(receiver.flowHandle[:], body[:6])
-	success = true
 	go receiver.run(receiveCtx)
 	return receiver, nil
 }
@@ -165,31 +122,22 @@ func validateChannels(left, right channelInfo) error {
 	return nil
 }
 
-func selectLocalAddress(
-	interfaceID string,
-	interfaces []net.Interface,
-	remoteIP net.IP,
-	remotePort uint16,
-) (net.IP, error) {
+func selectLocalAddress(interfaceID string, interfaces []net.Interface, transmitter *net.UDPAddr) (net.IP, error) {
 	if interfaceID != "" {
 		return firstIPv4Address(&interfaces[0])
 	}
-	conn, err := net.DialUDP(
-		"udp4",
-		nil,
-		&net.UDPAddr{IP: remoteIP, Port: int(remotePort)},
-	)
+	conn, err := net.DialUDP("udp4", nil, transmitter)
 	if err != nil {
 		return nil, fmt.Errorf("select local address for transmitter: %w", err)
 	}
 	defer func() {
 		_ = conn.Close()
 	}()
-	address := conn.LocalAddr().(*net.UDPAddr)
-	if address.IP.To4() == nil {
+	address := conn.LocalAddr().(*net.UDPAddr).IP.To4()
+	if address == nil {
 		return nil, errors.New("operating system selected no local IPv4 address")
 	}
-	return append(net.IP(nil), address.IP.To4()...), nil
+	return address, nil
 }
 
 func (r *Receiver) run(ctx context.Context) {
@@ -203,23 +151,9 @@ func (r *Receiver) run(ctx context.Context) {
 	}
 	stopInterrupt()
 	_ = r.mediaConn.Close()
-	if err != nil {
-		_ = r.writer.CloseWithError(err)
-	} else {
-		_ = r.writer.Close()
-	}
+	_ = r.writer.CloseWithError(err) // nil gives readers io.EOF
 
-	stopCtx, stopCancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
-	request := buildStopRequest(r.flowHandle)
-	_, _ = exchangeControl(
-		stopCtx,
-		r.controlConn,
-		request,
-		stopFlowSequence,
-		stopFlowOpcode,
-		time.Second,
-	)
-	stopCancel()
+	_, _ = exchangeControl(context.WithoutCancel(ctx), r.controlConn, buildStopRequest(r.flowHandle), time.Second)
 	_ = r.controlConn.Close()
 
 	r.terminal = err
@@ -245,7 +179,7 @@ func (r *Receiver) Wait() error {
 
 // Close stops reception. It is safe to call repeatedly and concurrently.
 func (r *Receiver) Close() error {
-	r.closeOnce.Do(r.cancel)
+	r.cancel()
 	<-r.done
 	return nil
 }

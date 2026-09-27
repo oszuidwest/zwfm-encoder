@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
+	"os"
 	"time"
 )
 
@@ -53,9 +55,7 @@ func (p *mediaProcessor) receive(datagram []byte, now time.Time) (bool, error) {
 		p.initialized = true
 		p.expected = packet.position
 	}
-	if packet.position < p.expected {
-		return true, p.advance(now)
-	}
+	// advance drops packets that start before the expected position.
 	if _, duplicate := p.pending[packet.position]; !duplicate {
 		p.pending[packet.position] = packet
 	}
@@ -63,14 +63,7 @@ func (p *mediaProcessor) receive(datagram []byte, now time.Time) (bool, error) {
 }
 
 func (p *mediaProcessor) parse(datagram []byte) (mediaPacket, bool) {
-	if len(datagram) < mediaHeaderSize {
-		return mediaPacket{}, false
-	}
-	frameSize := mediaChannels * p.bytesPerSample
-	if frameSize <= 0 || (len(datagram)-mediaHeaderSize)%frameSize != 0 {
-		return mediaPacket{}, false
-	}
-	if len(datagram) == mediaHeaderSize {
+	if len(datagram) <= mediaHeaderSize || (len(datagram)-mediaHeaderSize)%p.frameSize() != 0 {
 		return mediaPacket{}, false
 	}
 	seconds := uint64(binary.BigEndian.Uint32(datagram[1:5]))
@@ -94,11 +87,9 @@ func (p *mediaProcessor) advance(now time.Time) error {
 		p.expected += p.packetFrames(packet)
 	}
 
-	for position := range p.pending {
-		if position < p.expected {
-			delete(p.pending, position)
-		}
-	}
+	maps.DeleteFunc(p.pending, func(position uint64, _ mediaPacket) bool {
+		return position < p.expected
+	})
 	minimum, ok := p.earliestPending()
 	if !ok {
 		p.gapStarted = time.Time{}
@@ -123,13 +114,12 @@ func (p *mediaProcessor) advance(now time.Time) error {
 	return p.advance(now)
 }
 
+func (p *mediaProcessor) frameSize() int {
+	return mediaChannels * p.bytesPerSample
+}
+
 func (p *mediaProcessor) packetFrames(packet mediaPacket) uint64 {
-	frameSize := mediaChannels * p.bytesPerSample
-	var frames uint64
-	for offset := 0; offset < len(packet.payload); offset += frameSize {
-		frames++
-	}
-	return frames
+	return uint64(len(packet.payload) / p.frameSize()) //nolint:gosec // Lengths are non-negative.
 }
 
 func (p *mediaProcessor) earliestPending() (uint64, bool) {
@@ -144,57 +134,35 @@ func (p *mediaProcessor) earliestPending() (uint64, bool) {
 	return minimum, found
 }
 
+// appendPacket writes the top 16 bits of each big-endian sample as S16LE.
 func (p *mediaProcessor) appendPacket(packet mediaPacket) error {
-	frameSize := mediaChannels * p.bytesPerSample
-	frames := len(packet.payload) / frameSize
-	output := make([]byte, frames*outputFrameSize)
-	outputOffset := 0
+	frameSize := p.frameSize()
+	output := make([]byte, 0, len(packet.payload)/frameSize*outputFrameSize)
 	for offset := 0; offset < len(packet.payload); offset += frameSize {
 		for channel := range mediaChannels {
 			sample := offset + channel*p.bytesPerSample
-			output[outputOffset] = packet.payload[sample+1]
-			output[outputOffset+1] = packet.payload[sample]
-			outputOffset += 2
+			output = append(output, packet.payload[sample+1], packet.payload[sample])
 		}
 	}
-	return writeOutput(p.output, output)
+	_, err := p.output.Write(output)
+	return err
 }
 
 func (p *mediaProcessor) appendSilence(frames uint64) error {
-	var zeroBatch [outputBatchSize]byte
-	const framesPerBatch = outputBatchSize / outputFrameSize
-	for frames >= framesPerBatch {
-		if err := writeOutput(p.output, zeroBatch[:]); err != nil {
+	var zeros [outputBatchSize]byte
+	for frames > 0 {
+		batch := min(frames, outputBatchSize/outputFrameSize)
+		if _, err := p.output.Write(zeros[:batch*outputFrameSize]); err != nil {
 			return err
 		}
-		frames -= framesPerBatch
-	}
-	var zeroFrame [outputFrameSize]byte
-	for range frames {
-		if err := writeOutput(p.output, zeroFrame[:]); err != nil {
-			return err
-		}
+		frames -= batch
 	}
 	return nil
 }
 
-func writeOutput(output io.Writer, data []byte) error {
-	n, err := output.Write(data)
-	if err != nil {
-		return err
-	}
-	if n != len(data) {
-		return io.ErrShortWrite
-	}
-	return nil
-}
-
-func receiveMedia(
-	ctx context.Context,
-	conn *net.UDPConn,
-	bits uint16,
-	output io.Writer,
-) error {
+// receiveMedia writes received media to output until an error occurs. The
+// caller must close conn when ctx is cancelled to interrupt a pending read.
+func receiveMedia(ctx context.Context, conn *net.UDPConn, bits uint16, output io.Writer) error {
 	processor := newMediaProcessor(bits, output)
 	buffer := make([]byte, 65535)
 	lastValid := time.Now()
@@ -224,9 +192,6 @@ func receiveMedia(
 		if keepaliveTarget != nil {
 			deadline = earlierTime(deadline, nextKeepalive)
 		}
-		if contextDeadline, ok := ctx.Deadline(); ok {
-			deadline = earlierTime(deadline, contextDeadline)
-		}
 		if err := conn.SetReadDeadline(deadline); err != nil {
 			return fmt.Errorf("set media deadline: %w", err)
 		}
@@ -235,8 +200,7 @@ func receiveMedia(
 			if contextErr := ctx.Err(); contextErr != nil {
 				return contextErr
 			}
-			var networkError net.Error
-			if errors.As(err, &networkError) && networkError.Timeout() {
+			if errors.Is(err, os.ErrDeadlineExceeded) {
 				continue
 			}
 			return fmt.Errorf("receive media: %w", err)

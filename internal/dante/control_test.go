@@ -19,10 +19,7 @@ func TestBuildFlowRequest(t *testing.T) {
 		mediaPort:  5000,
 		localIP:    net.IPv4(192, 0, 2, 10),
 	}
-	message, err := buildFlowRequest(&parameters)
-	if err != nil {
-		t.Fatalf("buildFlowRequest: %v", err)
-	}
+	message := buildFlowRequest(&parameters)
 	if got := binary.BigEndian.Uint16(message[0:2]); got != 0x1102 {
 		t.Errorf("start code = %#x", got)
 	}
@@ -126,14 +123,7 @@ func TestExchangeControl(t *testing.T) {
 				_, _ = server.WriteToUDP(controlResponse(sequence+1, stopFlowOpcode, 1, nil), peer)
 				_, _ = server.WriteToUDP(controlResponse(sequence, stopFlowOpcode, test.status, []byte(test.wantBody)), peer)
 			}()
-			body, err := exchangeControl(
-				context.Background(),
-				client,
-				request,
-				sequence,
-				stopFlowOpcode,
-				time.Second,
-			)
+			body, err := exchangeControl(context.Background(), client, request, time.Second)
 			<-serverDone
 			if test.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), test.wantError) {
@@ -159,16 +149,9 @@ func checkUint16(t *testing.T, data []byte, offset int, want uint16, field strin
 }
 
 func controlResponse(sequence, opcode, status uint16, body []byte) []byte {
-	if len(body) > int(^uint16(0))-controlHeaderSize {
-		panic("test control response body is too large")
-	}
 	message := make([]byte, controlHeaderSize+len(body))
-	length := uint16(controlHeaderSize)
-	for range body {
-		length++
-	}
 	binary.BigEndian.PutUint16(message[0:2], 0x1102)
-	binary.BigEndian.PutUint16(message[2:4], length)
+	binary.BigEndian.PutUint16(message[2:4], uint16(len(message))) //nolint:gosec // test bodies are tiny.
 	binary.BigEndian.PutUint16(message[4:6], sequence)
 	binary.BigEndian.PutUint16(message[6:8], opcode)
 	binary.BigEndian.PutUint16(message[8:10], status)

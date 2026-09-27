@@ -23,14 +23,14 @@ func TestParseTXT(t *testing.T) {
 				"enc=32", "fpp=32,16", "nchan=2",
 			},
 			want: channelInfo{
-				id: 16, rate: 48000, bits: 32, nchan: 2, fppMax: 32, fppMin: 16, hasTXT: true,
+				id: 16, rate: 48000, bits: 32, nchan: 2, fppMax: 32, fppMin: 16,
 			},
 		},
 		{
 			name:  "decimal ID and en fallback",
 			items: []string{"id=9", "rate=48000", "en=16", "nchan=4", "fpp=64,8"},
 			want: channelInfo{
-				id: 9, rate: 48000, bits: 16, nchan: 4, fppMax: 64, fppMin: 8, hasTXT: true,
+				id: 9, rate: 48000, bits: 16, nchan: 4, fppMax: 64, fppMin: 8,
 			},
 		},
 		{name: "missing ID", items: []string{"rate=48000", "enc=24", "nchan=2", "fpp=32,32"}, wantError: true},
@@ -63,7 +63,7 @@ func TestParseDNSResponseSelectsRequestedInstance(t *testing.T) {
 	t.Parallel()
 	requested := "Left@tx" + serviceSuffix
 	other := "Other@tx" + serviceSuffix
-	packet := buildTestDNSResponse(t, requested, other)
+	packet := buildMixedDNSResponse(t, requested, other)
 
 	port, txt, err := parseDNSResponse(packet, requested)
 	if err != nil {
@@ -83,18 +83,12 @@ func TestParseDNSResponseSelectsRequestedInstance(t *testing.T) {
 func TestMergeDiscoveryResponseAcceptsOnlyRequiredSource(t *testing.T) {
 	t.Parallel()
 	requested := "Right@tx" + serviceSuffix
-	packet := buildTestDNSResponse(t, requested, "Other@tx"+serviceSuffix)
+	packet := buildMixedDNSResponse(t, requested, "Other@tx"+serviceSuffix)
 	requiredSource := net.IPv4(192, 0, 2, 10)
 	foreignSource := net.IPv4(192, 0, 2, 11)
 	var info channelInfo
 
-	complete, err := mergeDiscoveryResponse(
-		&info,
-		packet,
-		foreignSource,
-		requested,
-		requiredSource,
-	)
+	complete, err := mergeDiscoveryResponse(&info, packet, foreignSource, requested, requiredSource)
 	if err != nil {
 		t.Fatalf("foreign response: %v", err)
 	}
@@ -102,13 +96,7 @@ func TestMergeDiscoveryResponseAcceptsOnlyRequiredSource(t *testing.T) {
 		t.Fatalf("foreign response was accepted: %#v", info)
 	}
 
-	complete, err = mergeDiscoveryResponse(
-		&info,
-		packet,
-		requiredSource,
-		requested,
-		requiredSource,
-	)
+	complete, err = mergeDiscoveryResponse(&info, packet, requiredSource, requested, requiredSource)
 	if err != nil {
 		t.Fatalf("required response: %v", err)
 	}
@@ -124,18 +112,12 @@ func TestMergeDiscoveryResponseIgnoresMalformedTXT(t *testing.T) {
 	t.Parallel()
 	requested := "Left@tx" + serviceSuffix
 	source := net.IPv4(192, 0, 2, 10)
-	malformed := buildTestChannelDNSResponse(
-		t,
-		requested,
-		4455,
-		[]string{"id=not-a-number", "rate=48000", "enc=24", "nchan=2", "fpp=32,32"},
-	)
-	valid := buildTestChannelDNSResponse(
-		t,
-		requested,
-		4455,
-		[]string{"id=7", "rate=48000", "enc=24", "nchan=2", "fpp=32,32"},
-	)
+	malformed := buildTestDNSResponse(t, []testChannel{
+		{requested, 4455, []string{"id=not-a-number", "rate=48000", "enc=24", "nchan=2", "fpp=32,32"}},
+	}, nil)
+	valid := buildTestDNSResponse(t, []testChannel{
+		{requested, 4455, []string{"id=7", "rate=48000", "enc=24", "nchan=2", "fpp=32,32"}},
+	}, nil)
 	var info channelInfo
 
 	complete, err := mergeDiscoveryResponse(&info, malformed, source, requested, nil)
@@ -155,46 +137,38 @@ func TestMergeDiscoveryResponseIgnoresMalformedTXT(t *testing.T) {
 	}
 }
 
-func buildTestDNSResponse(t *testing.T, requested, other string) []byte {
+type testChannel struct {
+	instance string
+	port     uint16
+	txt      []string
+}
+
+// buildTestDNSResponse encodes SRV and TXT records for each channel into the
+// answer and additional sections of an mDNS response.
+func buildTestDNSResponse(t *testing.T, answers, additionals []testChannel) []byte {
 	t.Helper()
-	requestedName, err := dnsmessage.NewName(requested)
-	if err != nil {
-		t.Fatal(err)
-	}
-	otherName, err := dnsmessage.NewName(other)
-	if err != nil {
-		t.Fatal(err)
-	}
-	target, err := dnsmessage.NewName("tx.local.")
-	if err != nil {
-		t.Fatal(err)
-	}
 	builder := dnsmessage.NewBuilder(nil, dnsmessage.Header{Response: true})
 	builder.EnableCompression()
+	add := func(channels []testChannel) {
+		for _, channel := range channels {
+			header := dnsmessage.ResourceHeader{Name: dnsmessage.MustNewName(channel.instance), Class: dnsmessage.ClassINET, TTL: 120}
+			srv := dnsmessage.SRVResource{Port: channel.port, Target: dnsmessage.MustNewName("tx.local.")}
+			if err := builder.SRVResource(header, srv); err != nil {
+				t.Fatal(err)
+			}
+			if err := builder.TXTResource(header, dnsmessage.TXTResource{TXT: channel.txt}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	if err := builder.StartAnswers(); err != nil {
 		t.Fatal(err)
 	}
-	otherHeader := dnsmessage.ResourceHeader{Name: otherName, Class: dnsmessage.ClassINET, TTL: 120}
-	if err := builder.SRVResource(otherHeader, dnsmessage.SRVResource{Port: 9999, Target: target}); err != nil {
-		t.Fatal(err)
-	}
-	if err := builder.TXTResource(otherHeader, dnsmessage.TXTResource{
-		TXT: []string{"id=99", "rate=44100", "enc=16", "nchan=1", "fpp=1,1"},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	add(answers)
 	if err := builder.StartAdditionals(); err != nil {
 		t.Fatal(err)
 	}
-	requestedHeader := dnsmessage.ResourceHeader{Name: requestedName, Class: dnsmessage.ClassINET, TTL: 120}
-	if err := builder.SRVResource(requestedHeader, dnsmessage.SRVResource{Port: 4455, Target: target}); err != nil {
-		t.Fatal(err)
-	}
-	if err := builder.TXTResource(requestedHeader, dnsmessage.TXTResource{
-		TXT: []string{"id=7", "rate=48000", "enc=24", "nchan=2", "fpp=32,32"},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	add(additionals)
 	packet, err := builder.Finish()
 	if err != nil {
 		t.Fatal(err)
@@ -202,36 +176,11 @@ func buildTestDNSResponse(t *testing.T, requested, other string) []byte {
 	return packet
 }
 
-func buildTestChannelDNSResponse(
-	t *testing.T,
-	instance string,
-	port uint16,
-	txt []string,
-) []byte {
+// buildMixedDNSResponse answers for other and puts requested in the additional section.
+func buildMixedDNSResponse(t *testing.T, requested, other string) []byte {
 	t.Helper()
-	instanceName, err := dnsmessage.NewName(instance)
-	if err != nil {
-		t.Fatal(err)
-	}
-	target, err := dnsmessage.NewName("tx.local.")
-	if err != nil {
-		t.Fatal(err)
-	}
-	builder := dnsmessage.NewBuilder(nil, dnsmessage.Header{Response: true})
-	builder.EnableCompression()
-	if err := builder.StartAnswers(); err != nil {
-		t.Fatal(err)
-	}
-	header := dnsmessage.ResourceHeader{Name: instanceName, Class: dnsmessage.ClassINET, TTL: 120}
-	if err := builder.SRVResource(header, dnsmessage.SRVResource{Port: port, Target: target}); err != nil {
-		t.Fatal(err)
-	}
-	if err := builder.TXTResource(header, dnsmessage.TXTResource{TXT: txt}); err != nil {
-		t.Fatal(err)
-	}
-	packet, err := builder.Finish()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return packet
+	return buildTestDNSResponse(t,
+		[]testChannel{{other, 9999, []string{"id=99", "rate=44100", "enc=16", "nchan=1", "fpp=1,1"}}},
+		[]testChannel{{requested, 4455, []string{"id=7", "rate=48000", "enc=24", "nchan=2", "fpp=32,32"}}},
+	)
 }

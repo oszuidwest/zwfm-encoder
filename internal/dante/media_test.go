@@ -57,21 +57,19 @@ func TestMalformedMediaIsDropped(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name     string
+		bits     uint16
 		datagram []byte
 	}{
-		{name: "short header", datagram: make([]byte, 8)},
-		{name: "partial frame", datagram: append(make([]byte, 9), 1, 2, 3)},
-		{name: "partial 24-bit frame", datagram: append(make([]byte, 9), 1, 2, 3, 4)},
+		{name: "short header", bits: 16, datagram: make([]byte, 8)},
+		{name: "header only", bits: 16, datagram: make([]byte, 9)},
+		{name: "partial frame", bits: 16, datagram: append(make([]byte, 9), 1, 2, 3)},
+		{name: "partial 24-bit frame", bits: 24, datagram: append(make([]byte, 9), 1, 2, 3, 4)},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			var output bytes.Buffer
-			bits := uint16(16)
-			if test.name == "partial 24-bit frame" {
-				bits = 24
-			}
-			processor := newMediaProcessor(bits, &output)
+			processor := newMediaProcessor(test.bits, &output)
 			valid, err := processor.receive(test.datagram, time.Now())
 			if err != nil {
 				t.Fatalf("receive: %v", err)

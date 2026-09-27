@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -24,95 +26,47 @@ type channelInfo struct {
 	nchan   uint16
 	fppMax  uint16
 	fppMin  uint16
-	hasSRV  bool
-	hasTXT  bool
 }
 
 func parseTXT(items []string) (channelInfo, error) {
 	values := make(map[string]string)
 	for _, item := range items {
-		key, value, found := strings.Cut(item, "=")
-		if found {
+		if key, value, found := strings.Cut(item, "="); found {
 			values[key] = value
 		}
-	}
-
-	id, err := parseUint16(values, "id", true)
-	if err != nil {
-		return channelInfo{}, err
-	}
-	rate, err := parseUint32(values, "rate")
-	if err != nil {
-		return channelInfo{}, err
 	}
 	encodingKey := "enc"
 	if _, ok := values[encodingKey]; !ok {
 		encodingKey = "en"
 	}
-	bits, err := parseUint16(values, encodingKey, false)
-	if err != nil {
-		return channelInfo{}, fmt.Errorf("bits per sample: %w", err)
-	}
-	nchan, err := parseUint16(values, "nchan", false)
-	if err != nil {
+	fppMaxText, fppMinText, _ := strings.Cut(values["fpp"], ",")
+
+	id, idErr := parseTXTNumber[uint16]("id", values["id"])
+	rate, rateErr := parseTXTNumber[uint32]("rate", values["rate"])
+	bits, bitsErr := parseTXTNumber[uint16](encodingKey, values[encodingKey])
+	nchan, nchanErr := parseTXTNumber[uint16]("nchan", values["nchan"])
+	fppMax, fppMaxErr := parseTXTNumber[uint16]("fpp maximum", fppMaxText)
+	fppMin, fppMinErr := parseTXTNumber[uint16]("fpp minimum", fppMinText)
+	if err := errors.Join(idErr, rateErr, bitsErr, nchanErr, fppMaxErr, fppMinErr); err != nil {
 		return channelInfo{}, err
 	}
-
-	fppValue, ok := values["fpp"]
-	if !ok {
-		return channelInfo{}, errors.New("missing TXT key \"fpp\"")
+	if fppMax == 0 || fppMin == 0 {
+		return channelInfo{}, fmt.Errorf("invalid TXT fpp %q", values["fpp"])
 	}
-	fppParts := strings.Split(fppValue, ",")
-	if len(fppParts) != 2 {
-		return channelInfo{}, fmt.Errorf("invalid TXT fpp %q", fppValue)
-	}
-	fppMaxValue, err := strconv.ParseUint(fppParts[0], 10, 16)
-	if err != nil || fppMaxValue == 0 {
-		return channelInfo{}, fmt.Errorf("invalid TXT fpp maximum %q", fppParts[0])
-	}
-	fppMinValue, err := strconv.ParseUint(fppParts[1], 10, 16)
-	if err != nil || fppMinValue == 0 {
-		return channelInfo{}, fmt.Errorf("invalid TXT fpp minimum %q", fppParts[1])
-	}
-
-	return channelInfo{
-		id:     id,
-		rate:   rate,
-		bits:   bits,
-		nchan:  nchan,
-		fppMax: uint16(fppMaxValue),
-		fppMin: uint16(fppMinValue),
-		hasTXT: true,
-	}, nil
+	return channelInfo{id: id, rate: rate, bits: bits, nchan: nchan, fppMax: fppMax, fppMin: fppMin}, nil
 }
 
-func parseUint16(values map[string]string, key string, allowHex bool) (uint16, error) {
-	value, ok := values[key]
-	if !ok {
-		return 0, fmt.Errorf("missing TXT key %q", key)
+// parseTXTNumber parses a decimal or 0x-prefixed hexadecimal TXT value that fits in T.
+func parseTXTNumber[T uint16 | uint32](key, value string) (T, error) {
+	digits, base := value, 10
+	if hex, ok := strings.CutPrefix(strings.ToLower(value), "0x"); ok {
+		digits, base = hex, 16
 	}
-	base := 10
-	if allowHex && (strings.HasPrefix(value, "0x") || strings.HasPrefix(value, "0X")) {
-		base = 16
-		value = value[2:]
-	}
-	parsed, err := strconv.ParseUint(value, base, 16)
-	if err != nil {
+	parsed, err := strconv.ParseUint(digits, base, 64)
+	if err != nil || parsed > uint64(^T(0)) {
 		return 0, fmt.Errorf("invalid TXT %s %q", key, value)
 	}
-	return uint16(parsed), nil
-}
-
-func parseUint32(values map[string]string, key string) (uint32, error) {
-	value, ok := values[key]
-	if !ok {
-		return 0, fmt.Errorf("missing TXT key %q", key)
-	}
-	parsed, err := strconv.ParseUint(value, 10, 32)
-	if err != nil {
-		return 0, fmt.Errorf("invalid TXT %s %q", key, value)
-	}
-	return uint32(parsed), nil
+	return T(parsed), nil
 }
 
 func buildDNSQuery(instance string) ([]byte, error) {
@@ -150,12 +104,26 @@ func parseDNSResponse(packet []byte, requested string) (uint16, *channelInfo, er
 		return 0, nil, fmt.Errorf("parse DNS questions: %w", err)
 	}
 
+	resources, err := parser.AllAnswers()
+	if err != nil {
+		return 0, nil, fmt.Errorf("parse DNS answers: %w", err)
+	}
+	if err := parser.SkipAllAuthorities(); err != nil {
+		return 0, nil, fmt.Errorf("parse DNS authorities: %w", err)
+	}
+	additionals, err := parser.AllAdditionals()
+	if err != nil {
+		return 0, nil, fmt.Errorf("parse DNS additionals: %w", err)
+	}
+
 	var port uint16
 	var txt *channelInfo
 	var txtErr error
-	handle := func(resource dnsmessage.Resource) {
+	resources = append(resources, additionals...)
+	for index := range resources {
+		resource := &resources[index]
 		if !strings.EqualFold(resource.Header.Name.String(), requested) {
-			return
+			continue
 		}
 		switch body := resource.Body.(type) {
 		case *dnsmessage.SRVResource:
@@ -164,34 +132,10 @@ func parseDNSResponse(packet []byte, requested string) (uint16, *channelInfo, er
 			parsed, err := parseTXT(body.TXT)
 			if err != nil {
 				txtErr = fmt.Errorf("invalid TXT record for %q: %w", requested, err)
-				return
+				continue
 			}
 			txt = &parsed
 		}
-	}
-
-	for {
-		resource, err := parser.Answer()
-		if errors.Is(err, dnsmessage.ErrSectionDone) {
-			break
-		}
-		if err != nil {
-			return 0, nil, fmt.Errorf("parse DNS answer: %w", err)
-		}
-		handle(resource)
-	}
-	if err := parser.SkipAllAuthorities(); err != nil {
-		return 0, nil, fmt.Errorf("parse DNS authorities: %w", err)
-	}
-	for {
-		resource, err := parser.Additional()
-		if errors.Is(err, dnsmessage.ErrSectionDone) {
-			break
-		}
-		if err != nil {
-			return 0, nil, fmt.Errorf("parse DNS additional: %w", err)
-		}
-		handle(resource)
 	}
 	if txt == nil && txtErr != nil {
 		return port, nil, txtErr
@@ -200,46 +144,38 @@ func parseDNSResponse(packet []byte, requested string) (uint16, *channelInfo, er
 }
 
 func discoveryInterfaces(interfaceID string) ([]net.Interface, error) {
-	interfaces := make([]net.Interface, 0)
 	if interfaceID != "" {
 		iface, err := net.InterfaceByName(interfaceID)
+		if err == nil {
+			err = checkDiscoveryInterface(iface)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("network interface %q: %w", interfaceID, err)
 		}
-		interfaces = append(interfaces, *iface)
-	} else {
-		available, err := net.Interfaces()
-		if err != nil {
-			return nil, fmt.Errorf("list network interfaces: %w", err)
-		}
-		interfaces = available
+		return []net.Interface{*iface}, nil
 	}
 
-	usable := make([]net.Interface, 0, len(interfaces))
-	for index := range interfaces {
-		iface := interfaces[index]
-		validFlags := iface.Flags&net.FlagUp != 0 && iface.Flags&net.FlagMulticast != 0
-		if !validFlags || iface.Flags&net.FlagLoopback != 0 {
-			if interfaceID != "" {
-				return nil, fmt.Errorf(
-					"network interface %q must be up, multicast-capable, and non-loopback",
-					interfaceID,
-				)
-			}
-			continue
-		}
-		if _, err := firstIPv4Address(&iface); err != nil {
-			if interfaceID != "" {
-				return nil, fmt.Errorf("network interface %q: %w", interfaceID, err)
-			}
-			continue
-		}
-		usable = append(usable, iface)
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil, fmt.Errorf("list network interfaces: %w", err)
 	}
+	usable := slices.DeleteFunc(interfaces, func(iface net.Interface) bool {
+		return checkDiscoveryInterface(&iface) != nil
+	})
 	if len(usable) == 0 {
 		return nil, errors.New("no up, multicast-capable network interface with a non-loopback IPv4 address")
 	}
 	return usable, nil
+}
+
+// checkDiscoveryInterface returns why iface cannot carry discovery, or nil.
+func checkDiscoveryInterface(iface *net.Interface) error {
+	const required = net.FlagUp | net.FlagMulticast
+	if iface.Flags&required != required || iface.Flags&net.FlagLoopback != 0 {
+		return errors.New("must be up, multicast-capable, and non-loopback")
+	}
+	_, err := firstIPv4Address(iface)
+	return err
 }
 
 func firstIPv4Address(iface *net.Interface) (net.IP, error) {
@@ -254,25 +190,19 @@ func firstIPv4Address(iface *net.Interface) (net.IP, error) {
 		}
 		ip := network.IP.To4()
 		if ip != nil && !ip.IsLoopback() {
-			return append(net.IP(nil), ip...), nil
+			return ip, nil
 		}
 	}
 	return nil, errors.New("no non-loopback IPv4 address")
 }
 
-func discoverChannel(
-	ctx context.Context,
-	interfaces []net.Interface,
-	transmitter string,
-	channel string,
-	requiredSource net.IP,
-) (channelInfo, error) {
+func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitter, channel string, requiredSource net.IP) (channelInfo, error) {
 	instance := channel + "@" + transmitter + serviceSuffix
 	query, err := buildDNSQuery(instance)
 	if err != nil {
 		return channelInfo{}, err
 	}
-	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero})
 	if err != nil {
 		return channelInfo{}, fmt.Errorf("open discovery socket: %w", err)
 	}
@@ -324,20 +254,13 @@ func discoverChannel(
 				}
 				return channelInfo{}, fmt.Errorf("discover channel %q: %w", channel, lookupErr)
 			}
-			var networkError net.Error
-			if errors.As(err, &networkError) && networkError.Timeout() {
+			if errors.Is(err, os.ErrDeadlineExceeded) {
 				continue
 			}
 			return channelInfo{}, fmt.Errorf("receive discovery response for %q: %w", channel, err)
 		}
 
-		complete, parseErr := mergeDiscoveryResponse(
-			&info,
-			buffer[:n],
-			source.IP,
-			instance,
-			requiredSource,
-		)
+		complete, parseErr := mergeDiscoveryResponse(&info, buffer[:n], source.IP, instance, requiredSource)
 		if parseErr != nil {
 			lastParseErr = parseErr
 			continue
@@ -348,41 +271,26 @@ func discoverChannel(
 	}
 }
 
-func sendDiscoveryQuery(
-	conn *ipv4.PacketConn,
-	interfaces []net.Interface,
-	query []byte,
-	destination *net.UDPAddr,
-) error {
-	var lastErr error
-	sent := false
+// sendDiscoveryQuery sends query on every interface and fails only when no
+// interface could send it.
+func sendDiscoveryQuery(conn *ipv4.PacketConn, interfaces []net.Interface, query []byte, destination *net.UDPAddr) error {
+	var errs []error
 	for index := range interfaces {
-		if err := conn.SetMulticastInterface(&interfaces[index]); err != nil {
-			lastErr = err
-			continue
+		err := conn.SetMulticastInterface(&interfaces[index])
+		if err == nil {
+			_, err = conn.WriteTo(query, nil, destination)
 		}
-		if _, err := conn.WriteTo(query, nil, destination); err != nil {
-			lastErr = err
-			continue
+		if err != nil {
+			errs = append(errs, err)
 		}
-		sent = true
 	}
-	if sent {
-		return nil
+	if len(errs) == len(interfaces) {
+		return errors.Join(errs...)
 	}
-	if lastErr != nil {
-		return lastErr
-	}
-	return errors.New("no discovery interfaces")
+	return nil
 }
 
-func mergeDiscoveryResponse(
-	info *channelInfo,
-	packet []byte,
-	source net.IP,
-	requested string,
-	requiredSource net.IP,
-) (bool, error) {
+func mergeDiscoveryResponse(info *channelInfo, packet []byte, source net.IP, requested string, requiredSource net.IP) (bool, error) {
 	source = source.To4()
 	if source == nil {
 		return false, nil
@@ -402,16 +310,15 @@ func mergeDiscoveryResponse(
 		return false, nil
 	}
 	if info.address == nil {
-		info.address = append(net.IP(nil), source...)
+		info.address = source
 	}
 	if port != 0 {
 		info.port = port
-		info.hasSRV = true
 	}
 	if txt != nil {
-		address, savedPort, hasSRV := info.address, info.port, info.hasSRV
+		txt.address, txt.port = info.address, info.port
 		*info = *txt
-		info.address, info.port, info.hasSRV = address, savedPort, hasSRV
 	}
-	return info.hasSRV && info.hasTXT, nil
+	// A port comes from SRV; parseTXT guarantees a non-zero fppMax.
+	return info.port != 0 && info.fppMax != 0, nil
 }
