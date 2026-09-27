@@ -14,12 +14,20 @@ func TestListenerQueueBuffersTargetDurationWithinBounds(t *testing.T) {
 		codec   types.Codec
 		bitrate int
 	}{
+		// PCM uses the s302m rate, not raw capture bytes.
+		// PCM: ceil(240000 B/s * 2s / 4096) = 118 chunks.
 		{name: "pcm", codec: types.CodecPCM},
+		// Opus default lands exactly on the floor.
 		{name: "opus default", codec: types.CodecOpus},
+		// Opus 256k: ceil(32000 B/s * 2s / 4096) = 16 chunks.
 		{name: "opus maximum", codec: types.CodecOpus, bitrate: 256},
+		// MP3 default: ceil(40000 B/s * 2s / 4096) = 20 chunks.
 		{name: "mp3 default", codec: types.CodecMP3},
+		// MP3 64k computes below the floor.
 		{name: "mp3 minimum", codec: types.CodecMP3, bitrate: 64},
 	}
+	// Compressed codecs use kbit/s * 1000 / 8.
+	// Queue sizing remains clamped between the minimum and maximum chunk counts.
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()

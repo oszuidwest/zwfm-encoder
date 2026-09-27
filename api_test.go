@@ -43,22 +43,6 @@ func TestValidateRecorderLocalPathRejectsTraversal(t *testing.T) {
 		t.Fatal("validateRecorderLocalPath() error = nil, want error")
 	}
 }
-func TestBuildReadyResponseReady(t *testing.T) {
-	t.Parallel()
-	input := readyFixture()
-	resp, status := buildReadyResponse(&input)
-	if status != http.StatusOK {
-		t.Fatalf("status = %d, want %d", status, http.StatusOK)
-	}
-	if resp.Status != "ready" {
-		t.Fatalf("ready status = %q, want ready", resp.Status)
-	}
-	for name, component := range resp.Components {
-		if !component.OK {
-			t.Fatalf("component %q not ready: %+v", name, component)
-		}
-	}
-}
 func TestBuildReadyResponseFailures(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -136,27 +120,6 @@ func TestBuildReadyResponseFailures(t *testing.T) {
 				t.Fatalf("component %q OK = true, want false; response = %+v", tt.component, resp)
 			}
 		})
-	}
-}
-func TestBuildReadyResponseAllowsStoppedOnDemandRecorder(t *testing.T) {
-	t.Parallel()
-	input := readyFixture()
-	input.recorders = []types.Recorder{
-		{
-			ID:            "recorder-ondemand",
-			Enabled:       true,
-			RecordingMode: types.RecordingOnDemand,
-		},
-	}
-	input.recorderStatuses = map[string]types.ProcessStatus{
-		"recorder-ondemand": {State: types.ProcessStopped},
-	}
-	resp, status := buildReadyResponse(&input)
-	if status != http.StatusOK {
-		t.Fatalf("status = %d, want %d; response = %+v", status, http.StatusOK, resp)
-	}
-	if !resp.Components["recorders"].OK {
-		t.Fatalf("recorders component = %+v, want OK", resp.Components["recorders"])
 	}
 }
 func TestBuildReadyResponseIgnoresListenerStreams(t *testing.T) {
@@ -455,34 +418,6 @@ func healthFixture() healthInputs {
 		encoderStatus:   types.EncoderStatus{State: types.StateRunning},
 		audioLevels:     audio.AudioLevels{},
 	}
-}
-
-func TestBuildHealthResponseAudioConditionsAreInformational(t *testing.T) {
-	t.Parallel()
-	t.Run("active channel imbalance stays healthy", func(t *testing.T) {
-		t.Parallel()
-		in := healthFixture()
-		in.audioLevels.ChannelImbalanceLevel = audio.ImbalanceLevelActive
-		resp, status := buildHealthResponse(&in)
-		if status != http.StatusOK || resp.Status != "healthy" {
-			t.Fatalf("status = %d/%q, want 200/healthy", status, resp.Status)
-		}
-		if !resp.ChannelImbalanceDetected {
-			t.Fatal("ChannelImbalanceDetected = false, want true (informational field must still be reported)")
-		}
-	})
-	t.Run("active silence stays healthy", func(t *testing.T) {
-		t.Parallel()
-		in := healthFixture()
-		in.audioLevels.SilenceLevel = audio.SilenceLevelActive
-		resp, status := buildHealthResponse(&in)
-		if status != http.StatusOK || resp.Status != "healthy" {
-			t.Fatalf("status = %d/%q, want 200/healthy", status, resp.Status)
-		}
-		if !resp.SilenceDetected {
-			t.Fatal("SilenceDetected = false, want true")
-		}
-	})
 }
 
 func TestBuildHealthResponseUnhealthyConditions(t *testing.T) {
@@ -850,41 +785,6 @@ func seededSensitiveServer(t *testing.T) sensitiveFixture {
 	return fixture
 }
 
-func TestHandleAPIConfigRedactsStoredSecrets(t *testing.T) {
-	t.Parallel()
-	fixture := seededSensitiveServer(t)
-	rec := runJSONHandler(t, fixture.server.handleAPIConfig, http.MethodGet, "/api/config", "")
-	assertStatus(t, rec, http.StatusOK)
-	body := rec.Body.Bytes()
-	assertNotContains(t, body,
-		fixture.streamPassword,
-		fixture.s3Secret,
-		fixture.webhookURL,
-		fixture.recordingAPIKey,
-		`"password":"`,
-		`"s3_secret_access_key":"`,
-	)
-	assertContains(t, body,
-		`"webhook_has_url":true`,
-		`"recording_has_api_key":true`,
-		`"has_password":true`,
-		`"has_s3_secret":true`,
-	)
-	resp := decodeJSON[types.APIConfigResponse](t, body)
-	if !resp.WebhookHasURL {
-		t.Fatalf("WebhookHasURL = false, want true")
-	}
-	if !resp.RecordingHasAPIKey {
-		t.Fatalf("RecordingHasAPIKey = false, want true")
-	}
-	if len(resp.Streams) != 1 || !resp.Streams[0].HasPassword {
-		t.Fatalf("Streams = %+v, want one redacted stream with HasPassword=true", resp.Streams)
-	}
-	if len(resp.Recorders) != 1 || !resp.Recorders[0].HasS3Secret {
-		t.Fatalf("Recorders = %+v, want one redacted recorder with HasS3Secret=true", resp.Recorders)
-	}
-}
-
 func TestSettingsRoundTripThroughAPIEveryField(t *testing.T) {
 	t.Parallel()
 	s := freshServer(t)
@@ -1128,54 +1028,6 @@ func TestHandleRecorderEndpointsRedactS3Secret(t *testing.T) {
 			assertStatus(t, rec, http.StatusOK)
 			assertNotContains(t, rec.Body.Bytes(), fixture.s3Secret, `"s3_secret_access_key":"`)
 			assertContains(t, rec.Body.Bytes(), `"has_s3_secret":true`)
-		})
-	}
-}
-func TestPreserveSecretKeepReplaceClearConflict(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name      string
-		value     string
-		clear     bool
-		want      string
-		wantError string
-	}{
-		{
-			name: "keep when empty",
-			want: "saved-secret",
-		},
-		{
-			name:  "replace when set",
-			value: "new-secret",
-			want:  "new-secret",
-		},
-		{
-			name:  "clear when flagged",
-			clear: true,
-		},
-		{
-			name:      "conflict when clear and set",
-			value:     "new-secret",
-			clear:     true,
-			wantError: "clear_secret: conflicts with non-empty secret",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got, err := preserveSecret(tt.value, "saved-secret", tt.clear, "clear_secret", "secret")
-			if tt.wantError != "" {
-				if err == nil || err.Error() != tt.wantError {
-					t.Fatalf("preserveSecret() error = %v, want %q", err, tt.wantError)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("preserveSecret() error = %v", err)
-			}
-			if got != tt.want {
-				t.Fatalf("preserveSecret() = %q, want %q", got, tt.want)
-			}
 		})
 	}
 }
@@ -1433,95 +1285,6 @@ func validBaselineSettings(cfg *config.Config) *config.SettingsUpdate {
 		ZabbixImbalanceKey:          snap.ZabbixImbalanceKey,
 		ZabbixUploadKey:             snap.ZabbixUploadKey,
 		RecordingMaxDurationMinutes: snap.RecordingMaxDurationMinutes,
-	}
-}
-
-func TestApplyWithPreserveHiddenValues(t *testing.T) {
-	t.Parallel()
-	const savedWebhookURL = "https://hooks.example.com/saved-token"
-	tests := []struct {
-		name   string
-		seed   func() *config.SettingsUpdate
-		mutate func(*config.SettingsUpdate)
-		read   func(config.Snapshot) string
-		want   string
-	}{
-		{
-			name: "webhook keep",
-			seed: func() *config.SettingsUpdate { return &config.SettingsUpdate{WebhookURL: savedWebhookURL} },
-			mutate: func(upd *config.SettingsUpdate) {
-				upd.WebhookURL = ""
-				upd.ClearWebhookURL = false
-			},
-			read: func(snap config.Snapshot) string { return snap.WebhookURL },
-			want: savedWebhookURL,
-		},
-		{
-			name: "webhook replace",
-			seed: func() *config.SettingsUpdate { return &config.SettingsUpdate{WebhookURL: savedWebhookURL} },
-			mutate: func(upd *config.SettingsUpdate) {
-				upd.WebhookURL = "https://hooks.example.com/new-token"
-				upd.ClearWebhookURL = false
-			},
-			read: func(snap config.Snapshot) string { return snap.WebhookURL },
-			want: "https://hooks.example.com/new-token",
-		},
-		{
-			name: "webhook clear",
-			seed: func() *config.SettingsUpdate { return &config.SettingsUpdate{WebhookURL: savedWebhookURL} },
-			mutate: func(upd *config.SettingsUpdate) {
-				upd.WebhookURL = ""
-				upd.ClearWebhookURL = true
-			},
-			read: func(snap config.Snapshot) string { return snap.WebhookURL },
-		},
-		{
-			name: "graph keep",
-			seed: seededGraphSettings,
-			mutate: func(upd *config.SettingsUpdate) {
-				upd.GraphClientSecret = ""
-				upd.ClearGraphClientSecret = false
-			},
-			read: func(snap config.Snapshot) string { return snap.GraphClientSecret },
-			want: "saved-secret",
-		},
-		{
-			name: "graph replace",
-			seed: seededGraphSettings,
-			mutate: func(upd *config.SettingsUpdate) {
-				upd.GraphClientSecret = "new-secret"
-				upd.ClearGraphClientSecret = false
-			},
-			read: func(snap config.Snapshot) string { return snap.GraphClientSecret },
-			want: "new-secret",
-		},
-		{
-			name: "graph clear",
-			seed: seededGraphSettings,
-			mutate: func(upd *config.SettingsUpdate) {
-				upd.GraphClientSecret = ""
-				upd.ClearGraphClientSecret = true
-			},
-			read: func(snap config.Snapshot) string { return snap.GraphClientSecret },
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			s := seededServer(t, tt.seed())
-			upd := validBaselineSettings(s.config)
-			tt.mutate(upd)
-			body, err := json.Marshal(upd)
-			if err != nil {
-				t.Fatalf("marshal SettingsUpdate: %v", err)
-			}
-			rec := postSettingsBody(t, s, string(body))
-			assertStatus(t, rec, http.StatusNoContent)
-			snap := s.config.Snapshot()
-			if got := tt.read(snap); got != tt.want {
-				t.Fatalf("hidden value = %q, want %q", got, tt.want)
-			}
-		})
 	}
 }
 

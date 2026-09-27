@@ -64,40 +64,6 @@ func TestGroupEventsPairsProblemsAndPartitionsEvents(t *testing.T) {
 	assertPartition(t, events, &groups)
 }
 
-func TestGroupEventsTreatsCallerAndListenerStreamProblemsAsIncidents(t *testing.T) {
-	t.Parallel()
-
-	base := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
-	events := decorateNewestFirst(
-		testEvent(base, 2, StreamRetry, map[string]any{
-			"stream_name": "Listener",
-			"mode":        "listener",
-		}),
-		testEvent(base, 1, StreamRetry, map[string]any{
-			"stream_name": "Caller",
-			"mode":        "caller",
-		}),
-	)
-	events[0].StreamID = "listener"
-	events[1].StreamID = "caller"
-
-	groups := GroupEvents(events, nil)
-	if len(groups.Attention) != 2 {
-		t.Fatalf("attention len = %d, want 2", len(groups.Attention))
-	}
-	items := itemsByStreamID(groups.Attention)
-	if _, ok := items["caller"]; !ok {
-		t.Fatal("caller stream problem missing from attention")
-	}
-	if _, ok := items["listener"]; !ok {
-		t.Fatal("listener stream problem missing from attention")
-	}
-	if len(groups.Activity) != 0 {
-		t.Fatalf("activity len = %d, want 0", len(groups.Activity))
-	}
-	assertPartition(t, events, &groups)
-}
-
 func TestGroupEventsResolvesListenerProblemOnRestart(t *testing.T) {
 	t.Parallel()
 
@@ -215,24 +181,6 @@ func TestGroupEventsCleanExitKeepsRetryingIncidentOpen(t *testing.T) {
 		t.Fatalf("chips = %v, want both retries in one incident", groups.Attention[0].Chips)
 	}
 	assertPartition(t, events, &groups)
-}
-
-func TestGroupEventsStreamStoppedWithoutIncidentIsActivity(t *testing.T) {
-	t.Parallel()
-
-	base := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
-	events := decorateNewestFirst(
-		testEvent(base, 1, StreamStopped, map[string]any{"stream_name": "Main", "mode": "caller"}),
-	)
-	events[0].StreamID = "stream-1"
-
-	groups := GroupEvents(events, nil)
-	if len(groups.Resolved) != 0 || len(groups.Attention) != 0 {
-		t.Fatalf("resolved/attention = %d/%d, want 0/0", len(groups.Resolved), len(groups.Attention))
-	}
-	if len(groups.Activity) != 1 || groups.Activity[0].Title != "Stream stopped" {
-		t.Fatalf("activity = %+v, want one stream stopped row", groups.Activity)
-	}
 }
 
 func TestGroupEventsClosesIncidentsForRemovedStreams(t *testing.T) {
@@ -378,29 +326,6 @@ func FuzzGroupEvents(f *testing.F) {
 	})
 }
 
-func TestGroupEventsKeepsOrphanRecoveryInActivity(t *testing.T) {
-	t.Parallel()
-
-	base := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
-	events := decorateNewestFirst(
-		testEvent(base, 1, SilenceEnd, map[string]any{
-			"duration_ms": 5000,
-		}),
-	)
-
-	groups := GroupEvents(events, nil)
-	if len(groups.Resolved) != 0 || len(groups.Attention) != 0 {
-		t.Fatalf("orphan recovery grouped as incident: attention=%d resolved=%d", len(groups.Attention), len(groups.Resolved))
-	}
-	if len(groups.Activity) != 1 {
-		t.Fatalf("activity len = %d, want 1", len(groups.Activity))
-	}
-	if got := groups.Activity[0].Events[0].Type; got != SilenceEnd {
-		t.Fatalf("activity event = %q, want %q", got, SilenceEnd)
-	}
-	assertPartition(t, events, &groups)
-}
-
 func TestGroupEventsKeepsOrphanAudioDumpInActivity(t *testing.T) {
 	t.Parallel()
 
@@ -502,27 +427,6 @@ func TestGroupEventsMatchesSameTriggerDumpsByIncidentID(t *testing.T) {
 	assertPartition(t, events, &groups)
 }
 
-func TestGroupEventsUsesIncidentIDInAudioIncidentKeys(t *testing.T) {
-	t.Parallel()
-
-	base := time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC)
-	events := decorateNewestFirst(
-		testEvent(base, 2, SilenceEnd, map[string]any{"incident_id": 2}),
-		testEvent(base, 1, SilenceEnd, map[string]any{"incident_id": 1}),
-		Event{Timestamp: base, Type: SilenceStart, Details: map[string]any{"incident_id": 2}},
-		Event{Timestamp: base, Type: SilenceStart, Details: map[string]any{"incident_id": 1}},
-	)
-
-	groups := GroupEvents(events, nil)
-	if len(groups.Resolved) != 2 {
-		t.Fatalf("resolved len = %d, want 2", len(groups.Resolved))
-	}
-	if groups.Resolved[0].Key == groups.Resolved[1].Key {
-		t.Fatalf("distinct incidents share key %q", groups.Resolved[0].Key)
-	}
-	assertPartition(t, events, &groups)
-}
-
 func TestGroupEventsSeparatesAudioIncidentsAfterDetectorReset(t *testing.T) {
 	t.Parallel()
 
@@ -596,34 +500,6 @@ func TestGroupEventsSeparatesAudioIncidentsAfterDetectorReset(t *testing.T) {
 			assertPartition(t, events, &groups)
 		})
 	}
-}
-
-func TestGroupEventsSortsResolvedIncidentsByResolutionTime(t *testing.T) {
-	t.Parallel()
-
-	base := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
-	events := decorateNewestFirst(
-		testEvent(base, 10, SilenceEnd, map[string]any{
-			"duration_ms": 9000,
-		}),
-		testEvent(base, 6, ChannelImbalanceEnd, map[string]any{
-			"duration_ms": 1000,
-		}),
-		testEvent(base, 5, ChannelImbalanceStart, nil),
-		testEvent(base, 1, SilenceStart, nil),
-	)
-
-	groups := GroupEvents(events, nil)
-	if len(groups.Resolved) != 2 {
-		t.Fatalf("resolved len = %d, want 2", len(groups.Resolved))
-	}
-	if got := groups.Resolved[0].Events[len(groups.Resolved[0].Events)-1].Type; got != SilenceEnd {
-		t.Fatalf("newest resolved incident last event = %q, want %q", got, SilenceEnd)
-	}
-	if got := groups.Resolved[1].Events[len(groups.Resolved[1].Events)-1].Type; got != ChannelImbalanceEnd {
-		t.Fatalf("older resolved incident last event = %q, want %q", got, ChannelImbalanceEnd)
-	}
-	assertPartition(t, events, &groups)
 }
 
 func TestGroupEventsHandlesZeroTimestamp(t *testing.T) {

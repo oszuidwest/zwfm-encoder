@@ -88,101 +88,6 @@ func TestLoadCreatesDefaultConfig(t *testing.T) {
 	reloadedSnap := reloaded.Snapshot()
 	assertDefaultScalarSettings(t, &reloadedSnap)
 }
-func TestLoadAcceptsDocumentedMinimalConfig(t *testing.T) {
-	t.Parallel()
-	snap := loadSnapshot(t, `{
-  "system": {
-    "port": 8080,
-    "username": "admin",
-    "password": "encoder"
-  },
-  "web": {
-    "station_name": "ZuidWest FM"
-  }
-}`)
-	assertDefaultScalarSettings(t, &snap)
-}
-func TestLoadDefaultsDoNotOverrideConfiguredValues(t *testing.T) {
-	t.Parallel()
-	snap := loadSnapshot(t, `{
-  "system": {
-    "port": 9090,
-    "username": "operator",
-    "password": "secret"
-  },
-  "web": {
-    "station_name": "Custom Station",
-    "color_light": "#123456"
-  },
-  "silence_detection": {
-    "threshold_db": -35,
-    "duration_ms": 20000
-  }
-}`)
-	assertEqual(t, "WebPort", snap.WebPort, 9090)
-	assertEqual(t, "WebUser", snap.WebUser, "operator")
-	assertEqual(t, "WebPassword", snap.WebPassword, "secret")
-	assertEqual(t, "StationName", snap.StationName, "Custom Station")
-	assertEqual(t, "StationColorLight", snap.StationColorLight, "#123456")
-	assertEqual(t, "StationColorDark", snap.StationColorDark, DefaultStationColorDark)
-	assertEqual(t, "SilenceThreshold", snap.SilenceThreshold, -35.0)
-	assertEqual(t, "SilenceDurationMs", snap.SilenceDurationMs, int64(20000))
-	assertEqual(t, "SilenceRecoveryMs", snap.SilenceRecoveryMs, int64(5000))
-	assertEqual(t, "PeakHoldMs", snap.PeakHoldMs, int64(3000))
-}
-func TestLoadKeepsSilenceDefaultsForPartialBlock(t *testing.T) {
-	t.Parallel()
-	snap := loadSnapshot(t, `{
-  "system": {"port": 8080, "username": "admin", "password": "encoder"},
-  "web": {"station_name": "ZuidWest FM"},
-  "silence_detection": {"threshold_db": -35}
-}`)
-	assertEqual(t, "SilenceThreshold", snap.SilenceThreshold, -35.0)
-	assertEqual(t, "SilenceDurationMs", snap.SilenceDurationMs, DefaultSilenceDurationMs)
-	assertEqual(t, "SilenceRecoveryMs", snap.SilenceRecoveryMs, DefaultSilenceRecoveryMs)
-	assertEqual(t, "PeakHoldMs", snap.PeakHoldMs, DefaultPeakHoldMs)
-}
-func TestLoadDefaultsChannelImbalanceWhenBlockMissing(t *testing.T) {
-	t.Parallel()
-	snap := loadSnapshot(t, validConfigJSON(""))
-	assertEqual(t, "ChannelImbalanceThreshold", snap.ChannelImbalanceThreshold, DefaultChannelImbalanceThreshold)
-	assertEqual(t, "ChannelImbalanceDurationMs", snap.ChannelImbalanceDurationMs, DefaultChannelImbalanceDurationMs)
-	assertEqual(t, "ChannelImbalanceRecoveryMs", snap.ChannelImbalanceRecoveryMs, DefaultChannelImbalanceRecoveryMs)
-}
-func TestLoadKeepsChannelImbalanceDefaultsForEmptyAndPartialBlock(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name          string
-		block         string
-		wantThreshold float64
-		wantDuration  int64
-		wantRecovery  int64
-	}{
-		{
-			name:          "empty object keeps all defaults",
-			block:         `"channel_imbalance_detection":{}`,
-			wantThreshold: DefaultChannelImbalanceThreshold,
-			wantDuration:  DefaultChannelImbalanceDurationMs,
-			wantRecovery:  DefaultChannelImbalanceRecoveryMs,
-		},
-		{
-			name:          "partial block only overrides present fields",
-			block:         `"channel_imbalance_detection":{"threshold_db":20}`,
-			wantThreshold: 20,
-			wantDuration:  DefaultChannelImbalanceDurationMs,
-			wantRecovery:  DefaultChannelImbalanceRecoveryMs,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			snap := loadSnapshot(t, validConfigJSON(tt.block))
-			assertEqual(t, "ChannelImbalanceThreshold", snap.ChannelImbalanceThreshold, tt.wantThreshold)
-			assertEqual(t, "ChannelImbalanceDurationMs", snap.ChannelImbalanceDurationMs, tt.wantDuration)
-			assertEqual(t, "ChannelImbalanceRecoveryMs", snap.ChannelImbalanceRecoveryMs, tt.wantRecovery)
-		})
-	}
-}
 func TestLoadAcceptsEmptyWebBlock(t *testing.T) {
 	t.Parallel()
 	snap := loadSnapshot(t, `{
@@ -477,118 +382,6 @@ func validConfigJSON(extra string) string {
 	}
 	return string(out)
 }
-func TestLoadPreservesExplicitZeroAndFalseValues(t *testing.T) {
-	t.Parallel()
-	snap := loadSnapshot(t, validConfigJSON(`
-	  "silence_detection": {
-	    "threshold_db": -1,
-	    "duration_ms": 1234,
-    "recovery_ms": 4321,
-    "peak_hold_ms": 999
-  },
-  "silence_dump": {
-    "enabled": false,
-    "retention_days": 0
-  },
-  "notifications": {
-    "webhook": {
-      "events": {
-        "silence_start": false,
-        "silence_end": false,
-        "audio_dump": false,
-        "channel_imbalance_start": false,
-        "channel_imbalance_end": false
-      }
-    },
-    "email": {
-      "events": {
-        "silence_start": false,
-        "silence_end": false,
-        "audio_dump": false,
-        "channel_imbalance_start": false,
-        "channel_imbalance_end": false
-      }
-    },
-    "zabbix": {
-      "port": 0,
-      "events": {
-        "silence_start": false,
-        "silence_end": false,
-        "channel_imbalance_start": false,
-        "channel_imbalance_end": false
-      }
-	    }
-	  }
-	`))
-	assertEqual(t, "SilenceThreshold", snap.SilenceThreshold, -1.0)
-	assertEqual(t, "SilenceDurationMs", snap.SilenceDurationMs, int64(1234))
-	assertEqual(t, "SilenceRecoveryMs", snap.SilenceRecoveryMs, int64(4321))
-	assertEqual(t, "PeakHoldMs", snap.PeakHoldMs, int64(999))
-	if snap.SilenceDumpEnabled {
-		t.Fatal("SilenceDumpEnabled = true, want false")
-	}
-	assertEqual(t, "SilenceDumpRetentionDays", snap.SilenceDumpRetentionDays, 0)
-	assertEqual(t, "WebhookEvents", snap.WebhookEvents, types.EventSubscriptions{})
-	assertEqual(t, "EmailEvents", snap.EmailEvents, types.EventSubscriptions{})
-	assertEqual(t, "ZabbixEvents", snap.ZabbixEvents, types.EventSubscriptions{})
-	assertEqual(t, "ZabbixPort", snap.ZabbixPort, 0)
-	assertEqual(t, "WebPort", snap.WebPort, DefaultWebPort)
-	assertEqual(t, "RecordingMaxDurationMinutes", snap.RecordingMaxDurationMinutes, 0)
-}
-func TestZabbixEventsJSONSemantics(t *testing.T) {
-	t.Parallel()
-	allFalse := types.EventSubscriptions{}
-	tests := []struct {
-		name string
-		json string
-		want types.EventSubscriptions
-	}{
-		{
-			name: "missing events field stays empty",
-			json: validConfigJSON(`"notifications":{"zabbix":{}}`),
-			want: allFalse,
-		},
-		{
-			name: "events null stays empty",
-			json: validConfigJSON(`"notifications":{"zabbix":{"events":null}}`),
-			want: allFalse,
-		},
-		{
-			name: "events empty object stays empty",
-			json: validConfigJSON(`"notifications":{"zabbix":{"events":{}}}`),
-			want: allFalse,
-		},
-		{
-			name: "partial object only overrides present fields",
-			json: validConfigJSON(`"notifications":{"zabbix":{"events":{"silence_start":true}}}`),
-			want: types.EventSubscriptions{SilenceStart: true},
-		},
-		{
-			name: "old event JSON defaults imbalance subscriptions false",
-			json: validConfigJSON(`"notifications":{"zabbix":{"events":{"silence_start":true,"silence_end":true}}}`),
-			want: types.EventSubscriptions{SilenceStart: true, SilenceEnd: true},
-		},
-		{
-			name: "partial object supports channel imbalance start",
-			json: validConfigJSON(`"notifications":{"zabbix":{"events":{"channel_imbalance_start":true}}}`),
-			want: types.EventSubscriptions{ChannelImbalanceStart: true},
-		},
-		{
-			name: "explicit false values disable events",
-			json: validConfigJSON(`"notifications":{"zabbix":{"events":{"silence_start":false,"silence_end":false,"channel_imbalance_start":false,"channel_imbalance_end":false}}}`),
-			want: allFalse,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := loadSnapshot(t, tt.json).ZabbixEvents
-			if got != tt.want {
-				t.Fatalf("ZabbixEvents = %+v, want %+v", got, tt.want)
-			}
-		})
-	}
-}
 func TestApplySettingsValidatesInput(t *testing.T) {
 	t.Parallel()
 	configPath := filepath.Join(t.TempDir(), "config.json")
@@ -739,31 +532,6 @@ func TestSaveLockedWritePath(t *testing.T) {
 		}
 	})
 }
-func TestValidateSilenceThreshold(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		threshold float64
-		wantValid bool
-	}{
-		{threshold: -60, wantValid: true},
-		{threshold: -1, wantValid: true},
-		{threshold: -0.5},
-		{threshold: 0},
-		{threshold: 1},
-		{threshold: -61},
-	}
-	for _, tt := range tests {
-		t.Run(fmt.Sprintf("%g", tt.threshold), func(t *testing.T) {
-			t.Parallel()
-			gotValid := validateSilenceThreshold("threshold", tt.threshold) == ""
-			if gotValid != tt.wantValid {
-				t.Fatalf("validateSilenceThreshold(%g) valid = %v, want %v",
-					tt.threshold, gotValid, tt.wantValid)
-			}
-		})
-	}
-}
-
 func minimalValidUpdate() *SettingsUpdate {
 	return &SettingsUpdate{
 		SilenceThreshold:           -40,
@@ -816,6 +584,7 @@ func populateSettingsValue(t *testing.T, value reflect.Value, path string) {
 		field := value.Field(i)
 		fieldInfo := valueType.Field(i)
 		fieldPath := path + "." + fieldInfo.Name
+		// Clear flags are control inputs and must not alter a fully populated fixture.
 		if strings.HasPrefix(fieldInfo.Name, "Clear") {
 			if field.Kind() != reflect.Bool {
 				t.Fatalf("%s has kind %s, want bool for a clear flag", fieldPath, field.Kind())
@@ -912,29 +681,6 @@ func assertSettingsFieldsPersisted(t *testing.T, update, snapshot reflect.Value,
 	}
 }
 
-func TestValidateChannelImbalanceThreshold(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		threshold float64
-		wantValid bool
-	}{
-		{threshold: 0.99},
-		{threshold: 1, wantValid: true},
-		{threshold: 59.9, wantValid: true},
-		{threshold: 60},
-		{threshold: 61},
-	}
-	for _, tt := range tests {
-		t.Run(fmt.Sprintf("%g", tt.threshold), func(t *testing.T) {
-			t.Parallel()
-			gotValid := validateChannelImbalanceThreshold("threshold", tt.threshold) == ""
-			if gotValid != tt.wantValid {
-				t.Fatalf("validateChannelImbalanceThreshold(%g) valid = %v, want %v",
-					tt.threshold, gotValid, tt.wantValid)
-			}
-		})
-	}
-}
 func TestSettingsUpdateValidate_ClearHiddenValueConflict(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

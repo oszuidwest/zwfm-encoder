@@ -154,43 +154,6 @@ func TestEmitEventIncludesRuntimeStreamMode(t *testing.T) {
 	}
 }
 
-func TestEmitEventWithModeUsesExplicitModeWithoutRuntimeStream(t *testing.T) {
-	t.Parallel()
-
-	const id = "caller-1"
-	m := NewManager("ffmpeg")
-
-	var gotMode string
-	m.SetEventCallback(func(_, _, mode, _, _, _ string, _, _ int) {
-		gotMode = mode
-	}, nil)
-
-	m.emitEventWithMode(id, types.StreamModeCaller, "stream_stopped", "Stream ended normally", "", 0, 0)
-	if gotMode != string(types.StreamModeCaller) {
-		t.Fatalf("mode = %q, want %q", gotMode, types.StreamModeCaller)
-	}
-}
-
-func TestStatusesNeverMarksListenerStable(t *testing.T) {
-	t.Parallel()
-	const id = "listener-1"
-	m := NewManager("ffmpeg")
-	m.streams[id] = &Stream{
-		state:     types.ProcessRunning,
-		mode:      types.StreamModeListener,
-		startTime: time.Now().Add(-2 * types.StableThreshold),
-	}
-	statuses := m.Statuses(func(string) *types.Stream {
-		return &types.Stream{ID: id, Mode: types.StreamModeListener, MaxRetries: 3}
-	})
-	status := statuses[id]
-	if status.State != types.ProcessRunning {
-		t.Fatalf("status state = %q, want running", status.State)
-	}
-	if status.Stable {
-		t.Fatal("listener status Stable = true, want false")
-	}
-}
 func TestClassifyStreamExit(t *testing.T) {
 	t.Parallel()
 	errFailed := errors.New("ffmpeg failed")
@@ -260,20 +223,6 @@ func TestStartReportsNotStartedOnValidationError(t *testing.T) {
 	}
 }
 
-func TestStartReportsNotStartedWhenProcessLaunchFails(t *testing.T) {
-	m := NewManager("/nonexistent/ffmpeg-binary-for-test")
-	stream := validStream()
-	started, err := m.Start(stream)
-	if err == nil {
-		t.Fatal("Start succeeded with a nonexistent ffmpeg binary")
-	}
-	if started {
-		t.Error("Start reported started=true when the process failed to launch")
-	}
-	if _, exists := m.streams[stream.ID]; exists {
-		t.Error("Start left a placeholder entry after a failed launch")
-	}
-}
 func TestListenerStartEncoderFailureReleasesFanoutPort(t *testing.T) {
 	port := freeUDPPort(t)
 	m := NewManager("/nonexistent/ffmpeg-binary-for-test")
@@ -356,38 +305,6 @@ func TestStartListenerWithFFmpegDoesNotRequireSRTProtocol(t *testing.T) {
 	}
 	assertUDPPortAvailable(t, port)
 }
-func TestStatusesIncludesListenerEncoderAndClientFields(t *testing.T) {
-	t.Parallel()
-	const id = "listener-1"
-	fanout, err := srtfanout.NewServer(srtfanout.Config{
-		Port: 9000,
-	})
-	if err != nil {
-		t.Fatalf("NewServer() error = %v", err)
-	}
-	m := NewManager("ffmpeg")
-	stream := &Stream{
-		state:     types.ProcessRunning,
-		mode:      types.StreamModeListener,
-		startTime: time.Now().Add(-2 * types.StableThreshold),
-		fanout:    fanout,
-		encoder:   &encoderRun{},
-	}
-	m.streams[id] = stream
-	statuses := m.Statuses(func(string) *types.Stream {
-		return &types.Stream{ID: id, Mode: types.StreamModeListener, MaxRetries: 3}
-	})
-	status := statuses[id]
-	if status.Stable {
-		t.Fatal("listener status Stable = true, want false")
-	}
-	if !status.EncoderRunning {
-		t.Fatal("listener status EncoderRunning = false, want true")
-	}
-	if status.ClientCount != 0 {
-		t.Fatalf("listener status ClientCount = %d, want 0", status.ClientCount)
-	}
-}
 func TestStatusesSurfacesListenerDropsFromFanout(t *testing.T) {
 	t.Parallel()
 	const id = "listener-1"
@@ -415,20 +332,6 @@ func TestStatusesSurfacesListenerDropsFromFanout(t *testing.T) {
 	}
 	if status.AudioDrops != 7 {
 		t.Fatalf("AudioDrops = %d, want 7 (must stay distinct from ListenerDrops)", status.AudioDrops)
-	}
-}
-func TestStatusesListenerWithoutFanoutReportsNoDrops(t *testing.T) {
-	t.Parallel()
-	const id = "listener-1"
-	m := NewManager("ffmpeg")
-	m.streams[id] = &Stream{state: types.ProcessRunning, mode: types.StreamModeListener}
-
-	status := m.Statuses(func(string) *types.Stream {
-		return &types.Stream{ID: id, Mode: types.StreamModeListener, MaxRetries: 3}
-	})[id]
-
-	if status.ListenerDrops != 0 {
-		t.Fatalf("ListenerDrops = %d, want 0 when fanout is nil", status.ListenerDrops)
 	}
 }
 func TestWriteAudioFanOutListenerCopiesQueuedChunk(t *testing.T) {

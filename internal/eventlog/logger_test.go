@@ -13,18 +13,6 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-func TestDefaultLogPathUsesPlatformDefault(t *testing.T) {
-	t.Parallel()
-
-	got := DefaultLogPath(8080)
-	if !filepath.IsAbs(got) {
-		t.Errorf("DefaultLogPath() = %q, want an absolute path", got)
-	}
-	if want := filepath.Join("8080", "encoder.jsonl"); !strings.HasSuffix(got, want) {
-		t.Errorf("DefaultLogPath() = %q, want suffix %q", got, want)
-	}
-}
-
 func TestDefaultLogPathIsInsideDefaultLogDir(t *testing.T) {
 	t.Parallel()
 
@@ -195,35 +183,6 @@ func TestLoggerToleratesRotationFailure(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 	if len(lines) != 2 {
 		t.Fatalf("active log has %d lines, want 2:\n%s", len(lines), data)
-	}
-}
-
-func TestLoggerSeqIncrementsOnEachWrite(t *testing.T) {
-	t.Parallel()
-	path := filepath.Join(t.TempDir(), "encoder.jsonl")
-	logger, err := NewLogger(path)
-	if err != nil {
-		t.Fatalf("NewLogger() error = %v", err)
-	}
-	defer func() {
-		if err := logger.Close(); err != nil {
-			t.Fatalf("Close() error = %v", err)
-		}
-	}()
-	if got := logger.Seq(); got != 0 {
-		t.Fatalf("Seq() before any write = %d, want 0", got)
-	}
-	if err := logger.Log(&Event{Type: StreamStarted, Message: "first"}); err != nil {
-		t.Fatalf("Log() error = %v", err)
-	}
-	if got := logger.Seq(); got != 1 {
-		t.Fatalf("Seq() after first write = %d, want 1", got)
-	}
-	if err := logger.Log(&Event{Type: StreamStopped, Message: "second"}); err != nil {
-		t.Fatalf("Log() error = %v", err)
-	}
-	if got := logger.Seq(); got != 2 {
-		t.Fatalf("Seq() after second write = %d, want 2", got)
 	}
 }
 

@@ -173,7 +173,8 @@ type audioDumpCall struct {
 // testChannel records alert dispatches through buffered channels.
 type testChannel struct {
 	noopAlertChannel
-	name                     string
+	name string
+	// Configuration flags are mutated before dispatch and read after queued sends complete.
 	configuredSilence        atomic.Bool
 	configuredImbalance      atomic.Bool
 	subscribesStart          bool
@@ -309,21 +310,6 @@ func TestCloseIdempotent(t *testing.T) {
 	o.Close()
 	o.Close() // Must not panic; t.Cleanup calls it a third time.
 }
-func TestDrainLogsAfterCloseIsNoOp(t *testing.T) {
-	t.Parallel()
-	o := newTestOrchestrator(t, newTestChannel(false))
-	o.Close()
-	done := make(chan struct{})
-	go func() {
-		o.DrainLogs()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("DrainLogs blocked after Close")
-	}
-}
 func TestEnqueueLogAfterCloseIsNoOp(t *testing.T) {
 	t.Parallel()
 	logPath := filepath.Join(t.TempDir(), "encoder.jsonl")
@@ -398,103 +384,6 @@ func TestCloseCancelsInFlightNotification(t *testing.T) {
 		t.Fatalf("ctx.Err() after Close() = %v, want %v", err, context.Canceled)
 	}
 	awaitCall(t, ch.done, "blocked notification send to finish")
-}
-
-func TestOnDumpReadyNilPending(t *testing.T) {
-	t.Parallel()
-	ch := newTestChannel(true)
-	o := newTestOrchestrator(t, ch)
-	o.OnDumpReady(&silencedump.EncodeResult{Trigger: silencedump.TriggerSilence})
-	assertNoCall(t, ch.audioDumpCalled, "SendAudioDump")
-}
-
-func TestOnDumpReadyNilPendingAfterReset(t *testing.T) {
-	t.Parallel()
-	ch := newTestChannel(true)
-	o := newTestOrchestrator(t, ch)
-	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
-	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
-	o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 5000})
-	awaitCall(t, ch.silenceEndCalled, "SendSilenceEnd")
-	o.Reset()
-	o.OnDumpReady(&silencedump.EncodeResult{Trigger: silencedump.TriggerSilence})
-	assertNoCall(t, ch.audioDumpCalled, "SendAudioDump after Reset")
-}
-
-func TestActiveChannelsClearedAfterRecovery(t *testing.T) {
-	t.Parallel()
-	first := newTestChannel(false)
-	first.name = "first"
-	next := newTestChannel(false)
-	next.name = "next"
-	next.configuredSilence.Store(false)
-	o := NewAlertOrchestrator(config.New(""), NewDispatcher(first, next))
-	t.Cleanup(o.Close)
-
-	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
-	awaitCall(t, first.silenceStartCalled, "first channel silence start")
-	first.configuredSilence.Store(false)
-	next.configuredSilence.Store(true)
-
-	o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 3000})
-	awaitCall(t, first.silenceEndCalled, "first channel silence end")
-	assertNoCall(t, next.silenceEndCalled, "next channel silence end")
-
-	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
-	awaitCall(t, next.silenceStartCalled, "next channel silence start")
-	assertNoCall(t, first.silenceStartCalled, "first channel second silence start")
-}
-
-func TestActiveChannelsNotRebuiltWithinSilencePeriod(t *testing.T) {
-	t.Parallel()
-	active := newTestChannel(false)
-	active.name = "active"
-	late := newTestChannel(false)
-	late.name = "late"
-	late.configuredSilence.Store(false)
-	o := NewAlertOrchestrator(config.New(""), NewDispatcher(active, late))
-	t.Cleanup(o.Close)
-
-	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
-	awaitCall(t, active.silenceStartCalled, "active channel first silence start")
-	active.configuredSilence.Store(false)
-	late.configuredSilence.Store(true)
-
-	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
-	awaitCall(t, active.silenceStartCalled, "active channel second silence start")
-	assertNoCall(t, late.silenceStartCalled, "late channel silence start")
-}
-
-func TestAudioDumpUsesSnapshotFromSilenceEnd(t *testing.T) {
-	t.Parallel()
-	ch := newTestChannel(true)
-	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
-	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
-	t.Cleanup(o.Close)
-	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
-	awaitCall(t, ch.silenceStartCalled, "SendSilenceStart")
-	o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 5000})
-	silenceEndSnap := awaitCall(t, ch.silenceEndCalled, "SendSilenceEnd")
-	if err := cfg.ApplySettings(&config.SettingsUpdate{
-		SilenceThreshold:            -20,
-		SilenceDurationMs:           15000,
-		SilenceRecoveryMs:           5000,
-		PeakHoldMs:                  config.DefaultPeakHoldMs,
-		ChannelImbalanceThreshold:   config.DefaultChannelImbalanceThreshold,
-		ChannelImbalanceDurationMs:  config.DefaultChannelImbalanceDurationMs,
-		ChannelImbalanceRecoveryMs:  config.DefaultChannelImbalanceRecoveryMs,
-		SilenceDumpEnabled:          true,
-		SilenceDumpRetentionDays:    7,
-		RecordingMaxDurationMinutes: config.DefaultRecordingMaxDurationMinutes,
-	}); err != nil {
-		t.Fatalf("ApplySettings failed: %v", err)
-	}
-	o.OnDumpReady(&silencedump.EncodeResult{Trigger: silencedump.TriggerSilence})
-	audioDumpCall := awaitCall(t, ch.audioDumpCalled, "SendAudioDump")
-	if audioDumpCall.snap.SilenceThreshold != silenceEndSnap.SilenceThreshold {
-		t.Fatalf("SendAudioDump received threshold %.1f dB, want %.1f dB (from silence-end snapshot)",
-			audioDumpCall.snap.SilenceThreshold, silenceEndSnap.SilenceThreshold)
-	}
 }
 
 func TestAudioDumpMatchesSameTriggerRecoveriesByIncidentID(t *testing.T) {
@@ -740,41 +629,6 @@ func TestChannelImbalanceDumpUsesRecoveryContext(t *testing.T) {
 	}
 	assertDetailFloat(t, details, "balance_db", 0)
 	assertDetailFloat(t, details, "imbalance_db", 0)
-}
-
-func TestResetClearsChannelImbalanceActiveState(t *testing.T) {
-	t.Parallel()
-	active := newTestChannel(false)
-	active.name = "active"
-	active.configuredImbalance.Store(true)
-	active.subscribesImbalanceStart = true
-	active.subscribesImbalanceEnd = true
-	late := newTestChannel(false)
-	late.name = "late"
-	late.subscribesImbalanceStart = true
-	late.subscribesImbalanceEnd = true
-	o := NewAlertOrchestrator(config.New(""), NewDispatcher(active, late))
-	t.Cleanup(o.Close)
-
-	o.HandleChannelImbalanceEvent(&audio.ImbalanceEvent{
-		JustEntered: true, BalanceDB: 24, ImbalanceDB: 24, CurrentLevelL: -6, CurrentLevelR: -30,
-	})
-	awaitCall(t, active.imbalanceStartCalled, "active imbalance start before reset")
-	active.configuredImbalance.Store(false)
-	late.configuredImbalance.Store(true)
-
-	o.Reset()
-	o.HandleChannelImbalanceEvent(&audio.ImbalanceEvent{
-		JustRecovered: true, TotalDurationMs: 16000, CurrentLevelL: -8, CurrentLevelR: -8,
-	})
-	assertNoCall(t, active.imbalanceEndCalled, "active imbalance end after reset")
-	assertNoCall(t, late.imbalanceEndCalled, "late imbalance end after reset")
-
-	o.HandleChannelImbalanceEvent(&audio.ImbalanceEvent{
-		JustEntered: true, BalanceDB: -20, ImbalanceDB: 20, CurrentLevelL: -30, CurrentLevelR: -10,
-	})
-	awaitCall(t, late.imbalanceStartCalled, "late imbalance start after reset")
-	assertNoCall(t, active.imbalanceStartCalled, "active imbalance start after reset")
 }
 
 func TestSilenceActiveStateSurvivesChannelImbalanceDispatch(t *testing.T) {

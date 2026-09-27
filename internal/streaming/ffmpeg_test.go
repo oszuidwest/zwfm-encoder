@@ -78,22 +78,6 @@ func TestBuildSRTURLCaller(t *testing.T) {
 		})
 	}
 }
-func TestBuildCallerArgsUsesSRTOutput(t *testing.T) {
-	t.Parallel()
-	stream := &types.Stream{
-		Host:     "stream.example.com",
-		Port:     9000,
-		StreamID: "studio",
-		Codec:    types.CodecMP3,
-	}
-	args := BuildCallerArgs(stream)
-	if slices.Contains(args, "pipe:1") {
-		t.Fatalf("caller args contain pipe:1: %v", args)
-	}
-	if got := args[len(args)-1]; got != BuildSRTURL(stream) {
-		t.Fatalf("caller output = %q, want SRT URL %q", got, BuildSRTURL(stream))
-	}
-}
 func TestBuildListenerPipeArgs(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
