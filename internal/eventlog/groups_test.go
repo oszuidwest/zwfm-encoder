@@ -42,7 +42,7 @@ func TestGroupEventsPairsProblemsAndPartitionsEvents(t *testing.T) {
 		}),
 	)
 
-	groups := GroupEvents(events)
+	groups := GroupEvents(events, nil)
 	if len(groups.Attention) != 0 {
 		t.Fatalf("attention len = %d, want 0", len(groups.Attention))
 	}
@@ -81,7 +81,7 @@ func TestGroupEventsTreatsCallerAndListenerStreamProblemsAsIncidents(t *testing.
 	events[0].StreamID = "listener"
 	events[1].StreamID = "caller"
 
-	groups := GroupEvents(events)
+	groups := GroupEvents(events, nil)
 	if len(groups.Attention) != 2 {
 		t.Fatalf("attention len = %d, want 2", len(groups.Attention))
 	}
@@ -121,7 +121,7 @@ func TestGroupEventsResolvesListenerProblemOnRestart(t *testing.T) {
 		events[i].StreamID = "listener"
 	}
 
-	groups := GroupEvents(events)
+	groups := GroupEvents(events, nil)
 	if len(groups.Attention) != 0 {
 		t.Fatalf("attention len = %d, want 0", len(groups.Attention))
 	}
@@ -133,6 +133,152 @@ func TestGroupEventsResolvesListenerProblemOnRestart(t *testing.T) {
 	}
 	if groups.Resolved[0].StatusText != "Resolved" {
 		t.Fatalf("status = %q, want Resolved", groups.Resolved[0].StatusText)
+	}
+	assertPartition(t, events, &groups)
+}
+
+func TestGroupEventsStreamStoppedClosesIncidentAsStopped(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
+	for _, mode := range []string{"caller", "listener"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+
+			details := map[string]any{"stream_name": "Main", "mode": mode}
+			events := decorateNewestFirst(
+				testEvent(base, 3, StreamStopped, details),
+				testEvent(base, 2, StreamRetry, details),
+				testEvent(base, 1, StreamError, map[string]any{
+					"stream_name": "Main",
+					"mode":        mode,
+					"error":       "Connection refused",
+				}),
+			)
+			for i := range events {
+				events[i].StreamID = "stream-1"
+			}
+
+			groups := GroupEvents(events, nil)
+			if len(groups.Attention) != 0 {
+				t.Fatalf("attention len = %d, want 0", len(groups.Attention))
+			}
+			if len(groups.Resolved) != 1 {
+				t.Fatalf("resolved len = %d, want 1", len(groups.Resolved))
+			}
+			item := groups.Resolved[0]
+			if item.StatusText != "Stopped" {
+				t.Fatalf("status = %q, want Stopped", item.StatusText)
+			}
+			if item.Severity != SeverityInfo {
+				t.Fatalf("severity = %q, want %q", item.Severity, SeverityInfo)
+			}
+			if got := item.Events[len(item.Events)-1].Type; got != StreamStopped {
+				t.Fatalf("last event = %q, want %q", got, StreamStopped)
+			}
+			if !containsString(item.Chips, "2.0s") {
+				t.Fatalf("chips = %v, want duration chip 2.0s", item.Chips)
+			}
+			if want := base.Add(3 * time.Second).UnixMilli(); item.SortTs != want {
+				t.Fatalf("sortTs = %d, want stop time %d", item.SortTs, want)
+			}
+			assertPartition(t, events, &groups)
+		})
+	}
+}
+
+func TestGroupEventsCleanExitKeepsRetryingIncidentOpen(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
+	details := map[string]any{"stream_name": "Main", "mode": "caller"}
+	endedNormally := testEvent(base, 3, StreamStopped, details)
+	endedNormally.Message = StreamEndedNormallyMessage
+	events := decorateNewestFirst(
+		testEvent(base, 4, StreamRetry, details),
+		endedNormally,
+		testEvent(base, 2, StreamStarted, details),
+		testEvent(base, 1, StreamRetry, details),
+	)
+	for i := range events {
+		events[i].StreamID = "stream-1"
+	}
+
+	groups := GroupEvents(events, nil)
+	if len(groups.Resolved) != 0 {
+		t.Fatalf("resolved len = %d, want 0 while the stream keeps retrying", len(groups.Resolved))
+	}
+	if len(groups.Attention) != 1 || groups.Attention[0].StatusText != "Ongoing" {
+		t.Fatalf("attention = %+v, want one ongoing incident", groups.Attention)
+	}
+	if !containsString(groups.Attention[0].Chips, "2 tries") {
+		t.Fatalf("chips = %v, want both retries in one incident", groups.Attention[0].Chips)
+	}
+	assertPartition(t, events, &groups)
+}
+
+func TestGroupEventsStreamStoppedWithoutIncidentIsActivity(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
+	events := decorateNewestFirst(
+		testEvent(base, 1, StreamStopped, map[string]any{"stream_name": "Main", "mode": "caller"}),
+	)
+	events[0].StreamID = "stream-1"
+
+	groups := GroupEvents(events, nil)
+	if len(groups.Resolved) != 0 || len(groups.Attention) != 0 {
+		t.Fatalf("resolved/attention = %d/%d, want 0/0", len(groups.Resolved), len(groups.Attention))
+	}
+	if len(groups.Activity) != 1 || groups.Activity[0].Title != "Stream stopped" {
+		t.Fatalf("activity = %+v, want one stream stopped row", groups.Activity)
+	}
+}
+
+func TestGroupEventsClosesIncidentsForRemovedStreams(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
+	retry := func(second int, streamID string) Event {
+		event := testEvent(base, second, StreamRetry, map[string]any{
+			"stream_name": streamID,
+			"mode":        "caller",
+			"error":       "Connection refused",
+		})
+		event.StreamID = streamID
+		return event
+	}
+	legacy := testEvent(base, 4, StreamRetry, map[string]any{"stream_name": "legacy"})
+	events := decorateNewestFirst(
+		legacy,
+		retry(3, "deleted"),
+		retry(2, "configured"),
+		retry(1, "deleted"),
+	)
+
+	groups := GroupEvents(events, func(streamID string) bool {
+		return streamID == "configured"
+	})
+
+	attention := itemsByStreamID(groups.Attention)
+	if len(attention) != 2 {
+		t.Fatalf("attention = %d items, want configured and legacy stream", len(attention))
+	}
+	if item, ok := attention["configured"]; !ok || item.StatusText != "Ongoing" {
+		t.Fatalf("configured stream incident = %+v, want Ongoing", item)
+	}
+	if _, ok := attention[""]; !ok {
+		t.Fatal("legacy incident without stream ID must stay ongoing")
+	}
+	if len(groups.Resolved) != 1 {
+		t.Fatalf("resolved len = %d, want 1", len(groups.Resolved))
+	}
+	item := groups.Resolved[0]
+	if item.Events[0].StreamID != "deleted" || len(item.Events) != 2 {
+		t.Fatalf("resolved incident = %+v, want both deleted-stream events", item.Events)
+	}
+	if item.StatusText != "Stopped" || item.Severity != SeverityInfo {
+		t.Fatalf("status/severity = %q/%q, want Stopped/info", item.StatusText, item.Severity)
 	}
 	assertPartition(t, events, &groups)
 }
@@ -152,7 +298,7 @@ func TestGroupEventsDoesNotCollapseHistoricalUploadFiles(t *testing.T) {
 		}),
 	)
 
-	groups := GroupEvents(events)
+	groups := GroupEvents(events, nil)
 	if len(groups.Attention) != 2 {
 		t.Fatalf("attention len = %d, want 2", len(groups.Attention))
 	}
@@ -181,7 +327,7 @@ func TestGroupEventsAvoidsEmptyRecorderNameUploadCollision(t *testing.T) {
 		}),
 	)
 
-	groups := GroupEvents(events)
+	groups := GroupEvents(events, nil)
 	if len(groups.Attention) != 2 {
 		t.Fatalf("attention len = %d, want 2", len(groups.Attention))
 	}
@@ -207,7 +353,7 @@ func TestGroupEventsKeepsOrphanRecoveryInActivity(t *testing.T) {
 		}),
 	)
 
-	groups := GroupEvents(events)
+	groups := GroupEvents(events, nil)
 	if len(groups.Resolved) != 0 || len(groups.Attention) != 0 {
 		t.Fatalf("orphan recovery grouped as incident: attention=%d resolved=%d", len(groups.Attention), len(groups.Resolved))
 	}
@@ -230,7 +376,7 @@ func TestGroupEventsKeepsOrphanAudioDumpInActivity(t *testing.T) {
 		}),
 	)
 
-	groups := GroupEvents(events)
+	groups := GroupEvents(events, nil)
 	if len(groups.Resolved) != 0 || len(groups.Attention) != 0 {
 		t.Fatalf("orphan dump grouped as incident: attention=%d resolved=%d", len(groups.Attention), len(groups.Resolved))
 	}
@@ -261,7 +407,7 @@ func TestGroupEventsAttachesImbalanceDumpToImbalanceIncident(t *testing.T) {
 		testEvent(base, 3, ChannelImbalanceStart, map[string]any{"incident_id": 1}),
 	)
 
-	groups := GroupEvents(events)
+	groups := GroupEvents(events, nil)
 	if len(groups.Resolved) != 1 {
 		t.Fatalf("resolved len = %d, want 1", len(groups.Resolved))
 	}
@@ -299,7 +445,7 @@ func TestGroupEventsMatchesSameTriggerDumpsByIncidentID(t *testing.T) {
 		testEvent(base, 1, SilenceStart, map[string]any{"incident_id": 1}),
 	)
 
-	groups := GroupEvents(events)
+	groups := GroupEvents(events, nil)
 	if len(groups.Resolved) != 2 {
 		t.Fatalf("resolved len = %d, want 2", len(groups.Resolved))
 	}
@@ -332,7 +478,7 @@ func TestGroupEventsUsesIncidentIDInAudioIncidentKeys(t *testing.T) {
 		Event{Timestamp: base, Type: SilenceStart, Details: map[string]any{"incident_id": 1}},
 	)
 
-	groups := GroupEvents(events)
+	groups := GroupEvents(events, nil)
 	if len(groups.Resolved) != 2 {
 		t.Fatalf("resolved len = %d, want 2", len(groups.Resolved))
 	}
@@ -384,7 +530,7 @@ func TestGroupEventsSeparatesAudioIncidentsAfterDetectorReset(t *testing.T) {
 				testEvent(base, 1, tt.startType, map[string]any{"incident_id": 1}),
 			)
 
-			groups := GroupEvents(events)
+			groups := GroupEvents(events, nil)
 			if len(groups.Attention) != 1 {
 				t.Fatalf("attention len = %d, want 1", len(groups.Attention))
 			}
@@ -432,7 +578,7 @@ func TestGroupEventsSortsResolvedIncidentsByResolutionTime(t *testing.T) {
 		testEvent(base, 1, SilenceStart, nil),
 	)
 
-	groups := GroupEvents(events)
+	groups := GroupEvents(events, nil)
 	if len(groups.Resolved) != 2 {
 		t.Fatalf("resolved len = %d, want 2", len(groups.Resolved))
 	}
@@ -458,7 +604,7 @@ func TestGroupEventsHandlesZeroTimestamp(t *testing.T) {
 		},
 	})
 
-	groups := GroupEvents(events)
+	groups := GroupEvents(events, nil)
 	if len(groups.Activity) != 1 {
 		t.Fatalf("activity len = %d, want 1", len(groups.Activity))
 	}
@@ -498,7 +644,7 @@ func TestGroupEventsLabelsListenerStartActivity(t *testing.T) {
 		},
 	})
 
-	groups := GroupEvents(events)
+	groups := GroupEvents(events, nil)
 	if len(groups.Activity) != 2 {
 		t.Fatalf("activity len = %d, want 2", len(groups.Activity))
 	}
@@ -530,7 +676,7 @@ func TestGroupEventsRecorderErrorIsUnresolved(t *testing.T) {
 		}),
 	)
 
-	groups := GroupEvents(events)
+	groups := GroupEvents(events, nil)
 	if len(groups.Attention) != 1 {
 		t.Fatalf("attention len = %d, want 1", len(groups.Attention))
 	}
@@ -557,7 +703,7 @@ func TestGroupEventsUploadAbandonedIsFailed(t *testing.T) {
 		}),
 	)
 
-	groups := GroupEvents(events)
+	groups := GroupEvents(events, nil)
 	if len(groups.Attention) != 1 {
 		t.Fatalf("attention len = %d, want 1", len(groups.Attention))
 	}
@@ -596,7 +742,7 @@ func TestGroupEventsUploadAbandonedClosesOpenUploadIncidentAsFailed(t *testing.T
 		}),
 	)
 
-	groups := GroupEvents(events)
+	groups := GroupEvents(events, nil)
 	if len(groups.Attention) != 1 {
 		t.Fatalf("attention len = %d, want 1", len(groups.Attention))
 	}
@@ -632,7 +778,7 @@ func TestGroupEventsLabelsMultipleRoutineRecorders(t *testing.T) {
 		}),
 	)
 
-	groups := GroupEvents(events)
+	groups := GroupEvents(events, nil)
 	if len(groups.Routine) != 1 {
 		t.Fatalf("routine len = %d, want 1", len(groups.Routine))
 	}
