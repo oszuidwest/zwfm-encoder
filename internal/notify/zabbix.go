@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
@@ -111,9 +110,12 @@ func sendZabbixPayload(ctx context.Context, server string, port int, payload zab
 		return fmt.Errorf("zabbix rejected data: %s", resp.Info)
 	}
 
-	// Check for no items processed, which usually means the host or key is unknown.
-	if strings.Contains(resp.Info, "processed: 0;") && strings.Contains(resp.Info, "failed: 0;") {
-		return fmt.Errorf("zabbix processed no items (check host/key config)")
+	// An unknown host/key or a value of the wrong type is reported as a
+	// "success" response with failed items, e.g. "processed: 0; failed: 1".
+	var processed, failed int
+	if _, err := fmt.Sscanf(resp.Info, "processed: %d; failed: %d", &processed, &failed); err == nil &&
+		(processed == 0 || failed > 0) {
+		return fmt.Errorf("zabbix did not accept the item (check host/key config): %s", resp.Info)
 	}
 
 	return nil
