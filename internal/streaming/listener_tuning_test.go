@@ -3,6 +3,7 @@ package streaming
 import (
 	"testing"
 
+	"github.com/oszuidwest/zwfm-encoder/internal/srtfanout"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
@@ -35,5 +36,15 @@ func TestListenerQueueBuffersTargetDurationWithinBounds(t *testing.T) {
 				t.Fatalf("queue buffers %d bytes, want at least target %d bytes", bufferedBytes, targetBytes)
 			}
 		})
+	}
+}
+
+func TestListenerLatencyRaisedForPCMOnly(t *testing.T) {
+	t.Parallel()
+	if got := listenerLatency(&types.Stream{Codec: types.CodecPCM}); got != listenerLatencyPCM {
+		t.Fatalf("listenerLatency(pcm) = %s, want %s", got, listenerLatencyPCM)
+	}
+	if got := listenerLatency(&types.Stream{Codec: types.CodecMP3}); got != srtfanout.DefaultLatency {
+		t.Fatalf("listenerLatency(mp3) = %s, want %s", got, srtfanout.DefaultLatency)
 	}
 }
