@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/ffmpeg"
 	"github.com/oszuidwest/zwfm-encoder/internal/srtfanout"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
@@ -205,19 +206,30 @@ func (m *Manager) runWriter(streamID string, s *Stream) {
 // concurrent Start calls from launching duplicate FFmpeg processes while
 // keeping the lock free for WriteAudio and Statuses on other streams.
 func (m *Manager) Start(stream *types.Stream) (bool, error) {
+	started, err := m.start(stream, nil)
+	return started != nil, err
+}
+
+// start launches stream and returns the running entry, or nil when it did not
+// create one. A non-nil expected restricts the launch to replacing that exact
+// entry, so a retry monitor cannot revive a stream that Stop already removed.
+func (m *Manager) start(stream *types.Stream, expected *Stream) (*Stream, error) {
 	if stream.ModeOrDefault() == types.StreamModeListener {
-		return m.startListenerFanout(stream)
+		return m.startListenerFanout(stream, expected)
 	}
-	return m.startCaller(stream)
+	return m.startCaller(stream, expected)
 }
 
 // claimStream validates the stream and inserts a ProcessStarting placeholder
 // that carries over retry state from any existing entry, so concurrent
 // starters see the correct backoff. It returns claimed=false when another
-// path already runs or is starting this stream. Old-stream resources are
-// stopped outside the lock: the writer's error path acquires m.mu, and
-// waiting while holding the lock would deadlock.
-func (m *Manager) claimStream(stream *types.Stream, mode types.StreamMode) (placeholder *Stream, claimed bool, err error) {
+// path already runs or is starting this stream, or when expected is non-nil
+// and no longer the current entry. Old-stream resources are stopped outside
+// the lock: the writer's error path acquires m.mu, and waiting while holding
+// the lock would deadlock.
+func (m *Manager) claimStream(
+	stream *types.Stream, mode types.StreamMode, expected *Stream,
+) (placeholder *Stream, claimed bool, err error) {
 	if err := stream.Validate(); err != nil {
 		return nil, false, err
 	}
@@ -228,6 +240,10 @@ func (m *Manager) claimStream(stream *types.Stream, mode types.StreamMode) (plac
 	if exists && (existing.state == types.ProcessRunning || existing.state == types.ProcessStarting) {
 		m.mu.Unlock()
 		return nil, false, nil // Already running or being started
+	}
+	if expected != nil && existing != expected {
+		m.mu.Unlock()
+		return nil, false, nil // Stopped or replaced since the caller observed it
 	}
 
 	// Preserve retry state and capture old stream for writer cleanup
@@ -260,10 +276,10 @@ func (m *Manager) claimStream(stream *types.Stream, mode types.StreamMode) (plac
 	return placeholder, true, nil
 }
 
-func (m *Manager) startCaller(stream *types.Stream) (bool, error) {
-	placeholder, claimed, err := m.claimStream(stream, stream.ModeOrDefault())
+func (m *Manager) startCaller(stream *types.Stream, expected *Stream) (*Stream, error) {
+	placeholder, claimed, err := m.claimStream(stream, stream.ModeOrDefault(), expected)
 	if !claimed {
-		return false, err
+		return nil, err
 	}
 	retryCount, backoff := placeholder.retryCount, placeholder.backoff
 
@@ -278,7 +294,7 @@ func (m *Manager) startCaller(stream *types.Stream) (bool, error) {
 			delete(m.streams, stream.ID)
 		}
 		m.mu.Unlock()
-		return false, err
+		return nil, err
 	}
 
 	s := &Stream{
@@ -300,7 +316,7 @@ func (m *Manager) startCaller(stream *types.Stream) (bool, error) {
 		result.Cancel(errStoppedByUser)
 		result.CloseStdin()
 		_ = result.Wait()
-		return false, nil
+		return nil, nil
 	}
 	m.streams[stream.ID] = s
 	m.mu.Unlock()
@@ -323,24 +339,24 @@ func (m *Manager) startCaller(stream *types.Stream) (bool, error) {
 		m.maybeEmitStable(stream.ID, s)
 	}()
 
-	return true, nil
+	return s, nil
 }
 
-func (m *Manager) startListenerFanout(stream *types.Stream) (bool, error) {
-	placeholder, claimed, err := m.claimStream(stream, types.StreamModeListener)
+func (m *Manager) startListenerFanout(stream *types.Stream, expected *Stream) (*Stream, error) {
+	placeholder, claimed, err := m.claimStream(stream, types.StreamModeListener, expected)
 	if !claimed {
-		return false, err
+		return nil, err
 	}
 	retryCount, backoff := placeholder.retryCount, placeholder.backoff
 
 	fanout, err := srtfanout.NewServer(listenerFanoutConfig(stream))
 	if err != nil {
 		m.removePlaceholder(stream.ID, placeholder)
-		return false, err
+		return nil, err
 	}
 	if err := fanout.Start(); err != nil {
 		m.removePlaceholder(stream.ID, placeholder)
-		return false, err
+		return nil, err
 	}
 
 	s := &Stream{
@@ -359,14 +375,14 @@ func (m *Manager) startListenerFanout(stream *types.Stream) (bool, error) {
 				"stream_id", stream.ID, "error", waitErr)
 		}
 		m.removePlaceholder(stream.ID, placeholder)
-		return false, err
+		return nil, err
 	}
 
 	m.mu.Lock()
 	if m.streams[stream.ID] != placeholder {
 		m.mu.Unlock()
 		m.stopStreamResources(stream.ID, s)
-		return false, nil
+		return nil, nil
 	}
 	m.streams[stream.ID] = s
 	m.mu.Unlock()
@@ -380,7 +396,7 @@ func (m *Manager) startListenerFanout(stream *types.Stream) (bool, error) {
 		0,
 		0,
 	)
-	return true, nil
+	return s, nil
 }
 
 func (m *Manager) removePlaceholder(streamID string, placeholder *Stream) {
@@ -536,10 +552,15 @@ func (m *Manager) waitEncoderRunGoroutines(streamID string, run *encoderRun) {
 }
 
 // Stop terminates a stream with proper graceful shutdown.
+//
+// Every managed entry, whether running, starting, errored, or waiting to
+// retry, emits exactly one stream_stopped event before Stop returns. Retry
+// monitors observe the removal and exit without restarting the stream.
 func (m *Manager) Stop(streamID string) error {
 	m.mu.Lock()
 	stream, exists := m.streams[streamID]
-	if !exists {
+	if !exists || stream.state == types.ProcessStopping {
+		// Nothing to stop, or a concurrent Stop owns shutdown and its event.
 		m.mu.Unlock()
 		return nil
 	}
@@ -549,6 +570,7 @@ func (m *Manager) Stop(streamID string) error {
 	if stream.state == types.ProcessStarting {
 		delete(m.streams, streamID)
 		m.mu.Unlock()
+		m.emitStopped(streamID, stream.mode)
 		return nil
 	}
 
@@ -558,7 +580,7 @@ func (m *Manager) Stop(streamID string) error {
 
 		slog.Info("stopping listener stream", "stream_id", streamID)
 		m.stopListenerResources(streamID, stream)
-		m.emitEventWithMode(streamID, stream.mode, "stream_stopped", "Stream stopped by user", "", 0, 0)
+		m.emitStopped(streamID, stream.mode)
 
 		m.mu.Lock()
 		if m.streams[streamID] == stream {
@@ -574,9 +596,11 @@ func (m *Manager) Stop(streamID string) error {
 		m.mu.Unlock()
 
 		// Clean up writer goroutine. This path is hit when MonitorAndRetry
-		// sets ProcessStopped/ProcessError before StopAll reaches this stream.
+		// sets ProcessStopped/ProcessError after a failure, including while
+		// the stream waits for its next retry.
 		stream.closeAudioCh()
 		stream.writerWg.Wait()
+		m.emitStopped(streamID, stream.mode)
 
 		return nil
 	}
@@ -611,11 +635,21 @@ func (m *Manager) Stop(streamID string) error {
 	//    so this won't block. May be a no-op if writer already closed it.
 	result.CloseStdin()
 
+	// 6. Stop owns the terminal event: the retry monitor exits on a
+	//    ProcessStopping entry without emitting anything.
+	m.emitStopped(streamID, stream.mode)
+
 	m.mu.Lock()
-	delete(m.streams, streamID)
+	if m.streams[streamID] == stream {
+		delete(m.streams, streamID)
+	}
 	m.mu.Unlock()
 
 	return nil
+}
+
+func (m *Manager) emitStopped(streamID string, mode types.StreamMode) {
+	m.emitEventWithMode(streamID, mode, "stream_stopped", "Stream stopped by user", "", 0, 0)
 }
 
 // StopAll terminates all streams and returns any errors joined together.
@@ -763,18 +797,25 @@ func (m *Manager) Statuses(getStreamConfig func(string) *types.Stream) map[strin
 	return statuses
 }
 
-// StreamInfo returns the process result, retry backoff, and mode for streamID.
-// The exists return value is false if the stream is not found.
-func (m *Manager) StreamInfo(
-	streamID string,
-) (result *ffmpeg.StartResult, backoff *util.Backoff, mode types.StreamMode, exists bool) {
+// current returns the managed entry for streamID, or nil if there is none.
+func (m *Manager) current(streamID string) *Stream {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	stream, exists := m.streams[streamID]
-	if !exists {
-		return nil, nil, types.StreamModeCaller, false
-	}
-	return stream.result, stream.backoff, stream.mode, true
+	return m.streams[streamID]
+}
+
+// owns reports whether stream is still the managed entry for streamID and no
+// Stop is in progress. Retry monitors check it before acting so that a stop,
+// delete, or restart through another path ends their ownership.
+func (m *Manager) owns(streamID string, stream *Stream) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.ownsLocked(streamID, stream)
+}
+
+func (m *Manager) ownsLocked(streamID string, stream *Stream) bool {
+	cur, exists := m.streams[streamID]
+	return exists && cur == stream && cur.state != types.ProcessStopping
 }
 
 // SetError records an error message and sets the stream state to error.
@@ -808,20 +849,25 @@ func (m *Manager) ResetRetry(streamID string) {
 	}
 }
 
-// MarkStopped updates the stream state to stopped without terminating the process.
-func (m *Manager) MarkStopped(streamID string) {
+// markExited records that the owned caller process exited. It returns false
+// when the entry was stopped or replaced, in which case Stop or the new owner
+// handles the lifecycle and the monitor must not act on the exit.
+func (m *Manager) markExited(streamID string, owned *Stream) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if stream, exists := m.streams[streamID]; exists {
-		stream.state = types.ProcessStopped
+	if !m.ownsLocked(streamID, owned) {
+		return false
 	}
+	owned.state = types.ProcessStopped
+	return true
 }
 
-// Remove deletes a stream from the manager and cleans up its writer goroutine.
-func (m *Manager) Remove(streamID string) {
+// removeIfOwned deletes stream from the manager and cleans up its resources,
+// unless it was replaced or a Stop already owns its shutdown.
+func (m *Manager) removeIfOwned(streamID string, stream *Stream) {
 	m.mu.Lock()
-	stream, exists := m.streams[streamID]
-	if exists {
+	removed := m.ownsLocked(streamID, stream)
+	if removed {
 		delete(m.streams, streamID)
 	}
 	m.mu.Unlock()
@@ -829,7 +875,7 @@ func (m *Manager) Remove(streamID string) {
 	// Close channel and wait for writer AFTER releasing m.mu.
 	// The writer's error path acquires m.mu - waiting while holding
 	// the lock would deadlock.
-	if exists {
+	if removed {
 		m.stopStreamResources(streamID, stream)
 	}
 }
@@ -879,6 +925,8 @@ func resolveExitError(result *ffmpeg.StartResult, err error) string {
 	return err.Error()
 }
 
+// handleStreamExit logs the exit of a caller process and updates retry state.
+// Intentional stops are reported by Stop.
 func (m *Manager) handleStreamExit(
 	streamID string, result *ffmpeg.StartResult, backoff *util.Backoff, mode types.StreamMode,
 	err error, runDuration time.Duration,
@@ -887,11 +935,10 @@ func (m *Manager) handleStreamExit(
 
 	switch classifyStreamExit(mode, err, cause) {
 	case streamExitIntentionalStop:
-		m.emitEventWithMode(streamID, mode, "stream_stopped", "Stream stopped by user", "", 0, 0)
 		return
 	case streamExitNormalStop:
 		m.ResetRetry(streamID)
-		m.emitEventWithMode(streamID, mode, "stream_stopped", "Stream ended normally", "", 0, 0)
+		m.emitEventWithMode(streamID, mode, "stream_stopped", eventlog.StreamEndedNormallyMessage, "", 0, 0)
 		return
 	case streamExitFailure:
 		// Handled by the shared error path below.
@@ -916,66 +963,75 @@ func (m *Manager) handleStreamExit(
 	}
 }
 
-func (m *Manager) shouldContinueRetry(streamID string, ctx StreamContext) (shouldRetry bool, reason string) {
+// shouldContinueRetry returns the stream config to retry with, or nil and the
+// reason retrying must stop.
+func (m *Manager) shouldContinueRetry(
+	streamID string, owned *Stream, ctx StreamContext,
+) (cfg *types.Stream, reason string) {
+	if !m.owns(streamID, owned) {
+		return nil, "stream stopped"
+	}
 	if !ctx.IsRunning() {
-		return false, "encoder stopped"
+		return nil, "encoder stopped"
 	}
-	stream := ctx.Stream(streamID)
-	if stream == nil {
-		return false, "stream removed"
+	cfg = ctx.Stream(streamID)
+	if cfg == nil {
+		return nil, "stream removed"
 	}
-	if !stream.Enabled {
-		return false, "stream disabled"
+	if !cfg.Enabled {
+		return nil, "stream disabled"
 	}
-	retryCount := m.RetryCount(streamID)
-	maxRetries := stream.MaxRetriesOrDefault()
-	if retryCount > maxRetries {
-		return false, "max retries exceeded"
+	if m.RetryCount(streamID) > cfg.MaxRetriesOrDefault() {
+		return nil, "max retries exceeded"
 	}
-	return true, ""
+	return cfg, ""
 }
 
 // MonitorAndRetry watches a stream and restarts it on failure. This method
 // blocks until the stream is stopped or retry limits are exceeded.
+//
+// The monitor owns the entry that was current when it started, and each entry
+// it restarts. Once Stop removes or begins stopping that entry, the monitor
+// exits without emitting events or restarting the stream.
 func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <-chan struct{}) {
-	for {
+	owned := m.current(streamID)
+	for owned != nil {
 		select {
 		case <-stopChan:
 			return
 		default:
 		}
 
-		result, backoff, mode, exists := m.StreamInfo(streamID)
-		if exists && mode == types.StreamModeListener {
-			m.monitorListenerEncoder(streamID, ctx, stopChan)
+		if owned.mode == types.StreamModeListener {
+			m.monitorListenerEncoder(streamID, owned, ctx, stopChan)
 			return
 		}
-		if !exists || result == nil || backoff == nil {
+		if owned.result == nil || owned.backoff == nil {
 			return
 		}
+		result, backoff, mode := owned.result, owned.backoff, owned.mode
 
 		startTime := time.Now()
 		err := result.Wait()
 		runDuration := time.Since(startTime)
 
-		m.MarkStopped(streamID)
+		if !m.markExited(streamID, owned) {
+			return
+		}
 		m.handleStreamExit(streamID, result, backoff, mode, err, runDuration)
 
-		shouldRetry, reason := m.shouldContinueRetry(streamID, ctx)
-		if !shouldRetry {
-			if reason != "" {
-				slog.Info("stream monitoring stopped", "stream_id", streamID, "reason", reason)
-			}
+		cfg, reason := m.shouldContinueRetry(streamID, owned, ctx)
+		if cfg == nil {
+			slog.Info("stream monitoring stopped", "stream_id", streamID, "reason", reason)
 			if reason != "max retries exceeded" {
-				m.Remove(streamID)
+				m.removeIfOwned(streamID, owned)
 			}
 			return
 		}
 
 		retryDelay := backoff.Current()
-		stream := ctx.Stream(streamID)
 		retryCount := m.RetryCount(streamID)
-		maxRetries := stream.MaxRetriesOrDefault()
+		maxRetries := cfg.MaxRetriesOrDefault()
 		slog.Info("stream stopped, waiting before retry",
 			"stream_id", streamID, "delay", retryDelay, "retry", retryCount, "max_retries", maxRetries)
 		m.emitEventWithMode(streamID, mode, "stream_retry",
@@ -989,32 +1045,38 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 		}
 
 		// Re-check conditions after wait
-		shouldRetry, reason = m.shouldContinueRetry(streamID, ctx)
-		if !shouldRetry {
+		cfg, reason = m.shouldContinueRetry(streamID, owned, ctx)
+		if cfg == nil {
 			slog.Info("stream not restarting", "stream_id", streamID, "reason", reason)
 			if reason != "max retries exceeded" {
-				m.Remove(streamID)
+				m.removeIfOwned(streamID, owned)
 			}
 			return
 		}
 
-		stream = ctx.Stream(streamID)
-		started, err := m.Start(stream)
+		next, err := m.start(cfg, owned)
 		if err != nil {
 			slog.Error("failed to restart stream", "stream_id", streamID, "error", err)
-			m.Remove(streamID)
+			m.removeIfOwned(streamID, owned)
 			return
 		}
-		if !started {
-			// The new owner already has a monitor.
-			slog.Info("stream already restarted by another path, stopping duplicate monitor",
+		if next == nil {
+			// Stopped during restart, or the new owner already has a monitor.
+			slog.Info("stream stopped or restarted by another path, stopping monitor",
 				"stream_id", streamID)
 			return
 		}
+		owned = next
 	}
 }
 
-func (m *Manager) monitorListenerEncoder(streamID string, ctx StreamContext, stopChan <-chan struct{}) {
+func (m *Manager) monitorListenerEncoder(
+	streamID string, stream *Stream, ctx StreamContext, stopChan <-chan struct{},
+) {
+	backoff := stream.backoff
+	if backoff == nil {
+		return
+	}
 	for {
 		select {
 		case <-stopChan:
@@ -1022,8 +1084,13 @@ func (m *Manager) monitorListenerEncoder(streamID string, ctx StreamContext, sto
 		default:
 		}
 
-		stream, run, backoff, exists := m.listenerEncoderInfo(streamID)
-		if !exists || stream == nil || backoff == nil || run == nil {
+		if !m.owns(streamID, stream) {
+			return
+		}
+		stream.encoderMu.RLock()
+		run := stream.encoder
+		stream.encoderMu.RUnlock()
+		if run == nil {
 			return
 		}
 
@@ -1042,7 +1109,7 @@ func (m *Manager) monitorListenerEncoder(streamID string, ctx StreamContext, sto
 		runDuration := time.Since(run.startedAt)
 		cause := context.Cause(run.result.Context())
 
-		if errors.Is(cause, errStoppedByUser) {
+		if errors.Is(cause, errStoppedByUser) || !m.owns(streamID, stream) {
 			return
 		}
 
@@ -1083,6 +1150,12 @@ func (m *Manager) monitorListenerEncoder(streamID string, ctx StreamContext, sto
 				m.recordListenerEncoderFailure(streamID, stream, backoff, errMsg, 0)
 				continue
 			}
+			if !m.owns(streamID, stream) {
+				// Stop began while the encoder was starting and may have
+				// missed the new run; release it here.
+				m.stopEncoderRun(streamID, stream.detachEncoderRun(nil))
+				return
+			}
 			m.emitEventWithMode(
 				streamID,
 				types.StreamModeListener,
@@ -1101,35 +1174,12 @@ func (m *Manager) monitorListenerEncoder(streamID string, ctx StreamContext, sto
 func (m *Manager) prepareListenerRetry(
 	streamID string, stream *Stream, ctx StreamContext, errMsg string,
 ) (cfg *types.Stream, ok bool) {
-	shouldRetry, reason := m.shouldContinueRetry(streamID, ctx)
-	if !shouldRetry {
+	cfg, reason := m.shouldContinueRetry(streamID, stream, ctx)
+	if cfg == nil {
 		m.stopListenerAfterRetryEnd(streamID, stream, reason, errMsg)
 		return nil, false
 	}
-	cfg = ctx.Stream(streamID)
-	if cfg == nil {
-		m.stopListenerAfterRetryEnd(streamID, stream, "stream removed", errMsg)
-		return nil, false
-	}
 	return cfg, true
-}
-
-func (m *Manager) listenerEncoderInfo(
-	streamID string,
-) (stream *Stream, run *encoderRun, backoff *util.Backoff, exists bool) {
-	m.mu.RLock()
-	stream, exists = m.streams[streamID]
-	if !exists || stream.mode != types.StreamModeListener {
-		m.mu.RUnlock()
-		return nil, nil, nil, false
-	}
-	backoff = stream.backoff
-	m.mu.RUnlock()
-
-	stream.encoderMu.RLock()
-	run = stream.encoder
-	stream.encoderMu.RUnlock()
-	return stream, run, backoff, true
 }
 
 func (m *Manager) recordListenerEncoderFailure(
@@ -1160,9 +1210,7 @@ func (m *Manager) recordListenerEncoderFailure(
 }
 
 func (m *Manager) stopListenerAfterRetryEnd(streamID string, stream *Stream, reason, errMsg string) {
-	if reason != "" {
-		slog.Info("listener encoder monitoring stopped", "stream_id", streamID, "reason", reason)
-	}
+	slog.Info("listener encoder monitoring stopped", "stream_id", streamID, "reason", reason)
 
 	if reason == "max retries exceeded" {
 		m.mu.Lock()
@@ -1182,5 +1230,5 @@ func (m *Manager) stopListenerAfterRetryEnd(streamID string, stream *Stream, rea
 		return
 	}
 
-	m.Remove(streamID)
+	m.removeIfOwned(streamID, stream)
 }

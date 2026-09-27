@@ -67,6 +67,7 @@ type historicalIncident struct {
 	durationMs int64
 	attempts   int
 	dump       bool
+	stopped    bool // ended by a stop or stream removal rather than recovery
 	events     []groupedEvent
 }
 
@@ -114,7 +115,12 @@ func EmptyEventGroups() EventGroups {
 
 // GroupEvents groups decorated events for the events UI.
 // Only supplied events are grouped, so pagination can split incidents.
-func GroupEvents(events []EventView) EventGroups {
+//
+// streamExists reports whether a stream ID is still configured. Ongoing stream
+// incidents for streams that no longer exist are closed as stopped, which also
+// covers logs written before deletions emitted stream_stopped. A nil
+// streamExists treats every stream as configured.
+func GroupEvents(events []EventView, streamExists func(streamID string) bool) EventGroups {
 	grouped := make([]groupedEvent, len(events))
 	for i := range events {
 		grouped[i] = groupedEvent{
@@ -136,7 +142,15 @@ func GroupEvents(events []EventView) EventGroups {
 		state.process(asc[i])
 	}
 
-	ongoing := slices.Collect(maps.Values(state.openByKey))
+	ongoing := make([]*historicalIncident, 0, len(state.openByKey))
+	for incident := range maps.Values(state.openByKey) {
+		if isRemovedStreamIncident(incident, streamExists) {
+			incident.stopped = true
+			state.closed = append(state.closed, incident)
+			continue
+		}
+		ongoing = append(ongoing, incident)
+	}
 	consumed := consumedEventIDs(len(grouped), state.closed, state.failed, ongoing)
 
 	groups := EmptyEventGroups()
@@ -168,7 +182,11 @@ func GroupEvents(events []EventView) EventGroups {
 		groups.Attention = append(groups.Attention, incidentItem(incident, "failed"))
 	}
 	for _, incident := range state.closed {
-		groups.Resolved = append(groups.Resolved, incidentItem(incident, "resolved"))
+		status := "resolved"
+		if incident.stopped {
+			status = "stopped"
+		}
+		groups.Resolved = append(groups.Resolved, incidentItem(incident, status))
 	}
 
 	sortItemsDesc(groups.Attention)
@@ -192,6 +210,7 @@ func (s *groupingState) process(event groupedEvent) {
 
 	if open := s.openByKey[key]; open != nil && eventClosesIncident(open, event) {
 		open.add(event)
+		open.stopped = event.view.Type == StreamStopped
 		s.closed = append(s.closed, open)
 		delete(s.openByKey, key)
 		return
@@ -230,10 +249,23 @@ func eventClosesIncident(open *historicalIncident, event groupedEvent) bool {
 	if open.closeType == event.view.Type {
 		return true
 	}
+	if open.closeType != StreamStable {
+		return false
+	}
+	// A stopped or deleted stream ends its incident without recovering. A
+	// clean exit is followed by a retry, so the incident stays open.
+	if event.view.Type == StreamStopped {
+		return event.view.Message != StreamEndedNormallyMessage
+	}
 	// Listener starts resolve incidents even without a StreamStable event.
-	return open.closeType == StreamStable &&
-		event.view.Type == StreamStarted &&
-		isListenerStreamEvent(event)
+	return event.view.Type == StreamStarted && isListenerStreamEvent(event)
+}
+
+// isRemovedStreamIncident reports whether incident belongs to a stream ID that
+// is no longer configured. Legacy events without a stream ID never match.
+func isRemovedStreamIncident(incident *historicalIncident, streamExists func(string) bool) bool {
+	streamID := incident.first.view.StreamID
+	return streamExists != nil && streamID != "" && !streamExists(streamID)
 }
 
 func consumedEventIDs(eventCount int, groups ...[]*historicalIncident) []bool {
@@ -308,8 +340,9 @@ func incidentItem(incident *historicalIncident, status string) EventGroupItem {
 		duration = max(0, incident.endTs-incident.startTs)
 	}
 
+	ended := status == "resolved" || status == "stopped"
 	chips := []string{}
-	if status == "resolved" && duration > 0 {
+	if ended && duration > 0 {
 		chips = append(chips, formatSmartDuration(duration))
 	}
 	if incident.attempts > 1 {
@@ -325,12 +358,15 @@ func incidentItem(incident *historicalIncident, status string) EventGroupItem {
 	}
 
 	severity := incident.severity
-	if status == "resolved" {
+	switch status {
+	case "resolved":
 		severity = SeveritySuccess
+	case "stopped":
+		severity = SeverityInfo
 	}
 
 	sortTs := incident.startTs
-	if status == "resolved" || status == "failed" {
+	if ended || status == "failed" {
 		// Open incidents sort by start; terminal incidents by final event.
 		sortTs = incident.endTs
 	}
@@ -577,6 +613,8 @@ func statusText(status string) string {
 		return "Failed"
 	case "resolved":
 		return "Resolved"
+	case "stopped":
+		return "Stopped"
 	case "unresolved":
 		return "Unresolved"
 	default:

@@ -34,6 +34,11 @@ const (
 	StreamStopped EventType = "stream_stopped"
 )
 
+// StreamEndedNormallyMessage is the stream_stopped message for a caller
+// process that exited cleanly on its own. The retry monitor restarts such a
+// stream, so this event does not end an open stream incident.
+const StreamEndedNormallyMessage = "Stream ended normally"
+
 const (
 	// SilenceStart indicates a silence start event.
 	SilenceStart EventType = "silence_start"

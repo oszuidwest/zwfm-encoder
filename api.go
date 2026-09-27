@@ -420,6 +420,8 @@ func (s *Server) handleDeleteStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Stop before removing the config: Stop emits stream_stopped for every
+	// runtime state, which needs the configured name, and ends any pending retry.
 	if err := s.encoder.StopStream(id); err != nil {
 		//nolint:gosec // G706: structured logging of request-derived ID
 		slog.Warn("failed to stop stream before delete", "stream_id", id, "error", err)
@@ -1224,9 +1226,10 @@ func (s *Server) handleAPIEventsFromPath(w http.ResponseWriter, r *http.Request,
 	}
 
 	views := eventlog.DecorateEvents(eventList)
+	streamExists := func(streamID string) bool { return s.config.Stream(streamID) != nil }
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"events":   views,
-		"groups":   eventlog.GroupEvents(views),
+		"groups":   eventlog.GroupEvents(views, streamExists),
 		"has_more": hasMore,
 	})
 }

@@ -294,6 +294,55 @@ func TestHandleAPIEventsDecoratesClassificationAndKeepsPagination(t *testing.T) 
 	}
 }
 
+func TestHandleAPIEventsStopsIncidentsForRemovedStreams(t *testing.T) {
+	t.Parallel()
+
+	server := freshServer(t)
+	kept := &types.Stream{Host: "kept.example", Port: 9000, Codec: types.CodecMP3}
+	if err := server.config.AddStream(kept); err != nil {
+		t.Fatalf("AddStream() error = %v", err)
+	}
+
+	logPath := filepath.Join(t.TempDir(), "encoder.jsonl")
+	base := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
+	writeAPIEvents(t, logPath, []eventlog.Event{
+		{
+			Timestamp: base,
+			Type:      eventlog.StreamError,
+			StreamID:  "stream-deleted",
+			Details:   map[string]any{"stream_name": "deleted.example:9000", "error": "Connection refused"},
+		},
+		{
+			Timestamp: base.Add(time.Second),
+			Type:      eventlog.StreamError,
+			StreamID:  kept.ID,
+			Details:   map[string]any{"stream_name": "kept.example:9000", "error": "Connection refused"},
+		},
+	})
+
+	rec := runJSONHandler(
+		t,
+		func(w http.ResponseWriter, r *http.Request) {
+			server.handleAPIEventsFromPath(w, r, logPath)
+		},
+		http.MethodGet,
+		"/api/events",
+		"",
+	)
+	assertStatus(t, rec, http.StatusOK)
+	groups := decodeJSON[eventsResponseForTest](t, rec.Body.Bytes()).Groups
+
+	if len(groups.Attention) != 1 || groups.Attention[0].Events[0].StreamID != kept.ID {
+		t.Fatalf("attention = %+v, want only the configured stream", groups.Attention)
+	}
+	if len(groups.Resolved) != 1 || groups.Resolved[0].Events[0].StreamID != "stream-deleted" {
+		t.Fatalf("resolved = %+v, want the deleted stream", groups.Resolved)
+	}
+	if got := groups.Resolved[0].StatusText; got != "Stopped" {
+		t.Fatalf("deleted stream status = %q, want Stopped", got)
+	}
+}
+
 func TestHandleAPIEventsReadFailureReturnsError(t *testing.T) {
 	t.Parallel()
 

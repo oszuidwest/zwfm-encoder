@@ -168,7 +168,7 @@ confirmed remote output.
 
 - **Severity:** `info`
 - **UI Label:** Stopped
-- **Triggered:** When a stream is intentionally stopped (user action or encoder shutdown).
+- **Triggered:** When a stream is intentionally stopped (user action, stream update or deletion, or encoder shutdown), once per stop; a pending retry is cancelled. A caller that exits cleanly on its own also writes this event with the message `Stream ended normally` and is then retried.
 
 ```json
 {
@@ -726,6 +726,19 @@ across pages and therefore grouped differently on each page. The embedded UI
 loads an expanding newest-first window so problem and recovery events can be
 paired within the same response.
 
+A stream incident starts with `stream_error` or `stream_retry` and is listed
+under `attention` with status `Ongoing` until it ends:
+
+- `stream_stable` (callers) or `stream_started` (listeners) moves it to
+  `resolved` with status `Resolved`.
+- `stream_stopped` moves it to `resolved` with status `Stopped` and severity
+  `info`: the stream was stopped or deleted rather than recovered. A
+  `stream_stopped` with the message `Stream ended normally` is followed by a
+  retry and leaves the incident open.
+- An ongoing incident for a stream ID that is no longer configured is also shown
+  as `Stopped`. This covers logs written before deletions emitted
+  `stream_stopped`.
+
 ---
 
 ## Event Summary Table
@@ -736,7 +749,7 @@ paired within the same response.
 | `stream_stable` | stream | success | recovery | Connected | Caller stream stable for 10s |
 | `stream_error` | stream | error | problem | Error | Stream encounters error |
 | `stream_retry` | stream | warning | problem | Retry | Caller stream or listener encoder retrying after failure |
-| `stream_stopped` | stream | info | lifecycle | Stopped | Stream intentionally stopped |
+| `stream_stopped` | stream | info | lifecycle | Stopped | Stream stopped, updated, or deleted |
 | `silence_start` | audio | warning | problem | Silence | Audio below threshold |
 | `silence_end` | audio | success | recovery | Recovered | Audio returns above threshold |
 | `audio_dump_ready` | audio | info | lifecycle | Audio Dump | MP3 context file ready after silence or channel imbalance |
