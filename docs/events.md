@@ -168,7 +168,7 @@ confirmed remote output.
 
 - **Severity:** `info`
 - **UI Label:** Stopped
-- **Triggered:** When a stream is intentionally stopped (user action, stream update or deletion, or encoder shutdown). Exactly one event is written per stop, whether the stream was running, starting, errored, or waiting to retry; a pending retry is cancelled. A caller process that exits cleanly on its own also writes this event with the message `Stream ended normally` and is then retried. In the events UI, `stream_stopped` ends an open stream incident with status **Stopped**, except for `Stream ended normally`, which leaves the incident open.
+- **Triggered:** When a stream is intentionally stopped (user action, stream update or deletion, or encoder shutdown), once per stop; a pending retry is cancelled. A caller that exits cleanly on its own also writes this event with the message `Stream ended normally` and is then retried.
 
 ```json
 {

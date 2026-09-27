@@ -264,11 +264,8 @@ func eventClosesIncident(open *historicalIncident, event groupedEvent) bool {
 // isRemovedStreamIncident reports whether incident belongs to a stream ID that
 // is no longer configured. Legacy events without a stream ID never match.
 func isRemovedStreamIncident(incident *historicalIncident, streamExists func(string) bool) bool {
-	if streamExists == nil || incident.first.view.Category != CategoryStream {
-		return false
-	}
 	streamID := incident.first.view.StreamID
-	return streamID != "" && !streamExists(streamID)
+	return streamExists != nil && streamID != "" && !streamExists(streamID)
 }
 
 func consumedEventIDs(eventCount int, groups ...[]*historicalIncident) []bool {
@@ -343,8 +340,9 @@ func incidentItem(incident *historicalIncident, status string) EventGroupItem {
 		duration = max(0, incident.endTs-incident.startTs)
 	}
 
+	ended := status == "resolved" || status == "stopped"
 	chips := []string{}
-	if (status == "resolved" || status == "stopped") && duration > 0 {
+	if ended && duration > 0 {
 		chips = append(chips, formatSmartDuration(duration))
 	}
 	if incident.attempts > 1 {
@@ -368,7 +366,7 @@ func incidentItem(incident *historicalIncident, status string) EventGroupItem {
 	}
 
 	sortTs := incident.startTs
-	if status == "resolved" || status == "stopped" || status == "failed" {
+	if ended || status == "failed" {
 		// Open incidents sort by start; terminal incidents by final event.
 		sortTs = incident.endTs
 	}

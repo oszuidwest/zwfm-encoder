@@ -214,9 +214,6 @@ func (m *Manager) Start(stream *types.Stream) (bool, error) {
 // create one. A non-nil expected restricts the launch to replacing that exact
 // entry, so a retry monitor cannot revive a stream that Stop already removed.
 func (m *Manager) start(stream *types.Stream, expected *Stream) (*Stream, error) {
-	if stream == nil {
-		return nil, nil
-	}
 	if stream.ModeOrDefault() == types.StreamModeListener {
 		return m.startListenerFanout(stream, expected)
 	}
@@ -929,20 +926,20 @@ func resolveExitError(result *ffmpeg.StartResult, err error) string {
 }
 
 // handleStreamExit logs the exit of a caller process and updates retry state.
-// It returns false when the exit was an intentional stop, which Stop reports.
+// Intentional stops are reported by Stop.
 func (m *Manager) handleStreamExit(
 	streamID string, result *ffmpeg.StartResult, backoff *util.Backoff, mode types.StreamMode,
 	err error, runDuration time.Duration,
-) bool {
+) {
 	cause := context.Cause(result.Context())
 
 	switch classifyStreamExit(mode, err, cause) {
 	case streamExitIntentionalStop:
-		return false
+		return
 	case streamExitNormalStop:
 		m.ResetRetry(streamID)
 		m.emitEventWithMode(streamID, mode, "stream_stopped", eventlog.StreamEndedNormallyMessage, "", 0, 0)
-		return true
+		return
 	case streamExitFailure:
 		// Handled by the shared error path below.
 	}
@@ -964,31 +961,30 @@ func (m *Manager) handleStreamExit(
 			backoff.Next()
 		}
 	}
-	return true
 }
 
+// shouldContinueRetry returns the stream config to retry with, or nil and the
+// reason retrying must stop.
 func (m *Manager) shouldContinueRetry(
 	streamID string, owned *Stream, ctx StreamContext,
-) (shouldRetry bool, reason string) {
+) (cfg *types.Stream, reason string) {
 	if !m.owns(streamID, owned) {
-		return false, "stream stopped"
+		return nil, "stream stopped"
 	}
 	if !ctx.IsRunning() {
-		return false, "encoder stopped"
+		return nil, "encoder stopped"
 	}
-	stream := ctx.Stream(streamID)
-	if stream == nil {
-		return false, "stream removed"
+	cfg = ctx.Stream(streamID)
+	if cfg == nil {
+		return nil, "stream removed"
 	}
-	if !stream.Enabled {
-		return false, "stream disabled"
+	if !cfg.Enabled {
+		return nil, "stream disabled"
 	}
-	retryCount := m.RetryCount(streamID)
-	maxRetries := stream.MaxRetriesOrDefault()
-	if retryCount > maxRetries {
-		return false, "max retries exceeded"
+	if m.RetryCount(streamID) > cfg.MaxRetriesOrDefault() {
+		return nil, "max retries exceeded"
 	}
-	return true, ""
+	return cfg, ""
 }
 
 // MonitorAndRetry watches a stream and restarts it on failure. This method
@@ -1022,12 +1018,10 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 		if !m.markExited(streamID, owned) {
 			return
 		}
-		if !m.handleStreamExit(streamID, result, backoff, mode, err, runDuration) {
-			return
-		}
+		m.handleStreamExit(streamID, result, backoff, mode, err, runDuration)
 
-		shouldRetry, reason := m.shouldContinueRetry(streamID, owned, ctx)
-		if !shouldRetry {
+		cfg, reason := m.shouldContinueRetry(streamID, owned, ctx)
+		if cfg == nil {
 			slog.Info("stream monitoring stopped", "stream_id", streamID, "reason", reason)
 			if reason != "max retries exceeded" {
 				m.removeIfOwned(streamID, owned)
@@ -1036,9 +1030,8 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 		}
 
 		retryDelay := backoff.Current()
-		stream := ctx.Stream(streamID)
 		retryCount := m.RetryCount(streamID)
-		maxRetries := stream.MaxRetriesOrDefault()
+		maxRetries := cfg.MaxRetriesOrDefault()
 		slog.Info("stream stopped, waiting before retry",
 			"stream_id", streamID, "delay", retryDelay, "retry", retryCount, "max_retries", maxRetries)
 		m.emitEventWithMode(streamID, mode, "stream_retry",
@@ -1052,8 +1045,8 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 		}
 
 		// Re-check conditions after wait
-		shouldRetry, reason = m.shouldContinueRetry(streamID, owned, ctx)
-		if !shouldRetry {
+		cfg, reason = m.shouldContinueRetry(streamID, owned, ctx)
+		if cfg == nil {
 			slog.Info("stream not restarting", "stream_id", streamID, "reason", reason)
 			if reason != "max retries exceeded" {
 				m.removeIfOwned(streamID, owned)
@@ -1061,7 +1054,7 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 			return
 		}
 
-		next, err := m.start(ctx.Stream(streamID), owned)
+		next, err := m.start(cfg, owned)
 		if err != nil {
 			slog.Error("failed to restart stream", "stream_id", streamID, "error", err)
 			m.removeIfOwned(streamID, owned)
@@ -1181,14 +1174,9 @@ func (m *Manager) monitorListenerEncoder(
 func (m *Manager) prepareListenerRetry(
 	streamID string, stream *Stream, ctx StreamContext, errMsg string,
 ) (cfg *types.Stream, ok bool) {
-	shouldRetry, reason := m.shouldContinueRetry(streamID, stream, ctx)
-	if !shouldRetry {
-		m.stopListenerAfterRetryEnd(streamID, stream, reason, errMsg)
-		return nil, false
-	}
-	cfg = ctx.Stream(streamID)
+	cfg, reason := m.shouldContinueRetry(streamID, stream, ctx)
 	if cfg == nil {
-		m.stopListenerAfterRetryEnd(streamID, stream, "stream removed", errMsg)
+		m.stopListenerAfterRetryEnd(streamID, stream, reason, errMsg)
 		return nil, false
 	}
 	return cfg, true
@@ -1222,9 +1210,7 @@ func (m *Manager) recordListenerEncoderFailure(
 }
 
 func (m *Manager) stopListenerAfterRetryEnd(streamID string, stream *Stream, reason, errMsg string) {
-	if reason != "" {
-		slog.Info("listener encoder monitoring stopped", "stream_id", streamID, "reason", reason)
-	}
+	slog.Info("listener encoder monitoring stopped", "stream_id", streamID, "reason", reason)
 
 	if reason == "max retries exceeded" {
 		m.mu.Lock()

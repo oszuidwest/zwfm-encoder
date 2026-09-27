@@ -828,8 +828,12 @@ func freeUDPPort(t *testing.T) int {
 }
 func fakeLongRunningExecutable(t *testing.T) string {
 	t.Helper()
+	return writeFakeFFmpeg(t, "#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n")
+}
+
+func writeFakeFFmpeg(t *testing.T, script string) string {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "fake-ffmpeg")
-	script := "#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n"
 	//nolint:gosec // Test helper must be executable and lives in t.TempDir().
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("WriteFile(fake ffmpeg) error = %v", err)

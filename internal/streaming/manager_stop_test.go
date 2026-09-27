@@ -1,8 +1,6 @@
 package streaming
 
 import (
-	"os"
-	"path/filepath"
 	"slices"
 	"sync"
 	"testing"
@@ -49,16 +47,6 @@ func waitMonitorDone(t *testing.T, done <-chan struct{}) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("MonitorAndRetry did not return after Stop")
 	}
-}
-
-func fakeFailingExecutable(t *testing.T) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "fake-ffmpeg")
-	//nolint:gosec // Test helper must be executable and lives in t.TempDir().
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
-		t.Fatalf("WriteFile(fake ffmpeg) error = %v", err)
-	}
-	return path
 }
 
 func TestStopEmitsOneStoppedEventForIdleStates(t *testing.T) {
@@ -151,7 +139,7 @@ func TestStopRunningCallerEndsMonitorWithoutRetry(t *testing.T) {
 }
 
 func TestStopDuringCallerRetryWaitCancelsRestart(t *testing.T) {
-	m := NewManager(fakeFailingExecutable(t))
+	m := NewManager(writeFakeFFmpeg(t, "#!/bin/sh\nexit 1\n"))
 	events := recordStreamEvents(m)
 	stream := validStream()
 	if started, err := m.Start(stream); err != nil || !started {
