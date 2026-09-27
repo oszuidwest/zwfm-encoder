@@ -54,9 +54,9 @@ func TestRecordingFileTime(t *testing.T) {
 			filename: "Studio-2026-09-28-14-37.wav",
 		},
 		{
-			name:     "recorder name containing digits",
-			safeName: "Studio-2024",
-			filename: "Studio-2024-2026-09-28-14-37.ts",
+			name:     "recorder name containing a timestamp",
+			safeName: "Studio-2024-01-01-00-00",
+			filename: "Studio-2024-01-01-00-00-2026-09-28-14-37.ts",
 			wantTime: wantTime,
 			wantOK:   true,
 		},
