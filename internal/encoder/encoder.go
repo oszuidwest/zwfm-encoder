@@ -17,6 +17,7 @@ import (
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
+	"github.com/oszuidwest/zwfm-encoder/internal/dante"
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/notify"
 	"github.com/oszuidwest/zwfm-encoder/internal/recording"
@@ -62,6 +63,7 @@ type Encoder struct {
 	config              *config.Config
 	ffmpegPath          string
 	buildCaptureCommand func(device, ffmpegPath string) (string, []string, error)
+	openDanteSource     func(context.Context, string) (danteSource, error)
 	streamRestartDelay  time.Duration
 	srtAvailable        bool
 	streamManager       *streaming.Manager
@@ -71,6 +73,7 @@ type Encoder struct {
 	sourceCmd           *exec.Cmd
 	sourceCancel        context.CancelFunc
 	sourceStdout        io.ReadCloser
+	sourceRunning       bool
 	sourceRunID         uint64
 	state               types.EncoderState
 	stopChan            chan struct{}
@@ -87,6 +90,11 @@ type Encoder struct {
 	alertOrchestrator   *notify.AlertOrchestrator
 	peakHolder          *audio.PeakHolder
 	secretExpiryChecker *notify.SecretExpiryChecker
+}
+
+type danteSource interface {
+	io.ReadCloser
+	Wait() error
 }
 
 // New creates a new Encoder with the given configuration and FFmpeg binary path.
@@ -134,6 +142,9 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 		config:              cfg,
 		ffmpegPath:          ffmpegPath,
 		buildCaptureCommand: audio.BuildCaptureCommand,
+		openDanteSource: func(ctx context.Context, input string) (danteSource, error) {
+			return dante.Open(ctx, input)
+		},
 		streamRestartDelay:  types.StreamRestartDelay,
 		srtAvailable:        srtUsable(srtAvailable, srtProbeErr),
 		streamManager:       streamMgr,
@@ -451,6 +462,10 @@ func (e *Encoder) Stop() error {
 			slog.Warn("failed to send signal to source", "error", err)
 			errs = append(errs, fmt.Errorf("signal source: %w", err))
 		}
+	} else if sourceCancel != nil {
+		// Native sources have no OS process to signal. Their cancellation
+		// function owns the network socket and unblocks the source reader.
+		sourceCancel()
 	}
 
 	pollCtx, pollCancel := context.WithCancel(context.Background())
@@ -459,7 +474,7 @@ func (e *Encoder) Stop() error {
 	stopped := e.pollUntil(pollCtx, func() bool {
 		e.mu.RLock()
 		defer e.mu.RUnlock()
-		return e.sourceCmd == nil
+		return !e.sourceRunning
 	})
 
 	select {
@@ -480,6 +495,8 @@ func (e *Encoder) Stop() error {
 	e.state = types.StateStopped
 	e.sourceCmd = nil
 	e.sourceCancel = nil
+	e.sourceStdout = nil
+	e.sourceRunning = false
 	e.mu.Unlock()
 
 	return errors.Join(errs...)
@@ -768,9 +785,17 @@ func (e *Encoder) runSourceLoop() {
 	}
 }
 
-// runSource starts the audio capture process and blocks until it exits.
+// runSource starts the configured audio source and blocks until it exits.
 func (e *Encoder) runSource() (string, error) {
 	audioInput := e.config.Snapshot().AudioInput
+	if dante.IsInput(audioInput) {
+		return e.runDanteSource(audioInput)
+	}
+	return e.runProcessSource(audioInput)
+}
+
+// runProcessSource starts a platform audio capture process and blocks until it exits.
+func (e *Encoder) runProcessSource(audioInput string) (string, error) {
 	cmdName, args, err := e.buildCaptureCommand(audioInput, e.ffmpegPath)
 	if err != nil {
 		return "", err
@@ -810,6 +835,7 @@ func (e *Encoder) runSource() (string, error) {
 
 	e.resetAudioLevels() // start each run silent until the first metered chunk
 
+	go e.runDistributor(runID)
 	go e.startEnabledStreamsAfterDelay(runID, stopChan, e.streamRestartDelay)
 
 	err = cmd.Wait()
@@ -820,10 +846,86 @@ func (e *Encoder) runSource() (string, error) {
 		e.sourceCmd = nil
 		e.sourceCancel = nil
 		e.sourceStdout = nil
+		e.sourceRunning = false
 	}()
 	// runDistributor publishes final silence after its last live level.
 
 	return util.ExtractLastError(stderrBuf.String()), err
+}
+
+// runDanteSource starts the native Dante receiver and blocks until it exits.
+func (e *Encoder) runDanteSource(audioInput string) (string, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	if !e.beginNativeSource(cancel) {
+		cancel()
+		return "", context.Canceled
+	}
+
+	receiver, err := e.openDanteSource(ctx, audioInput)
+	if err != nil {
+		e.finishSource()
+		cancel()
+		return "", err
+	}
+	stopSource := func() {
+		cancel()
+		_ = receiver.Close()
+	}
+
+	runID, stopChan, published := e.publishNativeSource(receiver, stopSource)
+	if !published {
+		stopSource()
+		e.finishSource()
+		return "", context.Canceled
+	}
+
+	slog.Info("starting native Dante audio capture", "input", audioInput)
+	e.resetAudioLevels()
+	go e.runDistributor(runID)
+	go e.startEnabledStreamsAfterDelay(runID, stopChan, e.streamRestartDelay)
+
+	err = receiver.Wait()
+	stopSource()
+	e.finishSource()
+	return "", err
+}
+
+func (e *Encoder) beginNativeSource(cancel context.CancelFunc) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.isStopping() {
+		return false
+	}
+	e.sourceCancel = cancel
+	e.sourceRunning = true
+	return true
+}
+
+func (e *Encoder) publishNativeSource(
+	stdout io.ReadCloser,
+	cancel context.CancelFunc,
+) (runID uint64, stopChan <-chan struct{}, ok bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.isStopping() {
+		return 0, nil, false
+	}
+	e.sourceRunID++
+	e.sourceCancel = cancel
+	e.sourceStdout = stdout
+	e.state = types.StateRunning
+	e.startTime = time.Now()
+	e.lastError = ""
+	return e.sourceRunID, e.stopChan, true
+}
+
+func (e *Encoder) finishSource() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.sourceCmd = nil
+	e.sourceCancel = nil
+	e.sourceStdout = nil
+	e.sourceRunning = false
 }
 
 // publishSource records a freshly started capture process as the active source
@@ -844,6 +946,7 @@ func (e *Encoder) publishSource(
 	e.sourceCmd = cmd
 	e.sourceCancel = cancel
 	e.sourceStdout = stdout
+	e.sourceRunning = true
 	e.state = types.StateRunning
 	e.startTime = time.Now()
 	e.lastError = ""
@@ -880,8 +983,6 @@ func (e *Encoder) startEnabledStreams(runID uint64) {
 	if !e.sourceRunActive(runID) {
 		return
 	}
-
-	go e.runDistributor(runID)
 
 	streams := e.config.ConfiguredStreams()
 	for i := range streams {

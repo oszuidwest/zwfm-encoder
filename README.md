@@ -76,6 +76,42 @@ Connect the audio output of your audio processor to the HiFiBerry input.
 - 16-bit depth
 - Stereo (2 channels)
 
+### Native Dante input
+
+The encoder can receive two Dante-compatible transmitter channels directly in
+the Go process. It discovers the named channels over mDNS, requests a unicast
+flow from the transmitter, reorders media packets, fills missing packets with
+silence, and converts 16/24/32-bit network PCM to the encoder's 48 kHz stereo
+S16LE format. No Dante Virtual Soundcard or external Inferno process is used.
+
+Set `audio.input` in `config.json` to a Dante URI:
+
+```json
+{
+  "audio": {
+    "input": "dante://studio-tx/Program%20L/Program%20R?interface=eth0"
+  }
+}
+```
+
+The URI format is
+`dante://TRANSMITTER/LEFT_CHANNEL/RIGHT_CHANNEL?interface=INTERFACE`. Percent-
+encode spaces and other reserved characters. Alternatively, names can be
+supplied as query parameters:
+
+```text
+dante:?tx=Main%20Desk&left=Program%20L&right=Program%20R&interface=eth0
+```
+
+The interface is optional; when omitted, the route used for IPv4 multicast is
+selected automatically. The transmitter must run at 48 kHz and advertise
+16-, 24-, or 32-bit PCM. The encoder and transmitter must be on a network where
+mDNS multicast and the Dante UDP traffic are permitted.
+
+This receive-only implementation is experimental, unofficial, and not Dante-
+certified. It selects channels by name in the encoder configuration and does
+not advertise the encoder as a routable receiver in Dante Controller.
+
 ## Codecs
 
 | Codec | Encoder | Bitrate | Notes |

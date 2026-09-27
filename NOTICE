@@ -1,0 +1,15 @@
+# Third-party notices
+
+## Inferno AoIP
+
+The receive-only Dante-compatible protocol implementation in `internal/dante`
+is derived from Inferno AoIP:
+
+- Project: <https://gitlab.com/lumifaza/inferno/>
+- Upstream revision used for the implementation:
+  `9767558e0905c9e9c960f5a60e050fbdc38300b7`
+- Copyright: 2023-2025 Teodor Wozniak and Inferno contributors
+- License selected for this combined work: GPL-3.0-or-later
+
+Inferno and this project are unofficial implementations. Neither is affiliated
+with or endorsed by Audinate. Dante is a trademark of Audinate Pty Ltd.

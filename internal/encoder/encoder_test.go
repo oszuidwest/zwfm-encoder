@@ -1,6 +1,7 @@
 package encoder
 
 import (
+	"context"
 	"errors"
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
@@ -16,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -131,6 +133,30 @@ func TestStopBeforeStreamDelayCancelsDelayedStarter(t *testing.T) {
 	}
 	time.Sleep(3 * testStreamRestartDelay)
 	assertManagersStopped(t, e, "managers revived after Stop() canceled the delayed starter")
+}
+
+func TestNativeDanteSourceUsesEncoderLifecycle(t *testing.T) {
+	e := newSourceLifecycleTestEncoder(t, "exit")
+	e.config.Audio.Input = "dante://studio-tx/Left/Right"
+	source := newFakeDanteSource()
+	e.openDanteSource = func(context.Context, string) (danteSource, error) {
+		return source, nil
+	}
+
+	if err := e.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	waitForCondition(t, time.Second, "native Dante source running", func() bool {
+		e.mu.RLock()
+		defer e.mu.RUnlock()
+		return e.state == types.StateRunning && e.sourceRunning && e.sourceCmd == nil
+	})
+	if err := e.Stop(); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if got := e.State(); got != types.StateStopped {
+		t.Fatalf("State() = %q, want %q", got, types.StateStopped)
+	}
 }
 func TestSourceMaxRetryExhaustionStopsRecordingManager(t *testing.T) {
 	e := newSourceLifecycleTestEncoder(t, "exit")
@@ -370,6 +396,39 @@ func helperCaptureCommand(mode string, extraArgs ...string) func(string, string)
 		args = append(args, extraArgs...)
 		return os.Args[0], args, nil
 	}
+}
+
+type fakeDanteSource struct {
+	reader    *io.PipeReader
+	writer    *io.PipeWriter
+	done      chan error
+	closeOnce sync.Once
+}
+
+func newFakeDanteSource() *fakeDanteSource {
+	reader, writer := io.Pipe()
+	return &fakeDanteSource{
+		reader: reader,
+		writer: writer,
+		done:   make(chan error, 1),
+	}
+}
+
+func (s *fakeDanteSource) Read(buffer []byte) (int, error) {
+	return s.reader.Read(buffer)
+}
+
+func (s *fakeDanteSource) Wait() error {
+	return <-s.done
+}
+
+func (s *fakeDanteSource) Close() error {
+	s.closeOnce.Do(func() {
+		_ = s.writer.Close()
+		_ = s.reader.Close()
+		s.done <- nil
+	})
+	return nil
 }
 func TestEncoderCaptureHelperProcess(t *testing.T) {
 	helperArgs := []string{}
