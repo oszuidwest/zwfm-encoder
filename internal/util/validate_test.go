@@ -8,7 +8,7 @@ import (
 func TestValidatePathRejectsTraversalAndAcceptsSafePath(t *testing.T) {
 	t.Parallel()
 	// Absolute-looking fixtures are intentional here: ValidatePath applies a
-	// slash-based API policy independent of the host platform.
+	// platform-independent substring check rather than filesystem semantics.
 	tests := []struct {
 		name    string
 		path    string

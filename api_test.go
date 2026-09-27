@@ -893,7 +893,11 @@ func populateAPISettingsValue(t *testing.T, value reflect.Value, path string) {
 }
 
 func validAPISettingsBool(fieldPath string) bool {
-	return len(fieldPath)%2 == 0
+	hash := uint32(17)
+	for i := range fieldPath {
+		hash = hash*31 + uint32(fieldPath[i])
+	}
+	return hash%2 == 1
 }
 
 func validAPISettingsString(fieldName string) string {
