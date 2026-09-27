@@ -78,11 +78,7 @@ Connect the audio output of your audio processor to the HiFiBerry input.
 
 ### Native Dante input
 
-The encoder can receive two Dante-compatible transmitter channels directly in
-the Go process. It discovers the named channels over mDNS, requests a unicast
-flow from the transmitter, reorders media packets, fills missing packets with
-silence, and converts 16/24/32-bit network PCM to the encoder's 48 kHz stereo
-S16LE format. No Dante Virtual Soundcard or other external software is needed.
+The encoder can receive two Dante-compatible transmitter channels directly in the Go process. It discovers the named channels over mDNS, requests a unicast flow from the transmitter, reorders media packets, fills missing packets with silence, and converts 16/24/32-bit network PCM to the encoder's 48 kHz stereo S16LE format. No Dante Virtual Soundcard or other external software is needed.
 
 Set `audio.input` in `config.json` to a Dante URI:
 
@@ -94,24 +90,15 @@ Set `audio.input` in `config.json` to a Dante URI:
 }
 ```
 
-The URI format is
-`dante://TRANSMITTER/LEFT_CHANNEL/RIGHT_CHANNEL?interface=INTERFACE`. Percent-
-encode spaces and other reserved characters in channel names.
+The URI format is `dante://TRANSMITTER/LEFT_CHANNEL/RIGHT_CHANNEL?interface=INTERFACE`. Percent-encode spaces and other reserved characters in channel names.
 
-The interface is optional; when omitted, mDNS runs on all interfaces and the
-source address the OS routes toward the transmitter is used. The transmitter
-must run at 48 kHz and advertise 16-, 24-, or 32-bit PCM. The encoder and transmitter must be on a network where
-mDNS multicast and the Dante UDP traffic are permitted.
+The interface is optional; when omitted, mDNS runs on all interfaces and the source address the OS routes toward the transmitter is used. The transmitter must run at 48 kHz and advertise 16-, 24-, or 32-bit PCM. The encoder and transmitter must be on a network where mDNS multicast and the Dante UDP traffic are permitted.
 
-This receive-only implementation is experimental, unofficial, and not Dante-
-certified. It selects channels by name in the encoder configuration and does
-not advertise the encoder as a routable receiver in Dante Controller.
+This receive-only implementation is experimental, unofficial, and not Dante-certified. It selects channels by name in the encoder configuration and does not advertise the encoder as a routable receiver in Dante Controller.
 
-The protocol behavior is described in
-[`docs/dante-protocol.md`](docs/dante-protocol.md).
+The protocol behavior is described in [`docs/dante-protocol.md`](docs/dante-protocol.md).
 
-Dante is a trademark of Audinate Pty Ltd; this project is not affiliated with
-or endorsed by Audinate.
+Dante is a trademark of Audinate Pty Ltd; this project is not affiliated with or endorsed by Audinate.
 
 ## Codecs
 
