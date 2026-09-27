@@ -1,6 +1,8 @@
 # Functional specification: receive-only Dante-compatible stereo input
 
-The receiver in `internal/dante` was implemented independently from this specification. Dante is a trademark of Audinate Pty Ltd; this project is not affiliated with or endorsed by Audinate.
+The receiver in `internal/dante` was reimplemented using a two-team clean-room process: Claude produced this functional specification, and Codex implemented it in an isolated environment without network access or access to prior implementations.
+
+`Dante` is a trademark of Audinate Pty Ltd. This unofficial project is not affiliated with, authorized, sponsored, certified, approved, or endorsed by Audinate.
 
 This document specifies a Go package `dante` that receives two audio channels from a Dante-compatible network audio transmitter and exposes them as a PCM byte stream. It describes observable protocol behavior (wire formats, constants, message sequences) and the required API. It contains no source code. All wire facts below have been verified against a Dante Virtual Soundcard transmitter on a local network.
 
