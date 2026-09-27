@@ -92,6 +92,8 @@ Set `audio.input` in `config.json` to a Dante URI:
 
 The URI format is `dante://TRANSMITTER/LEFT_CHANNEL/RIGHT_CHANNEL?interface=INTERFACE`. Percent-encode spaces and other reserved characters in channel names.
 
+The web interface shows a configured Dante input in the Input Device selector; choosing another device there replaces it. Dante inputs are set in `config.json` only.
+
 The interface is optional; when omitted, mDNS runs on all interfaces and the source address the OS routes toward the transmitter is used. The transmitter must run at 48 kHz and advertise 16-, 24-, or 32-bit PCM. The encoder and transmitter must be on a network where mDNS multicast and the Dante UDP traffic are permitted.
 
 This receive-only implementation is experimental, unofficial, and not Dante-certified. It selects channels by name in the encoder configuration and does not advertise the encoder as a routable receiver in Dante Controller.

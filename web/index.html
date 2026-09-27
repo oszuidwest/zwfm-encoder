@@ -147,6 +147,9 @@
                             <template x-if="devices.length > 0 && !config.audio_input">
                                 <option value="" disabled selected>Select audio input...</option>
                             </template>
+                            <template x-if="isDanteInput(config.audio_input)">
+                                <option :value="config.audio_input" x-text="danteInputLabel(config.audio_input)"></option>
+                            </template>
                             <template x-for="device in devices" :key="device.id">
                                 <option :value="device.id" x-text="device.name"></option>
                             </template>
