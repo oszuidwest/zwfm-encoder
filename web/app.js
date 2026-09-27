@@ -569,22 +569,6 @@ document.addEventListener('alpine:init', () => {
             }
         },
 
-        /** Reports whether the input is a dante:// URI (set in config.json). */
-        isDanteInput(input) {
-            return /^dante:/i.test(input || '');
-        },
-
-        /** Formats a dante:// URI as "Dante: transmitter left / right". */
-        danteInputLabel(input) {
-            try {
-                const url = new URL(input);
-                const [left = '', right = ''] = url.pathname.split('/').slice(1).map(decodeURIComponent);
-                return `Dante: ${url.hostname} ${left} / ${right}`;
-            } catch {
-                return `Dante: ${input}`;
-            }
-        },
-
         /** Global keyboard: Escape closes views, Enter saves, arrows navigate tabs. */
         handleGlobalKeydown(event) {
             // Don't handle if user is typing in an input field
