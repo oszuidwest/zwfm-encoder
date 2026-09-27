@@ -25,6 +25,9 @@ var errRecorderStopped = errors.New("recorder stopped")
 const (
 	// recorderAudioBufferChunks bounds backlog to about 3s of audio.
 	recorderAudioBufferChunks = 30
+	// usedFilenameLimit bounds the names each recorder remembers to avoid
+	// reuse; it spans the repeated hour of a DST fall-back for hourly mode.
+	usedFilenameLimit = 256
 	// writerDrainTimeout bounds graceful writer drain before cancelling FFmpeg.
 	writerDrainTimeout = 5 * time.Second
 	// processStopTimeout bounds waiting before escalating to SIGTERM.
@@ -57,8 +60,10 @@ type GenericRecorder struct {
 	audioDrops atomic.Int64 // Lost chunks from overflow or teardown.
 
 	// Current recording
-	currentFile string
-	startTime   time.Time
+	currentFile       string
+	startTime         time.Time
+	usedFilenames     map[string]struct{}
+	usedFilenameOrder []string
 
 	// S3 client (cached, recreated when config changes)
 	s3Client    *s3.Client
@@ -506,15 +511,6 @@ func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 func (r *GenericRecorder) startEncoderLocked() error {
 	r.startTime = time.Now()
 
-	// Generate filename based on recording mode
-	var filename string
-	if r.config.RecordingMode == types.RecordingHourly {
-		hourStart := r.startTime.Truncate(time.Hour)
-		filename = r.generateFilename(hourStart)
-	} else {
-		filename = r.generateFilename(r.startTime)
-	}
-
 	// Determine output directory based on storage mode
 	var outputDir string
 	if r.config.StorageMode == types.StorageS3 {
@@ -524,6 +520,10 @@ func (r *GenericRecorder) startEncoderLocked() error {
 		// Local or Both: use configured LocalPath
 		outputDir = r.config.LocalPath
 	}
+	filename := nextRecordingFilename(&r.config, r.startTime, func(filename string) bool {
+		_, err := os.Stat(filepath.Join(outputDir, filename))
+		return err == nil
+	}, r.usedFilenames)
 	r.currentFile = filepath.Join(outputDir, filename)
 
 	// Get codec configuration
@@ -538,7 +538,7 @@ func (r *GenericRecorder) startEncoderLocked() error {
 		"-f", format,
 		"-hide_banner",
 		"-loglevel", "warning",
-		"-y",
+		"-n",
 		r.currentFile,
 	)
 
@@ -548,6 +548,7 @@ func (r *GenericRecorder) startEncoderLocked() error {
 		return err
 	}
 
+	r.rememberFilenameLocked(filename)
 	r.result = result
 
 	// Scope writer state to this FFmpeg process; rotation creates fresh channels.
@@ -674,9 +675,40 @@ func (r *GenericRecorder) scheduleDurationLimitLocked() {
 	})
 }
 
-func (r *GenericRecorder) generateFilename(t time.Time) string {
-	safeName := sanitizeFilename(r.config.Name)
-	return fmt.Sprintf("%s-%s.%s", safeName, t.Format("2006-01-02-15-04"), r.config.Codec.FileExtension())
+// nextRecordingFilename names a recording after its start minute and appends
+// -2, -3, ... when that name exists on disk or was used earlier by this
+// recorder, so a restart within the same minute never overwrites audio.
+func nextRecordingFilename(
+	cfg *types.Recorder,
+	startTime time.Time,
+	exists func(string) bool,
+	used map[string]struct{},
+) string {
+	stem := fmt.Sprintf("%s-%s", sanitizeFilename(cfg.Name), startTime.Format("2006-01-02-15-04"))
+	extension := "." + cfg.Codec.FileExtension()
+	candidate := stem + extension
+	for suffix := 2; ; suffix++ {
+		if _, taken := used[candidate]; !taken && !exists(candidate) {
+			return candidate
+		}
+		candidate = fmt.Sprintf("%s-%d%s", stem, suffix, extension)
+	}
+}
+
+// Must be called with r.mu held.
+func (r *GenericRecorder) rememberFilenameLocked(filename string) {
+	if r.usedFilenames == nil {
+		r.usedFilenames = make(map[string]struct{}, usedFilenameLimit)
+	}
+	if _, ok := r.usedFilenames[filename]; ok {
+		return
+	}
+	if len(r.usedFilenameOrder) == usedFilenameLimit {
+		delete(r.usedFilenames, r.usedFilenameOrder[0])
+		r.usedFilenameOrder = r.usedFilenameOrder[1:]
+	}
+	r.usedFilenames[filename] = struct{}{}
+	r.usedFilenameOrder = append(r.usedFilenameOrder, filename)
 }
 
 func s3ObjectKey(recorderName, filename string) string {
