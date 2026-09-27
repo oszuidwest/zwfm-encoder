@@ -1,6 +1,7 @@
 package encoder
 
 import (
+	"context"
 	"errors"
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
@@ -50,11 +51,7 @@ func TestStartRejectsStateStopping(t *testing.T) {
 }
 func TestDelayedStarterDoesNotStartManagersAfterQuickSourceExit(t *testing.T) {
 	e := newSourceLifecycleTestEncoder(t, "exit")
-	// The wait budget is strictly smaller than the starter delay, so reaching
-	// the retry state proves the source exited before the delayed starter's
-	// timer fired: the starter is genuinely stale instead of racing a capture
-	// helper that outlives the delay (which would start the managers
-	// legitimately and flake this test).
+	// Reaching retry within this budget proves the delayed starter is stale.
 	const starterDelay = time.Second
 	e.streamRestartDelay = starterDelay
 	if err := e.Start(); err != nil {
@@ -120,7 +117,7 @@ func TestStopBeforeStreamDelayCancelsDelayedStarter(t *testing.T) {
 	waitForCondition(t, time.Second, "source running", func() bool {
 		e.mu.RLock()
 		defer e.mu.RUnlock()
-		return e.state == types.StateRunning && e.sourceCmd != nil && e.sourceRunID > 0
+		return e.state == types.StateRunning && e.sourceCancel != nil && e.sourceRunID > 0
 	})
 	waitForCondition(t, testStreamRestartDelay/2, "capture helper signal readiness", func() bool {
 		_, err := os.Stat(readyPath)
@@ -131,6 +128,31 @@ func TestStopBeforeStreamDelayCancelsDelayedStarter(t *testing.T) {
 	}
 	time.Sleep(3 * testStreamRestartDelay)
 	assertManagersStopped(t, e, "managers revived after Stop() canceled the delayed starter")
+}
+
+func TestNativeDanteSourceUsesEncoderLifecycle(t *testing.T) {
+	e := newSourceLifecycleTestEncoder(t, "exit")
+	e.config.Audio.Input = "dante://studio-tx/Left/Right"
+	e.openDanteSource = func(ctx context.Context, _ string) (source, error) {
+		reader, writer := io.Pipe()
+		context.AfterFunc(ctx, func() { _ = writer.Close() }) // Cancellation must unblock reads.
+		return fakeDanteSource{reader, ctx.Done()}, nil
+	}
+
+	if err := e.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	waitForCondition(t, time.Second, "native Dante source running", func() bool {
+		e.mu.RLock()
+		defer e.mu.RUnlock()
+		return e.state == types.StateRunning && e.sourceCancel != nil && e.sourceStdout != nil
+	})
+	if err := e.Stop(); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if got := e.State(); got != types.StateStopped {
+		t.Fatalf("State() = %q, want %q", got, types.StateStopped)
+	}
 }
 func TestSourceMaxRetryExhaustionStopsRecordingManager(t *testing.T) {
 	e := newSourceLifecycleTestEncoder(t, "exit")
@@ -370,6 +392,16 @@ func helperCaptureCommand(mode string, extraArgs ...string) func(string, string)
 		args = append(args, extraArgs...)
 		return os.Args[0], args, nil
 	}
+}
+
+type fakeDanteSource struct {
+	*io.PipeReader
+	done <-chan struct{}
+}
+
+func (s fakeDanteSource) Wait() error {
+	<-s.done
+	return nil
 }
 func TestEncoderCaptureHelperProcess(t *testing.T) {
 	helperArgs := []string{}

@@ -141,11 +141,15 @@
                     <div class="group">
                         <label for="audio-input">Input Device</label>
                         <select id="audio-input" x-model="config.audio_input" @focus="refreshDevices()" @change="updateAudioInput()">
-                            <template x-if="devices.length === 0">
+                            <template x-if="devices.length === 0 && !config.audio_input">
                                 <option value="">No devices found</option>
                             </template>
                             <template x-if="devices.length > 0 && !config.audio_input">
                                 <option value="" disabled selected>Select audio input...</option>
+                            </template>
+                            <!-- Preserve configured inputs absent from device discovery. -->
+                            <template x-if="config.audio_input && !devices.some(d => d.id === config.audio_input)">
+                                <option :value="config.audio_input" x-text="config.audio_input"></option>
                             </template>
                             <template x-for="device in devices" :key="device.id">
                                 <option :value="device.id" x-text="device.name"></option>
