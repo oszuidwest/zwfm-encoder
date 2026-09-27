@@ -544,140 +544,15 @@ func minimalValidUpdate() *SettingsUpdate {
 	}
 }
 
-func TestSettingsUpdateRoundTripsEveryField(t *testing.T) {
-	t.Parallel()
+func TestApplySettingsPersists(t *testing.T) {
 	cfg, configPath := newLoadedConfig(t)
-	update := populatedSettingsUpdate(t)
-	if err := cfg.ApplySettings(update); err != nil {
+	if err := cfg.ApplySettings(minimalValidUpdate()); err != nil {
 		t.Fatalf("ApplySettings() error = %v", err)
 	}
-
 	reloaded := New(configPath)
 	mustLoad(t, reloaded)
-	snapshot := reloaded.Snapshot()
-	assertSettingsFieldsPersisted(t, reflect.ValueOf(update).Elem(), reflect.ValueOf(snapshot), "SettingsUpdate")
-	configured := map[string]bool{
-		"webhook":          snapshot.HasWebhook(),
-		"graph":            snapshot.HasGraph(),
-		"zabbix silence":   snapshot.HasZabbixSilence(),
-		"zabbix imbalance": snapshot.HasZabbixImbalance(),
-		"zabbix upload":    snapshot.HasZabbixUpload(),
-	}
-	for name, ok := range configured {
-		if !ok {
-			t.Errorf("fully populated settings did not configure %s", name)
-		}
-	}
-}
-
-func populatedSettingsUpdate(t *testing.T) *SettingsUpdate {
-	t.Helper()
-	value := reflect.New(reflect.TypeFor[SettingsUpdate]()).Elem()
-	populateSettingsValue(t, value, "SettingsUpdate")
-	return value.Addr().Interface().(*SettingsUpdate)
-}
-
-func populateSettingsValue(t *testing.T, value reflect.Value, path string) {
-	t.Helper()
-	valueType := value.Type()
-	for i := range value.NumField() {
-		field := value.Field(i)
-		fieldInfo := valueType.Field(i)
-		fieldPath := path + "." + fieldInfo.Name
-		// Clear flags are control inputs and must not alter a fully populated fixture.
-		if strings.HasPrefix(fieldInfo.Name, "Clear") {
-			if field.Kind() != reflect.Bool {
-				t.Fatalf("%s has kind %s, want bool for a clear flag", fieldPath, field.Kind())
-			}
-			field.SetBool(false)
-			continue
-		}
-
-		switch field.Kind() {
-		case reflect.Struct:
-			populateSettingsValue(t, field, fieldPath)
-		case reflect.Bool:
-			field.SetBool(true)
-		case reflect.String:
-			field.SetString(validSettingsString(fieldInfo.Name))
-		case reflect.Int, reflect.Int64:
-			field.SetInt(validSettingsInt(fieldInfo.Name))
-		case reflect.Float64:
-			field.SetFloat(validSettingsFloat(t, fieldInfo.Name, fieldPath))
-		default:
-			t.Fatalf("%s has unhandled kind %s; add a valid value generator", fieldPath, field.Kind())
-		}
-	}
-}
-
-func validSettingsString(fieldName string) string {
-	switch fieldName {
-	case "WebhookURL":
-		return "https://hooks.example.com/settings-token"
-	case "GraphFromAddress":
-		return "sender@example.com"
-	case "GraphRecipients":
-		return "first@example.com,second@example.com"
-	case "GraphTenantID":
-		return "11111111-1111-1111-1111-111111111111"
-	case "GraphClientID":
-		return "22222222-2222-2222-2222-222222222222"
-	default:
-		return "value-" + strings.ToLower(fieldName)
-	}
-}
-
-func validSettingsInt(fieldName string) int64 {
-	switch fieldName {
-	case "ZabbixPort":
-		return 10051
-	case "RecordingMaxDurationMinutes":
-		return 120
-	case "SilenceDumpRetentionDays":
-		return 7
-	default:
-		return 1234
-	}
-}
-
-func validSettingsFloat(t *testing.T, fieldName, fieldPath string) float64 {
-	t.Helper()
-	switch fieldName {
-	case "SilenceThreshold":
-		return -42
-	case "ChannelImbalanceThreshold":
-		return 17
-	default:
-		t.Fatalf("%s needs a valid float64 generator", fieldPath)
-		return 0
-	}
-}
-
-func assertSettingsFieldsPersisted(t *testing.T, update, snapshot reflect.Value, path string) {
-	t.Helper()
-	updateType := update.Type()
-	for i := range update.NumField() {
-		fieldInfo := updateType.Field(i)
-		fieldPath := path + "." + fieldInfo.Name
-		want := update.Field(i)
-		if strings.HasPrefix(fieldInfo.Name, "Clear") {
-			if want.Bool() {
-				t.Fatalf("%s = true, clear flags must remain false in the round-trip fixture", fieldPath)
-			}
-			continue
-		}
-
-		got := snapshot.FieldByName(fieldInfo.Name)
-		if !got.IsValid() {
-			t.Fatalf("%s has no matching Snapshot field; add persistence and update this test", fieldPath)
-		}
-		if want.Kind() == reflect.Struct {
-			assertSettingsFieldsPersisted(t, want, got, fieldPath)
-			continue
-		}
-		if !reflect.DeepEqual(want.Interface(), got.Interface()) {
-			t.Errorf("%s after reload = %v, want %v", fieldPath, got.Interface(), want.Interface())
-		}
+	if got, want := reloaded.Snapshot(), cfg.Snapshot(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Snapshot() after reload = %+v, want %+v", got, want)
 	}
 }
 

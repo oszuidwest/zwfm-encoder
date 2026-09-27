@@ -122,6 +122,17 @@ func TestBuildReadyResponseFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildReadyResponseAllowsStoppedOnDemandRecorder(t *testing.T) {
+	input := readyFixture()
+	input.recorders[0].RecordingMode = types.RecordingOnDemand
+	input.recorderStatuses["recorder-1"] = types.ProcessStatus{State: types.ProcessStopped}
+	resp, status := buildReadyResponse(&input)
+	if status != http.StatusOK || !resp.Components["recorders"].OK {
+		t.Fatalf("buildReadyResponse() = (%+v, %d), want ready recorders and 200", resp, status)
+	}
+}
+
 func TestBuildReadyResponseIgnoresListenerStreams(t *testing.T) {
 	t.Parallel()
 	input := readyFixture()
@@ -417,6 +428,16 @@ func healthFixture() healthInputs {
 		ffmpegAvailable: true,
 		encoderStatus:   types.EncoderStatus{State: types.StateRunning},
 		audioLevels:     audio.AudioLevels{},
+	}
+}
+
+func TestBuildHealthResponseKeepsAudioConditionsInformational(t *testing.T) {
+	in := healthFixture()
+	in.audioLevels.SilenceLevel = audio.SilenceLevelActive
+	in.audioLevels.ChannelImbalanceLevel = audio.ImbalanceLevelActive
+	resp, status := buildHealthResponse(&in)
+	if status != http.StatusOK || resp.Status != "healthy" || !resp.SilenceDetected || !resp.ChannelImbalanceDetected {
+		t.Fatalf("buildHealthResponse() = (%+v, %d), want healthy, both audio flags, and 200", resp, status)
 	}
 }
 
@@ -787,8 +808,12 @@ func seededSensitiveServer(t *testing.T) sensitiveFixture {
 
 func TestSettingsRoundTripThroughAPIEveryField(t *testing.T) {
 	t.Parallel()
-	s := freshServer(t)
-	s.encoder = &encoder.Encoder{}
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	cfg := config.New(configPath)
+	if err := cfg.Load(); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	s := &Server{config: cfg, encoder: &encoder.Encoder{}}
 	update := populatedAPISettingsUpdate(t)
 	body, err := json.Marshal(update)
 	if err != nil {
@@ -796,6 +821,15 @@ func TestSettingsRoundTripThroughAPIEveryField(t *testing.T) {
 	}
 	postRec := postSettingsBody(t, s, string(body))
 	assertStatus(t, postRec, http.StatusNoContent)
+	reloaded := config.New(configPath)
+	if err := reloaded.Load(); err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	snapshot := reloaded.Snapshot()
+	assertSettingsPersisted(t, reflect.ValueOf(update).Elem(), reflect.ValueOf(snapshot), "SettingsUpdate")
+	if got, want := reloaded.DetectorSettings(), snapshot.DetectorSettingsSnapshot; !reflect.DeepEqual(got, want) {
+		t.Fatalf("DetectorSettings() = %+v, want %+v", got, want)
+	}
 
 	getRec := runJSONHandler(t, s.handleAPIConfig, http.MethodGet, "/api/config", "")
 	assertStatus(t, getRec, http.StatusOK)
@@ -832,6 +866,7 @@ func populateAPISettingsValue(t *testing.T, value reflect.Value, path string) {
 		field := value.Field(i)
 		fieldInfo := valueType.Field(i)
 		fieldPath := path + "." + fieldInfo.Name
+		// Clear flags are control inputs and must not alter a fully populated fixture.
 		if strings.HasPrefix(fieldInfo.Name, "Clear") {
 			if field.Kind() != reflect.Bool {
 				t.Fatalf("%s has kind %s, want bool for a clear flag", fieldPath, field.Kind())
@@ -844,7 +879,7 @@ func populateAPISettingsValue(t *testing.T, value reflect.Value, path string) {
 		case reflect.Struct:
 			populateAPISettingsValue(t, field, fieldPath)
 		case reflect.Bool:
-			field.SetBool(true)
+			field.SetBool(validAPISettingsBool(fieldPath))
 		case reflect.String:
 			field.SetString(validAPISettingsString(fieldInfo.Name))
 		case reflect.Int, reflect.Int64:
@@ -855,6 +890,10 @@ func populateAPISettingsValue(t *testing.T, value reflect.Value, path string) {
 			t.Fatalf("%s has unhandled kind %s; add a valid value generator", fieldPath, field.Kind())
 		}
 	}
+}
+
+func validAPISettingsBool(fieldPath string) bool {
+	return len(fieldPath)%2 == 0
 }
 
 func validAPISettingsString(fieldName string) string {
@@ -876,14 +915,24 @@ func validAPISettingsString(fieldName string) string {
 
 func validAPISettingsInt(fieldName string) int64 {
 	switch fieldName {
+	case "SilenceDurationMs":
+		return 11001
+	case "SilenceRecoveryMs":
+		return 12002
+	case "PeakHoldMs":
+		return 1303
+	case "ChannelImbalanceDurationMs":
+		return 14004
+	case "ChannelImbalanceRecoveryMs":
+		return 15005
 	case "ZabbixPort":
 		return 10051
 	case "RecordingMaxDurationMinutes":
-		return 120
+		return 121
 	case "SilenceDumpRetentionDays":
-		return 7
+		return 8
 	default:
-		return 1234
+		panic("missing integer fixture for " + fieldName)
 	}
 }
 
@@ -897,6 +946,32 @@ func validAPISettingsFloat(t *testing.T, fieldName, fieldPath string) float64 {
 	default:
 		t.Fatalf("%s needs a valid float64 generator", fieldPath)
 		return 0
+	}
+}
+
+func assertSettingsPersisted(t *testing.T, update, snapshot reflect.Value, path string) {
+	t.Helper()
+	for i := range update.NumField() {
+		fieldInfo := update.Type().Field(i)
+		fieldPath := path + "." + fieldInfo.Name
+		want := update.Field(i)
+		if strings.HasPrefix(fieldInfo.Name, "Clear") {
+			continue
+		}
+		got := snapshot.FieldByName(fieldInfo.Name)
+		if !got.IsValid() {
+			t.Fatalf("%s has no matching Snapshot field", fieldPath)
+		}
+		if fieldInfo.Name == "ZabbixEvents" {
+			want = reflect.ValueOf(want.Interface().(types.ZabbixEventSubscriptions).ToEventSubscriptions())
+		}
+		if want.Kind() == reflect.Struct && want.Type() == got.Type() {
+			assertSettingsPersisted(t, want, got, fieldPath)
+			continue
+		}
+		if !reflect.DeepEqual(want.Interface(), got.Interface()) {
+			t.Errorf("%s after reload = %v, want %v", fieldPath, got.Interface(), want.Interface())
+		}
 	}
 }
 

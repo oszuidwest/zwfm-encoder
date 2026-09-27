@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -223,6 +224,18 @@ func TestStartReportsNotStartedOnValidationError(t *testing.T) {
 	}
 }
 
+func TestStartReportsNotStartedWhenCallerLaunchFails(t *testing.T) {
+	m := NewManager("/nonexistent/ffmpeg-binary-for-test")
+	stream := validStream()
+	started, err := m.Start(stream)
+	if err == nil || started {
+		t.Fatalf("Start() = (%t, %v), want false and an error", started, err)
+	}
+	if _, exists := m.streams[stream.ID]; exists {
+		t.Fatal("Start left a placeholder entry after a failed caller launch")
+	}
+}
+
 func TestListenerStartEncoderFailureReleasesFanoutPort(t *testing.T) {
 	port := freeUDPPort(t)
 	m := NewManager("/nonexistent/ffmpeg-binary-for-test")
@@ -410,6 +423,9 @@ func TestWriteAudioFanOutSharesOneCopyAcrossStreams(t *testing.T) {
 	if !bytes.Equal(gotA, []byte{1, 2, 3, 4}) || !bytes.Equal(gotB, []byte{1, 2, 3, 4}) {
 		t.Fatalf("streams saw mutated source: a=%v b=%v, want original bytes", gotA, gotB)
 	}
+	if &gotA[0] != &gotB[0] {
+		t.Fatal("running streams did not share one copied slice")
+	}
 	if got := len(chStopped); got != 0 {
 		t.Fatalf("stopped stream received %d chunks, want 0", got)
 	}
@@ -442,6 +458,31 @@ func TestWriteAudioFanOutSharesOneCopyAcrossCallerAndListener(t *testing.T) {
 		!bytes.Equal(listenerChunk, []byte{1, 2, 3, 4}) {
 		t.Fatalf("streams saw mutated source: caller=%v listener=%v, want original bytes",
 			callerChunk, listenerChunk)
+	}
+	if &callerChunk[0] != &listenerChunk[0] {
+		t.Fatal("caller and listener did not share one copied slice")
+	}
+}
+
+func TestWriteAudioFanOutAllocationContract(t *testing.T) {
+	for _, count := range []int{0, 16} {
+		m := NewManager("ffmpeg")
+		channels := make([]chan []byte, count)
+		for i := range channels {
+			channels[i] = make(chan []byte, audioBufferSize)
+			m.streams[strconv.Itoa(i)] = &Stream{state: types.ProcessRunning, mode: types.StreamModeCaller, audioCh: channels[i]}
+		}
+		pcm := make([]byte, 20*1024)
+		allocs := testing.AllocsPerRun(50, func() {
+			m.WriteAudioFanOut(pcm)
+			for _, ch := range channels {
+				<-ch
+			}
+		})
+		want := min(float64(count), 1)
+		if allocs != want {
+			t.Fatalf("WriteAudioFanOut(%d streams) allocations = %.1f, want %.1f", count, allocs, want)
+		}
 	}
 }
 

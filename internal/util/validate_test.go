@@ -7,8 +7,8 @@ import (
 
 func TestValidatePathRejectsTraversalAndAcceptsSafePath(t *testing.T) {
 	t.Parallel()
-	// Keep path fixtures as variables when joining platform-specific segments:
-	// gocritic's filepathJoin check rejects literal Join arguments containing a separator.
+	// Absolute-looking fixtures are intentional here: ValidatePath applies a
+	// slash-based API policy independent of the host platform.
 	tests := []struct {
 		name    string
 		path    string
