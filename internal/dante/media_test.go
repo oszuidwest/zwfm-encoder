@@ -2,7 +2,11 @@ package dante
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
+	"errors"
+	"io"
+	"net"
 	"testing"
 	"time"
 )
@@ -189,6 +193,78 @@ func TestMediaOverlapDiscarding(t *testing.T) {
 	want = append(want, sampleOutput(4)...)
 	if !bytes.Equal(output.Bytes(), want) {
 		t.Fatalf("output = %x, want %x", output.Bytes(), want)
+	}
+}
+
+func TestMediaRejectsStalePackets(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	processor := newMediaProcessor(16, &bytes.Buffer{})
+	if _, err := processor.receive(samplePacket(1, 1), now); err != nil {
+		t.Fatal(err)
+	}
+	valid, err := processor.receive(samplePacket(0, 9), now)
+	if err != nil || valid {
+		t.Fatalf("late packet = (%t, %v), want (false, nil)", valid, err)
+	}
+	if _, err := processor.receive(samplePacket(3, 3), now); err != nil {
+		t.Fatal(err)
+	}
+	valid, err = processor.receive(samplePacket(3, 9), now)
+	if err != nil || valid {
+		t.Fatalf("duplicate packet = (%t, %v), want (false, nil)", valid, err)
+	}
+}
+
+func TestReceiveMediaDropsOtherSources(t *testing.T) {
+	t.Parallel()
+	mediaConn := listenLoopbackUDP(t)
+	defer func() { _ = mediaConn.Close() }()
+	trusted := listenLoopbackUDP(t)
+	defer func() { _ = trusted.Close() }()
+	rogue, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 2)})
+	if err != nil {
+		t.Skipf("open second loopback address: %v", err)
+	}
+	defer func() { _ = rogue.Close() }()
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	stopInterrupt := context.AfterFunc(ctx, func() { _ = mediaConn.Close() })
+	defer stopInterrupt()
+	outputReader, outputWriter := io.Pipe()
+	result := make(chan error, 1)
+	go func() {
+		receiveErr := receiveMedia(
+			ctx,
+			mediaConn,
+			trusted.LocalAddr().(*net.UDPAddr).IP,
+			16,
+			outputWriter,
+		)
+		_ = outputWriter.CloseWithError(receiveErr)
+		result <- receiveErr
+	}()
+
+	target := mediaConn.LocalAddr().(*net.UDPAddr)
+	if _, err := rogue.WriteToUDP(samplePacket(0, 9), target); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := trusted.WriteToUDP(samplePacket(0, 1), target); err != nil {
+		t.Fatal(err)
+	}
+	want := sampleOutput(1)
+	got := make([]byte, len(want))
+	if _, err := io.ReadFull(outputReader, got); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("output = %x, want trusted source %x", got, want)
+	}
+	cancel()
+	_ = mediaConn.Close()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("receiveMedia returned %v, want context cancellation", err)
 	}
 }
 

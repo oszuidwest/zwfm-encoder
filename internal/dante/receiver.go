@@ -143,7 +143,13 @@ func selectLocalAddress(interfaceID string, interfaces []net.Interface, transmit
 func (r *Receiver) run(ctx context.Context) {
 	stopInterrupt := context.AfterFunc(ctx, r.interrupt)
 	bufferedOutput := bufio.NewWriterSize(r.writer, outputBatchSize)
-	err := receiveMedia(ctx, r.mediaConn, r.bits, bufferedOutput)
+	err := receiveMedia(
+		ctx,
+		r.mediaConn,
+		r.controlConn.RemoteAddr().(*net.UDPAddr).IP,
+		r.bits,
+		bufferedOutput,
+	)
 	if ctx.Err() != nil {
 		err = nil
 	} else {

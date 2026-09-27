@@ -55,9 +55,13 @@ func (p *mediaProcessor) receive(datagram []byte, now time.Time) (bool, error) {
 		p.initialized = true
 		p.expected = packet.position
 	}
-	if _, duplicate := p.pending[packet.position]; !duplicate {
-		p.pending[packet.position] = packet
+	if packet.position < p.expected {
+		return false, p.advance(now)
 	}
+	if _, duplicate := p.pending[packet.position]; duplicate {
+		return false, p.advance(now)
+	}
+	p.pending[packet.position] = packet
 	return true, p.advance(now)
 }
 
@@ -160,7 +164,13 @@ func (p *mediaProcessor) appendSilence(frames uint64) error {
 }
 
 // receiveMedia requires conn to be closed when ctx is cancelled.
-func receiveMedia(ctx context.Context, conn *net.UDPConn, bits uint16, output io.Writer) error {
+func receiveMedia(
+	ctx context.Context,
+	conn *net.UDPConn,
+	transmitter net.IP,
+	bits uint16,
+	output io.Writer,
+) error {
 	processor := newMediaProcessor(bits, output)
 	buffer := make([]byte, 65535)
 	lastValid := time.Now()
@@ -202,6 +212,9 @@ func receiveMedia(ctx context.Context, conn *net.UDPConn, bits uint16, output io
 				continue
 			}
 			return fmt.Errorf("receive media: %w", err)
+		}
+		if !source.IP.Equal(transmitter) {
+			continue
 		}
 		valid, err := processor.receive(buffer[:n], time.Now())
 		if err != nil {

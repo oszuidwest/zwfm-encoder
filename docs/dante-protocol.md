@@ -150,11 +150,11 @@ Open the media socket (UDP, bound to the local IPv4 address, ephemeral port) bef
 
 The stream position (in frames) of the first frame of the payload is `seconds * 48000 + sample offset`. The payload is a whole number of frames; each frame has N samples in the requested channel order; each sample is bits/8 bytes, signed, big-endian and left-justified (the first byte is the most significant). Conversion to 16-bit output takes the first two bytes of each sample (then write them little-endian).
 
-A datagram shorter than 9 bytes or whose payload is not a whole number of frames is malformed. Malformed datagrams must be dropped, never fatal (any host can send datagrams to the port).
+A datagram shorter than 9 bytes or whose payload is not a whole number of frames is malformed. Malformed datagrams and datagrams whose source IP differs from the discovered transmitter must be dropped, never fatal (any host can send datagrams to the port).
 
 ### 5.2 Keepalive
 
-At least every 250 ms, once media has been received, send a 2-byte UDP datagram `0x13 0x37` from the media socket to the source address of the most recent media datagram. Without keepalives the transmitter stops the flow.
+At least every 250 ms, once media has been received, send a 2-byte UDP datagram `0x13 0x37` from the media socket to the source address of the most recent accepted media datagram. Without keepalives the transmitter stops the flow.
 
 ### 5.3 Ordering, loss and timeouts
 
