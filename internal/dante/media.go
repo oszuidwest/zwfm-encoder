@@ -55,7 +55,6 @@ func (p *mediaProcessor) receive(datagram []byte, now time.Time) (bool, error) {
 		p.initialized = true
 		p.expected = packet.position
 	}
-	// advance drops packets that start before the expected position.
 	if _, duplicate := p.pending[packet.position]; !duplicate {
 		p.pending[packet.position] = packet
 	}
@@ -134,7 +133,7 @@ func (p *mediaProcessor) earliestPending() (uint64, bool) {
 	return minimum, found
 }
 
-// appendPacket writes the top 16 bits of each big-endian sample as S16LE.
+// appendPacket converts the most significant sample bits to S16LE.
 func (p *mediaProcessor) appendPacket(packet mediaPacket) error {
 	frameSize := p.frameSize()
 	output := make([]byte, 0, len(packet.payload)/frameSize*outputFrameSize)
@@ -160,8 +159,7 @@ func (p *mediaProcessor) appendSilence(frames uint64) error {
 	return nil
 }
 
-// receiveMedia writes received media to output until an error occurs. The
-// caller must close conn when ctx is cancelled to interrupt a pending read.
+// receiveMedia requires conn to be closed when ctx is cancelled.
 func receiveMedia(ctx context.Context, conn *net.UDPConn, bits uint16, output io.Writer) error {
 	processor := newMediaProcessor(bits, output)
 	buffer := make([]byte, 65535)

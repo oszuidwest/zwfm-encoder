@@ -43,7 +43,7 @@ func chooseFPP(maximum, minimum, bytesPerSample uint16) (uint16, error) {
 	return chosen, nil
 }
 
-// receiverName returns the hostname reduced to at most 31 printable ASCII bytes.
+// receiverName returns a printable hostname within the protocol's 31-byte limit.
 func receiverName() string {
 	name, _ := os.Hostname()
 	name = strings.Map(func(r rune) rune {
@@ -106,8 +106,7 @@ func buildStopRequest(handle [6]byte) []byte {
 	return message
 }
 
-// exchangeControl sends request and returns the body of the first successful
-// response that echoes its sequence number and opcode.
+// exchangeControl returns the first successful response matching the request.
 func exchangeControl(ctx context.Context, conn *net.UDPConn, request []byte, timeout time.Duration) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

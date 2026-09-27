@@ -56,7 +56,6 @@ func parseTXT(items []string) (channelInfo, error) {
 	return channelInfo{id: id, rate: rate, bits: bits, nchan: nchan, fppMax: fppMax, fppMin: fppMin}, nil
 }
 
-// parseTXTNumber parses a decimal or 0x-prefixed hexadecimal TXT value that fits in T.
 func parseTXTNumber[T uint16 | uint32](key, value string) (T, error) {
 	digits, base := value, 10
 	if hex, ok := strings.CutPrefix(strings.ToLower(value), "0x"); ok {
@@ -168,7 +167,6 @@ func discoveryInterfaces(interfaceID string) ([]net.Interface, error) {
 	return usable, nil
 }
 
-// checkDiscoveryInterface returns why iface cannot carry discovery, or nil.
 func checkDiscoveryInterface(iface *net.Interface) error {
 	const required = net.FlagUp | net.FlagMulticast
 	if iface.Flags&required != required || iface.Flags&net.FlagLoopback != 0 {
@@ -271,8 +269,7 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 	}
 }
 
-// sendDiscoveryQuery sends query on every interface and fails only when no
-// interface could send it.
+// sendDiscoveryQuery succeeds when any interface accepts the query.
 func sendDiscoveryQuery(conn *ipv4.PacketConn, interfaces []net.Interface, query []byte, destination *net.UDPAddr) error {
 	var errs []error
 	for index := range interfaces {
@@ -319,6 +316,6 @@ func mergeDiscoveryResponse(info *channelInfo, packet []byte, source net.IP, req
 		txt.address, txt.port = info.address, info.port
 		*info = *txt
 	}
-	// A port comes from SRV; parseTXT guarantees a non-zero fppMax.
+	// SRV supplies port; a parsed TXT record always supplies fppMax.
 	return info.port != 0 && info.fppMax != 0, nil
 }

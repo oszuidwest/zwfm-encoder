@@ -12,7 +12,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/dante"
 )
 
-// Temporary live smoke test against a real Dante transmitter.
+// TestLiveSmoke exercises a real transmitter when DANTE_LIVE_INPUT is set.
 func TestLiveSmoke(t *testing.T) {
 	input := os.Getenv("DANTE_LIVE_INPUT")
 	if input == "" {

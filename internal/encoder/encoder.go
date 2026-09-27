@@ -1,6 +1,4 @@
-// Package encoder provides the audio capture and encoding engine.
-// It manages real-time PCM audio distribution to multiple FFmpeg stream
-// processes, with automatic retry, silence detection, and level metering.
+// Package encoder captures PCM audio and distributes it to streams and recorders.
 package encoder
 
 import (
@@ -90,21 +88,19 @@ type Encoder struct {
 	secretExpiryChecker *notify.SecretExpiryChecker
 }
 
-// source is a running audio input: S16LE stereo PCM plus a Wait that blocks
-// until the input has fully shut down.
+// source provides S16LE stereo PCM and waits for input shutdown.
 type source interface {
 	io.Reader
 	Wait() error
 }
 
-// captureProcess adapts a platform capture command to source.
 type captureProcess struct {
 	io.Reader
 	cmd    *exec.Cmd
 	stderr bytes.Buffer
 }
 
-// Wait waits for the process and reports its last stderr error line, if any.
+// Wait prefers the process's final stderr message over its exit error.
 func (p *captureProcess) Wait() error {
 	err := p.cmd.Wait()
 	if msg := util.ExtractLastError(p.stderr.String()); err != nil && msg != "" {
@@ -124,7 +120,6 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 	dispatcher := notify.NewDispatcher(webhookCh, emailCh, zabbixCh)
 	orchestrator := notify.NewAlertOrchestrator(cfg, dispatcher)
 
-	// Create dump manager with callback to alert orchestrator
 	dumpManager := silencedump.NewManager(
 		ffmpegPath,
 		snap.WebPort,
@@ -133,17 +128,14 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 		orchestrator.OnDumpReady,
 	)
 
-	// Create event logger with platform-specific path
 	eventLogPath := eventlog.DefaultLogPath(snap.WebPort)
 	logger, err := eventlog.NewLogger(eventLogPath)
 	if err != nil {
 		return nil, fmt.Errorf("create event logger at %s: %w", eventLogPath, err)
 	}
 
-	// Wire event logger to alert orchestrator for silence event logging
 	orchestrator.SetEventLogger(logger)
 
-	// Create stream manager and wire up event callback
 	streamMgr := streaming.NewManager(ffmpegPath)
 	srtAvailable, srtProbeErr := util.ProbeFFmpegProtocol(ffmpegPath, "srt")
 	switch {
@@ -175,29 +167,22 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 		secretExpiryChecker: notify.NewSecretExpiryChecker(&graphCfg),
 	}
 
-	// Set event callback on stream manager
 	streamMgr.SetEventCallback(e.onStreamEvent, e.getStreamName)
 
 	return e, nil
 }
 
-// srtUsable decides whether SRT streams may be attempted based on the probe
-// outcome. A failed probe is inconclusive, not proof that SRT is unavailable,
-// so SRT stays usable and the real FFmpeg stream command reports a definitive
-// protocol error if necessary.
+// srtUsable treats probe failures as inconclusive so FFmpeg can report the error.
 func srtUsable(supported bool, probeErr error) bool {
 	return supported || probeErr != nil
 }
 
-// SRTAvailable reports whether SRT streams may be attempted: SRT support is
-// confirmed or the capability probe was inconclusive.
+// SRTAvailable reports whether SRT streams may be attempted.
 func (e *Encoder) SRTAvailable() bool {
 	return e != nil && e.srtAvailable
 }
 
-// srtCapabilityError reports why SRT streams cannot run, or nil when SRT is
-// usable or unconfigured. It returns nil in degraded mode (no FFmpeg path),
-// where SRT is not the relevant failure.
+// srtCapabilityError ignores SRT capability in degraded mode without FFmpeg.
 func (e *Encoder) srtCapabilityError() error {
 	if e == nil || e.ffmpegPath == "" || e.SRTAvailable() {
 		return nil
@@ -272,7 +257,6 @@ func (e *Encoder) InitRecording() error {
 		return fmt.Errorf("create recording manager: %w", err)
 	}
 
-	// Wire upload abandoned callback to dispatch to all configured notification channels
 	mgr.SetUploadAbandonedCallback(func(event recording.UploadAbandonedEvent) {
 		e.alertOrchestrator.HandleUploadAbandoned(notify.UploadAbandonedData{
 			RecorderName: event.RecorderName,
@@ -283,7 +267,6 @@ func (e *Encoder) InitRecording() error {
 		})
 	})
 
-	// Add all configured recorders
 	for i := range snap.Recorders {
 		if err := mgr.AddRecorder(&snap.Recorders[i]); err != nil {
 			slog.Warn("failed to add recorder", "id", snap.Recorders[i].ID, "error", err)
@@ -380,24 +363,19 @@ func (e *Encoder) Status() types.EncoderStatus {
 
 // StreamStatuses returns status for all configured streams.
 func (e *Encoder) StreamStatuses(streams []types.Stream) map[string]types.ProcessStatus {
-	// Get statuses for streams with active processes
 	processStatuses := e.streamManager.Statuses(e.config.Stream)
 
-	// Build complete status map for all configured streams
 	result := make(map[string]types.ProcessStatus, len(streams))
 	for i := range streams {
 		stream := &streams[i]
 		status, exists := processStatuses[stream.ID]
 		switch {
 		case exists:
-			// Stream has active process - use its status
-			// Also reflect disabled state if stream was disabled while running
 			if !stream.Enabled {
 				status.State = types.ProcessDisabled
 			}
 			result[stream.ID] = status
 		case !stream.Enabled:
-			// Stream is disabled - mark explicitly
 			result[stream.ID] = types.ProcessStatus{
 				State:      types.ProcessDisabled,
 				MaxRetries: stream.MaxRetriesOrDefault(),
@@ -409,7 +387,6 @@ func (e *Encoder) StreamStatuses(streams []types.Stream) map[string]types.Proces
 				Error:      e.SRTErrorMessage(),
 			}
 		default:
-			// Stream is enabled but has no process (encoder not running)
 			result[stream.ID] = types.ProcessStatus{
 				State:      types.ProcessStopped,
 				MaxRetries: stream.MaxRetriesOrDefault(),
@@ -467,11 +444,9 @@ func (e *Encoder) Stop() error {
 	sourceCancel := e.sourceCancel
 	e.mu.Unlock()
 
-	// Stop all streams and recording first; collect all shutdown errors.
 	errs := e.stopConsumers()
 
-	// Cancelling the source signals a capture process (killed after
-	// ShutdownTimeout via cmd.WaitDelay) or closes a native receiver.
+	// Cancellation closes native inputs and gracefully stops capture processes.
 	if sourceCancel != nil {
 		sourceCancel()
 	}
@@ -489,7 +464,7 @@ func (e *Encoder) Stop() error {
 	case <-stopped:
 		slog.Info("source capture stopped gracefully")
 	case <-time.After(types.ShutdownTimeout):
-		pollCancel() // Stop polling goroutine immediately
+		pollCancel()
 		slog.Warn("source capture did not stop in time")
 		errs = append(errs, fmt.Errorf("source shutdown timeout"))
 	}
@@ -504,9 +479,7 @@ func (e *Encoder) Stop() error {
 	return errors.Join(errs...)
 }
 
-// stopConsumers stops the stream and recorder output processes and returns
-// any shutdown errors. Shared by Stop and the source-retry give-up path.
-// (Compliance recording continues independently of the recording manager.)
+// stopConsumers stops managed streams and recorders and combines their errors.
 func (e *Encoder) stopConsumers() []error {
 	var errs []error
 	if err := e.streamManager.StopAll(); err != nil {
@@ -520,9 +493,7 @@ func (e *Encoder) stopConsumers() []error {
 	return errs
 }
 
-// resetDetection clears silence/imbalance detection and notification state,
-// stops the silence dump manager, and drains queued alert log entries.
-// Shared by Stop and the source-retry give-up path.
+// resetDetection clears detector, notification, dump, and alert-log state.
 func (e *Encoder) resetDetection() {
 	e.silenceDetect.Reset()
 	e.imbalanceDetect.Reset()
@@ -562,10 +533,7 @@ func (e *Encoder) StartStream(streamID string) error {
 	return e.startStream(streamID, 0)
 }
 
-// RestartStream stops a stream and schedules its start after
-// types.StreamRestartDelay. The delayed start is bound to the current source
-// run, so a stale restarter cannot revive the stream after the encoder
-// stopped or restarted in the meantime. No-op when the encoder is not running.
+// RestartStream restarts a stream only if its current source run remains active.
 func (e *Encoder) RestartStream(streamID string) {
 	e.mu.RLock()
 	running := e.state == types.StateRunning
@@ -597,10 +565,7 @@ func (e *Encoder) RestartStream(streamID string) {
 	}()
 }
 
-// ApplySettingsEffects applies the runtime side effects of a settings save:
-// detector resets, silence dump and recording limits, and Graph secret expiry
-// cache invalidation. Keeping the list here means a new settings consumer only
-// needs a change in this method, not in the HTTP layer.
+// ApplySettingsEffects synchronizes runtime services with saved settings.
 func (e *Encoder) ApplySettingsEffects() {
 	e.UpdateSilenceConfig()
 	e.UpdateChannelImbalanceConfig()
@@ -609,10 +574,7 @@ func (e *Encoder) ApplySettingsEffects() {
 	e.InvalidateGraphSecretExpiryCache()
 }
 
-// startStream starts a stream, optionally bound to a specific source run.
-// A runID of 0 means "no ownership constraint" (manual API calls); a non-zero
-// runID only starts the stream while that source run is still active, so a stale
-// delayed starter cannot revive streams after the source has exited or restarted.
+// startStream uses runID zero for manual starts and otherwise requires that run.
 func (e *Encoder) startStream(streamID string, runID uint64) error {
 	var stopChan chan struct{}
 
@@ -638,13 +600,11 @@ func (e *Encoder) startStream(streamID string, runID uint64) error {
 		}
 	}
 
-	// Start preserves existing retry state automatically
 	started, err := e.streamManager.Start(stream)
 	if err != nil {
 		return fmt.Errorf("failed to start stream: %w", err)
 	}
 
-	// Only a new process owns a retry monitor.
 	if started {
 		go e.streamManager.MonitorAndRetry(streamID, e, stopChan)
 	}
@@ -788,8 +748,7 @@ func (e *Encoder) runSourceLoop() {
 func (e *Encoder) runSource() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	// Register cancel before opening: Dante discovery and flow setup can take
-	// seconds and Stop must be able to abort them.
+	// Register first so Stop can cancel discovery and flow setup.
 	if !e.reserveSource(cancel) {
 		return context.Canceled
 	}
@@ -805,16 +764,14 @@ func (e *Encoder) runSource() error {
 		return src.Wait()
 	}
 
-	e.resetAudioLevels() // start each run silent until the first metered chunk
+	e.resetAudioLevels()
 	go e.runDistributor(runID)
 	go e.startEnabledStreamsAfterDelay(runID, stopChan, e.streamRestartDelay)
 
-	// runDistributor publishes final silence after its last live level.
 	return src.Wait()
 }
 
-// openSource opens a native Dante receiver for dante:// inputs and starts a
-// platform capture process otherwise. Cancelling ctx stops the source.
+// openSource selects native Dante or platform capture from the input URI.
 func (e *Encoder) openSource(ctx context.Context, audioInput string) (source, error) {
 	if dante.IsInput(audioInput) {
 		slog.Info("starting native Dante audio capture", "input", audioInput)
@@ -828,7 +785,7 @@ func (e *Encoder) openSource(ctx context.Context, audioInput string) (source, er
 	slog.Info("starting audio capture", "command", cmdName, "input", audioInput)
 
 	cmd := util.CommandContext(ctx, cmdName, args...)
-	// Declarative graceful shutdown: signal first, kill after WaitDelay.
+	// Signal before forcing termination after WaitDelay.
 	cmd.Cancel = func() error {
 		return util.GracefulSignal(cmd.Process)
 	}
@@ -846,8 +803,7 @@ func (e *Encoder) openSource(ctx context.Context, audioInput string) (source, er
 	return process, nil
 }
 
-// reserveSource registers cancel as the active source's stop function unless
-// shutdown has begun.
+// reserveSource makes setup cancellable unless shutdown has begun.
 func (e *Encoder) reserveSource(cancel context.CancelFunc) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -858,7 +814,6 @@ func (e *Encoder) reserveSource(cancel context.CancelFunc) bool {
 	return true
 }
 
-// finishSource clears the active source after it exits.
 func (e *Encoder) finishSource() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -866,9 +821,7 @@ func (e *Encoder) finishSource() {
 	e.sourceStdout = nil
 }
 
-// publishSource records a freshly opened source as the active source run and
-// returns its run ID and stop channel. It returns ok=false without recording
-// anything if shutdown began first, so the caller can tear the source down.
+// publishSource installs src unless shutdown has begun.
 func (e *Encoder) publishSource(src io.Reader) (runID uint64, stopChan <-chan struct{}, ok bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -905,7 +858,6 @@ func (e *Encoder) startEnabledStreams(runID uint64) {
 		return
 	}
 
-	// Start silence dump manager (cleanup scheduler)
 	if e.silenceDumpManager != nil {
 		e.silenceDumpManager.Start()
 	}
@@ -933,7 +885,6 @@ func (e *Encoder) startEnabledStreams(runID uint64) {
 		return
 	}
 
-	// Start recording manager (starts auto-start recorders)
 	if e.recordingManager != nil {
 		if err := e.recordingManager.Start(); err != nil {
 			slog.Error("failed to start recording manager", "error", err)
@@ -986,13 +937,9 @@ func (e *Encoder) runDistributor(runID uint64) {
 
 		chunk := buf[:n]
 
-		// ProcessSamples also feeds the silence dump ring buffer.
 		distributor.ProcessSamples(chunk)
 
-		// One lazy clone shared by the stream and recorder queues: the capture
-		// buffer is reused, so consumers get an immutable copy, but never more
-		// than one per chunk. Cloning is skipped entirely when nothing can
-		// receive audio. All queue consumers treat chunks as read-only.
+		// Queue consumers share one immutable clone of the reused capture buffer.
 		var shared []byte
 		copyChunk := func() []byte {
 			if shared == nil {
@@ -1009,19 +956,16 @@ func (e *Encoder) runDistributor(runID uint64) {
 	}
 }
 
-// updateAudioLevels publishes a freshly allocated, immutable snapshot.
 func (e *Encoder) updateAudioLevels(levels *audio.AudioLevels) {
 	e.audioLevels.Store(levels)
 }
 
-// resetAudioLevels publishes the silent snapshot used when no audio is flowing.
 func (e *Encoder) resetAudioLevels() {
 	levels := silentAudioLevels
 	e.audioLevels.Store(&levels)
 }
 
-// pollUntil signals when the given condition becomes true.
-// The goroutine exits when either the condition is met or the context is cancelled.
+// pollUntil closes its result when condition succeeds or ctx is cancelled.
 func (e *Encoder) pollUntil(ctx context.Context, condition func() bool) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {

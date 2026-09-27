@@ -151,7 +151,7 @@ func checkUint16(t *testing.T, data []byte, offset int, want uint16, field strin
 func controlResponse(sequence, opcode, status uint16, body []byte) []byte {
 	message := make([]byte, controlHeaderSize+len(body))
 	binary.BigEndian.PutUint16(message[0:2], 0x1102)
-	binary.BigEndian.PutUint16(message[2:4], uint16(len(message))) //nolint:gosec // test bodies are tiny.
+	binary.BigEndian.PutUint16(message[2:4], uint16(len(message))) //nolint:gosec // The test message fits in uint16.
 	binary.BigEndian.PutUint16(message[4:6], sequence)
 	binary.BigEndian.PutUint16(message[6:8], opcode)
 	binary.BigEndian.PutUint16(message[8:10], status)

@@ -151,7 +151,7 @@ func (r *Receiver) run(ctx context.Context) {
 	}
 	stopInterrupt()
 	_ = r.mediaConn.Close()
-	_ = r.writer.CloseWithError(err) // nil gives readers io.EOF
+	_ = r.writer.CloseWithError(err)
 
 	_, _ = exchangeControl(context.WithoutCancel(ctx), r.controlConn, buildStopRequest(r.flowHandle), time.Second)
 	_ = r.controlConn.Close()

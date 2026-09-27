@@ -51,11 +51,7 @@ func TestStartRejectsStateStopping(t *testing.T) {
 }
 func TestDelayedStarterDoesNotStartManagersAfterQuickSourceExit(t *testing.T) {
 	e := newSourceLifecycleTestEncoder(t, "exit")
-	// The wait budget is strictly smaller than the starter delay, so reaching
-	// the retry state proves the source exited before the delayed starter's
-	// timer fired: the starter is genuinely stale instead of racing a capture
-	// helper that outlives the delay (which would start the managers
-	// legitimately and flake this test).
+	// Reaching retry within this budget proves the delayed starter is stale.
 	const starterDelay = time.Second
 	e.streamRestartDelay = starterDelay
 	if err := e.Start(); err != nil {
@@ -139,7 +135,7 @@ func TestNativeDanteSourceUsesEncoderLifecycle(t *testing.T) {
 	e.config.Audio.Input = "dante://studio-tx/Left/Right"
 	e.openDanteSource = func(ctx context.Context, _ string) (source, error) {
 		reader, writer := io.Pipe()
-		context.AfterFunc(ctx, func() { _ = writer.Close() }) // mirrors dante.Open
+		context.AfterFunc(ctx, func() { _ = writer.Close() }) // Cancellation must unblock reads.
 		return fakeDanteSource{reader, ctx.Done()}, nil
 	}
 

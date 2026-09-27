@@ -147,7 +147,7 @@
                             <template x-if="devices.length > 0 && !config.audio_input">
                                 <option value="" disabled selected>Select audio input...</option>
                             </template>
-                            <!-- Configured input that is not listed, e.g. a dante:// URI from config.json -->
+                            <!-- Preserve configured inputs absent from device discovery. -->
                             <template x-if="config.audio_input && !devices.some(d => d.id === config.audio_input)">
                                 <option :value="config.audio_input" x-text="config.audio_input"></option>
                             </template>

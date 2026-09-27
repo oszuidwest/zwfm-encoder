@@ -45,7 +45,7 @@ func parseInputURL(input string) (inputConfig, error) {
 		return inputConfig{}, errors.New("fragments are not supported")
 	}
 
-	// Split the escaped path so channel names may contain %2F.
+	// Split before decoding to preserve escaped slashes in channel names.
 	channels := strings.Split(strings.TrimPrefix(u.EscapedPath(), "/"), "/")
 	if len(channels) != 2 || channels[0] == "" || channels[1] == "" {
 		return inputConfig{}, errors.New("path must contain exactly two non-empty channels")

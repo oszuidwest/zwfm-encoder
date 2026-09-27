@@ -143,8 +143,6 @@ type testChannel struct {
 	txt      []string
 }
 
-// buildTestDNSResponse encodes SRV and TXT records for each channel into the
-// answer and additional sections of an mDNS response.
 func buildTestDNSResponse(t *testing.T, answers, additionals []testChannel) []byte {
 	t.Helper()
 	builder := dnsmessage.NewBuilder(nil, dnsmessage.Header{Response: true})
@@ -176,7 +174,6 @@ func buildTestDNSResponse(t *testing.T, answers, additionals []testChannel) []by
 	return packet
 }
 
-// buildMixedDNSResponse answers for other and puts requested in the additional section.
 func buildMixedDNSResponse(t *testing.T, requested, other string) []byte {
 	t.Helper()
 	return buildTestDNSResponse(t,
