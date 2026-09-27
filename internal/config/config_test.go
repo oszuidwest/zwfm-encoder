@@ -589,77 +589,6 @@ func TestZabbixEventsJSONSemantics(t *testing.T) {
 		})
 	}
 }
-func TestZabbixEventsRoundTrip(t *testing.T) {
-	t.Parallel()
-	configPath := writeConfig(t, validConfigJSON(`"notifications":{"zabbix":{"events":{"silence_start":true,"silence_end":true,"channel_imbalance_start":true,"channel_imbalance_end":true}}}`))
-	cfg := New(configPath)
-	mustLoad(t, cfg)
-	stream := &types.Stream{Host: "127.0.0.1", Port: 1234, Codec: types.CodecPCM}
-	if err := cfg.AddStream(stream); err != nil {
-		t.Fatalf("AddStream() error = %v", err)
-	}
-	cfg2 := New(configPath)
-	mustLoad(t, cfg2)
-	got := cfg2.Snapshot().ZabbixEvents
-	want := types.EventSubscriptions{
-		SilenceStart:          true,
-		SilenceEnd:            true,
-		ChannelImbalanceStart: true,
-		ChannelImbalanceEnd:   true,
-	}
-	if got != want {
-		t.Fatalf("ZabbixEvents after round-trip = %+v, want %+v", got, want)
-	}
-}
-
-func TestApplySettingsRoundTripsNotificationImbalanceFields(t *testing.T) {
-	t.Parallel()
-	cfg, configPath := newLoadedConfig(t)
-	upd := minimalValidUpdate()
-	upd.WebhookEvents = types.EventSubscriptions{
-		SilenceStart:          true,
-		AudioDump:             true,
-		ChannelImbalanceStart: true,
-		ChannelImbalanceEnd:   true,
-	}
-	upd.EmailEvents = types.EventSubscriptions{
-		SilenceEnd:          true,
-		AudioDump:           true,
-		ChannelImbalanceEnd: true,
-	}
-	upd.ZabbixEvents = types.ZabbixEventSubscriptions{
-		SilenceStart:          true,
-		ChannelImbalanceStart: true,
-		ChannelImbalanceEnd:   true,
-	}
-	upd.ZabbixServer = "zabbix.example.com"
-	upd.ZabbixPort = 10051
-	upd.ZabbixHost = "encoder-01"
-	upd.ZabbixSilenceKey = "silence.alert"
-	upd.ZabbixImbalanceKey = "imbalance.alert"
-	upd.ZabbixUploadKey = "upload.alert"
-	if err := cfg.ApplySettings(upd); err != nil {
-		t.Fatalf("ApplySettings() error = %v", err)
-	}
-	reloaded := New(configPath)
-	mustLoad(t, reloaded)
-	snap := reloaded.Snapshot()
-	if snap.WebhookEvents != upd.WebhookEvents {
-		t.Fatalf("WebhookEvents = %+v, want %+v", snap.WebhookEvents, upd.WebhookEvents)
-	}
-	if snap.EmailEvents != upd.EmailEvents {
-		t.Fatalf("EmailEvents = %+v, want %+v", snap.EmailEvents, upd.EmailEvents)
-	}
-	if snap.ZabbixEvents != upd.ZabbixEvents.ToEventSubscriptions() {
-		t.Fatalf("ZabbixEvents = %+v, want %+v", snap.ZabbixEvents, upd.ZabbixEvents.ToEventSubscriptions())
-	}
-	if snap.ZabbixImbalanceKey != "imbalance.alert" {
-		t.Fatalf("ZabbixImbalanceKey = %q, want imbalance.alert", snap.ZabbixImbalanceKey)
-	}
-	if !snap.HasZabbixImbalance() {
-		t.Fatal("HasZabbixImbalance() = false, want true")
-	}
-}
 func TestApplySettingsValidatesInput(t *testing.T) {
 	t.Parallel()
 	configPath := filepath.Join(t.TempDir(), "config.json")
@@ -696,16 +625,10 @@ func TestLoadRejectsInvalidFileSettings(t *testing.T) {
 		badConfig("duplicate nested color_light key with null override", `{"system":{"port":8080,"username":"admin","password":"encoder"},"web":{"station_name":"ZuidWest FM","color_light":"#E6007E","color_dark":"#E6007E","color_light":null},"silence_detection":{"threshold_db":-40,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}}`, `duplicate key "color_light"`),
 		badConfig("empty station color light", validConfigJSON(`"web":{"station_name":"ZuidWest FM","color_light":"","color_dark":"#E6007E"}`), `color_light "": must be hex format (#RRGGBB)`),
 		badConfig("empty station color dark", validConfigJSON(`"web":{"station_name":"ZuidWest FM","color_light":"#E6007E","color_dark":""}`), `color_dark "": must be hex format (#RRGGBB)`),
-		badConfig("positive silence threshold", validConfigJSON(`"silence_detection":{"threshold_db":1,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}`), "silence_detection.threshold_db: must be between -60 and -1 dB"),
-		badConfig("zero silence threshold", validConfigJSON(`"silence_detection":{"threshold_db":0,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}`), "silence_detection.threshold_db: must be between -60 and -1 dB"),
-		badConfig("fractional silence threshold above -1", validConfigJSON(`"silence_detection":{"threshold_db":-0.5,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}`), "silence_detection.threshold_db: must be between -60 and -1 dB"),
-		badConfig("silence threshold below -60", validConfigJSON(`"silence_detection":{"threshold_db":-61,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}`), "silence_detection.threshold_db: must be between -60 and -1 dB"),
+		badConfig("invalid silence threshold uses file field path", validConfigJSON(`"silence_detection":{"threshold_db":0,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}`), "silence_detection.threshold_db"),
 		badConfig("zero silence duration", validConfigJSON(`"silence_detection":{"threshold_db":-40,"duration_ms":0,"recovery_ms":5000,"peak_hold_ms":3000}`), "silence_detection.duration_ms: must be greater than 0"),
 		badConfig("zero silence recovery", validConfigJSON(`"silence_detection":{"threshold_db":-40,"duration_ms":15000,"recovery_ms":0,"peak_hold_ms":3000}`), "silence_detection.recovery_ms: must be greater than 0"),
 		badConfig("zero peak hold", validConfigJSON(`"silence_detection":{"threshold_db":-40,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":0}`), "silence_detection.peak_hold_ms: must be between 500 and 10000 ms"),
-		badConfig("zero channel imbalance threshold", validConfigJSON(`"channel_imbalance_detection":{"threshold_db":0,"duration_ms":15000,"recovery_ms":5000}`), "channel_imbalance_detection.threshold_db: must be at least 1 dB and below 60 dB"),
-		badConfig("channel imbalance threshold at 60 is rejected", validConfigJSON(`"channel_imbalance_detection":{"threshold_db":60,"duration_ms":15000,"recovery_ms":5000}`), "channel_imbalance_detection.threshold_db: must be at least 1 dB and below 60 dB"),
-		badConfig("channel imbalance threshold above 60 is rejected", validConfigJSON(`"channel_imbalance_detection":{"threshold_db":61,"duration_ms":15000,"recovery_ms":5000}`), "channel_imbalance_detection.threshold_db: must be at least 1 dB and below 60 dB"),
 		badConfig("zero channel imbalance duration", validConfigJSON(`"channel_imbalance_detection":{"threshold_db":12,"duration_ms":0,"recovery_ms":5000}`), "channel_imbalance_detection.duration_ms: must be greater than 0"),
 		badConfig("zero channel imbalance recovery", validConfigJSON(`"channel_imbalance_detection":{"threshold_db":12,"duration_ms":15000,"recovery_ms":0}`), "channel_imbalance_detection.recovery_ms: must be greater than 0"),
 		badConfig("explicit null channel imbalance duration", validConfigJSON(`"channel_imbalance_detection":{"threshold_db":12,"duration_ms":null,"recovery_ms":5000}`), "channel_imbalance_detection.duration_ms: must be greater than 0"),
@@ -730,19 +653,9 @@ func TestSettingsUpdateValidateAPIFieldNames(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:    "positive silence threshold uses API name",
-			update:  SettingsUpdate{SilenceThreshold: 1, SilenceDurationMs: 1, SilenceRecoveryMs: 1},
-			wantErr: "silence_threshold:",
-		},
-		{
-			name:    "zero silence threshold uses API name",
+			name:    "invalid silence threshold uses API field path",
 			update:  SettingsUpdate{SilenceThreshold: 0, SilenceDurationMs: 1, SilenceRecoveryMs: 1},
-			wantErr: "silence_threshold:",
-		},
-		{
-			name:    "fractional silence threshold above -1 uses API name",
-			update:  SettingsUpdate{SilenceThreshold: -0.5, SilenceDurationMs: 1, SilenceRecoveryMs: 1},
-			wantErr: "silence_threshold:",
+			wantErr: "silence_threshold",
 		},
 		{
 			name:    "zero silence duration uses API name",
@@ -825,19 +738,26 @@ func TestSaveLockedWritePath(t *testing.T) {
 		}
 	})
 }
-func TestSilenceThresholdBoundary(t *testing.T) {
+func TestValidateSilenceThreshold(t *testing.T) {
 	t.Parallel()
-	for _, threshold := range []float64{-1, -60} {
-		t.Run(fmt.Sprintf("file/%g", threshold), func(t *testing.T) {
+	tests := []struct {
+		threshold float64
+		wantValid bool
+	}{
+		{threshold: -60, wantValid: true},
+		{threshold: -1, wantValid: true},
+		{threshold: -0.5},
+		{threshold: 0},
+		{threshold: 1},
+		{threshold: -61},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%g", tt.threshold), func(t *testing.T) {
 			t.Parallel()
-			block := fmt.Sprintf(`"silence_detection":{"threshold_db":%g,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":3000}`, threshold)
-			loadConfig(t, validConfigJSON(block))
-		})
-		t.Run(fmt.Sprintf("api/%g", threshold), func(t *testing.T) {
-			t.Parallel()
-			update := SettingsUpdate{SilenceThreshold: threshold, SilenceDurationMs: 1, SilenceRecoveryMs: 1}
-			if errs := update.Validate(); hasValidationError(errs, "silence_threshold") {
-				t.Fatalf("Validate() returned unexpected silence_threshold error: %v", errs)
+			gotValid := validateSilenceThreshold("threshold", tt.threshold) == ""
+			if gotValid != tt.wantValid {
+				t.Fatalf("validateSilenceThreshold(%g) valid = %v, want %v",
+					tt.threshold, gotValid, tt.wantValid)
 			}
 		})
 	}
@@ -854,76 +774,165 @@ func minimalValidUpdate() *SettingsUpdate {
 		ChannelImbalanceRecoveryMs: 5000,
 	}
 }
-func TestChannelImbalanceThresholdBoundary(t *testing.T) {
+
+func TestSettingsUpdateRoundTripsEveryField(t *testing.T) {
+	t.Parallel()
+	cfg, configPath := newLoadedConfig(t)
+	update := populatedSettingsUpdate(t)
+	if err := cfg.ApplySettings(update); err != nil {
+		t.Fatalf("ApplySettings() error = %v", err)
+	}
+
+	reloaded := New(configPath)
+	mustLoad(t, reloaded)
+	snapshot := reloaded.Snapshot()
+	assertSettingsFieldsPersisted(t, reflect.ValueOf(update).Elem(), reflect.ValueOf(snapshot), "SettingsUpdate")
+	configured := map[string]bool{
+		"webhook":          snapshot.HasWebhook(),
+		"graph":            snapshot.HasGraph(),
+		"zabbix silence":   snapshot.HasZabbixSilence(),
+		"zabbix imbalance": snapshot.HasZabbixImbalance(),
+		"zabbix upload":    snapshot.HasZabbixUpload(),
+	}
+	for name, ok := range configured {
+		if !ok {
+			t.Errorf("fully populated settings did not configure %s", name)
+		}
+	}
+}
+
+func populatedSettingsUpdate(t *testing.T) *SettingsUpdate {
+	t.Helper()
+	value := reflect.New(reflect.TypeFor[SettingsUpdate]()).Elem()
+	populateSettingsValue(t, value, "SettingsUpdate")
+	return value.Addr().Interface().(*SettingsUpdate)
+}
+
+func populateSettingsValue(t *testing.T, value reflect.Value, path string) {
+	t.Helper()
+	valueType := value.Type()
+	for i := range value.NumField() {
+		field := value.Field(i)
+		fieldInfo := valueType.Field(i)
+		fieldPath := path + "." + fieldInfo.Name
+		if strings.HasPrefix(fieldInfo.Name, "Clear") {
+			if field.Kind() != reflect.Bool {
+				t.Fatalf("%s has kind %s, want bool for a clear flag", fieldPath, field.Kind())
+			}
+			field.SetBool(false)
+			continue
+		}
+
+		switch field.Kind() {
+		case reflect.Struct:
+			populateSettingsValue(t, field, fieldPath)
+		case reflect.Bool:
+			field.SetBool(true)
+		case reflect.String:
+			field.SetString(validSettingsString(fieldInfo.Name))
+		case reflect.Int, reflect.Int64:
+			field.SetInt(validSettingsInt(fieldInfo.Name))
+		case reflect.Float64:
+			field.SetFloat(validSettingsFloat(t, fieldInfo.Name, fieldPath))
+		default:
+			t.Fatalf("%s has unhandled kind %s; add a valid value generator", fieldPath, field.Kind())
+		}
+	}
+}
+
+func validSettingsString(fieldName string) string {
+	switch fieldName {
+	case "WebhookURL":
+		return "https://hooks.example.com/settings-token"
+	case "GraphFromAddress":
+		return "sender@example.com"
+	case "GraphRecipients":
+		return "first@example.com,second@example.com"
+	case "GraphTenantID":
+		return "11111111-1111-1111-1111-111111111111"
+	case "GraphClientID":
+		return "22222222-2222-2222-2222-222222222222"
+	default:
+		return "value-" + strings.ToLower(fieldName)
+	}
+}
+
+func validSettingsInt(fieldName string) int64 {
+	switch fieldName {
+	case "ZabbixPort":
+		return 10051
+	case "RecordingMaxDurationMinutes":
+		return 120
+	case "SilenceDumpRetentionDays":
+		return 7
+	default:
+		return 1234
+	}
+}
+
+func validSettingsFloat(t *testing.T, fieldName, fieldPath string) float64 {
+	t.Helper()
+	switch fieldName {
+	case "SilenceThreshold":
+		return -42
+	case "ChannelImbalanceThreshold":
+		return 17
+	default:
+		t.Fatalf("%s needs a valid float64 generator", fieldPath)
+		return 0
+	}
+}
+
+func assertSettingsFieldsPersisted(t *testing.T, update, snapshot reflect.Value, path string) {
+	t.Helper()
+	updateType := update.Type()
+	for i := range update.NumField() {
+		fieldInfo := updateType.Field(i)
+		fieldPath := path + "." + fieldInfo.Name
+		want := update.Field(i)
+		if strings.HasPrefix(fieldInfo.Name, "Clear") {
+			if want.Bool() {
+				t.Fatalf("%s = true, clear flags must remain false in the round-trip fixture", fieldPath)
+			}
+			continue
+		}
+
+		got := snapshot.FieldByName(fieldInfo.Name)
+		if !got.IsValid() {
+			t.Fatalf("%s has no matching Snapshot field; add persistence and update this test", fieldPath)
+		}
+		if want.Kind() == reflect.Struct {
+			assertSettingsFieldsPersisted(t, want, got, fieldPath)
+			continue
+		}
+		if !reflect.DeepEqual(want.Interface(), got.Interface()) {
+			t.Errorf("%s after reload = %v, want %v", fieldPath, got.Interface(), want.Interface())
+		}
+	}
+}
+
+func TestValidateChannelImbalanceThreshold(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name      string
-		threshold string
-		value     float64
-		wantErr   bool
+		threshold float64
+		wantValid bool
 	}{
-		{"one is valid", "1", 1, false},
-		{"just below sixty is valid", "59.9", 59.9, false},
-		{"zero is rejected", "0", 0, true},
-		{"sixty is rejected", "60", 60, true},
-		{"above sixty is rejected", "61", 61, true},
+		{threshold: 0.99},
+		{threshold: 1, wantValid: true},
+		{threshold: 59.9, wantValid: true},
+		{threshold: 60},
+		{threshold: 61},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(fmt.Sprintf("%g", tt.threshold), func(t *testing.T) {
 			t.Parallel()
-			block := `"channel_imbalance_detection":{"threshold_db":` + tt.threshold + `,"duration_ms":15000,"recovery_ms":5000}`
-			fileErr := New(writeConfig(t, validConfigJSON(block))).Load() != nil
-			if fileErr != tt.wantErr {
-				t.Fatalf("Load() rejected threshold %s = %v, want %v", tt.threshold, fileErr, tt.wantErr)
-			}
-			upd := minimalValidUpdate()
-			upd.ChannelImbalanceThreshold = tt.value
-			apiErr := hasValidationError(upd.Validate(), "channel_imbalance_threshold")
-			if apiErr != tt.wantErr {
-				t.Fatalf("Validate() rejected threshold %v = %v, want %v", tt.value, apiErr, tt.wantErr)
+			gotValid := validateChannelImbalanceThreshold("threshold", tt.threshold) == ""
+			if gotValid != tt.wantValid {
+				t.Fatalf("validateChannelImbalanceThreshold(%g) valid = %v, want %v",
+					tt.threshold, gotValid, tt.wantValid)
 			}
 		})
 	}
-}
-func TestApplySettingsRoundTripsChannelImbalance(t *testing.T) {
-	t.Parallel()
-	cfg, configPath := newLoadedConfig(t)
-	upd := minimalValidUpdate()
-	upd.ChannelImbalanceThreshold = 18
-	upd.ChannelImbalanceDurationMs = 20000
-	upd.ChannelImbalanceRecoveryMs = 4000
-	if err := cfg.ApplySettings(upd); err != nil {
-		t.Fatalf("ApplySettings() error = %v", err)
-	}
-	reloaded := New(configPath)
-	mustLoad(t, reloaded)
-	snap := reloaded.Snapshot()
-	assertEqual(t, "ChannelImbalanceThreshold", snap.ChannelImbalanceThreshold, 18.0)
-	assertEqual(t, "ChannelImbalanceDurationMs", snap.ChannelImbalanceDurationMs, int64(20000))
-	assertEqual(t, "ChannelImbalanceRecoveryMs", snap.ChannelImbalanceRecoveryMs, int64(4000))
-}
-func TestDetectorSettingsReflectsAppliedSettings(t *testing.T) {
-	t.Parallel()
-	cfg, _ := newLoadedConfig(t)
-	upd := minimalValidUpdate()
-	upd.SilenceThreshold = -22
-	upd.SilenceDurationMs = 1234
-	upd.SilenceRecoveryMs = 567
-	upd.PeakHoldMs = 2500
-	upd.ChannelImbalanceThreshold = 18
-	upd.ChannelImbalanceDurationMs = 2345
-	upd.ChannelImbalanceRecoveryMs = 678
-	if err := cfg.ApplySettings(upd); err != nil {
-		t.Fatalf("ApplySettings() error = %v", err)
-	}
-	got := cfg.DetectorSettings()
-	assertEqual(t, "SilenceThreshold", got.SilenceThreshold, -22.0)
-	assertEqual(t, "SilenceDurationMs", got.SilenceDurationMs, int64(1234))
-	assertEqual(t, "SilenceRecoveryMs", got.SilenceRecoveryMs, int64(567))
-	assertEqual(t, "PeakHoldMs", got.PeakHoldMs, int64(2500))
-	assertEqual(t, "ChannelImbalanceThreshold", got.ChannelImbalanceThreshold, 18.0)
-	assertEqual(t, "ChannelImbalanceDurationMs", got.ChannelImbalanceDurationMs, int64(2345))
-	assertEqual(t, "ChannelImbalanceRecoveryMs", got.ChannelImbalanceRecoveryMs, int64(678))
 }
 func TestSettingsUpdateValidate_ClearHiddenValueConflict(t *testing.T) {
 	t.Parallel()

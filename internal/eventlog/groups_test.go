@@ -283,64 +283,99 @@ func TestGroupEventsClosesIncidentsForRemovedStreams(t *testing.T) {
 	assertPartition(t, events, &groups)
 }
 
-func TestGroupEventsDoesNotCollapseHistoricalUploadFiles(t *testing.T) {
+func TestGroupEventsDoesNotCollapseUploadFiles(t *testing.T) {
 	t.Parallel()
+	tests := []struct {
+		name         string
+		recorderName string
+	}{
+		{name: "historical files for one recorder", recorderName: "hourly"},
+		{name: "files without recorder name"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			base := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
+			details := func(filename string) map[string]any {
+				return map[string]any{
+					"recorder_name": tt.recorderName,
+					"filename":      filename,
+				}
+			}
+			events := decorateNewestFirst(
+				testEvent(base, 2, UploadFailed, details("b.mp3")),
+				testEvent(base, 1, UploadFailed, details("a.mp3")),
+			)
 
-	base := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
-	events := decorateNewestFirst(
-		testEvent(base, 2, UploadFailed, map[string]any{
-			"recorder_name": "hourly",
-			"filename":      "b.mp3",
-		}),
-		testEvent(base, 1, UploadFailed, map[string]any{
-			"recorder_name": "hourly",
-			"filename":      "a.mp3",
-		}),
-	)
-
-	groups := GroupEvents(events, nil)
-	if len(groups.Attention) != 2 {
-		t.Fatalf("attention len = %d, want 2", len(groups.Attention))
+			groups := GroupEvents(events, nil)
+			if len(groups.Attention) != 2 {
+				t.Fatalf("attention len = %d, want 2", len(groups.Attention))
+			}
+			gotFiles := map[string]bool{}
+			for _, item := range groups.Attention {
+				gotFiles[detailString(eventDetails(item.Events[0].Details), "filename")] = true
+			}
+			for _, filename := range []string{"a.mp3", "b.mp3"} {
+				if !gotFiles[filename] {
+					t.Fatalf("attention files = %v, missing %s", gotFiles, filename)
+				}
+			}
+			assertPartition(t, events, &groups)
+		})
 	}
-	gotFiles := map[string]bool{}
-	for _, item := range groups.Attention {
-		gotFiles[detailString(eventDetails(item.Events[0].Details), "filename")] = true
-	}
-	for _, filename := range []string{"a.mp3", "b.mp3"} {
-		if !gotFiles[filename] {
-			t.Fatalf("attention files = %v, missing %s", gotFiles, filename)
-		}
-	}
-	assertPartition(t, events, &groups)
 }
 
-func TestGroupEventsAvoidsEmptyRecorderNameUploadCollision(t *testing.T) {
-	t.Parallel()
+func FuzzGroupEvents(f *testing.F) {
+	f.Add([]byte{})
+	f.Add([]byte{0, 1, 2, 3, 4})
+	f.Add([]byte{5, 5, 6, 7, 8, 9, 10})
+	f.Add([]byte{14, 16, 15, 17, 18, 19})
 
-	base := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
-	events := decorateNewestFirst(
-		testEvent(base, 2, UploadFailed, map[string]any{
-			"filename": "b.mp3",
-		}),
-		testEvent(base, 1, UploadFailed, map[string]any{
-			"filename": "a.mp3",
-		}),
-	)
-
-	groups := GroupEvents(events, nil)
-	if len(groups.Attention) != 2 {
-		t.Fatalf("attention len = %d, want 2", len(groups.Attention))
+	eventTypes := []EventType{
+		StreamStarted,
+		StreamStable,
+		StreamError,
+		StreamRetry,
+		StreamStopped,
+		SilenceStart,
+		SilenceEnd,
+		AudioDumpReady,
+		ChannelImbalanceStart,
+		ChannelImbalanceEnd,
+		RecorderStarted,
+		RecorderStopped,
+		RecorderError,
+		RecorderFile,
+		UploadQueued,
+		UploadCompleted,
+		UploadFailed,
+		UploadRetry,
+		UploadAbandoned,
+		CleanupCompleted,
 	}
-	gotFiles := map[string]bool{}
-	for _, item := range groups.Attention {
-		gotFiles[detailString(eventDetails(item.Events[0].Details), "filename")] = true
-	}
-	for _, filename := range []string{"a.mp3", "b.mp3"} {
-		if !gotFiles[filename] {
-			t.Fatalf("attention files = %v, missing %s", gotFiles, filename)
+	f.Fuzz(func(t *testing.T, data []byte) {
+		if len(data) > 128 {
+			data = data[:128]
 		}
-	}
-	assertPartition(t, events, &groups)
+		base := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
+		events := make([]Event, 0, len(data))
+		for i, value := range data {
+			events = append(events, Event{
+				Timestamp: base.Add(time.Duration(i) * time.Nanosecond),
+				Type:      eventTypes[int(value)%len(eventTypes)],
+				StreamID:  fmt.Sprintf("stream-%d", value%3),
+				Details: map[string]any{
+					"incident_id":   int64(value % 4),
+					"recorder_name": fmt.Sprintf("recorder-%d", value%3),
+					"filename":      fmt.Sprintf("file-%d.mp3", i%4),
+					"duration_ms":   int64(value) * 100,
+				},
+			})
+		}
+		views := DecorateEvents(events)
+		groups := GroupEvents(views, nil)
+		assertPartition(t, views, &groups)
+	})
 }
 
 func TestGroupEventsKeepsOrphanRecoveryInActivity(t *testing.T) {

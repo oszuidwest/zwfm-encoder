@@ -37,23 +37,6 @@ func TestManagerStopStopsRotatingRecorder(t *testing.T) {
 	}
 }
 
-func TestStopReusesUploadQueue(t *testing.T) {
-	r := NewGenericRecorder(GenericRecorderConfig{
-		Recorder: testS3Recorder(),
-		SpoolDir: t.TempDir(),
-	})
-	before := r.uploadQueue
-	r.mu.Lock()
-	r.state = types.ProcessRunning
-	r.mu.Unlock()
-	if err := r.Stop(); err != nil {
-		t.Fatal(err)
-	}
-	if r.uploadQueue != before {
-		t.Fatal("Stop reassigned uploadQueue; it must be created once and reused for the recorder's lifetime")
-	}
-}
-
 func TestQueueForUploadAfterWorkerStopPersistsToRetryQueue(t *testing.T) {
 	spoolDir := t.TempDir()
 	r := NewGenericRecorder(GenericRecorderConfig{

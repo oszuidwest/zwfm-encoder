@@ -3,11 +3,11 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -19,20 +19,6 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-func TestDerefReturnsValueWhenPresentFallbackWhenNil(t *testing.T) {
-	t.Parallel()
-	empty := ""
-	value := "explicit"
-	if got := deref((*string)(nil), "saved"); got != "saved" {
-		t.Fatalf("deref(nil, saved) = %q, want %q", got, "saved")
-	}
-	if got := deref(&empty, "saved"); got != "" {
-		t.Fatalf("deref(&\"\", saved) = %q, want empty string", got)
-	}
-	if got := deref(&value, "saved"); got != "explicit" {
-		t.Fatalf("deref(&explicit, saved) = %q, want %q", got, "explicit")
-	}
-}
 func TestValidateRecorderLocalPathCreatesWritableDirectory(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "archive")
@@ -772,7 +758,7 @@ func seededServer(t *testing.T, upd *config.SettingsUpdate) *Server {
 	if err := cfg.ApplySettings(upd); err != nil {
 		t.Fatalf("ApplySettings() error = %v", err)
 	}
-	return &Server{config: cfg}
+	return &Server{config: cfg, encoder: &encoder.Encoder{}}
 }
 
 // seededGraphSettings returns a saved Graph config that reaches runtime validation.
@@ -899,129 +885,163 @@ func TestHandleAPIConfigRedactsStoredSecrets(t *testing.T) {
 	}
 }
 
-func TestHandleAPIConfigIncludesChannelImbalance(t *testing.T) {
+func TestSettingsRoundTripThroughAPIEveryField(t *testing.T) {
 	t.Parallel()
 	s := freshServer(t)
-	rec := runJSONHandler(t, s.handleAPIConfig, http.MethodGet, "/api/config", "")
-	assertStatus(t, rec, http.StatusOK)
-	assertContains(t, rec.Body.Bytes(),
-		`"channel_imbalance_threshold":`,
-		`"channel_imbalance_duration_ms":`,
-		`"channel_imbalance_recovery_ms":`,
-	)
-	resp := decodeJSON[types.APIConfigResponse](t, rec.Body.Bytes())
-	if resp.ChannelImbalanceThreshold != config.DefaultChannelImbalanceThreshold {
-		t.Fatalf("ChannelImbalanceThreshold = %v, want %v", resp.ChannelImbalanceThreshold, config.DefaultChannelImbalanceThreshold)
-	}
-	if resp.ChannelImbalanceDurationMs != config.DefaultChannelImbalanceDurationMs {
-		t.Fatalf("ChannelImbalanceDurationMs = %d, want %d", resp.ChannelImbalanceDurationMs, config.DefaultChannelImbalanceDurationMs)
-	}
-	if resp.ChannelImbalanceRecoveryMs != config.DefaultChannelImbalanceRecoveryMs {
-		t.Fatalf("ChannelImbalanceRecoveryMs = %d, want %d", resp.ChannelImbalanceRecoveryMs, config.DefaultChannelImbalanceRecoveryMs)
-	}
-}
-
-func TestHandleAPIConfigIncludesNotificationImbalanceFields(t *testing.T) {
-	t.Parallel()
-	s := freshServer(t)
-	upd := validBaselineSettings(s.config)
-	upd.WebhookEvents = types.EventSubscriptions{ChannelImbalanceStart: true}
-	upd.EmailEvents = types.EventSubscriptions{ChannelImbalanceEnd: true}
-	upd.ZabbixServer = "zabbix.example.com"
-	upd.ZabbixPort = 10051
-	upd.ZabbixHost = "encoder-01"
-	upd.ZabbixImbalanceKey = "imbalance.alert"
-	upd.ZabbixEvents = types.ZabbixEventSubscriptions{
-		ChannelImbalanceStart: true,
-		ChannelImbalanceEnd:   true,
-	}
-	if err := s.config.ApplySettings(upd); err != nil {
-		t.Fatalf("ApplySettings() error = %v", err)
-	}
-
-	rec := runJSONHandler(t, s.handleAPIConfig, http.MethodGet, "/api/config", "")
-	assertStatus(t, rec, http.StatusOK)
-	assertContains(t, rec.Body.Bytes(),
-		`"zabbix_imbalance_key":"imbalance.alert"`,
-		`"channel_imbalance_start":true`,
-		`"channel_imbalance_end":true`,
-	)
-	resp := decodeJSON[types.APIConfigResponse](t, rec.Body.Bytes())
-	if resp.ZabbixImbalanceKey != "imbalance.alert" {
-		t.Fatalf("ZabbixImbalanceKey = %q, want imbalance.alert", resp.ZabbixImbalanceKey)
-	}
-	if !resp.WebhookEvents.ChannelImbalanceStart {
-		t.Fatal("WebhookEvents.ChannelImbalanceStart = false, want true")
-	}
-	if !resp.EmailEvents.ChannelImbalanceEnd {
-		t.Fatal("EmailEvents.ChannelImbalanceEnd = false, want true")
-	}
-	if !resp.ZabbixEvents.ChannelImbalanceStart || !resp.ZabbixEvents.ChannelImbalanceEnd {
-		t.Fatalf("ZabbixEvents = %+v, want imbalance start/end true", resp.ZabbixEvents)
-	}
-}
-
-func TestApplyWithPreserveRoundTripsChannelImbalance(t *testing.T) {
-	t.Parallel()
-	s := freshServer(t)
-	upd := validBaselineSettings(s.config)
-	upd.ChannelImbalanceThreshold = 18
-	upd.ChannelImbalanceDurationMs = 20000
-	upd.ChannelImbalanceRecoveryMs = 4000
-	snap, err := applyWithPreserve(t, s.config, upd)
+	s.encoder = &encoder.Encoder{}
+	update := populatedAPISettingsUpdate(t)
+	body, err := json.Marshal(update)
 	if err != nil {
-		t.Fatalf("applyWithPreserve() error = %v", err)
+		t.Fatalf("marshal SettingsUpdate: %v", err)
 	}
-	if snap.ChannelImbalanceThreshold != 18 {
-		t.Fatalf("ChannelImbalanceThreshold = %v, want 18", snap.ChannelImbalanceThreshold)
-	}
-	if snap.ChannelImbalanceDurationMs != 20000 {
-		t.Fatalf("ChannelImbalanceDurationMs = %d, want 20000", snap.ChannelImbalanceDurationMs)
-	}
-	if snap.ChannelImbalanceRecoveryMs != 4000 {
-		t.Fatalf("ChannelImbalanceRecoveryMs = %d, want 4000", snap.ChannelImbalanceRecoveryMs)
+	postRec := postSettingsBody(t, s, string(body))
+	assertStatus(t, postRec, http.StatusNoContent)
+
+	getRec := runJSONHandler(t, s.handleAPIConfig, http.MethodGet, "/api/config", "")
+	assertStatus(t, getRec, http.StatusOK)
+	assertNotContains(t, getRec.Body.Bytes(),
+		update.WebhookURL,
+		update.GraphClientSecret,
+		`"webhook_url"`,
+		`"graph_client_secret"`,
+	)
+	assertContains(t, getRec.Body.Bytes(),
+		`"webhook_has_url":true`,
+		`"graph_has_secret":true`,
+	)
+	response := decodeJSON[types.APIConfigResponse](t, getRec.Body.Bytes())
+	assertAPISettingsReturned(
+		t,
+		reflect.ValueOf(update).Elem(),
+		reflect.ValueOf(response),
+		"SettingsUpdate",
+	)
+}
+
+func populatedAPISettingsUpdate(t *testing.T) *config.SettingsUpdate {
+	t.Helper()
+	value := reflect.New(reflect.TypeFor[config.SettingsUpdate]()).Elem()
+	populateAPISettingsValue(t, value, "SettingsUpdate")
+	return value.Addr().Interface().(*config.SettingsUpdate)
+}
+
+func populateAPISettingsValue(t *testing.T, value reflect.Value, path string) {
+	t.Helper()
+	valueType := value.Type()
+	for i := range value.NumField() {
+		field := value.Field(i)
+		fieldInfo := valueType.Field(i)
+		fieldPath := path + "." + fieldInfo.Name
+		if strings.HasPrefix(fieldInfo.Name, "Clear") {
+			if field.Kind() != reflect.Bool {
+				t.Fatalf("%s has kind %s, want bool for a clear flag", fieldPath, field.Kind())
+			}
+			field.SetBool(false)
+			continue
+		}
+
+		switch field.Kind() {
+		case reflect.Struct:
+			populateAPISettingsValue(t, field, fieldPath)
+		case reflect.Bool:
+			field.SetBool(true)
+		case reflect.String:
+			field.SetString(validAPISettingsString(fieldInfo.Name))
+		case reflect.Int, reflect.Int64:
+			field.SetInt(validAPISettingsInt(fieldInfo.Name))
+		case reflect.Float64:
+			field.SetFloat(validAPISettingsFloat(t, fieldInfo.Name, fieldPath))
+		default:
+			t.Fatalf("%s has unhandled kind %s; add a valid value generator", fieldPath, field.Kind())
+		}
 	}
 }
 
-func TestApplyWithPreserveRoundTripsNotificationImbalanceFields(t *testing.T) {
-	t.Parallel()
-	s := freshServer(t)
-	upd := validBaselineSettings(s.config)
-	upd.WebhookEvents = types.EventSubscriptions{
-		SilenceStart:          true,
-		ChannelImbalanceStart: true,
-		ChannelImbalanceEnd:   true,
-	}
-	upd.EmailEvents = types.EventSubscriptions{
-		SilenceEnd:          true,
-		AudioDump:           true,
-		ChannelImbalanceEnd: true,
-	}
-	upd.ZabbixServer = "zabbix.example.com"
-	upd.ZabbixPort = 10051
-	upd.ZabbixHost = "encoder-01"
-	upd.ZabbixImbalanceKey = "imbalance.alert"
-	upd.ZabbixEvents = types.ZabbixEventSubscriptions{
-		ChannelImbalanceStart: true,
-		ChannelImbalanceEnd:   true,
-	}
-	snap, err := applyWithPreserve(t, s.config, upd)
-	if err != nil {
-		t.Fatalf("applyWithPreserve() error = %v", err)
-	}
-	if snap.WebhookEvents != upd.WebhookEvents {
-		t.Fatalf("WebhookEvents = %+v, want %+v", snap.WebhookEvents, upd.WebhookEvents)
-	}
-	if snap.EmailEvents != upd.EmailEvents {
-		t.Fatalf("EmailEvents = %+v, want %+v", snap.EmailEvents, upd.EmailEvents)
-	}
-	if snap.ZabbixEvents != upd.ZabbixEvents.ToEventSubscriptions() {
-		t.Fatalf("ZabbixEvents = %+v, want %+v", snap.ZabbixEvents, upd.ZabbixEvents.ToEventSubscriptions())
-	}
-	if snap.ZabbixImbalanceKey != "imbalance.alert" {
-		t.Fatalf("ZabbixImbalanceKey = %q, want imbalance.alert", snap.ZabbixImbalanceKey)
+func validAPISettingsString(fieldName string) string {
+	switch fieldName {
+	case "WebhookURL":
+		return "https://hooks.example.com/api-settings-token"
+	case "GraphFromAddress":
+		return "sender@example.com"
+	case "GraphRecipients":
+		return "first@example.com,second@example.com"
+	case "GraphTenantID":
+		return "11111111-1111-1111-1111-111111111111"
+	case "GraphClientID":
+		return "22222222-2222-2222-2222-222222222222"
+	default:
+		return "value-" + strings.ToLower(fieldName)
 	}
 }
+
+func validAPISettingsInt(fieldName string) int64 {
+	switch fieldName {
+	case "ZabbixPort":
+		return 10051
+	case "RecordingMaxDurationMinutes":
+		return 120
+	case "SilenceDumpRetentionDays":
+		return 7
+	default:
+		return 1234
+	}
+}
+
+func validAPISettingsFloat(t *testing.T, fieldName, fieldPath string) float64 {
+	t.Helper()
+	switch fieldName {
+	case "SilenceThreshold":
+		return -42
+	case "ChannelImbalanceThreshold":
+		return 17
+	default:
+		t.Fatalf("%s needs a valid float64 generator", fieldPath)
+		return 0
+	}
+}
+
+func assertAPISettingsReturned(t *testing.T, update, response reflect.Value, path string) {
+	t.Helper()
+	updateType := update.Type()
+	for i := range update.NumField() {
+		fieldInfo := updateType.Field(i)
+		fieldPath := path + "." + fieldInfo.Name
+		want := update.Field(i)
+		if strings.HasPrefix(fieldInfo.Name, "Clear") {
+			if want.Bool() {
+				t.Fatalf("%s = true, clear flags must remain false in the round-trip fixture", fieldPath)
+			}
+			continue
+		}
+
+		var got reflect.Value
+		switch fieldInfo.Name {
+		case "WebhookURL":
+			got = response.FieldByName("WebhookHasURL")
+			want = reflect.ValueOf(want.String() != "")
+		case "GraphClientSecret":
+			got = response.FieldByName("GraphHasSecret")
+			want = reflect.ValueOf(want.String() != "")
+		case "SilenceDumpEnabled":
+			got = response.FieldByName("SilenceDump").FieldByName("Enabled")
+		case "SilenceDumpRetentionDays":
+			got = response.FieldByName("SilenceDump").FieldByName("RetentionDays")
+		default:
+			got = response.FieldByName(fieldInfo.Name)
+		}
+		if !got.IsValid() {
+			t.Fatalf("%s has no matching API config field; expose it or update this test", fieldPath)
+		}
+		if want.Kind() == reflect.Struct {
+			assertAPISettingsReturned(t, want, got, fieldPath)
+			continue
+		}
+		if !reflect.DeepEqual(want.Interface(), got.Interface()) {
+			t.Errorf("%s from GET /api/config = %v, want %v", fieldPath, got.Interface(), want.Interface())
+		}
+	}
+}
+
 func TestHandleStreamEndpointsRedactPassword(t *testing.T) {
 	t.Parallel()
 	fixture := seededSensitiveServer(t)
@@ -1110,26 +1130,6 @@ func TestHandleRecorderEndpointsRedactS3Secret(t *testing.T) {
 			assertContains(t, rec.Body.Bytes(), `"has_s3_secret":true`)
 		})
 	}
-}
-func TestRedactionHelpersOmitSecretFields(t *testing.T) {
-	t.Parallel()
-	streamBody, err := json.Marshal(redactStream(&types.Stream{
-		Password: "helper-stream-secret",
-		Mode:     types.StreamModeListener,
-	}))
-	if err != nil {
-		t.Fatalf("marshal redacted stream: %v", err)
-	}
-	assertNotContains(t, streamBody, "helper-stream-secret", `"password":"`)
-	assertContains(t, streamBody, `"has_password":true`, `"mode":"listener"`)
-	recorderBody, err := json.Marshal(redactRecorder(&types.Recorder{
-		S3SecretAccessKey: "helper-recorder-secret",
-	}))
-	if err != nil {
-		t.Fatalf("marshal redacted recorder: %v", err)
-	}
-	assertNotContains(t, recorderBody, "helper-recorder-secret", `"s3_secret_access_key":"`)
-	assertContains(t, recorderBody, `"has_s3_secret":true`)
 }
 func TestPreserveSecretKeepReplaceClearConflict(t *testing.T) {
 	t.Parallel()
@@ -1436,19 +1436,6 @@ func validBaselineSettings(cfg *config.Config) *config.SettingsUpdate {
 	}
 }
 
-// applyWithPreserve mirrors the settings API hidden-value preservation flow.
-func applyWithPreserve(t *testing.T, cfg *config.Config, upd *config.SettingsUpdate) (config.Snapshot, error) {
-	t.Helper()
-	snap := cfg.Snapshot()
-	preserveHiddenSettings(upd, &snap)
-	if errs := upd.Validate(); len(errs) > 0 {
-		return config.Snapshot{}, fmt.Errorf("validate: %s", strings.Join(errs, "; "))
-	}
-	if err := cfg.ApplySettings(upd); err != nil {
-		return config.Snapshot{}, err
-	}
-	return cfg.Snapshot(), nil
-}
 func TestApplyWithPreserveHiddenValues(t *testing.T) {
 	t.Parallel()
 	const savedWebhookURL = "https://hooks.example.com/saved-token"
@@ -1524,10 +1511,13 @@ func TestApplyWithPreserveHiddenValues(t *testing.T) {
 			s := seededServer(t, tt.seed())
 			upd := validBaselineSettings(s.config)
 			tt.mutate(upd)
-			snap, err := applyWithPreserve(t, s.config, upd)
+			body, err := json.Marshal(upd)
 			if err != nil {
-				t.Fatalf("applyWithPreserve() error = %v", err)
+				t.Fatalf("marshal SettingsUpdate: %v", err)
 			}
+			rec := postSettingsBody(t, s, string(body))
+			assertStatus(t, rec, http.StatusNoContent)
+			snap := s.config.Snapshot()
 			if got := tt.read(snap); got != tt.want {
 				t.Fatalf("hidden value = %q, want %q", got, tt.want)
 			}

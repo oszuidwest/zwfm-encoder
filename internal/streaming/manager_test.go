@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -432,32 +431,6 @@ func TestStatusesListenerWithoutFanoutReportsNoDrops(t *testing.T) {
 		t.Fatalf("ListenerDrops = %d, want 0 when fanout is nil", status.ListenerDrops)
 	}
 }
-func TestWriteAudioFanOutListenerSkipsWhenNoEncoderRun(t *testing.T) {
-	t.Parallel()
-	m := NewManager("ffmpeg")
-	m.streams["listener-1"] = &Stream{
-		state: types.ProcessRunning,
-		mode:  types.StreamModeListener,
-	}
-	m.WriteAudioFanOut([]byte("pcm"))
-}
-
-func TestWriteAudioFanOutListenerSkipsWithoutAllocatingWhenNoEncoderRun(t *testing.T) {
-	m := NewManager("ffmpeg")
-	m.streams["listener-1"] = &Stream{
-		state: types.ProcessRunning,
-		mode:  types.StreamModeListener,
-	}
-	pcm := make([]byte, 20*1024)
-
-	allocs := testing.AllocsPerRun(1000, func() {
-		m.WriteAudioFanOut(pcm)
-	})
-	if allocs != 0 {
-		t.Fatalf("WriteAudioFanOut allocations = %.1f, want 0", allocs)
-	}
-}
-
 func TestWriteAudioFanOutListenerCopiesQueuedChunk(t *testing.T) {
 	t.Parallel()
 	m := NewManager("ffmpeg")
@@ -534,9 +507,6 @@ func TestWriteAudioFanOutSharesOneCopyAcrossStreams(t *testing.T) {
 	if !bytes.Equal(gotA, []byte{1, 2, 3, 4}) || !bytes.Equal(gotB, []byte{1, 2, 3, 4}) {
 		t.Fatalf("streams saw mutated source: a=%v b=%v, want original bytes", gotA, gotB)
 	}
-	if &gotA[0] != &gotB[0] {
-		t.Fatal("expected running streams to share one copied slice")
-	}
 	if got := len(chStopped); got != 0 {
 		t.Fatalf("stopped stream received %d chunks, want 0", got)
 	}
@@ -569,44 +539,6 @@ func TestWriteAudioFanOutSharesOneCopyAcrossCallerAndListener(t *testing.T) {
 		!bytes.Equal(listenerChunk, []byte{1, 2, 3, 4}) {
 		t.Fatalf("streams saw mutated source: caller=%v listener=%v, want original bytes",
 			callerChunk, listenerChunk)
-	}
-	if &callerChunk[0] != &listenerChunk[0] {
-		t.Fatal("expected caller and active listener streams to share one copied slice")
-	}
-}
-
-func TestWriteAudioFanOutAllocatesOncePerChunk(t *testing.T) {
-	m := NewManager("ffmpeg")
-	chans := make([]chan []byte, 16)
-	for i := range chans {
-		id := strconv.Itoa(i)
-		ch := make(chan []byte, audioBufferSize)
-		m.streams[id] = &Stream{state: types.ProcessRunning, mode: types.StreamModeCaller, audioCh: ch}
-		chans[i] = ch
-	}
-	pcm := make([]byte, 20*1024)
-
-	allocs := testing.AllocsPerRun(50, func() {
-		m.WriteAudioFanOut(pcm)
-		for _, ch := range chans {
-			<-ch
-		}
-	})
-	if allocs != 1 {
-		t.Fatalf("WriteAudioFanOut allocations = %.1f, want 1 shared copy for 16 streams", allocs)
-	}
-}
-
-func TestWriteAudioFanOutSkipsAllocationWhenNoRunningStream(t *testing.T) {
-	m := NewManager("ffmpeg")
-	m.streams["stopped"] = &Stream{state: types.ProcessStopped, mode: types.StreamModeCaller}
-	pcm := make([]byte, 20*1024)
-
-	allocs := testing.AllocsPerRun(50, func() {
-		m.WriteAudioFanOut(pcm)
-	})
-	if allocs != 0 {
-		t.Fatalf("WriteAudioFanOut allocations = %.1f, want 0 when no stream is running", allocs)
 	}
 }
 

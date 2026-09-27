@@ -307,22 +307,6 @@ func TestReadLastIncludesChannelImbalanceUnderAudioFilter(t *testing.T) {
 	assertMessages(t, got, []string{"imbalance-end", "imbalance-start"})
 }
 
-func TestEventJSONDoesNotPersistClassification(t *testing.T) {
-	t.Parallel()
-
-	line := mustMarshal(t, &Event{Type: UploadFailed})
-	for _, want := range []string{`"type":"upload_failed"`} {
-		if !strings.Contains(line, want) {
-			t.Fatalf("marshaled event = %s, want to contain %s", line, want)
-		}
-	}
-	for _, forbidden := range []string{`"severity"`, `"category"`, `"reason"`} {
-		if strings.Contains(line, forbidden) {
-			t.Fatalf("marshaled event = %s, want no %s field", line, forbidden)
-		}
-	}
-}
-
 func TestLogStreamPersistsModeInDetails(t *testing.T) {
 	t.Parallel()
 

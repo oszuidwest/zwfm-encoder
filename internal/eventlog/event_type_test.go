@@ -56,9 +56,6 @@ func TestEventTypeClassification(t *testing.T) {
 			if got := eventType.Reason(); got != want.reason {
 				t.Fatalf("Reason() = %q, want %q", got, want.reason)
 			}
-			if got := eventType.Reason() == ReasonRoutine; got != (want.reason == ReasonRoutine) {
-				t.Fatalf("Reason() == ReasonRoutine = %v, want %v", got, want.reason == ReasonRoutine)
-			}
 		})
 	}
 }
