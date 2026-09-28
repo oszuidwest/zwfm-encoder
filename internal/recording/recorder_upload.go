@@ -3,10 +3,14 @@ package recording
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -160,7 +164,7 @@ func (r *GenericRecorder) uploadWorker() {
 
 // uploadFile uploads to S3 and deletes temp files in S3-only mode.
 func (r *GenericRecorder) uploadFile(req uploadRequest) {
-	err := r.doUpload(req)
+	err := r.doUpload(&req)
 	if err != nil {
 		slog.Error("upload failed", "id", r.id, "s3_key", req.s3Key, "error", err)
 		r.logUploadEvent(eventlog.UploadFailed, filepath.Base(req.localPath), req.s3Key, err.Error(), 0)
@@ -173,12 +177,12 @@ func (r *GenericRecorder) uploadFile(req uploadRequest) {
 	r.deleteAfterUpload(req)
 }
 
-// doUpload performs the actual S3 upload using the transfer manager for
-// automatic multipart uploads. Returns nil on success.
-func (r *GenericRecorder) doUpload(req uploadRequest) error {
+// doUpload uploads without replacing an existing S3 object. If the requested
+// key already exists, it updates req with a numeric suffix and tries again.
+func (r *GenericRecorder) doUpload(req *uploadRequest) error {
 	file, err := os.Open(req.localPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("open recording for upload: %w", err)
 	}
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil {
@@ -193,6 +197,7 @@ func (r *GenericRecorder) doUpload(req uploadRequest) error {
 
 	r.mu.RLock()
 	bucket := r.config.S3Bucket
+	contentType := r.config.Codec.ContentType()
 	r.mu.RUnlock()
 
 	// Create transfer manager with progress logging
@@ -221,14 +226,59 @@ func (r *GenericRecorder) doUpload(req uploadRequest) error {
 		"size_mb", req.fileSize/(1024*1024),
 		"timeout_min", timeoutMinutes)
 
-	_, err = tm.UploadObject(ctx, &transfermanager.UploadObjectInput{
-		Bucket:        aws.String(bucket),
-		Key:           aws.String(req.s3Key),
-		Body:          file,
-		ContentLength: aws.Int64(req.fileSize),
-		ContentType:   aws.String(r.config.Codec.ContentType()),
-	})
-	return err
+	baseKey := req.s3Key
+	for suffix := 2; ; suffix++ {
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return fmt.Errorf("rewind recording for upload: %w", err)
+		}
+
+		_, err = tm.UploadObject(ctx, &transfermanager.UploadObjectInput{
+			Bucket:        aws.String(bucket),
+			Key:           aws.String(req.s3Key),
+			Body:          file,
+			ContentLength: aws.Int64(req.fileSize),
+			ContentType:   aws.String(contentType),
+			IfNoneMatch:   aws.String("*"),
+		})
+		if !isS3KeyConflict(err) {
+			return err
+		}
+
+		previousKey := req.s3Key
+		req.s3Key = s3KeyWithSuffix(baseKey, suffix)
+		slog.Warn("S3 object already exists, using suffixed key",
+			"id", r.id,
+			"existing_key", previousKey,
+			"new_key", req.s3Key)
+	}
+}
+
+func s3KeyWithSuffix(key string, suffix int) string {
+	extension := path.Ext(key)
+	return fmt.Sprintf("%s-%d%s", strings.TrimSuffix(key, extension), suffix, extension)
+}
+
+func isS3KeyConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var apiErr interface{ ErrorCode() string }
+	if errors.As(err, &apiErr) {
+		switch apiErr.ErrorCode() {
+		case "PreconditionFailed", "ConditionalRequestConflict":
+			return true
+		default:
+			return false
+		}
+	}
+
+	var responseErr interface{ HTTPStatusCode() int }
+	if errors.As(err, &responseErr) {
+		status := responseErr.HTTPStatusCode()
+		return status == 409 || status == 412
+	}
+	return false
 }
 
 var errNoS3Client = &noS3ClientError{}
@@ -394,7 +444,7 @@ func (r *GenericRecorder) retryUpload(p *pendingUpload) bool {
 		return true // Nothing to upload
 	}
 
-	err := r.doUpload(p.request)
+	err := r.doUpload(&p.request)
 	if err != nil {
 		p.lastError = err.Error()
 		slog.Error("retry upload failed", "id", r.id, "s3_key", p.request.s3Key, "error", err)
