@@ -862,7 +862,11 @@ func TestSettingsRoundTripThroughAPIEveryField(t *testing.T) {
 		if clear == 1 {
 			wantWebhookURL, wantGraphSecret = "", ""
 		}
-		snapshot := s.config.Snapshot()
+		reloaded := config.New(configPath)
+		if err := reloaded.Load(); err != nil {
+			t.Fatalf("reload hidden settings: %v", err)
+		}
+		snapshot := reloaded.Snapshot()
 		if snapshot.WebhookURL != wantWebhookURL || snapshot.GraphClientSecret != wantGraphSecret {
 			t.Fatalf("hidden settings after clear=%t = (%q, %q), want (%q, %q)", clear == 1, snapshot.WebhookURL, snapshot.GraphClientSecret, wantWebhookURL, wantGraphSecret)
 		}
