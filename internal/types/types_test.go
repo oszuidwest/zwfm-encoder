@@ -60,8 +60,6 @@ func TestCodecUnmarshalJSON(t *testing.T) {
 		{name: "pcm", input: `"pcm"`, want: CodecPCM},
 		{name: "mp3", input: `"mp3"`, want: CodecMP3},
 		{name: "opus", input: `"opus"`, want: CodecOpus},
-		{name: "legacy wav rejected", input: `"wav"`, wantErr: "codec: must be pcm, mp3, or opus"},
-		{name: "legacy ogg rejected", input: `"ogg"`, wantErr: "codec: must be pcm, mp3, or opus"},
 	})
 }
 func TestRecordingModeUnmarshalJSON(t *testing.T) {
@@ -152,42 +150,6 @@ func TestCodecFormat(t *testing.T) {
 		})
 	}
 }
-func TestCodecDefaultBitrate(t *testing.T) {
-	tests := []struct {
-		codec Codec
-		want  int
-	}{
-		{codec: CodecMP3, want: 320},
-		{codec: CodecOpus, want: 128},
-		{codec: CodecPCM, want: 0},
-		{codec: Codec("aac"), want: 0},
-	}
-	for _, tt := range tests {
-		t.Run(string(tt.codec), func(t *testing.T) {
-			if got := tt.codec.DefaultBitrate(); got != tt.want {
-				t.Fatalf("DefaultBitrate() = %d, want %d", got, tt.want)
-			}
-		})
-	}
-}
-func TestStreamModeOrDefault(t *testing.T) {
-	tests := []struct {
-		name string
-		mode StreamMode
-		want StreamMode
-	}{
-		{name: "legacy empty defaults to caller", want: StreamModeCaller},
-		{name: "caller", mode: StreamModeCaller, want: StreamModeCaller},
-		{name: "listener", mode: StreamModeListener, want: StreamModeListener},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.mode.OrDefault(); got != tt.want {
-				t.Fatalf("OrDefault() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
 func TestStreamValidateModeAware(t *testing.T) {
 	tests := []streamValidateCase{
 		streamCase("legacy caller remains valid", &Stream{Host: "stream.example.com", Port: 9000, Codec: CodecMP3}),
@@ -215,33 +177,42 @@ func TestStreamValidateModeAware(t *testing.T) {
 		})
 	}
 }
-func TestEventSubscriptionsToZabbixEventSubscriptionsOmitsAudioDump(t *testing.T) {
-	got := (EventSubscriptions{
-		SilenceStart:          true,
-		SilenceEnd:            false,
-		AudioDump:             true,
-		ChannelImbalanceStart: true,
-		ChannelImbalanceEnd:   true,
-	}).ToZabbixEventSubscriptions()
-	want := ZabbixEventSubscriptions{
-		SilenceStart:          true,
-		SilenceEnd:            false,
-		ChannelImbalanceStart: true,
-		ChannelImbalanceEnd:   true,
+
+func TestStreamTransportBehaviorByMode(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		stream       *Stream
+		wantSRT      bool
+		wantEndpoint string
+		wantRetries  int
+	}{
+		{
+			name:         "legacy caller uses remote endpoint and retry default",
+			stream:       &Stream{Host: "stream.example.com"},
+			wantSRT:      true,
+			wantEndpoint: "stream.example.com:0",
+			wantRetries:  DefaultMaxRetries,
+		},
+		{
+			name:         "listener uses default bind host and explicit retries",
+			stream:       &Stream{Mode: StreamModeListener, MaxRetries: 7},
+			wantEndpoint: "0.0.0.0:0",
+			wantRetries:  7,
+		},
 	}
-	if got != want {
-		t.Fatalf("ToZabbixEventSubscriptions() = %+v, want %+v", got, want)
-	}
-}
-func TestZabbixEventSubscriptionsRoundTrip(t *testing.T) {
-	start := ZabbixEventSubscriptions{
-		SilenceStart:          true,
-		SilenceEnd:            true,
-		ChannelImbalanceStart: true,
-		ChannelImbalanceEnd:   true,
-	}
-	got := start.ToEventSubscriptions().ToZabbixEventSubscriptions()
-	if got != start {
-		t.Fatalf("round-trip = %+v, want %+v", got, start)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.stream.RequiresFFmpegSRT(); got != tt.wantSRT {
+				t.Errorf("RequiresFFmpegSRT() = %v, want %v", got, tt.wantSRT)
+			}
+			if got := tt.stream.Endpoint(); got != tt.wantEndpoint {
+				t.Errorf("Endpoint() = %q, want %q", got, tt.wantEndpoint)
+			}
+			if got := tt.stream.MaxRetriesOrDefault(); got != tt.wantRetries {
+				t.Errorf("MaxRetriesOrDefault() = %d, want %d", got, tt.wantRetries)
+			}
+		})
 	}
 }

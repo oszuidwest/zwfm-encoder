@@ -660,8 +660,8 @@ func (e *Encoder) UpdateRecordingMaxDuration() {
 
 // UpdateSilenceDumpConfig applies the current silence dump configuration.
 func (e *Encoder) UpdateSilenceDumpConfig() {
-	snap := e.config.Snapshot()
 	if e.silenceDumpManager != nil {
+		snap := e.config.Snapshot()
 		e.silenceDumpManager.SetEnabled(snap.SilenceDumpEnabled)
 		e.silenceDumpManager.SetRetentionDays(snap.SilenceDumpRetentionDays)
 	}

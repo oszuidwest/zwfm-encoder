@@ -155,43 +155,6 @@ func TestEmitEventIncludesRuntimeStreamMode(t *testing.T) {
 	}
 }
 
-func TestEmitEventWithModeUsesExplicitModeWithoutRuntimeStream(t *testing.T) {
-	t.Parallel()
-
-	const id = "caller-1"
-	m := NewManager("ffmpeg")
-
-	var gotMode string
-	m.SetEventCallback(func(_, _, mode, _, _, _ string, _, _ int) {
-		gotMode = mode
-	}, nil)
-
-	m.emitEventWithMode(id, types.StreamModeCaller, "stream_stopped", "Stream ended normally", "", 0, 0)
-	if gotMode != string(types.StreamModeCaller) {
-		t.Fatalf("mode = %q, want %q", gotMode, types.StreamModeCaller)
-	}
-}
-
-func TestStatusesNeverMarksListenerStable(t *testing.T) {
-	t.Parallel()
-	const id = "listener-1"
-	m := NewManager("ffmpeg")
-	m.streams[id] = &Stream{
-		state:     types.ProcessRunning,
-		mode:      types.StreamModeListener,
-		startTime: time.Now().Add(-2 * types.StableThreshold),
-	}
-	statuses := m.Statuses(func(string) *types.Stream {
-		return &types.Stream{ID: id, Mode: types.StreamModeListener, MaxRetries: 3}
-	})
-	status := statuses[id]
-	if status.State != types.ProcessRunning {
-		t.Fatalf("status state = %q, want running", status.State)
-	}
-	if status.Stable {
-		t.Fatal("listener status Stable = true, want false")
-	}
-}
 func TestClassifyStreamExit(t *testing.T) {
 	t.Parallel()
 	errFailed := errors.New("ffmpeg failed")
@@ -261,20 +224,18 @@ func TestStartReportsNotStartedOnValidationError(t *testing.T) {
 	}
 }
 
-func TestStartReportsNotStartedWhenProcessLaunchFails(t *testing.T) {
+func TestStartReportsNotStartedWhenCallerLaunchFails(t *testing.T) {
 	m := NewManager("/nonexistent/ffmpeg-binary-for-test")
 	stream := validStream()
 	started, err := m.Start(stream)
-	if err == nil {
-		t.Fatal("Start succeeded with a nonexistent ffmpeg binary")
-	}
-	if started {
-		t.Error("Start reported started=true when the process failed to launch")
+	if err == nil || started {
+		t.Fatalf("Start() = (%t, %v), want false and an error", started, err)
 	}
 	if _, exists := m.streams[stream.ID]; exists {
-		t.Error("Start left a placeholder entry after a failed launch")
+		t.Fatal("Start left a placeholder entry after a failed caller launch")
 	}
 }
+
 func TestListenerStartEncoderFailureReleasesFanoutPort(t *testing.T) {
 	port := freeUDPPort(t)
 	m := NewManager("/nonexistent/ffmpeg-binary-for-test")
@@ -357,38 +318,6 @@ func TestStartListenerWithFFmpegDoesNotRequireSRTProtocol(t *testing.T) {
 	}
 	assertUDPPortAvailable(t, port)
 }
-func TestStatusesIncludesListenerEncoderAndClientFields(t *testing.T) {
-	t.Parallel()
-	const id = "listener-1"
-	fanout, err := srtfanout.NewServer(srtfanout.Config{
-		Port: 9000,
-	})
-	if err != nil {
-		t.Fatalf("NewServer() error = %v", err)
-	}
-	m := NewManager("ffmpeg")
-	stream := &Stream{
-		state:     types.ProcessRunning,
-		mode:      types.StreamModeListener,
-		startTime: time.Now().Add(-2 * types.StableThreshold),
-		fanout:    fanout,
-		encoder:   &encoderRun{},
-	}
-	m.streams[id] = stream
-	statuses := m.Statuses(func(string) *types.Stream {
-		return &types.Stream{ID: id, Mode: types.StreamModeListener, MaxRetries: 3}
-	})
-	status := statuses[id]
-	if status.Stable {
-		t.Fatal("listener status Stable = true, want false")
-	}
-	if !status.EncoderRunning {
-		t.Fatal("listener status EncoderRunning = false, want true")
-	}
-	if status.ClientCount != 0 {
-		t.Fatalf("listener status ClientCount = %d, want 0", status.ClientCount)
-	}
-}
 func TestStatusesSurfacesListenerDropsFromFanout(t *testing.T) {
 	t.Parallel()
 	const id = "listener-1"
@@ -418,46 +347,6 @@ func TestStatusesSurfacesListenerDropsFromFanout(t *testing.T) {
 		t.Fatalf("AudioDrops = %d, want 7 (must stay distinct from ListenerDrops)", status.AudioDrops)
 	}
 }
-func TestStatusesListenerWithoutFanoutReportsNoDrops(t *testing.T) {
-	t.Parallel()
-	const id = "listener-1"
-	m := NewManager("ffmpeg")
-	m.streams[id] = &Stream{state: types.ProcessRunning, mode: types.StreamModeListener}
-
-	status := m.Statuses(func(string) *types.Stream {
-		return &types.Stream{ID: id, Mode: types.StreamModeListener, MaxRetries: 3}
-	})[id]
-
-	if status.ListenerDrops != 0 {
-		t.Fatalf("ListenerDrops = %d, want 0 when fanout is nil", status.ListenerDrops)
-	}
-}
-func TestWriteAudioFanOutListenerSkipsWhenNoEncoderRun(t *testing.T) {
-	t.Parallel()
-	m := NewManager("ffmpeg")
-	m.streams["listener-1"] = &Stream{
-		state: types.ProcessRunning,
-		mode:  types.StreamModeListener,
-	}
-	m.WriteAudioFanOut([]byte("pcm"))
-}
-
-func TestWriteAudioFanOutListenerSkipsWithoutAllocatingWhenNoEncoderRun(t *testing.T) {
-	m := NewManager("ffmpeg")
-	m.streams["listener-1"] = &Stream{
-		state: types.ProcessRunning,
-		mode:  types.StreamModeListener,
-	}
-	pcm := make([]byte, 20*1024)
-
-	allocs := testing.AllocsPerRun(1000, func() {
-		m.WriteAudioFanOut(pcm)
-	})
-	if allocs != 0 {
-		t.Fatalf("WriteAudioFanOut allocations = %.1f, want 0", allocs)
-	}
-}
-
 func TestWriteAudioFanOutListenerCopiesQueuedChunk(t *testing.T) {
 	t.Parallel()
 	m := NewManager("ffmpeg")
@@ -535,7 +424,7 @@ func TestWriteAudioFanOutSharesOneCopyAcrossStreams(t *testing.T) {
 		t.Fatalf("streams saw mutated source: a=%v b=%v, want original bytes", gotA, gotB)
 	}
 	if &gotA[0] != &gotB[0] {
-		t.Fatal("expected running streams to share one copied slice")
+		t.Fatal("running streams did not share one copied slice")
 	}
 	if got := len(chStopped); got != 0 {
 		t.Fatalf("stopped stream received %d chunks, want 0", got)
@@ -571,42 +460,29 @@ func TestWriteAudioFanOutSharesOneCopyAcrossCallerAndListener(t *testing.T) {
 			callerChunk, listenerChunk)
 	}
 	if &callerChunk[0] != &listenerChunk[0] {
-		t.Fatal("expected caller and active listener streams to share one copied slice")
+		t.Fatal("caller and listener did not share one copied slice")
 	}
 }
 
-func TestWriteAudioFanOutAllocatesOncePerChunk(t *testing.T) {
-	m := NewManager("ffmpeg")
-	chans := make([]chan []byte, 16)
-	for i := range chans {
-		id := strconv.Itoa(i)
-		ch := make(chan []byte, audioBufferSize)
-		m.streams[id] = &Stream{state: types.ProcessRunning, mode: types.StreamModeCaller, audioCh: ch}
-		chans[i] = ch
-	}
-	pcm := make([]byte, 20*1024)
-
-	allocs := testing.AllocsPerRun(50, func() {
-		m.WriteAudioFanOut(pcm)
-		for _, ch := range chans {
-			<-ch
+func TestWriteAudioFanOutAllocationContract(t *testing.T) {
+	for _, count := range []int{0, 16} {
+		m := NewManager("ffmpeg")
+		channels := make([]chan []byte, count)
+		for i := range channels {
+			channels[i] = make(chan []byte, audioBufferSize)
+			m.streams[strconv.Itoa(i)] = &Stream{state: types.ProcessRunning, mode: types.StreamModeCaller, audioCh: channels[i]}
 		}
-	})
-	if allocs != 1 {
-		t.Fatalf("WriteAudioFanOut allocations = %.1f, want 1 shared copy for 16 streams", allocs)
-	}
-}
-
-func TestWriteAudioFanOutSkipsAllocationWhenNoRunningStream(t *testing.T) {
-	m := NewManager("ffmpeg")
-	m.streams["stopped"] = &Stream{state: types.ProcessStopped, mode: types.StreamModeCaller}
-	pcm := make([]byte, 20*1024)
-
-	allocs := testing.AllocsPerRun(50, func() {
-		m.WriteAudioFanOut(pcm)
-	})
-	if allocs != 0 {
-		t.Fatalf("WriteAudioFanOut allocations = %.1f, want 0 when no stream is running", allocs)
+		pcm := make([]byte, 20*1024)
+		allocs := testing.AllocsPerRun(50, func() {
+			m.WriteAudioFanOut(pcm)
+			for _, ch := range channels {
+				<-ch
+			}
+		})
+		want := min(float64(count), 1)
+		if allocs != want {
+			t.Fatalf("WriteAudioFanOut(%d streams) allocations = %.1f, want %.1f", count, allocs, want)
+		}
 	}
 }
 

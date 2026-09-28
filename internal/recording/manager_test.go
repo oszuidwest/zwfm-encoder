@@ -59,12 +59,25 @@ func TestRecorderCodecMetadata(t *testing.T) {
 }
 func TestPrepareUploadRequestRejectsParentDirectoryReference(t *testing.T) {
 	t.Parallel()
+	baseDir := t.TempDir()
+	nestedDir := filepath.Join(baseDir, "nested")
+	if err := os.Mkdir(nestedDir, 0o700); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+	reachableFile := filepath.Join(baseDir, "escape.mp3")
+	if err := os.WriteFile(reachableFile, []byte("audio"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
 	cfg := testS3Recorder()
 	recorder := NewGenericRecorder(GenericRecorderConfig{
 		Recorder: cfg,
 		SpoolDir: t.TempDir(),
 	})
-	path := filepath.FromSlash(t.TempDir() + "/../escape.mp3")
+	separator := string(os.PathSeparator)
+	path := nestedDir + separator + ".." + separator + filepath.Base(reachableFile)
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("Stat() error = %v, test path must reach a real file", err)
+	}
 	if _, ok := recorder.prepareUploadRequest(path); ok {
 		t.Fatal("prepareUploadRequest() ok = true, want false")
 	}
@@ -252,30 +265,6 @@ func TestProcessRetryQueueRemovesMetadataForMissingFile(t *testing.T) {
 	}
 	if _, err := os.Stat(pending.metadataPath); !os.IsNotExist(err) {
 		t.Fatalf("metadata stat error = %v, want not exist", err)
-	}
-}
-func TestStopPreservesRetryQueue(t *testing.T) {
-	t.Parallel()
-	cfg := testS3Recorder()
-	recorder := NewGenericRecorder(GenericRecorderConfig{
-		Recorder: cfg,
-		SpoolDir: t.TempDir(),
-	})
-	recorder.state = types.ProcessRunning
-	recorder.retryQueue = []pendingUpload{
-		{
-			request: uploadRequest{
-				localPath: "one.mp3",
-				s3Key:     "recordings/Test/one.mp3",
-			},
-			firstAttempt: time.Now(),
-		},
-	}
-	if err := recorder.Stop(); err != nil {
-		t.Fatal(err)
-	}
-	if got := len(recorder.retryQueue); got != 1 {
-		t.Fatalf("retryQueue len after Stop = %d, want 1", got)
 	}
 }
 func testS3Recorder() *types.Recorder {

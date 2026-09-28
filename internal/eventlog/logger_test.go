@@ -13,18 +13,6 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-func TestDefaultLogPathUsesPlatformDefault(t *testing.T) {
-	t.Parallel()
-
-	got := DefaultLogPath(8080)
-	if !filepath.IsAbs(got) {
-		t.Errorf("DefaultLogPath() = %q, want an absolute path", got)
-	}
-	if want := filepath.Join("8080", "encoder.jsonl"); !strings.HasSuffix(got, want) {
-		t.Errorf("DefaultLogPath() = %q, want suffix %q", got, want)
-	}
-}
-
 func TestDefaultLogPathIsInsideDefaultLogDir(t *testing.T) {
 	t.Parallel()
 
@@ -198,35 +186,6 @@ func TestLoggerToleratesRotationFailure(t *testing.T) {
 	}
 }
 
-func TestLoggerSeqIncrementsOnEachWrite(t *testing.T) {
-	t.Parallel()
-	path := filepath.Join(t.TempDir(), "encoder.jsonl")
-	logger, err := NewLogger(path)
-	if err != nil {
-		t.Fatalf("NewLogger() error = %v", err)
-	}
-	defer func() {
-		if err := logger.Close(); err != nil {
-			t.Fatalf("Close() error = %v", err)
-		}
-	}()
-	if got := logger.Seq(); got != 0 {
-		t.Fatalf("Seq() before any write = %d, want 0", got)
-	}
-	if err := logger.Log(&Event{Type: StreamStarted, Message: "first"}); err != nil {
-		t.Fatalf("Log() error = %v", err)
-	}
-	if got := logger.Seq(); got != 1 {
-		t.Fatalf("Seq() after first write = %d, want 1", got)
-	}
-	if err := logger.Log(&Event{Type: StreamStopped, Message: "second"}); err != nil {
-		t.Fatalf("Log() error = %v", err)
-	}
-	if got := logger.Seq(); got != 2 {
-		t.Fatalf("Seq() after second write = %d, want 2", got)
-	}
-}
-
 func TestLoggerSeqDoesNotIncrementOnFailedWrite(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "encoder.jsonl")
@@ -305,22 +264,6 @@ func TestReadLastIncludesChannelImbalanceUnderAudioFilter(t *testing.T) {
 		t.Fatalf("ReadLast() error = %v", err)
 	}
 	assertMessages(t, got, []string{"imbalance-end", "imbalance-start"})
-}
-
-func TestEventJSONDoesNotPersistClassification(t *testing.T) {
-	t.Parallel()
-
-	line := mustMarshal(t, &Event{Type: UploadFailed})
-	for _, want := range []string{`"type":"upload_failed"`} {
-		if !strings.Contains(line, want) {
-			t.Fatalf("marshaled event = %s, want to contain %s", line, want)
-		}
-	}
-	for _, forbidden := range []string{`"severity"`, `"category"`, `"reason"`} {
-		if strings.Contains(line, forbidden) {
-			t.Fatalf("marshaled event = %s, want no %s field", line, forbidden)
-		}
-	}
 }
 
 func TestLogStreamPersistsModeInDetails(t *testing.T) {

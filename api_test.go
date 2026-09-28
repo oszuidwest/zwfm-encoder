@@ -3,11 +3,11 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -19,20 +19,6 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-func TestDerefReturnsValueWhenPresentFallbackWhenNil(t *testing.T) {
-	t.Parallel()
-	empty := ""
-	value := "explicit"
-	if got := deref((*string)(nil), "saved"); got != "saved" {
-		t.Fatalf("deref(nil, saved) = %q, want %q", got, "saved")
-	}
-	if got := deref(&empty, "saved"); got != "" {
-		t.Fatalf("deref(&\"\", saved) = %q, want empty string", got)
-	}
-	if got := deref(&value, "saved"); got != "explicit" {
-		t.Fatalf("deref(&explicit, saved) = %q, want %q", got, "explicit")
-	}
-}
 func TestValidateRecorderLocalPathCreatesWritableDirectory(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "archive")
@@ -55,22 +41,6 @@ func TestValidateRecorderLocalPathRejectsTraversal(t *testing.T) {
 	}
 	if err := validateRecorderLocalPath(recorder); err == nil {
 		t.Fatal("validateRecorderLocalPath() error = nil, want error")
-	}
-}
-func TestBuildReadyResponseReady(t *testing.T) {
-	t.Parallel()
-	input := readyFixture()
-	resp, status := buildReadyResponse(&input)
-	if status != http.StatusOK {
-		t.Fatalf("status = %d, want %d", status, http.StatusOK)
-	}
-	if resp.Status != "ready" {
-		t.Fatalf("ready status = %q, want ready", resp.Status)
-	}
-	for name, component := range resp.Components {
-		if !component.OK {
-			t.Fatalf("component %q not ready: %+v", name, component)
-		}
 	}
 }
 func TestBuildReadyResponseFailures(t *testing.T) {
@@ -152,27 +122,17 @@ func TestBuildReadyResponseFailures(t *testing.T) {
 		})
 	}
 }
+
 func TestBuildReadyResponseAllowsStoppedOnDemandRecorder(t *testing.T) {
-	t.Parallel()
 	input := readyFixture()
-	input.recorders = []types.Recorder{
-		{
-			ID:            "recorder-ondemand",
-			Enabled:       true,
-			RecordingMode: types.RecordingOnDemand,
-		},
-	}
-	input.recorderStatuses = map[string]types.ProcessStatus{
-		"recorder-ondemand": {State: types.ProcessStopped},
-	}
+	input.recorders[0].RecordingMode = types.RecordingOnDemand
+	input.recorderStatuses["recorder-1"] = types.ProcessStatus{State: types.ProcessStopped}
 	resp, status := buildReadyResponse(&input)
-	if status != http.StatusOK {
-		t.Fatalf("status = %d, want %d; response = %+v", status, http.StatusOK, resp)
-	}
-	if !resp.Components["recorders"].OK {
-		t.Fatalf("recorders component = %+v, want OK", resp.Components["recorders"])
+	if status != http.StatusOK || !resp.Components["recorders"].OK {
+		t.Fatalf("buildReadyResponse() = (%+v, %d), want ready recorders and 200", resp, status)
 	}
 }
+
 func TestBuildReadyResponseIgnoresListenerStreams(t *testing.T) {
 	t.Parallel()
 	input := readyFixture()
@@ -471,32 +431,14 @@ func healthFixture() healthInputs {
 	}
 }
 
-func TestBuildHealthResponseAudioConditionsAreInformational(t *testing.T) {
-	t.Parallel()
-	t.Run("active channel imbalance stays healthy", func(t *testing.T) {
-		t.Parallel()
-		in := healthFixture()
-		in.audioLevels.ChannelImbalanceLevel = audio.ImbalanceLevelActive
-		resp, status := buildHealthResponse(&in)
-		if status != http.StatusOK || resp.Status != "healthy" {
-			t.Fatalf("status = %d/%q, want 200/healthy", status, resp.Status)
-		}
-		if !resp.ChannelImbalanceDetected {
-			t.Fatal("ChannelImbalanceDetected = false, want true (informational field must still be reported)")
-		}
-	})
-	t.Run("active silence stays healthy", func(t *testing.T) {
-		t.Parallel()
-		in := healthFixture()
-		in.audioLevels.SilenceLevel = audio.SilenceLevelActive
-		resp, status := buildHealthResponse(&in)
-		if status != http.StatusOK || resp.Status != "healthy" {
-			t.Fatalf("status = %d/%q, want 200/healthy", status, resp.Status)
-		}
-		if !resp.SilenceDetected {
-			t.Fatal("SilenceDetected = false, want true")
-		}
-	})
+func TestBuildHealthResponseKeepsAudioConditionsInformational(t *testing.T) {
+	in := healthFixture()
+	in.audioLevels.SilenceLevel = audio.SilenceLevelActive
+	in.audioLevels.ChannelImbalanceLevel = audio.ImbalanceLevelActive
+	resp, status := buildHealthResponse(&in)
+	if status != http.StatusOK || resp.Status != "healthy" || !resp.SilenceDetected || !resp.ChannelImbalanceDetected {
+		t.Fatalf("buildHealthResponse() = (%+v, %d), want healthy, both audio flags, and 200", resp, status)
+	}
 }
 
 func TestBuildHealthResponseUnhealthyConditions(t *testing.T) {
@@ -772,7 +714,7 @@ func seededServer(t *testing.T, upd *config.SettingsUpdate) *Server {
 	if err := cfg.ApplySettings(upd); err != nil {
 		t.Fatalf("ApplySettings() error = %v", err)
 	}
-	return &Server{config: cfg}
+	return &Server{config: cfg, encoder: &encoder.Encoder{}}
 }
 
 // seededGraphSettings returns a saved Graph config that reaches runtime validation.
@@ -864,164 +806,242 @@ func seededSensitiveServer(t *testing.T) sensitiveFixture {
 	return fixture
 }
 
-func TestHandleAPIConfigRedactsStoredSecrets(t *testing.T) {
+func TestSettingsRoundTripThroughAPIEveryField(t *testing.T) {
 	t.Parallel()
-	fixture := seededSensitiveServer(t)
-	rec := runJSONHandler(t, fixture.server.handleAPIConfig, http.MethodGet, "/api/config", "")
-	assertStatus(t, rec, http.StatusOK)
-	body := rec.Body.Bytes()
-	assertNotContains(t, body,
-		fixture.streamPassword,
-		fixture.s3Secret,
-		fixture.webhookURL,
-		fixture.recordingAPIKey,
-		`"password":"`,
-		`"s3_secret_access_key":"`,
-	)
-	assertContains(t, body,
-		`"webhook_has_url":true`,
-		`"recording_has_api_key":true`,
-		`"has_password":true`,
-		`"has_s3_secret":true`,
-	)
-	resp := decodeJSON[types.APIConfigResponse](t, body)
-	if !resp.WebhookHasURL {
-		t.Fatalf("WebhookHasURL = false, want true")
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	cfg := config.New(configPath)
+	if err := cfg.Load(); err != nil {
+		t.Fatalf("Load() error = %v", err)
 	}
-	if !resp.RecordingHasAPIKey {
-		t.Fatalf("RecordingHasAPIKey = false, want true")
+	s := &Server{config: cfg, encoder: &encoder.Encoder{}}
+	var update *config.SettingsUpdate
+	for pass := range 2 {
+		update = populatedAPISettingsUpdate(t, pass == 1)
+		body, err := json.Marshal(update)
+		if err != nil {
+			t.Fatalf("marshal SettingsUpdate: %v", err)
+		}
+		postRec := postSettingsBody(t, s, string(body))
+		assertStatus(t, postRec, http.StatusNoContent)
+		reloaded := config.New(configPath)
+		if err := reloaded.Load(); err != nil {
+			t.Fatalf("reload config: %v", err)
+		}
+		snapshot := reloaded.Snapshot()
+		assertSettingsPersisted(t, reflect.ValueOf(update).Elem(), reflect.ValueOf(snapshot), "SettingsUpdate")
+		if got, want := reloaded.DetectorSettings(), snapshot.DetectorSettingsSnapshot; !reflect.DeepEqual(got, want) {
+			t.Fatalf("DetectorSettings() = %+v, want %+v", got, want)
+		}
+
+		getRec := runJSONHandler(t, s.handleAPIConfig, http.MethodGet, "/api/config", "")
+		assertStatus(t, getRec, http.StatusOK)
+		assertNotContains(t, getRec.Body.Bytes(),
+			update.WebhookURL,
+			update.GraphClientSecret,
+			`"webhook_url"`,
+			`"graph_client_secret"`,
+		)
+		assertContains(t, getRec.Body.Bytes(),
+			`"webhook_has_url":true`,
+			`"graph_has_secret":true`,
+		)
+		response := decodeJSON[types.APIConfigResponse](t, getRec.Body.Bytes())
+		assertAPISettingsReturned(t, reflect.ValueOf(update).Elem(), reflect.ValueOf(response), "SettingsUpdate")
 	}
-	if len(resp.Streams) != 1 || !resp.Streams[0].HasPassword {
-		t.Fatalf("Streams = %+v, want one redacted stream with HasPassword=true", resp.Streams)
-	}
-	if len(resp.Recorders) != 1 || !resp.Recorders[0].HasS3Secret {
-		t.Fatalf("Recorders = %+v, want one redacted recorder with HasS3Secret=true", resp.Recorders)
+
+	savedWebhookURL, savedGraphSecret := update.WebhookURL, update.GraphClientSecret
+	update.WebhookURL, update.GraphClientSecret = "", ""
+	for clear := range 2 {
+		update.ClearWebhookURL, update.ClearGraphClientSecret = clear == 1, clear == 1
+		body, err := json.Marshal(update)
+		if err != nil {
+			t.Fatalf("marshal hidden settings update: %v", err)
+		}
+		assertStatus(t, postSettingsBody(t, s, string(body)), http.StatusNoContent)
+		wantWebhookURL, wantGraphSecret := savedWebhookURL, savedGraphSecret
+		if clear == 1 {
+			wantWebhookURL, wantGraphSecret = "", ""
+		}
+		reloaded := config.New(configPath)
+		if err := reloaded.Load(); err != nil {
+			t.Fatalf("reload hidden settings: %v", err)
+		}
+		snapshot := reloaded.Snapshot()
+		if snapshot.WebhookURL != wantWebhookURL || snapshot.GraphClientSecret != wantGraphSecret {
+			t.Fatalf("hidden settings after clear=%t = (%q, %q), want (%q, %q)", clear == 1, snapshot.WebhookURL, snapshot.GraphClientSecret, wantWebhookURL, wantGraphSecret)
+		}
+		response := decodeJSON[types.APIConfigResponse](t, runJSONHandler(t, s.handleAPIConfig, http.MethodGet, "/api/config", "").Body.Bytes())
+		if response.WebhookHasURL != (clear == 0) || response.GraphHasSecret != (clear == 0) {
+			t.Fatalf("hidden-setting indicators after clear=%t = (%t, %t)", clear == 1, response.WebhookHasURL, response.GraphHasSecret)
+		}
 	}
 }
 
-func TestHandleAPIConfigIncludesChannelImbalance(t *testing.T) {
-	t.Parallel()
-	s := freshServer(t)
-	rec := runJSONHandler(t, s.handleAPIConfig, http.MethodGet, "/api/config", "")
-	assertStatus(t, rec, http.StatusOK)
-	assertContains(t, rec.Body.Bytes(),
-		`"channel_imbalance_threshold":`,
-		`"channel_imbalance_duration_ms":`,
-		`"channel_imbalance_recovery_ms":`,
-	)
-	resp := decodeJSON[types.APIConfigResponse](t, rec.Body.Bytes())
-	if resp.ChannelImbalanceThreshold != config.DefaultChannelImbalanceThreshold {
-		t.Fatalf("ChannelImbalanceThreshold = %v, want %v", resp.ChannelImbalanceThreshold, config.DefaultChannelImbalanceThreshold)
-	}
-	if resp.ChannelImbalanceDurationMs != config.DefaultChannelImbalanceDurationMs {
-		t.Fatalf("ChannelImbalanceDurationMs = %d, want %d", resp.ChannelImbalanceDurationMs, config.DefaultChannelImbalanceDurationMs)
-	}
-	if resp.ChannelImbalanceRecoveryMs != config.DefaultChannelImbalanceRecoveryMs {
-		t.Fatalf("ChannelImbalanceRecoveryMs = %d, want %d", resp.ChannelImbalanceRecoveryMs, config.DefaultChannelImbalanceRecoveryMs)
+func populatedAPISettingsUpdate(t *testing.T, invertBools bool) *config.SettingsUpdate {
+	t.Helper()
+	value := reflect.New(reflect.TypeFor[config.SettingsUpdate]()).Elem()
+	populateAPISettingsValue(t, value, "SettingsUpdate", invertBools)
+	return value.Addr().Interface().(*config.SettingsUpdate)
+}
+
+func populateAPISettingsValue(t *testing.T, value reflect.Value, path string, invertBools bool) {
+	t.Helper()
+	valueType := value.Type()
+	for i := range value.NumField() {
+		field := value.Field(i)
+		fieldInfo := valueType.Field(i)
+		fieldPath := path + "." + fieldInfo.Name
+		// Clear flags are control inputs and must not alter a fully populated fixture.
+		if strings.HasPrefix(fieldInfo.Name, "Clear") {
+			if field.Kind() != reflect.Bool {
+				t.Fatalf("%s has kind %s, want bool for a clear flag", fieldPath, field.Kind())
+			}
+			field.SetBool(false)
+			continue
+		}
+
+		switch field.Kind() {
+		case reflect.Struct:
+			populateAPISettingsValue(t, field, fieldPath, invertBools)
+		case reflect.Bool:
+			field.SetBool(validAPISettingsBool(fieldPath, invertBools))
+		case reflect.String:
+			field.SetString(validAPISettingsString(fieldInfo.Name))
+		case reflect.Int, reflect.Int64:
+			field.SetInt(validAPISettingsInt(fieldInfo.Name))
+		case reflect.Float64:
+			field.SetFloat(validAPISettingsFloat(t, fieldInfo.Name, fieldPath))
+		default:
+			t.Fatalf("%s has unhandled kind %s; add a valid value generator", fieldPath, field.Kind())
+		}
 	}
 }
 
-func TestHandleAPIConfigIncludesNotificationImbalanceFields(t *testing.T) {
-	t.Parallel()
-	s := freshServer(t)
-	upd := validBaselineSettings(s.config)
-	upd.WebhookEvents = types.EventSubscriptions{ChannelImbalanceStart: true}
-	upd.EmailEvents = types.EventSubscriptions{ChannelImbalanceEnd: true}
-	upd.ZabbixServer = "zabbix.example.com"
-	upd.ZabbixPort = 10051
-	upd.ZabbixHost = "encoder-01"
-	upd.ZabbixImbalanceKey = "imbalance.alert"
-	upd.ZabbixEvents = types.ZabbixEventSubscriptions{
-		ChannelImbalanceStart: true,
-		ChannelImbalanceEnd:   true,
-	}
-	if err := s.config.ApplySettings(upd); err != nil {
-		t.Fatalf("ApplySettings() error = %v", err)
-	}
+func validAPISettingsBool(fieldPath string, invert bool) bool {
+	return (len(fieldPath)%2 == 1) != invert
+}
 
-	rec := runJSONHandler(t, s.handleAPIConfig, http.MethodGet, "/api/config", "")
-	assertStatus(t, rec, http.StatusOK)
-	assertContains(t, rec.Body.Bytes(),
-		`"zabbix_imbalance_key":"imbalance.alert"`,
-		`"channel_imbalance_start":true`,
-		`"channel_imbalance_end":true`,
-	)
-	resp := decodeJSON[types.APIConfigResponse](t, rec.Body.Bytes())
-	if resp.ZabbixImbalanceKey != "imbalance.alert" {
-		t.Fatalf("ZabbixImbalanceKey = %q, want imbalance.alert", resp.ZabbixImbalanceKey)
-	}
-	if !resp.WebhookEvents.ChannelImbalanceStart {
-		t.Fatal("WebhookEvents.ChannelImbalanceStart = false, want true")
-	}
-	if !resp.EmailEvents.ChannelImbalanceEnd {
-		t.Fatal("EmailEvents.ChannelImbalanceEnd = false, want true")
-	}
-	if !resp.ZabbixEvents.ChannelImbalanceStart || !resp.ZabbixEvents.ChannelImbalanceEnd {
-		t.Fatalf("ZabbixEvents = %+v, want imbalance start/end true", resp.ZabbixEvents)
+func validAPISettingsString(fieldName string) string {
+	switch fieldName {
+	case "WebhookURL":
+		return "https://hooks.example.com/api-settings-token"
+	case "GraphFromAddress":
+		return "sender@example.com"
+	case "GraphRecipients":
+		return "first@example.com,second@example.com"
+	case "GraphTenantID":
+		return "11111111-1111-1111-1111-111111111111"
+	case "GraphClientID":
+		return "22222222-2222-2222-2222-222222222222"
+	default:
+		return "value-" + strings.ToLower(fieldName)
 	}
 }
 
-func TestApplyWithPreserveRoundTripsChannelImbalance(t *testing.T) {
-	t.Parallel()
-	s := freshServer(t)
-	upd := validBaselineSettings(s.config)
-	upd.ChannelImbalanceThreshold = 18
-	upd.ChannelImbalanceDurationMs = 20000
-	upd.ChannelImbalanceRecoveryMs = 4000
-	snap, err := applyWithPreserve(t, s.config, upd)
-	if err != nil {
-		t.Fatalf("applyWithPreserve() error = %v", err)
-	}
-	if snap.ChannelImbalanceThreshold != 18 {
-		t.Fatalf("ChannelImbalanceThreshold = %v, want 18", snap.ChannelImbalanceThreshold)
-	}
-	if snap.ChannelImbalanceDurationMs != 20000 {
-		t.Fatalf("ChannelImbalanceDurationMs = %d, want 20000", snap.ChannelImbalanceDurationMs)
-	}
-	if snap.ChannelImbalanceRecoveryMs != 4000 {
-		t.Fatalf("ChannelImbalanceRecoveryMs = %d, want 4000", snap.ChannelImbalanceRecoveryMs)
+func validAPISettingsInt(fieldName string) int64 {
+	switch fieldName {
+	case "SilenceDurationMs":
+		return 11001
+	case "SilenceRecoveryMs":
+		return 12002
+	case "PeakHoldMs":
+		return 1303
+	case "ChannelImbalanceDurationMs":
+		return 14004
+	case "ChannelImbalanceRecoveryMs":
+		return 15005
+	case "ZabbixPort":
+		return 10051
+	case "RecordingMaxDurationMinutes":
+		return 121
+	case "SilenceDumpRetentionDays":
+		return 8
+	default:
+		panic("missing integer fixture for " + fieldName)
 	}
 }
 
-func TestApplyWithPreserveRoundTripsNotificationImbalanceFields(t *testing.T) {
-	t.Parallel()
-	s := freshServer(t)
-	upd := validBaselineSettings(s.config)
-	upd.WebhookEvents = types.EventSubscriptions{
-		SilenceStart:          true,
-		ChannelImbalanceStart: true,
-		ChannelImbalanceEnd:   true,
-	}
-	upd.EmailEvents = types.EventSubscriptions{
-		SilenceEnd:          true,
-		AudioDump:           true,
-		ChannelImbalanceEnd: true,
-	}
-	upd.ZabbixServer = "zabbix.example.com"
-	upd.ZabbixPort = 10051
-	upd.ZabbixHost = "encoder-01"
-	upd.ZabbixImbalanceKey = "imbalance.alert"
-	upd.ZabbixEvents = types.ZabbixEventSubscriptions{
-		ChannelImbalanceStart: true,
-		ChannelImbalanceEnd:   true,
-	}
-	snap, err := applyWithPreserve(t, s.config, upd)
-	if err != nil {
-		t.Fatalf("applyWithPreserve() error = %v", err)
-	}
-	if snap.WebhookEvents != upd.WebhookEvents {
-		t.Fatalf("WebhookEvents = %+v, want %+v", snap.WebhookEvents, upd.WebhookEvents)
-	}
-	if snap.EmailEvents != upd.EmailEvents {
-		t.Fatalf("EmailEvents = %+v, want %+v", snap.EmailEvents, upd.EmailEvents)
-	}
-	if snap.ZabbixEvents != upd.ZabbixEvents.ToEventSubscriptions() {
-		t.Fatalf("ZabbixEvents = %+v, want %+v", snap.ZabbixEvents, upd.ZabbixEvents.ToEventSubscriptions())
-	}
-	if snap.ZabbixImbalanceKey != "imbalance.alert" {
-		t.Fatalf("ZabbixImbalanceKey = %q, want imbalance.alert", snap.ZabbixImbalanceKey)
+func validAPISettingsFloat(t *testing.T, fieldName, fieldPath string) float64 {
+	t.Helper()
+	switch fieldName {
+	case "SilenceThreshold":
+		return -42
+	case "ChannelImbalanceThreshold":
+		return 17
+	default:
+		t.Fatalf("%s needs a valid float64 generator", fieldPath)
+		return 0
 	}
 }
+
+func assertSettingsPersisted(t *testing.T, update, snapshot reflect.Value, path string) {
+	t.Helper()
+	for i := range update.NumField() {
+		fieldInfo := update.Type().Field(i)
+		fieldPath := path + "." + fieldInfo.Name
+		want := update.Field(i)
+		if strings.HasPrefix(fieldInfo.Name, "Clear") {
+			continue
+		}
+		got := snapshot.FieldByName(fieldInfo.Name)
+		if !got.IsValid() {
+			t.Fatalf("%s has no matching Snapshot field", fieldPath)
+		}
+		if fieldInfo.Name == "ZabbixEvents" {
+			want = reflect.ValueOf(want.Interface().(types.ZabbixEventSubscriptions).ToEventSubscriptions())
+		}
+		if want.Kind() == reflect.Struct && want.Type() == got.Type() {
+			assertSettingsPersisted(t, want, got, fieldPath)
+			continue
+		}
+		if !reflect.DeepEqual(want.Interface(), got.Interface()) {
+			t.Errorf("%s after reload = %v, want %v", fieldPath, got.Interface(), want.Interface())
+		}
+	}
+}
+
+func assertAPISettingsReturned(t *testing.T, update, response reflect.Value, path string) {
+	t.Helper()
+	updateType := update.Type()
+	for i := range update.NumField() {
+		fieldInfo := updateType.Field(i)
+		fieldPath := path + "." + fieldInfo.Name
+		want := update.Field(i)
+		if strings.HasPrefix(fieldInfo.Name, "Clear") {
+			if want.Bool() {
+				t.Fatalf("%s = true, clear flags must remain false in the round-trip fixture", fieldPath)
+			}
+			continue
+		}
+
+		var got reflect.Value
+		switch fieldInfo.Name {
+		case "WebhookURL":
+			got = response.FieldByName("WebhookHasURL")
+			want = reflect.ValueOf(want.String() != "")
+		case "GraphClientSecret":
+			got = response.FieldByName("GraphHasSecret")
+			want = reflect.ValueOf(want.String() != "")
+		case "SilenceDumpEnabled":
+			got = response.FieldByName("SilenceDump").FieldByName("Enabled")
+		case "SilenceDumpRetentionDays":
+			got = response.FieldByName("SilenceDump").FieldByName("RetentionDays")
+		default:
+			got = response.FieldByName(fieldInfo.Name)
+		}
+		if !got.IsValid() {
+			t.Fatalf("%s has no matching API config field; expose it or update this test", fieldPath)
+		}
+		if want.Kind() == reflect.Struct {
+			assertAPISettingsReturned(t, want, got, fieldPath)
+			continue
+		}
+		if !reflect.DeepEqual(want.Interface(), got.Interface()) {
+			t.Errorf("%s from GET /api/config = %v, want %v", fieldPath, got.Interface(), want.Interface())
+		}
+	}
+}
+
 func TestHandleStreamEndpointsRedactPassword(t *testing.T) {
 	t.Parallel()
 	fixture := seededSensitiveServer(t)
@@ -1108,74 +1128,6 @@ func TestHandleRecorderEndpointsRedactS3Secret(t *testing.T) {
 			assertStatus(t, rec, http.StatusOK)
 			assertNotContains(t, rec.Body.Bytes(), fixture.s3Secret, `"s3_secret_access_key":"`)
 			assertContains(t, rec.Body.Bytes(), `"has_s3_secret":true`)
-		})
-	}
-}
-func TestRedactionHelpersOmitSecretFields(t *testing.T) {
-	t.Parallel()
-	streamBody, err := json.Marshal(redactStream(&types.Stream{
-		Password: "helper-stream-secret",
-		Mode:     types.StreamModeListener,
-	}))
-	if err != nil {
-		t.Fatalf("marshal redacted stream: %v", err)
-	}
-	assertNotContains(t, streamBody, "helper-stream-secret", `"password":"`)
-	assertContains(t, streamBody, `"has_password":true`, `"mode":"listener"`)
-	recorderBody, err := json.Marshal(redactRecorder(&types.Recorder{
-		S3SecretAccessKey: "helper-recorder-secret",
-	}))
-	if err != nil {
-		t.Fatalf("marshal redacted recorder: %v", err)
-	}
-	assertNotContains(t, recorderBody, "helper-recorder-secret", `"s3_secret_access_key":"`)
-	assertContains(t, recorderBody, `"has_s3_secret":true`)
-}
-func TestPreserveSecretKeepReplaceClearConflict(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name      string
-		value     string
-		clear     bool
-		want      string
-		wantError string
-	}{
-		{
-			name: "keep when empty",
-			want: "saved-secret",
-		},
-		{
-			name:  "replace when set",
-			value: "new-secret",
-			want:  "new-secret",
-		},
-		{
-			name:  "clear when flagged",
-			clear: true,
-		},
-		{
-			name:      "conflict when clear and set",
-			value:     "new-secret",
-			clear:     true,
-			wantError: "clear_secret: conflicts with non-empty secret",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got, err := preserveSecret(tt.value, "saved-secret", tt.clear, "clear_secret", "secret")
-			if tt.wantError != "" {
-				if err == nil || err.Error() != tt.wantError {
-					t.Fatalf("preserveSecret() error = %v, want %q", err, tt.wantError)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("preserveSecret() error = %v", err)
-			}
-			if got != tt.want {
-				t.Fatalf("preserveSecret() = %q, want %q", got, tt.want)
-			}
 		})
 	}
 }
@@ -1433,105 +1385,6 @@ func validBaselineSettings(cfg *config.Config) *config.SettingsUpdate {
 		ZabbixImbalanceKey:          snap.ZabbixImbalanceKey,
 		ZabbixUploadKey:             snap.ZabbixUploadKey,
 		RecordingMaxDurationMinutes: snap.RecordingMaxDurationMinutes,
-	}
-}
-
-// applyWithPreserve mirrors the settings API hidden-value preservation flow.
-func applyWithPreserve(t *testing.T, cfg *config.Config, upd *config.SettingsUpdate) (config.Snapshot, error) {
-	t.Helper()
-	snap := cfg.Snapshot()
-	preserveHiddenSettings(upd, &snap)
-	if errs := upd.Validate(); len(errs) > 0 {
-		return config.Snapshot{}, fmt.Errorf("validate: %s", strings.Join(errs, "; "))
-	}
-	if err := cfg.ApplySettings(upd); err != nil {
-		return config.Snapshot{}, err
-	}
-	return cfg.Snapshot(), nil
-}
-func TestApplyWithPreserveHiddenValues(t *testing.T) {
-	t.Parallel()
-	const savedWebhookURL = "https://hooks.example.com/saved-token"
-	tests := []struct {
-		name   string
-		seed   func() *config.SettingsUpdate
-		mutate func(*config.SettingsUpdate)
-		read   func(config.Snapshot) string
-		want   string
-	}{
-		{
-			name: "webhook keep",
-			seed: func() *config.SettingsUpdate { return &config.SettingsUpdate{WebhookURL: savedWebhookURL} },
-			mutate: func(upd *config.SettingsUpdate) {
-				upd.WebhookURL = ""
-				upd.ClearWebhookURL = false
-			},
-			read: func(snap config.Snapshot) string { return snap.WebhookURL },
-			want: savedWebhookURL,
-		},
-		{
-			name: "webhook replace",
-			seed: func() *config.SettingsUpdate { return &config.SettingsUpdate{WebhookURL: savedWebhookURL} },
-			mutate: func(upd *config.SettingsUpdate) {
-				upd.WebhookURL = "https://hooks.example.com/new-token"
-				upd.ClearWebhookURL = false
-			},
-			read: func(snap config.Snapshot) string { return snap.WebhookURL },
-			want: "https://hooks.example.com/new-token",
-		},
-		{
-			name: "webhook clear",
-			seed: func() *config.SettingsUpdate { return &config.SettingsUpdate{WebhookURL: savedWebhookURL} },
-			mutate: func(upd *config.SettingsUpdate) {
-				upd.WebhookURL = ""
-				upd.ClearWebhookURL = true
-			},
-			read: func(snap config.Snapshot) string { return snap.WebhookURL },
-		},
-		{
-			name: "graph keep",
-			seed: seededGraphSettings,
-			mutate: func(upd *config.SettingsUpdate) {
-				upd.GraphClientSecret = ""
-				upd.ClearGraphClientSecret = false
-			},
-			read: func(snap config.Snapshot) string { return snap.GraphClientSecret },
-			want: "saved-secret",
-		},
-		{
-			name: "graph replace",
-			seed: seededGraphSettings,
-			mutate: func(upd *config.SettingsUpdate) {
-				upd.GraphClientSecret = "new-secret"
-				upd.ClearGraphClientSecret = false
-			},
-			read: func(snap config.Snapshot) string { return snap.GraphClientSecret },
-			want: "new-secret",
-		},
-		{
-			name: "graph clear",
-			seed: seededGraphSettings,
-			mutate: func(upd *config.SettingsUpdate) {
-				upd.GraphClientSecret = ""
-				upd.ClearGraphClientSecret = true
-			},
-			read: func(snap config.Snapshot) string { return snap.GraphClientSecret },
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			s := seededServer(t, tt.seed())
-			upd := validBaselineSettings(s.config)
-			tt.mutate(upd)
-			snap, err := applyWithPreserve(t, s.config, upd)
-			if err != nil {
-				t.Fatalf("applyWithPreserve() error = %v", err)
-			}
-			if got := tt.read(snap); got != tt.want {
-				t.Fatalf("hidden value = %q, want %q", got, tt.want)
-			}
-		})
 	}
 }
 

@@ -285,7 +285,7 @@ func TestStartStreamAttemptsUnverifiedSRT(t *testing.T) {
 			ID:      "stream-1",
 			Enabled: true,
 			Host:    "stream.example.com",
-			Port:    9000,
+			Port:    freeUDPPort(t),
 			Codec:   types.CodecMP3,
 		},
 	}
@@ -316,9 +316,18 @@ func TestStartStreamDoesNotRequireSRTForListener(t *testing.T) {
 			Port:    freeUDPPort(t),
 			Codec:   types.CodecMP3,
 		},
+		{
+			ID:      "caller-1",
+			Enabled: true,
+			Mode:    types.StreamModeCaller,
+			Host:    "stream.example.com",
+			Port:    freeUDPPort(t),
+			Codec:   types.CodecMP3,
+		},
 	}
 	e := &Encoder{
 		config:        cfg,
+		ffmpegPath:    nonexistentFFmpeg,
 		state:         types.StateRunning,
 		stopChan:      make(chan struct{}),
 		srtAvailable:  false,
@@ -330,6 +339,9 @@ func TestStartStreamDoesNotRequireSRTForListener(t *testing.T) {
 	}
 	if errors.Is(err, ErrSRTUnsupported) {
 		t.Fatalf("StartStream() error = %v, want real listener start error instead of SRT sentinel", err)
+	}
+	if err := e.StartStream("caller-1"); !errors.Is(err, ErrSRTUnsupported) {
+		t.Fatalf("StartStream(caller) error = %v, want %v", err, ErrSRTUnsupported)
 	}
 }
 func freeUDPPort(t *testing.T) int {

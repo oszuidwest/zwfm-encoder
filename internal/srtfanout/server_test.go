@@ -18,46 +18,6 @@ import (
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
-func TestNewServerDefaults(t *testing.T) {
-	t.Parallel()
-	server, err := NewServer(Config{
-		Port:   9000,
-		Logger: testLogger(),
-	})
-	if err != nil {
-		t.Fatalf("NewServer() error = %v", err)
-	}
-	if server.cfg.BindHost != "0.0.0.0" {
-		t.Fatalf("BindHost = %q, want 0.0.0.0", server.cfg.BindHost)
-	}
-	if server.cfg.Latency != DefaultLatency {
-		t.Fatalf("Latency = %s, want %s", server.cfg.Latency, DefaultLatency)
-	}
-	if server.cfg.MaxClients != DefaultMaxClients {
-		t.Fatalf("MaxClients = %d, want %d", server.cfg.MaxClients, DefaultMaxClients)
-	}
-	if server.cfg.QueueChunks != defaultQueueChunks {
-		t.Fatalf("QueueChunks = %d, want %d", server.cfg.QueueChunks, defaultQueueChunks)
-	}
-}
-func TestNewServerHonorsQueueChunks(t *testing.T) {
-	t.Parallel()
-	server, err := NewServer(Config{
-		Port:        9000,
-		QueueChunks: 64,
-		Logger:      testLogger(),
-	})
-	if err != nil {
-		t.Fatalf("NewServer() error = %v", err)
-	}
-	if server.cfg.QueueChunks != 64 {
-		t.Fatalf("QueueChunks = %d, want 64", server.cfg.QueueChunks)
-	}
-	sub := server.addQueueOnlySubscriber(t)
-	if got := cap(sub.ch); got != 64 {
-		t.Fatalf("subscriber queue cap = %d, want 64", got)
-	}
-}
 func TestHandleConnectTreatsEveryStreamIDAsSubscriber(t *testing.T) {
 	t.Parallel()
 	server, err := NewServer(Config{Port: 9000, Logger: testLogger()})

@@ -140,7 +140,7 @@ func TestManagerWriteAudioSharesOneCopyAcrossRecorders(t *testing.T) {
 		t.Fatalf("recorders saw the mutated source buffer: a=%d b=%d, want 1", ga[0], gb[0])
 	}
 	if &ga[0] != &gb[0] {
-		t.Fatal("expected active recorders to share one copied slice")
+		t.Fatal("running recorders did not share one copied slice")
 	}
 	if got := len(c.audioCh); got != 0 {
 		t.Fatalf("inactive recorder received %d chunks, want 0", got)
