@@ -98,6 +98,21 @@ func TestLoadAcceptsEmptyWebBlock(t *testing.T) {
 	assertEqual(t, "StationColorLight", snap.StationColorLight, DefaultStationColorLight)
 	assertEqual(t, "StationColorDark", snap.StationColorDark, DefaultStationColorDark)
 }
+func TestLoadPreservesPartialConfigDefaults(t *testing.T) {
+	t.Parallel()
+	snap := loadSnapshot(t, validConfigJSON(`
+  "silence_detection":{"threshold_db":-35},
+  "channel_imbalance_detection":{"duration_ms":1234},
+  "notifications":{"zabbix":{"events":{"silence_start":true}}}`))
+	wantDetectors := DetectorSettingsSnapshot{
+		SilenceThreshold: -35, SilenceDurationMs: DefaultSilenceDurationMs, SilenceRecoveryMs: DefaultSilenceRecoveryMs, PeakHoldMs: DefaultPeakHoldMs,
+		ChannelImbalanceThreshold: DefaultChannelImbalanceThreshold, ChannelImbalanceDurationMs: 1234, ChannelImbalanceRecoveryMs: DefaultChannelImbalanceRecoveryMs,
+	}
+	if snap.DetectorSettingsSnapshot != wantDetectors {
+		t.Fatalf("detector settings = %+v, want %+v", snap.DetectorSettingsSnapshot, wantDetectors)
+	}
+	assertEqual(t, "ZabbixEvents", snap.ZabbixEvents, types.EventSubscriptions{SilenceStart: true})
+}
 func TestLoadPreservesConfigDataAndSnapshotEntities(t *testing.T) {
 	t.Parallel()
 	configPath := filepath.Join(t.TempDir(), "config.json")
@@ -423,6 +438,7 @@ func TestLoadRejectsInvalidFileSettings(t *testing.T) {
 		badConfig("zero silence recovery", validConfigJSON(`"silence_detection":{"threshold_db":-40,"duration_ms":15000,"recovery_ms":0,"peak_hold_ms":3000}`), "silence_detection.recovery_ms: must be greater than 0"),
 		badConfig("zero peak hold", validConfigJSON(`"silence_detection":{"threshold_db":-40,"duration_ms":15000,"recovery_ms":5000,"peak_hold_ms":0}`), "silence_detection.peak_hold_ms: must be between 500 and 10000 ms"),
 		badConfig("invalid channel imbalance threshold uses file field path", validConfigJSON(`"channel_imbalance_detection":{"threshold_db":0,"duration_ms":15000,"recovery_ms":5000}`), "channel_imbalance_detection.threshold_db"),
+		badConfig("channel imbalance threshold at upper bound", validConfigJSON(`"channel_imbalance_detection":{"threshold_db":60,"duration_ms":15000,"recovery_ms":5000}`), "channel_imbalance_detection.threshold_db: must be at least 1 dB and below 60 dB"),
 		badConfig("zero channel imbalance duration", validConfigJSON(`"channel_imbalance_detection":{"threshold_db":12,"duration_ms":0,"recovery_ms":5000}`), "channel_imbalance_detection.duration_ms: must be greater than 0"),
 		badConfig("zero channel imbalance recovery", validConfigJSON(`"channel_imbalance_detection":{"threshold_db":12,"duration_ms":15000,"recovery_ms":0}`), "channel_imbalance_detection.recovery_ms: must be greater than 0"),
 		badConfig("explicit null channel imbalance duration", validConfigJSON(`"channel_imbalance_detection":{"threshold_db":12,"duration_ms":null,"recovery_ms":5000}`), "channel_imbalance_detection.duration_ms: must be greater than 0"),

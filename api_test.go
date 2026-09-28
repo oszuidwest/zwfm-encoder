@@ -814,52 +814,73 @@ func TestSettingsRoundTripThroughAPIEveryField(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 	s := &Server{config: cfg, encoder: &encoder.Encoder{}}
-	update := populatedAPISettingsUpdate(t)
-	body, err := json.Marshal(update)
-	if err != nil {
-		t.Fatalf("marshal SettingsUpdate: %v", err)
-	}
-	postRec := postSettingsBody(t, s, string(body))
-	assertStatus(t, postRec, http.StatusNoContent)
-	reloaded := config.New(configPath)
-	if err := reloaded.Load(); err != nil {
-		t.Fatalf("reload config: %v", err)
-	}
-	snapshot := reloaded.Snapshot()
-	assertSettingsPersisted(t, reflect.ValueOf(update).Elem(), reflect.ValueOf(snapshot), "SettingsUpdate")
-	if got, want := reloaded.DetectorSettings(), snapshot.DetectorSettingsSnapshot; !reflect.DeepEqual(got, want) {
-		t.Fatalf("DetectorSettings() = %+v, want %+v", got, want)
+	var update *config.SettingsUpdate
+	for pass := range 2 {
+		update = populatedAPISettingsUpdate(t, pass == 1)
+		body, err := json.Marshal(update)
+		if err != nil {
+			t.Fatalf("marshal SettingsUpdate: %v", err)
+		}
+		postRec := postSettingsBody(t, s, string(body))
+		assertStatus(t, postRec, http.StatusNoContent)
+		reloaded := config.New(configPath)
+		if err := reloaded.Load(); err != nil {
+			t.Fatalf("reload config: %v", err)
+		}
+		snapshot := reloaded.Snapshot()
+		assertSettingsPersisted(t, reflect.ValueOf(update).Elem(), reflect.ValueOf(snapshot), "SettingsUpdate")
+		if got, want := reloaded.DetectorSettings(), snapshot.DetectorSettingsSnapshot; !reflect.DeepEqual(got, want) {
+			t.Fatalf("DetectorSettings() = %+v, want %+v", got, want)
+		}
+
+		getRec := runJSONHandler(t, s.handleAPIConfig, http.MethodGet, "/api/config", "")
+		assertStatus(t, getRec, http.StatusOK)
+		assertNotContains(t, getRec.Body.Bytes(),
+			update.WebhookURL,
+			update.GraphClientSecret,
+			`"webhook_url"`,
+			`"graph_client_secret"`,
+		)
+		assertContains(t, getRec.Body.Bytes(),
+			`"webhook_has_url":true`,
+			`"graph_has_secret":true`,
+		)
+		response := decodeJSON[types.APIConfigResponse](t, getRec.Body.Bytes())
+		assertAPISettingsReturned(t, reflect.ValueOf(update).Elem(), reflect.ValueOf(response), "SettingsUpdate")
 	}
 
-	getRec := runJSONHandler(t, s.handleAPIConfig, http.MethodGet, "/api/config", "")
-	assertStatus(t, getRec, http.StatusOK)
-	assertNotContains(t, getRec.Body.Bytes(),
-		update.WebhookURL,
-		update.GraphClientSecret,
-		`"webhook_url"`,
-		`"graph_client_secret"`,
-	)
-	assertContains(t, getRec.Body.Bytes(),
-		`"webhook_has_url":true`,
-		`"graph_has_secret":true`,
-	)
-	response := decodeJSON[types.APIConfigResponse](t, getRec.Body.Bytes())
-	assertAPISettingsReturned(
-		t,
-		reflect.ValueOf(update).Elem(),
-		reflect.ValueOf(response),
-		"SettingsUpdate",
-	)
+	savedWebhookURL, savedGraphSecret := update.WebhookURL, update.GraphClientSecret
+	update.WebhookURL, update.GraphClientSecret = "", ""
+	for clear := range 2 {
+		update.ClearWebhookURL, update.ClearGraphClientSecret = clear == 1, clear == 1
+		body, err := json.Marshal(update)
+		if err != nil {
+			t.Fatalf("marshal hidden settings update: %v", err)
+		}
+		assertStatus(t, postSettingsBody(t, s, string(body)), http.StatusNoContent)
+		wantWebhookURL, wantGraphSecret := savedWebhookURL, savedGraphSecret
+		if clear == 1 {
+			wantWebhookURL, wantGraphSecret = "", ""
+		}
+		snapshot := s.config.Snapshot()
+		if snapshot.WebhookURL != wantWebhookURL || snapshot.GraphClientSecret != wantGraphSecret {
+			t.Fatalf("hidden settings after clear=%t = (%q, %q), want (%q, %q)", clear == 1, snapshot.WebhookURL, snapshot.GraphClientSecret, wantWebhookURL, wantGraphSecret)
+		}
+		response := decodeJSON[types.APIConfigResponse](t, runJSONHandler(t, s.handleAPIConfig, http.MethodGet, "/api/config", "").Body.Bytes())
+		if response.WebhookHasURL != (clear == 0) || response.GraphHasSecret != (clear == 0) {
+			t.Fatalf("hidden-setting indicators after clear=%t = (%t, %t)", clear == 1, response.WebhookHasURL, response.GraphHasSecret)
+		}
+	}
 }
 
-func populatedAPISettingsUpdate(t *testing.T) *config.SettingsUpdate {
+func populatedAPISettingsUpdate(t *testing.T, invertBools bool) *config.SettingsUpdate {
 	t.Helper()
 	value := reflect.New(reflect.TypeFor[config.SettingsUpdate]()).Elem()
-	populateAPISettingsValue(t, value, "SettingsUpdate")
+	populateAPISettingsValue(t, value, "SettingsUpdate", invertBools)
 	return value.Addr().Interface().(*config.SettingsUpdate)
 }
 
-func populateAPISettingsValue(t *testing.T, value reflect.Value, path string) {
+func populateAPISettingsValue(t *testing.T, value reflect.Value, path string, invertBools bool) {
 	t.Helper()
 	valueType := value.Type()
 	for i := range value.NumField() {
@@ -877,9 +898,9 @@ func populateAPISettingsValue(t *testing.T, value reflect.Value, path string) {
 
 		switch field.Kind() {
 		case reflect.Struct:
-			populateAPISettingsValue(t, field, fieldPath)
+			populateAPISettingsValue(t, field, fieldPath, invertBools)
 		case reflect.Bool:
-			field.SetBool(validAPISettingsBool(fieldPath))
+			field.SetBool(validAPISettingsBool(fieldPath, invertBools))
 		case reflect.String:
 			field.SetString(validAPISettingsString(fieldInfo.Name))
 		case reflect.Int, reflect.Int64:
@@ -892,12 +913,8 @@ func populateAPISettingsValue(t *testing.T, value reflect.Value, path string) {
 	}
 }
 
-func validAPISettingsBool(fieldPath string) bool {
-	hash := uint32(17)
-	for i := range fieldPath {
-		hash = hash*31 + uint32(fieldPath[i])
-	}
-	return hash%2 == 1
+func validAPISettingsBool(fieldPath string, invert bool) bool {
+	return (len(fieldPath)%2 == 1) != invert
 }
 
 func validAPISettingsString(fieldName string) string {
