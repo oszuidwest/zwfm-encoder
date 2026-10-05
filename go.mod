@@ -6,9 +6,9 @@ require (
 	fyne.io/systray v1.12.2
 	github.com/aws/aws-sdk-go-v2 v1.47.1
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.6
-	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.4.10
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.4
-	github.com/datarhei/gosrt v0.11.0
+	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.4.13
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.0
+	github.com/datarhei/gosrt v0.12.0
 	github.com/gorilla/websocket v1.5.3
 	golang.org/x/mod v0.41.0
 	golang.org/x/net v0.59.0
