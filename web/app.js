@@ -1588,10 +1588,6 @@ document.addEventListener('alpine:init', () => {
                         stateClass = 'state-success';
                         statusText = 'Recording';
                         break;
-                    case 'rotating':
-                        stateClass = 'state-warning';
-                        statusText = 'Rotating...';
-                        break;
                     case 'stopping':
                         stateClass = 'state-warning';
                         statusText = 'Finalizing...';

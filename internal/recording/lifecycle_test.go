@@ -17,26 +17,6 @@ func localOnDemandRecorder(t *testing.T, id string) *types.Recorder {
 	}
 }
 
-func TestManagerStopStopsRotatingRecorder(t *testing.T) {
-	m, err := NewManager("", t.TempDir(), 60, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := m.AddRecorder(localOnDemandRecorder(t, "r1")); err != nil {
-		t.Fatal(err)
-	}
-	rec := m.recorders["r1"]
-	rec.mu.Lock()
-	rec.state = types.ProcessRotating // Covers rotateFile's transient state.
-	rec.mu.Unlock()
-	if err := m.Stop(); err != nil {
-		t.Fatalf("Stop: %v", err)
-	}
-	if got := rec.Status().State; got != types.ProcessStopped {
-		t.Fatalf("rotating recorder left in %q after Manager.Stop; want stopped", got)
-	}
-}
-
 func TestQueueForUploadAfterWorkerStopPersistsToRetryQueue(t *testing.T) {
 	spoolDir := t.TempDir()
 	r := NewGenericRecorder(GenericRecorderConfig{
