@@ -187,8 +187,9 @@ confirmed remote output.
 ## Audio Events
 
 Audio events track periods when audio levels drop below the configured threshold
-(silence) and periods when the left and right channels differ by too much (channel
-imbalance). All of them are returned by the `audio` type filter.
+(silence), periods when the left and right channels differ by too much (channel
+imbalance), and periods when the audio input itself is unavailable. All of them
+are returned by the `audio` type filter.
 
 ### Silence Details Structure
 
@@ -378,6 +379,67 @@ and recovery settings.
   }
 }
 ```
+
+---
+
+### Input Details Structure
+
+```json
+{
+  "input": "default:CARD=sndrpihifiberry",
+  "error": "arecord: main:850: audio open error: No such device"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `input` | string | Configured audio input (device name or `dante://` URI) |
+| `error` | string | Capture error that ended the input (`input_lost` only) |
+| `duration_ms` | int | How long the input was unavailable: from the failure until steady audio flowed again (`input_restored` only) |
+
+---
+
+### `input_lost`
+
+- **Severity:** `error`
+- **UI Label:** Input Lost
+- **Triggered:** Once per outage, when audio capture from the configured input stops: an error, an unexpected exit, no audio within 30 seconds of opening the input, or no audio for 10 seconds after it started. The encoder keeps reopening the input (waiting 3 seconds doubling up to 10 seconds, plus up to 50% jitter, after each failed attempt) and never gives up; further failed attempts in the same outage do not log new events. This event also alerts every channel configured for audio alerts at that moment (webhook, email, Zabbix), regardless of per-event toggles.
+
+```json
+{
+  "ts": "2024-01-15T03:00:00.000Z",
+  "type": "input_lost",
+  "details": {
+    "input": "default:CARD=sndrpihifiberry",
+    "error": "arecord: main:850: audio open error: No such device"
+  }
+}
+```
+
+---
+
+### `input_restored`
+
+- **Severity:** `success`
+- **UI Label:** Input Restored
+- **Triggered:** When the input has delivered steady audio (no pause over 2 seconds) for 10 seconds again after an `input_lost`. Sent to every channel configured for audio alerts at that moment; a channel that also received the `input_lost` gets it after that. When a channel is backed up, its oldest queued input alerts are dropped so the latest state still arrives.
+
+```json
+{
+  "ts": "2024-01-15T03:06:40.000Z",
+  "type": "input_restored",
+  "details": {
+    "input": "default:CARD=sndrpihifiberry",
+    "duration_ms": 390000
+  }
+}
+```
+
+Webhook payloads use `event` `input_lost` or `input_restored` with `input`,
+`last_error` (lost) and `duration_ms` (restored). Zabbix receives
+`event=INPUT_LOST` and `event=INPUT_RESTORED duration_ms=...` on the silence
+key, without the input name or error: the template matches substrings of that
+item, so free text could fire or clear the silence triggers.
 
 ---
 
@@ -755,6 +817,8 @@ under `attention` with status `Ongoing` until it ends:
 | `audio_dump_ready` | audio | info | lifecycle | Audio Dump | MP3 context file ready after silence or channel imbalance |
 | `channel_imbalance_start` | audio | warning | problem | Imbalance | L/R level difference above threshold |
 | `channel_imbalance_end` | audio | success | recovery | Balanced | L/R channels balanced again |
+| `input_lost` | audio | error | problem | Input Lost | Audio capture from the input stopped |
+| `input_restored` | audio | success | recovery | Input Restored | Input delivered audio for 10s again after a loss |
 | `recorder_started` | recorder | info | lifecycle | Started | Recorder begins recording |
 | `recorder_stopped` | recorder | info | lifecycle | Stopped | Recorder stops recording |
 | `recorder_error` | recorder | error | problem | Error | Recorder encounters error |

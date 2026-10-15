@@ -774,3 +774,53 @@ func containsString(values []string, target string) bool {
 func eventTestKey(event *EventView) string {
 	return fmt.Sprintf("%s/%d", event.Type, event.Timestamp.UnixNano())
 }
+
+func TestGroupEventsInputLossOngoingThenResolved(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 10, 16, 3, 0, 0, 0, time.UTC)
+	lost := testEvent(base, 0, InputLost, map[string]any{
+		"input": "default:CARD=sndrpihifiberry",
+		"error": "audio open error: No such device",
+	})
+
+	ongoing := decorateNewestFirst(lost)
+	groups := GroupEvents(ongoing, nil)
+	if len(groups.Attention) != 1 {
+		t.Fatalf("attention len = %d, want 1", len(groups.Attention))
+	}
+	item := groups.Attention[0]
+	if item.Title != "Audio input lost" || item.StatusText != "Ongoing" || item.Severity != SeverityError {
+		t.Fatalf("ongoing item = %q/%q/%q, want Audio input lost/Ongoing/error", item.Title, item.StatusText, item.Severity)
+	}
+	if item.Detail != "audio open error: No such device" {
+		t.Fatalf("detail = %q, want the capture error", item.Detail)
+	}
+	assertPartition(t, ongoing, &groups)
+
+	// A silence incident in between must not be merged into the input incident.
+	resolved := decorateNewestFirst(
+		testEvent(base, 400, InputRestored, map[string]any{
+			"input":       "default:CARD=sndrpihifiberry",
+			"duration_ms": 390000,
+		}),
+		testEvent(base, 20, SilenceStart, map[string]any{"incident_id": 7}),
+		lost,
+	)
+	groups = GroupEvents(resolved, nil)
+	if len(groups.Resolved) != 1 {
+		t.Fatalf("resolved len = %d, want 1", len(groups.Resolved))
+	}
+	item = groups.Resolved[0]
+	if item.Title != "Audio input lost" || item.StatusText != "Resolved" || len(item.Events) != 2 {
+		t.Fatalf("resolved item = %q/%q with %d events, want Audio input lost/Resolved with 2",
+			item.Title, item.StatusText, len(item.Events))
+	}
+	if !slices.Contains(item.Chips, "6m 30s") {
+		t.Fatalf("chips = %v, want the 6m 30s outage duration", item.Chips)
+	}
+	if len(groups.Attention) != 1 || groups.Attention[0].Title != "Silence on input" {
+		t.Fatalf("attention = %+v, want only the open silence incident", groups.Attention)
+	}
+	assertPartition(t, resolved, &groups)
+}

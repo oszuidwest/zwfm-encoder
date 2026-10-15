@@ -241,7 +241,9 @@ func TestLoggerLogIsSafeForConcurrentUseWithSharedEvent(t *testing.T) {
 
 func TestFilterAudioMatchesSilenceAndChannelImbalance(t *testing.T) {
 	t.Parallel()
-	audio := []EventType{ChannelImbalanceStart, ChannelImbalanceEnd, SilenceStart, SilenceEnd, AudioDumpReady}
+	audio := []EventType{
+		ChannelImbalanceStart, ChannelImbalanceEnd, SilenceStart, SilenceEnd, AudioDumpReady, InputLost, InputRestored,
+	}
 	for _, ty := range audio {
 		if !matchesFilter(ty, FilterAudio) {
 			t.Errorf("matchesFilter(%s, FilterAudio) = false, want true", ty)

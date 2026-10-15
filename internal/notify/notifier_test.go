@@ -55,6 +55,14 @@ func (noopAlertChannel) SendAudioDump(
 ) error {
 	return nil
 }
+func (noopAlertChannel) SendInputLost(_ context.Context, _ *config.Snapshot, _ InputData) error {
+	return nil
+}
+
+func (noopAlertChannel) SendInputRestored(_ context.Context, _ *config.Snapshot, _ InputData) error {
+	return nil
+}
+
 func (noopAlertChannel) SendUploadAbandoned(_ context.Context, _ *config.Snapshot, _ UploadAbandonedData) error {
 	return nil
 }
@@ -187,6 +195,8 @@ type testChannel struct {
 	imbalanceStartCalled     chan imbalanceCall
 	imbalanceEndCalled       chan imbalanceCall
 	audioDumpCalled          chan audioDumpCall
+	inputLostCalled          chan InputData
+	inputRestoredCalled      chan InputData
 }
 
 func newTestChannel(subscribesDump bool) *testChannel {
@@ -200,6 +210,8 @@ func newTestChannel(subscribesDump bool) *testChannel {
 		imbalanceStartCalled: make(chan imbalanceCall, 1),
 		imbalanceEndCalled:   make(chan imbalanceCall, 1),
 		audioDumpCalled:      make(chan audioDumpCall, 1),
+		inputLostCalled:      make(chan InputData, 1),
+		inputRestoredCalled:  make(chan InputData, 1),
 	}
 	ch.configuredSilence.Store(true)
 	return ch
@@ -244,6 +256,15 @@ func (c *testChannel) SendAudioDump(
 	_ context.Context, cfg *config.Snapshot, data *AudioDumpData,
 ) error {
 	c.audioDumpCalled <- audioDumpCall{snap: cfg, data: *data}
+	return nil
+}
+
+func (c *testChannel) SendInputLost(_ context.Context, _ *config.Snapshot, data InputData) error {
+	c.inputLostCalled <- data
+	return nil
+}
+func (c *testChannel) SendInputRestored(_ context.Context, _ *config.Snapshot, data InputData) error {
+	c.inputRestoredCalled <- data
 	return nil
 }
 
@@ -854,5 +875,155 @@ func TestLogWriteOrderWithDump(t *testing.T) {
 	}
 	if events[1].Timestamp.After(events[0].Timestamp) {
 		t.Errorf("silence_end (%v) after audio_dump_ready (%v)", events[1].Timestamp, events[0].Timestamp)
+	}
+}
+
+func TestInputEventsReachAudioChannelsAndEventLog(t *testing.T) {
+	t.Parallel()
+	logPath := filepath.Join(t.TempDir(), "encoder.jsonl")
+	logger, err := eventlog.NewLogger(logPath)
+	if err != nil {
+		t.Fatalf("create logger: %v", err)
+	}
+	defer logger.Close() //nolint:errcheck // Test teardown.
+
+	// Input alerts ignore the silence per-event toggles, like upload abandonment.
+	send := newTestChannel(false)
+	send.name = "send"
+	send.subscribesStart = false
+	send.subscribesEnd = false
+	unconfigured := newTestChannel(false)
+	unconfigured.name = "unconfigured"
+	unconfigured.configuredSilence.Store(false)
+
+	o := NewAlertOrchestrator(config.New(""), NewDispatcher(send, unconfigured))
+	t.Cleanup(o.Close)
+	o.SetEventLogger(logger)
+
+	o.HandleInputLost(InputData{Input: "hw:1", Error: "device disconnected"})
+	if got := awaitCall(t, send.inputLostCalled, "SendInputLost"); got.Input != "hw:1" || got.Error != "device disconnected" {
+		t.Fatalf("SendInputLost data = %+v", got)
+	}
+	o.HandleInputRestored(InputData{Input: "hw:1", DurationMs: 65000})
+	if got := awaitCall(t, send.inputRestoredCalled, "SendInputRestored"); got.DurationMs != 65000 {
+		t.Fatalf("SendInputRestored data = %+v", got)
+	}
+	assertNoCall(t, unconfigured.inputLostCalled, "unconfigured input lost")
+	assertNoCall(t, unconfigured.inputRestoredCalled, "unconfigured input restored")
+
+	o.DrainLogs()
+	events, _, err := eventlog.ReadLast(logPath, 10, 0, eventlog.FilterAudio)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if len(events) != 2 || events[0].Type != eventlog.InputRestored || events[1].Type != eventlog.InputLost {
+		t.Fatalf("events = %+v, want input_restored after input_lost", events)
+	}
+	lost := eventDetailsMap(t, events[1].Details)
+	if lost["input"] != "hw:1" || lost["error"] != "device disconnected" {
+		t.Fatalf("input_lost details = %v", lost)
+	}
+	if got := eventDetailsMap(t, events[0].Details)["duration_ms"]; got != float64(65000) {
+		t.Fatalf("input_restored duration_ms = %v, want 65000", got)
+	}
+}
+
+// gatedInputChannel blocks input-loss delivery until released.
+type gatedInputChannel struct {
+	noopAlertChannel
+	calls   chan string
+	release chan struct{}
+}
+
+func (c *gatedInputChannel) IsConfiguredForSilence(_ *config.Snapshot) bool { return true }
+func (c *gatedInputChannel) SendInputLost(_ context.Context, _ *config.Snapshot, _ InputData) error {
+	c.calls <- "lost"
+	<-c.release
+	return nil
+}
+func (c *gatedInputChannel) SendInputRestored(_ context.Context, _ *config.Snapshot, _ InputData) error {
+	c.calls <- "restored"
+	return nil
+}
+
+func TestInputRestoredNeverOvertakesSlowInputLost(t *testing.T) {
+	t.Parallel()
+	ch := &gatedInputChannel{calls: make(chan string, 2), release: make(chan struct{})}
+	o := NewAlertOrchestrator(config.New(""), NewDispatcher(ch))
+	t.Cleanup(o.Close)
+
+	o.HandleInputLost(InputData{Input: "hw:1", Error: "gone"})
+	if got := awaitCall(t, ch.calls, "SendInputLost"); got != "lost" {
+		t.Fatalf("first delivery = %q, want lost", got)
+	}
+	o.HandleInputRestored(InputData{Input: "hw:1", DurationMs: 1000})
+	assertNoCall(t, ch.calls, "SendInputRestored while SendInputLost is still in flight")
+
+	close(ch.release)
+	if got := awaitCall(t, ch.calls, "SendInputRestored"); got != "restored" {
+		t.Fatalf("second delivery = %q, want restored", got)
+	}
+}
+
+// recordingInputChannel records input deliveries; the first one blocks until released.
+type recordingInputChannel struct {
+	noopAlertChannel
+	mu      sync.Mutex
+	got     []string
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (c *recordingInputChannel) IsConfiguredForSilence(_ *config.Snapshot) bool { return true }
+func (c *recordingInputChannel) record(kind string) {
+	c.mu.Lock()
+	c.got = append(c.got, kind)
+	c.mu.Unlock()
+	c.once.Do(func() {
+		close(c.started)
+		<-c.release
+	})
+}
+func (c *recordingInputChannel) SendInputLost(_ context.Context, _ *config.Snapshot, _ InputData) error {
+	c.record("lost")
+	return nil
+}
+func (c *recordingInputChannel) SendInputRestored(_ context.Context, _ *config.Snapshot, _ InputData) error {
+	c.record("restored")
+	return nil
+}
+
+func TestInputAlertOverflowKeepsLatestState(t *testing.T) {
+	t.Parallel()
+	ch := &recordingInputChannel{started: make(chan struct{}), release: make(chan struct{})}
+	o := NewAlertOrchestrator(config.New(""), NewDispatcher(ch))
+	t.Cleanup(o.Close)
+
+	o.HandleInputLost(InputData{})
+	<-ch.started // The worker is stuck on the first delivery.
+	// More alternating alerts than the queue holds, ending on a restoration.
+	for range inputQueueDepth {
+		o.HandleInputRestored(InputData{})
+		o.HandleInputLost(InputData{})
+	}
+	o.HandleInputRestored(InputData{})
+	close(ch.release)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		ch.mu.Lock()
+		got := append([]string(nil), ch.got...)
+		ch.mu.Unlock()
+		if len(got) == 1+inputQueueDepth {
+			if got[len(got)-1] != "restored" {
+				t.Fatalf("deliveries = %v, want the latest state (restored) delivered last", got)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("deliveries = %v, want %d (first plus a full queue)", got, 1+inputQueueDepth)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

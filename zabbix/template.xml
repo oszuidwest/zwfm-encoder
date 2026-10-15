@@ -24,7 +24,7 @@
                     <type>TRAP</type>
                     <key>silence.alert</key>
                     <value_type>TEXT</value_type>
-                    <description>Receives silence detection alerts from ZWFM encoder. Values contain SILENCE, RECOVERY, or TEST messages with audio levels.</description>
+                    <description>Receives silence detection alerts from ZWFM encoder. Values contain SILENCE, RECOVERY, or TEST messages with audio levels, and INPUT_LOST or INPUT_RESTORED when the audio input disappears or returns.</description>
                     <triggers>
                         <trigger>
                             <uuid>aa7ea5e33ab14a8f8bbc4f7a74eb11ed</uuid>
@@ -43,6 +43,16 @@
                             <opdata>{ITEM.LASTVALUE}</opdata>
                             <priority>DISASTER</priority>
                             <description>Silence has been detected by the ZWFM encoder. Trigger recovers when audio returns to normal levels.</description>
+                        </trigger>
+                        <trigger>
+                            <uuid>d0aa0142278a4c759f38db815d12f810</uuid>
+                            <expression>find(/ZWFM Encoder Monitor/silence.alert,,&quot;like&quot;,&quot;event=INPUT_LOST&quot;) = 1</expression>
+                            <recovery_mode>RECOVERY_EXPRESSION</recovery_mode>
+                            <recovery_expression>find(/ZWFM Encoder Monitor/silence.alert,,&quot;like&quot;,&quot;event=INPUT_RESTORED&quot;) = 1</recovery_expression>
+                            <name>Audio Input Lost</name>
+                            <opdata>{ITEM.LASTVALUE}</opdata>
+                            <priority>DISASTER</priority>
+                            <description>The encoder cannot capture audio from its input. It keeps retrying; the trigger recovers when the input has delivered steady audio for 10 seconds again.</description>
                         </trigger>
                         <trigger>
                             <uuid>6b003bc3fb6b4b1abdbbca315219508c</uuid>

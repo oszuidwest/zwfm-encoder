@@ -317,7 +317,6 @@ document.addEventListener('alpine:init', () => {
             state: 'connecting',
             uptime: '',
             sourceRetryCount: 0,
-            sourceMaxRetries: 10,
             lastError: ''
         },
 
@@ -823,7 +822,6 @@ document.addEventListener('alpine:init', () => {
             this.encoder.state = msg.encoder.state;
             this.encoder.uptime = msg.encoder.uptime || '';
             this.encoder.sourceRetryCount = msg.encoder.source_retry_count || 0;
-            this.encoder.sourceMaxRetries = msg.encoder.source_max_retries || 10;
             this.encoder.lastError = msg.encoder.last_error || '';
 
             if (!this.encoderRunning) {
