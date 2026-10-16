@@ -87,8 +87,8 @@ type GenericRecorder struct {
 	rotationTimer *time.Timer
 	// retiring tracks files that a rotation is still finalizing; Stop waits
 	// for them so they are queued for upload before intake closes.
-	retiring     sync.WaitGroup
-	retiringFile string // File a rotation is finalizing; protected from cleanup until queued.
+	retiring      sync.WaitGroup
+	retiringFiles map[string]struct{} // Files rotations are finalizing; protected from cleanup until queued.
 
 	// Max duration timer (on-demand mode)
 	durationTimer *time.Timer
@@ -118,6 +118,7 @@ func NewGenericRecorder(cfg GenericRecorderConfig) *GenericRecorder {
 		uploadQueue:        make(chan uploadRequest, 100),
 		uploadStopCh:       make(chan struct{}),
 		usedFilenames:      make(map[string]time.Time),
+		retiringFiles:      make(map[string]struct{}),
 	}
 }
 
@@ -170,7 +171,8 @@ func (r *GenericRecorder) getOrCreateS3Client() *s3.Client {
 func (r *GenericRecorder) IsCurrentFile(path string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return path != "" && (path == r.currentFile || path == r.retiringFile)
+	_, retiring := r.retiringFiles[path]
+	return path != "" && (path == r.currentFile || retiring)
 }
 
 // Start starts the recorder.
@@ -684,7 +686,7 @@ func (r *GenericRecorder) rotateFile() {
 		r.lastError = err.Error()
 		previous = encoderRun{}
 	} else {
-		r.retiringFile = previous.file
+		r.retiringFiles[previous.file] = struct{}{}
 		r.lastError = "" // Clears the error of an earlier failed rotation.
 		slog.Info("recorder rotated file", "id", r.id, "from", filepath.Base(previous.file), "to", filepath.Base(r.currentFile))
 	}
@@ -693,9 +695,7 @@ func (r *GenericRecorder) rotateFile() {
 
 	r.finishEncoder(previous)
 	r.mu.Lock()
-	if r.retiringFile == previous.file {
-		r.retiringFile = ""
-	}
+	delete(r.retiringFiles, previous.file)
 	r.mu.Unlock()
 
 	// Process the retry queue off the rotation path: a slow or unreachable S3

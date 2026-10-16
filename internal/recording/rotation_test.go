@@ -136,19 +136,7 @@ func TestStopWaitsForRotatedFile(t *testing.T) {
 	// The next file finalizes at once, so only the rotation keeps Stop busy.
 	t.Setenv(fakeFFmpegFinalizeEnv, "0s")
 	go r.rotateFile()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		r.mu.RLock()
-		handedOver := r.currentFile != firstFile
-		r.mu.RUnlock()
-		if handedOver {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("rotation did not hand over to the next file")
-		}
-		time.Sleep(time.Millisecond)
-	}
+	waitForHandOver(t, r, firstFile)
 	if !r.IsCurrentFile(firstFile) {
 		t.Fatal("the file being finalized is not protected from retention cleanup")
 	}
@@ -197,6 +185,46 @@ func TestFailedRotationKeepsRecording(t *testing.T) {
 	data, err := os.ReadFile(firstFile) //nolint:gosec // G304: test reads its own temp recording.
 	if err != nil || len(data) != 2*len(chunk) {
 		t.Fatalf("current file holds %d bytes, %v; want both chunks (%d bytes)", len(data), err, 2*len(chunk))
+	}
+}
+
+// TestOverlappingRotationsProtectEveryRetiringFile rotates again while the
+// first rotation is still finalizing: both retiring files stay protected.
+func TestOverlappingRotationsProtectEveryRetiringFile(t *testing.T) {
+	neverRotate(t)
+	t.Setenv(fakeFFmpegFinalizeEnv, "1s")
+	r := startHourlyTestRecorder(t, "overlap")
+	r.mu.RLock()
+	firstFile := r.currentFile
+	r.mu.RUnlock()
+
+	go r.rotateFile()
+	secondFile := waitForHandOver(t, r, firstFile)
+	t.Setenv(fakeFFmpegFinalizeEnv, "0s")
+	go r.rotateFile()
+	waitForHandOver(t, r, secondFile)
+	if !r.IsCurrentFile(firstFile) || !r.IsCurrentFile(secondFile) {
+		t.Fatalf("finalizing files protected: first %t, second %t; want both",
+			r.IsCurrentFile(firstFile), r.IsCurrentFile(secondFile))
+	}
+}
+
+// waitForHandOver waits until a rotation has moved r off from and returns the
+// new current file.
+func waitForHandOver(t *testing.T, r *GenericRecorder, from string) string {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		r.mu.RLock()
+		current := r.currentFile
+		r.mu.RUnlock()
+		if current != from {
+			return current
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("rotation did not hand over to the next file")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
