@@ -3,7 +3,6 @@ package encoder
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -75,7 +74,6 @@ type Encoder struct {
 	streamRestartDelay  time.Duration
 	inputStableDelay    time.Duration
 	inputStartupTimeout time.Duration
-	inputStallTimeout   time.Duration
 	srtAvailable        bool
 	streamManager       *streaming.Manager
 	recordingManager    *recording.Manager
@@ -174,7 +172,6 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 		streamRestartDelay:  types.StreamRestartDelay,
 		inputStableDelay:    types.StableThreshold,
 		inputStartupTimeout: inputStartupTimeout,
-		inputStallTimeout:   inputStallTimeout,
 		srtAvailable:        srtUsable(srtAvailable, srtProbeErr),
 		streamManager:       streamMgr,
 		silenceDumpManager:  dumpManager,
@@ -732,7 +729,7 @@ func (e *Encoder) runSourceLoop() {
 		stopChan := e.stopChan
 		e.mu.Unlock()
 
-		slog.Error("source capture error", "error", errMsg)
+		slog.Warn("audio input failed, reopening", "error", errMsg, "delay", retryDelay, "attempt", attempt)
 		if newlyLost {
 			e.alertOrchestrator.HandleInputLost(notify.InputData{
 				Input: e.config.AudioInput(),
@@ -740,7 +737,6 @@ func (e *Encoder) runSourceLoop() {
 			})
 		}
 
-		slog.Info("source stopped, waiting before restart", "delay", retryDelay, "attempt", attempt)
 		select {
 		case <-stopChan:
 			return
@@ -792,8 +788,6 @@ func (e *Encoder) superviseSource(runID uint64, src source, cancel context.Cance
 	ticker := time.NewTicker(inputCheckInterval)
 	defer ticker.Stop()
 	startedAt := time.Now()
-	startupTimeout := cmp.Or(e.inputStartupTimeout, inputStartupTimeout)
-	stallTimeout := cmp.Or(e.inputStallTimeout, inputStallTimeout)
 	confirmed := false
 
 	for {
@@ -807,14 +801,14 @@ func (e *Encoder) superviseSource(runID uint64, src source, cancel context.Cance
 		steadySince, lastAudio := e.audioTimes(runID)
 		var stallErr error
 		switch {
-		case lastAudio.IsZero() && now.Sub(startedAt) >= startupTimeout:
-			stallErr = fmt.Errorf("no audio from input within %s", startupTimeout)
-		case !lastAudio.IsZero() && now.Sub(lastAudio) >= stallTimeout:
-			stallErr = fmt.Errorf("no audio from input for %s", stallTimeout)
+		case lastAudio.IsZero() && now.Sub(startedAt) >= e.inputStartupTimeout:
+			stallErr = fmt.Errorf("no audio from input within %s", e.inputStartupTimeout)
+		case !lastAudio.IsZero() && now.Sub(lastAudio) >= inputStallTimeout:
+			stallErr = fmt.Errorf("no audio from input for %s", inputStallTimeout)
 		}
 		if stallErr != nil {
 			cancel()
-			<-exited
+			<-exited //nolint:errcheck // The cancelled capture's exit error only echoes the stall.
 			return stallErr
 		}
 		if !confirmed && !lastAudio.IsZero() &&
