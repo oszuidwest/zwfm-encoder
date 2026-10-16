@@ -151,7 +151,8 @@ func TestStopWaitsForRotatedFile(t *testing.T) {
 }
 
 // TestFailedRotationKeepsRecording covers a next file that cannot start: the
-// recorder keeps writing into the current file instead of stopping.
+// recorder keeps writing into the current file instead of stopping, and the
+// next successful rotation clears the error.
 func TestFailedRotationKeepsRecording(t *testing.T) {
 	neverRotate(t)
 	r := startHourlyTestRecorder(t, "fallback")
@@ -163,11 +164,20 @@ func TestFailedRotationKeepsRecording(t *testing.T) {
 	chunk := make([]byte, audio.BytesPerSecond/10)
 	r.WriteAudio(chunk)
 	r.rotateFile()
-	if got := r.Status().State; got != types.ProcessRunning || !r.IsCurrentFile(firstFile) {
-		t.Fatalf("after failed rotation: state %q, current file kept %t; want running in %s",
-			got, r.IsCurrentFile(firstFile), filepath.Base(firstFile))
+	if status := r.Status(); status.State != types.ProcessRunning || status.Error == "" || !r.IsCurrentFile(firstFile) {
+		t.Fatalf("after failed rotation: status %+v, current file kept %t; want running with an error in %s",
+			status, r.IsCurrentFile(firstFile), filepath.Base(firstFile))
 	}
 	r.WriteAudio(chunk)
+
+	r.mu.Lock()
+	r.ffmpegPath = os.Args[0]
+	r.mu.Unlock()
+	r.rotateFile()
+	if status := r.Status(); status.Error != "" || r.IsCurrentFile(firstFile) {
+		t.Fatalf("after a successful rotation: status %+v, still in the first file %t; want the error cleared",
+			status, r.IsCurrentFile(firstFile))
+	}
 	if err := r.Stop(); err != nil {
 		t.Fatalf("Stop() error = %v", err)
 	}

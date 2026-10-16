@@ -682,6 +682,7 @@ func (r *GenericRecorder) rotateFile() {
 		r.lastError = err.Error()
 		previous = encoderRun{}
 	} else {
+		r.lastError = "" // Clears the error of an earlier failed rotation.
 		slog.Info("recorder rotated file", "id", r.id, "from", filepath.Base(previous.file), "to", filepath.Base(r.currentFile))
 	}
 	r.scheduleRotationLocked(at)
