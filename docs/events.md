@@ -495,7 +495,7 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
 
 - **Severity:** `info`
 - **UI Label:** New File
-- **Triggered:** When a new recording file is created (at start or hourly boundary). At an hourly boundary this is logged when the next file starts, before the previous file is finalized and queued for upload; the two overlap so the hand-over drops no audio. A repeated clock hour (end of daylight saving time) gets a `-2` suffix, for example `Archive-2024-10-27-02-00-2.mp3`.
+- **Triggered:** When a new recording file is created (at start or hourly boundary). At an hourly boundary this is logged when the next file starts, before the previous one is finalized (see the README, Hourly Recording).
 
 ```json
 {

@@ -66,7 +66,6 @@ type GenericRecorder struct {
 
 	// Current recording
 	currentFile   string
-	startTime     time.Time
 	usedFilenames map[string]time.Time // Names started within usedFilenameWindow by this process; S3-only mode deletes the file itself after upload.
 
 	// S3 client (cached, recreated when config changes)
@@ -84,9 +83,8 @@ type GenericRecorder struct {
 	// Retry queue for failed uploads (protected by mu)
 	retryQueue []pendingUpload
 
-	// Rotation timer (hourly mode) and the hour boundary it fires for
+	// Rotation timer (hourly mode)
 	rotationTimer *time.Timer
-	nextRotation  time.Time
 	// retiring tracks files that a rotation is still finalizing; Stop waits
 	// for them so they are queued for upload before intake closes.
 	retiring sync.WaitGroup
@@ -253,7 +251,7 @@ func (r *GenericRecorder) startAsync() {
 
 	// Schedule based on recording mode
 	if r.config.RecordingMode == types.RecordingHourly {
-		r.scheduleRotationLocked()
+		r.scheduleRotationLocked(time.Now())
 	} else if r.maxDurationMinutes > 0 {
 		r.scheduleDurationLimitLocked()
 	}
@@ -521,8 +519,6 @@ func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 // start time, or the hour boundary for a rotation.
 // Must be called with r.mu held.
 func (r *GenericRecorder) startEncoderLocked(fileTime time.Time) error {
-	r.startTime = time.Now()
-
 	// Determine output directory based on storage mode
 	var outputDir string
 	if r.config.StorageMode == types.StorageS3 {
@@ -649,11 +645,11 @@ func (r *GenericRecorder) finishEncoder(run encoderRun) {
 	}
 }
 
-// Must be called with r.mu held.
-func (r *GenericRecorder) scheduleRotationLocked() {
-	now := time.Now()
-	r.nextRotation = now.Add(util.TimeUntilNextHour(now))
-	r.rotationTimer = afterFunc(r.nextRotation.Sub(now), r.rotateFile)
+// scheduleRotationLocked arms the rotation for the first hour boundary after
+// from. Must be called with r.mu held.
+func (r *GenericRecorder) scheduleRotationLocked(from time.Time) {
+	next := from.Truncate(time.Hour).Add(time.Hour)
+	r.rotationTimer = afterFunc(time.Until(next), r.rotateFile)
 }
 
 // rotateFile hands the recording over to a new file at the hour boundary.
@@ -667,22 +663,23 @@ func (r *GenericRecorder) rotateFile() {
 	}
 	slog.Info("recorder rotating file at hour boundary", "id", r.id)
 
+	// The wall clock names the file: a timer that fires a moment early still
+	// gives HH-00, a late one its real start, and after a clock step the name
+	// and the next boundary follow the corrected time.
+	at := time.Now().Round(time.Minute)
+
 	// Swap processes under one lock: WriteAudio sends every chunk either to the
 	// current file or, from here on, to the next one.
 	previous := r.claimEncoderLocked()
 	r.retiring.Add(1)
 	defer r.retiring.Done()
-	if err := r.startEncoderLocked(r.nextRotation); err != nil {
+	if err := r.startEncoderLocked(at); err != nil {
 		slog.Error("failed to start new recording file after rotation", "id", r.id, "error", err)
-		r.state = types.ProcessError
+		r.state = types.ProcessError // Hourly retry restarts the recorder.
 		r.lastError = err.Error()
-		r.mu.Unlock()
-		// Hourly retry restarts the recorder; still finish the previous file.
-		r.finishEncoder(previous)
-		go r.processRetryQueue()
-		return
+	} else {
+		r.scheduleRotationLocked(at)
 	}
-	r.scheduleRotationLocked()
 	r.mu.Unlock()
 
 	r.finishEncoder(previous)
