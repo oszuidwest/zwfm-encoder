@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -17,6 +18,14 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
+
+const recordingTimestampLayout = "2006-01-02-15-04"
+
+// recordingNameTail matches what follows the recorder name in a recording
+// filename: the start minute, an optional collision suffix and the extension of
+// a current (mp3, ts) or removed (ogg, mkv, mp2) codec. Keep it in sync with
+// types.codecPresets, or files of a new codec never expire.
+var recordingNameTail = regexp.MustCompile(`^-(\d{4}-\d{2}-\d{2}-\d{2}-\d{2})(?:-\d+)?\.(?:mp3|ts|ogg|mkv|mp2)$`)
 
 // startCleanupScheduler runs hourly retention cleanup until stopCh closes.
 // Capturing stopCh avoids racing Stop's field reset.
@@ -77,13 +86,8 @@ func (m *Manager) cleanupLocalFiles(recorder *GenericRecorder) {
 
 		name := entry.Name()
 
-		// Only process files matching this recorder's pattern
-		if !strings.HasPrefix(name, safeName+"-") {
-			continue
-		}
-
-		// Extract date from filename
-		fileDate, ok := util.FilenameTime(name)
+		// Only process files matching this recorder's pattern.
+		fileDate, ok := recordingFileTime(safeName, name)
 		if !ok {
 			continue
 		}
@@ -94,6 +98,13 @@ func (m *Manager) cleanupLocalFiles(recorder *GenericRecorder) {
 
 			// Skip if file is currently being recorded
 			if recorder.IsCurrentFile(filePath) {
+				continue
+			}
+
+			// A file still written to within retention keeps recent audio, even
+			// when its name is old (a long recording, or a clock fixed after boot).
+			// Lstat reads fresh metadata; a DirEntry may cache it on Windows.
+			if info, err := os.Lstat(filePath); err != nil || !info.ModTime().Before(cutoff) {
 				continue
 			}
 
@@ -154,14 +165,17 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 			key := aws.ToString(obj.Key)
 			filename := filepath.Base(key)
 
-			// Extract date from filename
+			// The recordings/<safeName>/ prefix already scopes the listing; after
+			// spool recovery a key can carry an old recorder name, so match only
+			// the timestamp.
 			fileDate, ok := util.FilenameTime(filename)
 			if !ok {
 				continue
 			}
 
-			// Delete if older than retention
-			if fileDate.Before(cutoff) {
+			// Delete if older than retention, by name and by upload time (a
+			// missing LastModified falls back to the name alone).
+			if fileDate.Before(cutoff) && aws.ToTime(obj.LastModified).Before(cutoff) {
 				_, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
 					Bucket: aws.String(cfg.S3Bucket),
 					Key:    obj.Key,
@@ -180,6 +194,23 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 		slog.Info("cleanup: deleted S3 objects", "id", cfg.ID, "count", deleted)
 		m.logCleanupEvent(cfg.Name, deleted, "s3")
 	}
+}
+
+// recordingFileTime reports the start time encoded in a recording filename
+// ("<safeName>-YYYY-MM-DD-HH-MM[-N].<ext>") and whether the file belongs to
+// the recorder at all, so local cleanup never deletes files of another
+// recorder sharing the directory.
+func recordingFileTime(safeName, filename string) (time.Time, bool) {
+	tail, ok := strings.CutPrefix(filename, safeName)
+	if !ok {
+		return time.Time{}, false
+	}
+	match := recordingNameTail.FindStringSubmatch(tail)
+	if match == nil {
+		return time.Time{}, false
+	}
+	fileTime, err := time.ParseInLocation(recordingTimestampLayout, match[1], time.Local)
+	return fileTime, err == nil
 }
 
 func (m *Manager) logCleanupEvent(recorderName string, filesDeleted int, storageType string) {
