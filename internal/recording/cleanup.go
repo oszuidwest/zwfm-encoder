@@ -101,6 +101,13 @@ func (m *Manager) cleanupLocalFiles(recorder *GenericRecorder) {
 				continue
 			}
 
+			// A file still written to within retention keeps recent audio, even
+			// when its name is old (a long recording, or a clock fixed after boot).
+			// Lstat reads fresh metadata; a DirEntry may cache it on Windows.
+			if info, err := os.Lstat(filePath); err != nil || !info.ModTime().Before(cutoff) {
+				continue
+			}
+
 			if err := os.Remove(filePath); err != nil {
 				slog.Warn("cleanup: failed to delete local file", "id", cfg.ID, "path", filePath, "error", err)
 			} else {
@@ -166,8 +173,9 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 				continue
 			}
 
-			// Delete if older than retention
-			if fileDate.Before(cutoff) {
+			// Delete if older than retention, by name and by upload time (a
+			// missing LastModified falls back to the name alone).
+			if fileDate.Before(cutoff) && aws.ToTime(obj.LastModified).Before(cutoff) {
 				_, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
 					Bucket: aws.String(cfg.S3Bucket),
 					Key:    obj.Key,

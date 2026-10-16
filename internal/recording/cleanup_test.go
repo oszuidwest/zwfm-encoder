@@ -1,8 +1,14 @@
 package recording
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -131,11 +137,18 @@ func TestCleanupLocalFilesDeletesOnlyExpiredOwnedFiles(t *testing.T) {
 		{name: "Studio-2000-01-01-00-03.ogg"},
 		{name: "Studio-2000-01-01-00-02.mp3", wantExists: true},
 		{name: "Studio-2000-01-01-00-04.json", wantExists: true},
+		{name: "Studio-2000-01-01-00-05.mp3", wantExists: true}, // Old name, written just now.
 		{name: recentFile, wantExists: true},
 		{name: "Studio-B-2000-01-01-00-00.mp3", wantExists: true},
 	}
+	old := time.Now().AddDate(0, 0, -2)
 	for _, file := range files {
 		writeCleanupFile(t, directory, file.name)
+		if file.name != "Studio-2000-01-01-00-05.mp3" {
+			if err := os.Chtimes(filepath.Join(directory, file.name), old, old); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 
 	currentFile := filepath.Join(directory, "Studio-2000-01-01-00-02.mp3")
@@ -162,5 +175,46 @@ func writeCleanupFile(t *testing.T, directory, name string) {
 
 	if err := os.WriteFile(filepath.Join(directory, name), []byte("audio"), 0o600); err != nil {
 		t.Fatalf("write cleanup file %q: %v", name, err)
+	}
+}
+
+func TestCleanupS3FilesDeletesOnlyObjectsExpiredByNameAndUploadTime(t *testing.T) {
+	t.Parallel()
+
+	old := time.Now().AddDate(0, 0, -2).UTC().Format(time.RFC3339)
+	recent := time.Now().UTC().Format(time.RFC3339)
+	var (
+		mu      sync.Mutex
+		deleted []string
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = fmt.Fprintf(w, `<ListBucketResult><Name>bucket</Name><IsTruncated>false</IsTruncated>
+<Contents><Key>recordings/Test/Test-2000-01-01-00-00.mp3</Key><LastModified>%s</LastModified></Contents>
+<Contents><Key>recordings/Test/Test-2000-01-01-01-00.mp3</Key><LastModified>%s</LastModified></Contents>
+</ListBucketResult>`, old, recent)
+		case http.MethodDelete:
+			mu.Lock()
+			deleted = append(deleted, strings.TrimPrefix(r.URL.Path, "/bucket/"))
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	cfg := testS3Recorder()
+	cfg.S3Endpoint = server.URL
+	cfg.RetentionDays = 1
+	(&Manager{}).cleanupS3Files(NewGenericRecorder(GenericRecorderConfig{Recorder: cfg}))
+
+	mu.Lock()
+	defer mu.Unlock()
+	// The second object has an old name but was uploaded just now.
+	if want := []string{"recordings/Test/Test-2000-01-01-00-00.mp3"}; !slices.Equal(deleted, want) {
+		t.Fatalf("deleted = %v, want %v", deleted, want)
 	}
 }
