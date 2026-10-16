@@ -116,3 +116,23 @@ func TestChannelImbalanceDirection(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildInputEmails(t *testing.T) {
+	t.Parallel()
+	subject, body := buildInputLostEmail("ZuidWest", "16 Oct 2026 03:00", InputData{Input: "hw:1", Error: "device disconnected"})
+	if subject != "[ALERT] Audio Input Lost - ZuidWest" {
+		t.Fatalf("lost subject = %q", subject)
+	}
+	for _, want := range []string{"16 Oct 2026 03:00", "Input: hw:1", "Error: device disconnected"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("lost body missing %q:\n%s", want, body)
+		}
+	}
+	subject, body = buildInputRestoredEmail("ZuidWest", "16 Oct 2026 03:07", InputData{Input: "hw:1", DurationMs: 390000})
+	if subject != "[OK] Audio Input Restored - ZuidWest" {
+		t.Fatalf("restored subject = %q", subject)
+	}
+	if !strings.Contains(body, "Input: hw:1") || !strings.Contains(body, "unavailable for") {
+		t.Fatalf("restored body = %q", body)
+	}
+}

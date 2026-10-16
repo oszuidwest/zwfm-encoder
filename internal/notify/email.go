@@ -85,6 +85,29 @@ func sendSilenceEndEmailWithClient(
 	return sendEmailWithClient(ctx, cfg, client, subject, body)
 }
 
+func buildInputLostEmail(stationName, eventTime string, d InputData) (subject, body string) {
+	subject = "[ALERT] Audio Input Lost - " + stationName
+	body = fmt.Sprintf(
+		"The encoder lost its audio input at %s.\n\n"+
+			"Input: %s\n"+
+			"Error: %s\n\n"+
+			"The encoder keeps trying to reopen the input and sends another email when it is back.",
+		eventTime, d.Input, d.Error,
+	)
+	return subject, body
+}
+
+func buildInputRestoredEmail(stationName, eventTime string, d InputData) (subject, body string) {
+	subject = "[OK] Audio Input Restored - " + stationName
+	body = fmt.Sprintf(
+		"The audio input was restored at %s.\n\n"+
+			"Input: %s\n"+
+			"The input was unavailable for %s.",
+		eventTime, d.Input, util.FormatDuration(d.DurationMs),
+	)
+	return subject, body
+}
+
 func silenceMeasurements(levelL, levelR, thresholdDB float64) string {
 	return fmt.Sprintf(
 		"Level: Left %.1f dB / Right %.1f dB (threshold: %.1f dB)",
@@ -354,6 +377,22 @@ func (c *EmailChannel) SendAudioDump(
 // SendUploadAbandoned sends a Microsoft Graph email after a recording upload exhausts retries.
 func (c *EmailChannel) SendUploadAbandoned(ctx context.Context, cfg *config.Snapshot, params UploadAbandonedData) error {
 	return sendUploadAbandonedEmail(ctx, BuildGraphConfig(cfg), cfg.StationName, params)
+}
+
+// SendInputLost sends a Microsoft Graph email when audio capture from the input stops.
+func (c *EmailChannel) SendInputLost(ctx context.Context, cfg *config.Snapshot, data InputData) error {
+	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client *GraphClient) error {
+		subject, body := buildInputLostEmail(cfg.StationName, util.HumanTime(), data)
+		return sendEmailWithClient(ctx, graphCfg, client, subject, body)
+	})
+}
+
+// SendInputRestored sends a Microsoft Graph email when audio capture runs stably again.
+func (c *EmailChannel) SendInputRestored(ctx context.Context, cfg *config.Snapshot, data InputData) error {
+	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client *GraphClient) error {
+		subject, body := buildInputRestoredEmail(cfg.StationName, util.HumanTime(), data)
+		return sendEmailWithClient(ctx, graphCfg, client, subject, body)
+	})
 }
 
 // SendTestEmail validates Microsoft Graph credentials before sending a test email.

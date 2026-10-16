@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
@@ -111,9 +110,13 @@ func sendZabbixPayload(ctx context.Context, server string, port int, payload zab
 		return fmt.Errorf("zabbix rejected data: %s", resp.Info)
 	}
 
-	// Check for no items processed, which usually means the host or key is unknown.
-	if strings.Contains(resp.Info, "processed: 0;") && strings.Contains(resp.Info, "failed: 0;") {
-		return fmt.Errorf("zabbix processed no items (check host/key config)")
+	// Zabbix answers "success" even when it drops the item (unknown host or key,
+	// disabled or non-trapper item, "Allowed hosts" mismatch, or a host monitored
+	// by a proxy); only the counters in info, e.g. "processed: 0; failed: 1",
+	// show it. Info that does not parse counts as delivered.
+	var processed int
+	if _, err := fmt.Sscanf(resp.Info, "processed: %d;", &processed); err == nil && processed == 0 {
+		return fmt.Errorf("zabbix did not accept the item (check host name, item key, trapper type and allowed hosts): %s", resp.Info)
 	}
 
 	return nil
@@ -190,6 +193,16 @@ func formatZabbixChannelImbalanceEndValue(e ChannelImbalanceData) string {
 		e.ImbalanceDB,
 		e.ThresholdDB,
 	)
+}
+
+// Input values carry no free text: the template matches substrings of the
+// silence item, so an input or error name could fire or clear other triggers.
+func formatZabbixInputLostValue(_ InputData) string {
+	return "event=INPUT_LOST"
+}
+
+func formatZabbixInputRestoredValue(d InputData) string {
+	return fmt.Sprintf("event=INPUT_RESTORED duration_ms=%d", d.DurationMs)
 }
 
 // SendZabbixTest validates a concrete Zabbix target before sending a test trapper value.
@@ -303,4 +316,16 @@ func (c *ZabbixChannel) SendAudioDump(
 // SendUploadAbandoned sends a Zabbix trapper value after a recording upload exhausts retries.
 func (c *ZabbixChannel) SendUploadAbandoned(ctx context.Context, cfg *config.Snapshot, params UploadAbandonedData) error {
 	return sendUploadAbandonedZabbix(ctx, cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixUploadKey, params)
+}
+
+// SendInputLost sends a Zabbix trapper value on the silence key when audio capture stops.
+func (c *ZabbixChannel) SendInputLost(ctx context.Context, cfg *config.Snapshot, data InputData) error {
+	return sendZabbixEvent(ctx, cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixSilenceKey,
+		formatZabbixInputLostValue(data))
+}
+
+// SendInputRestored sends a Zabbix trapper value on the silence key when audio capture runs again.
+func (c *ZabbixChannel) SendInputRestored(ctx context.Context, cfg *config.Snapshot, data InputData) error {
+	return sendZabbixEvent(ctx, cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixSilenceKey,
+		formatZabbixInputRestoredValue(data))
 }

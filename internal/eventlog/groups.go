@@ -74,6 +74,7 @@ type historicalIncident struct {
 var eventCloses = map[EventType]EventType{
 	SilenceStart:          SilenceEnd,
 	ChannelImbalanceStart: ChannelImbalanceEnd,
+	InputLost:             InputRestored,
 	StreamError:           StreamStable,
 	StreamRetry:           StreamStable,
 	UploadFailed:          UploadCompleted,
@@ -91,6 +92,8 @@ var eventLabels = map[EventType]string{
 	AudioDumpReady:        "Audio Dump",
 	ChannelImbalanceStart: "Imbalance",
 	ChannelImbalanceEnd:   "Balanced",
+	InputLost:             "Input Lost",
+	InputRestored:         "Input Restored",
 	RecorderStarted:       "Started",
 	RecorderStopped:       "Stopped",
 	RecorderError:         "Error",
@@ -487,10 +490,14 @@ func eventSourceKey(event groupedEvent) string {
 		}
 		return fmt.Sprintf("stream-event:%d", event.id)
 	case CategoryAudio:
-		if strings.HasPrefix(string(event.view.Type), "channel_imbalance_") {
+		switch {
+		case strings.HasPrefix(string(event.view.Type), "channel_imbalance_"):
 			return "audio:imbalance"
+		case strings.HasPrefix(string(event.view.Type), "input_"):
+			return "audio:input"
+		default:
+			return "audio:silence"
 		}
-		return "audio:silence"
 	case CategoryRecorder:
 		name := detailString(event.details, "recorder_name")
 		if isUploadEvent(event.view.Type) {
@@ -540,6 +547,8 @@ func incidentTitle(t EventType) string {
 		return "Silence on input"
 	case ChannelImbalanceStart:
 		return "Channel imbalance"
+	case InputLost:
+		return "Audio input lost"
 	case StreamError, StreamRetry:
 		return "Stream disconnected"
 	case UploadFailed, UploadRetry:
@@ -600,7 +609,7 @@ func activityStatusText(event groupedEvent) string {
 		return "Started"
 	case RecorderStopped:
 		return "Stopped"
-	case SilenceEnd, ChannelImbalanceEnd:
+	case SilenceEnd, ChannelImbalanceEnd, InputRestored:
 		return "Recovered"
 	default:
 		return eventLabel(event.view.Type)
@@ -645,7 +654,7 @@ func eventDetailFor(t EventType, details map[string]any) string {
 		if okLeft && okRight {
 			return fmt.Sprintf("L: %.1fdB  R: %.1fdB", left, right)
 		}
-	case SilenceEnd, ChannelImbalanceEnd:
+	case SilenceEnd, ChannelImbalanceEnd, InputRestored:
 		if duration := detailInt64(details, "duration_ms"); duration > 0 {
 			return "Duration: " + formatSmartDuration(duration)
 		}
@@ -661,7 +670,7 @@ func eventDetailFor(t EventType, details map[string]any) string {
 			return "Error: " + dumpErr
 		}
 		return detailString(details, "dump_filename")
-	case RecorderError, UploadFailed:
+	case InputLost, RecorderError, UploadFailed:
 		return cmp.Or(detailString(details, "error"), "Unknown error")
 	case UploadRetry, UploadAbandoned:
 		return retryErrorDetail(details, "Unknown error")

@@ -39,6 +39,8 @@ type WebhookPayload struct {
 	AudioDumpSizeBytes int64  `json:"audio_dump_size_bytes,omitempty"`
 	AudioDumpError     string `json:"audio_dump_error,omitempty"`
 
+	Input string `json:"input,omitempty"`
+
 	RecorderName string `json:"recorder_name,omitempty"`
 	Filename     string `json:"filename,omitempty"`
 	S3Key        string `json:"s3_key,omitempty"`
@@ -134,6 +136,26 @@ func sendUploadAbandonedWebhook(ctx context.Context, webhookURL string, p Upload
 		S3Key:        p.S3Key,
 		RetryCount:   p.RetryCount,
 		LastError:    p.LastError,
+	})
+}
+
+// sendWebhookInputLost notifies the configured webhook that audio capture stopped.
+func sendWebhookInputLost(ctx context.Context, webhookURL string, d InputData) error {
+	return sendWebhook(ctx, webhookURL, &WebhookPayload{
+		Event:     "input_lost",
+		Input:     d.Input,
+		LastError: d.Error,
+		Timestamp: timestampUTC(),
+	})
+}
+
+// sendWebhookInputRestored notifies the configured webhook that audio capture is running again.
+func sendWebhookInputRestored(ctx context.Context, webhookURL string, d InputData) error {
+	return sendWebhook(ctx, webhookURL, &WebhookPayload{
+		Event:      "input_restored",
+		Input:      d.Input,
+		DurationMs: d.DurationMs,
+		Timestamp:  timestampUTC(),
 	})
 }
 
@@ -293,4 +315,14 @@ func (c *WebhookChannel) SendAudioDump(
 // SendUploadAbandoned posts a webhook payload after a recording upload exhausts retries.
 func (c *WebhookChannel) SendUploadAbandoned(ctx context.Context, cfg *config.Snapshot, params UploadAbandonedData) error {
 	return sendUploadAbandonedWebhook(ctx, cfg.WebhookURL, params)
+}
+
+// SendInputLost posts a webhook payload when audio capture from the input stops.
+func (c *WebhookChannel) SendInputLost(ctx context.Context, cfg *config.Snapshot, data InputData) error {
+	return sendWebhookInputLost(ctx, cfg.WebhookURL, data)
+}
+
+// SendInputRestored posts a webhook payload when audio capture runs stably again.
+func (c *WebhookChannel) SendInputRestored(ctx context.Context, cfg *config.Snapshot, data InputData) error {
+	return sendWebhookInputRestored(ctx, cfg.WebhookURL, data)
 }
