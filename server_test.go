@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -31,16 +32,8 @@ func TestSetupRoutesRejectsUnauthenticatedRequests(t *testing.T) {
 		"POST /api/recordings/stop":  true,
 	}
 
-	patterns := setupRoutePatterns(t)
-	// probe resolves each request to the pattern it reaches, so a request that
-	// falls through to the protected "/" cannot pass for its own route.
-	probe := http.NewServeMux()
-	for _, pattern := range patterns {
-		probe.HandleFunc(pattern, func(http.ResponseWriter, *http.Request) {})
-	}
-
 	handler := newRouteTestServer(t).SetupRoutes()
-	for _, pattern := range patterns {
+	for _, pattern := range setupRoutePatterns(t) {
 		if unprotected[pattern] {
 			delete(unprotected, pattern)
 			continue
@@ -54,11 +47,14 @@ func TestSetupRoutesRejectsUnauthenticatedRequests(t *testing.T) {
 			t.Parallel()
 
 			req := httptest.NewRequest(method, path, http.NoBody)
-			if _, got := probe.Handler(req); got != pattern {
-				t.Fatalf("request %s %s reaches pattern %q, want %q", method, path, got, pattern)
-			}
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, req)
+
+			// A request that falls through to the protected "/" must not pass
+			// for its own route.
+			if req.Pattern != pattern {
+				t.Fatalf("request %s %s reached pattern %q, want %q", method, path, req.Pattern, pattern)
+			}
 
 			assertStatus(t, rec, http.StatusFound)
 			if location := rec.Header().Get("Location"); location != "/login" {
@@ -100,7 +96,7 @@ func TestSetupRoutesAPIKeyAuth(t *testing.T) {
 		{
 			name:       "wrong key",
 			configured: true,
-			key:        "wrong-key",
+			key:        strings.Repeat("x", len(apiKey)),
 			path:       "/api/recordings/stop",
 			wantStatus: http.StatusUnauthorized,
 			wantBody:   "Unauthorized",
@@ -166,7 +162,7 @@ func TestSecurityHeadersOnPublicResponse(t *testing.T) {
 		"X-Content-Type-Options": "nosniff",
 		"Referrer-Policy":        "strict-origin-when-cross-origin",
 	} {
-		if got := rec.Header().Get(name); got != want {
+		if got := rec.Result().Header.Get(name); got != want {
 			t.Errorf("header %s = %q, want %q", name, got, want)
 		}
 	}
@@ -181,38 +177,47 @@ func newRouteTestServer(t *testing.T) *Server {
 	return s
 }
 
-// setupRoutePatterns parses server.go and returns every Handle/HandleFunc
-// pattern, so a route added to SetupRoutes is covered without editing this test.
+// setupRoutePatterns parses the package's non-test files and returns every
+// Handle/HandleFunc pattern, so a new route is covered without editing this test.
 func setupRoutePatterns(t *testing.T) []string {
 	t.Helper()
 
-	file, err := parser.ParseFile(token.NewFileSet(), "server.go", nil, 0)
+	files, err := filepath.Glob("*.go")
 	if err != nil {
-		t.Fatalf("parse server.go: %v", err)
+		t.Fatal(err)
 	}
 	var patterns []string
-	ast.Inspect(file, func(node ast.Node) bool {
-		call, ok := node.(*ast.CallExpr)
-		if !ok {
-			return true
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
 		}
-		selector, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || (selector.Sel.Name != "Handle" && selector.Sel.Name != "HandleFunc") {
-			return true
-		}
-		literal, ok := call.Args[0].(*ast.BasicLit)
-		if !ok || literal.Kind != token.STRING {
-			t.Fatalf("route registration %s does not use a string literal pattern", selector.Sel.Name)
-		}
-		pattern, err := strconv.Unquote(literal.Value)
+		file, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
 		if err != nil {
-			t.Fatalf("route pattern %s: %v", literal.Value, err)
+			t.Fatalf("parse %s: %v", name, err)
 		}
-		patterns = append(patterns, pattern)
-		return true
-	})
+		ast.Inspect(file, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			selector, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || (selector.Sel.Name != "Handle" && selector.Sel.Name != "HandleFunc") {
+				return true
+			}
+			literal, ok := call.Args[0].(*ast.BasicLit)
+			if !ok || literal.Kind != token.STRING {
+				t.Fatalf("%s: route registration %s does not use a string literal pattern", name, selector.Sel.Name)
+			}
+			pattern, err := strconv.Unquote(literal.Value)
+			if err != nil {
+				t.Fatalf("%s: route pattern %s: %v", name, literal.Value, err)
+			}
+			patterns = append(patterns, pattern)
+			return true
+		})
+	}
 	if len(patterns) == 0 {
-		t.Fatal("server.go contains no route registrations")
+		t.Fatal("no route registrations found")
 	}
 	return patterns
 }
