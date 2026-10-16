@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -176,8 +177,13 @@ func (r *GenericRecorder) uploadFile(req uploadRequest) {
 	r.deleteAfterUpload(req)
 }
 
-// doUpload uploads without replacing an existing S3 object. If the requested
-// key already exists, it updates req with a numeric suffix and tries again.
+// maxS3KeySuffix bounds the suffixed keys doUpload tries; each attempt sends
+// the whole file.
+const maxS3KeySuffix = 10
+
+// doUpload uploads with If-None-Match: * so an existing object is never
+// replaced. When the key is taken it retries under -2, -3, ... within the same
+// timeout; req.s3Key is left at the last key tried.
 func (r *GenericRecorder) doUpload(req *uploadRequest) error {
 	file, err := os.Open(req.localPath)
 	if err != nil {
@@ -242,30 +248,32 @@ func (r *GenericRecorder) doUpload(req *uploadRequest) error {
 		if !isS3KeyConflict(err) {
 			return err
 		}
+		if suffix > maxS3KeySuffix {
+			return fmt.Errorf("no free S3 key for %s after %d attempts: %w", baseKey, maxS3KeySuffix, err)
+		}
 
 		previousKey := req.s3Key
 		req.s3Key = withNumericSuffix(baseKey, suffix)
-		slog.Warn("S3 object already exists, using suffixed key",
+		slog.Warn("S3 key taken, using suffixed key",
 			"id", r.id,
-			"existing_key", previousKey,
+			"taken_key", previousKey,
 			"new_key", req.s3Key)
 	}
 }
 
+// isS3KeyConflict reports whether a conditional upload failed because the key
+// is taken or another conditional write to it is in progress. The code also
+// covers CompleteMultipartUpload, which reports errors in an HTTP 200 body;
+// the status covers a 412 whose body has no parsable code.
 func isS3KeyConflict(err error) bool {
 	var apiErr interface{ ErrorCode() string }
 	if errors.As(err, &apiErr) {
-		code := apiErr.ErrorCode()
-		return code == "PreconditionFailed" || code == "ConditionalRequestConflict"
+		if code := apiErr.ErrorCode(); code == "PreconditionFailed" || code == "ConditionalRequestConflict" {
+			return true
+		}
 	}
-
-	// A conflict response with an unparsable body carries only its status.
 	var responseErr interface{ HTTPStatusCode() int }
-	if errors.As(err, &responseErr) {
-		status := responseErr.HTTPStatusCode()
-		return status == http.StatusConflict || status == http.StatusPreconditionFailed
-	}
-	return false
+	return errors.As(err, &responseErr) && responseErr.HTTPStatusCode() == http.StatusPreconditionFailed
 }
 
 var errNoS3Client = &noS3ClientError{}
@@ -277,11 +285,13 @@ type noS3ClientError struct{}
 
 func (e *noS3ClientError) Error() string { return "no S3 client available" }
 
-// uploadProgressListener logs upload progress.
+// uploadProgressListener logs upload progress. Multipart parts report
+// concurrently, so mu guards lastLoggedPct.
 type uploadProgressListener struct {
 	id            string
 	filename      string
 	fileSize      int64
+	mu            sync.Mutex
 	lastLoggedPct int
 }
 
@@ -292,6 +302,8 @@ func (l *uploadProgressListener) OnObjectBytesTransferred(
 		return
 	}
 	pct := int(e.BytesTransferred * 100 / l.fileSize)
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	// Log every 25%
 	if pct >= l.lastLoggedPct+25 {
 		l.lastLoggedPct = pct

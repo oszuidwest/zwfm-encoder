@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 func TestNextRecordingFilename(t *testing.T) {
@@ -54,23 +55,6 @@ func TestNextRecordingFilename(t *testing.T) {
 	}
 }
 
-func TestGenerateFilenameUsesStartMinute(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewGenericRecorder(GenericRecorderConfig{
-		Recorder: &types.Recorder{Name: "Studio", Codec: types.CodecMP3},
-	})
-	tests := map[time.Time]string{
-		time.Date(2026, time.September, 28, 14, 37, 42, 0, time.Local): "Studio-2026-09-28-14-37.mp3",
-		time.Date(2026, time.September, 28, 15, 0, 0, 0, time.Local):   "Studio-2026-09-28-15-00.mp3",
-	}
-	for startTime, want := range tests {
-		if got := recorder.generateFilename(startTime); got != want {
-			t.Errorf("generateFilename(%v) = %q, want %q", startTime, got, want)
-		}
-	}
-}
-
 func TestRememberFilenameForgetsNamesAfterWindow(t *testing.T) {
 	t.Parallel()
 
@@ -86,54 +70,132 @@ func TestRememberFilenameForgetsNamesAfterWindow(t *testing.T) {
 	}
 }
 
-// TestRestartDoesNotReuseDeletedRecordingName covers S3-only mode, where the
-// spool file is deleted after upload: the name must not come back while the
-// recorder runs, or the next upload would overwrite the earlier object.
-func TestRestartDoesNotReuseDeletedRecordingName(t *testing.T) {
-	t.Parallel()
+// noClobberFFmpeg writes a fake FFmpeg that, like the real one with -n, never
+// overwrites its output file, and that refuses to run without -n.
+func noClobberFFmpeg(t *testing.T) string {
+	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("fake FFmpeg is a POSIX shell script")
 	}
 
-	fakeFFmpeg := filepath.Join(t.TempDir(), "ffmpeg")
-	script := "#!/bin/sh\nfor arg; do out=$arg; done\ncat > \"$out\"\n"
-	if err := os.WriteFile(fakeFFmpeg, []byte(script), 0o700); err != nil { //nolint:gosec // Test executable.
+	path := filepath.Join(t.TempDir(), "ffmpeg")
+	script := `#!/bin/sh
+noclobber=
+for arg; do [ "$arg" = -n ] && noclobber=1; out=$arg; done
+[ -n "$noclobber" ] || exit 1
+set -C
+cat > "$out"
+`
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil { //nolint:gosec // Test executable.
 		t.Fatal(err)
 	}
+	return path
+}
+
+// recordOnce starts and stops the recorder and returns the files it created in dir.
+func recordOnce(t *testing.T, recorder *GenericRecorder, dir string) []string {
+	t.Helper()
+
+	before, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := recorder.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for recorder.Status().State != types.ProcessRunning {
+		if time.Now().After(deadline) {
+			t.Fatalf("recorder state = %+v, want running", recorder.Status())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := recorder.Stop(); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	after, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var created []string
+	for _, entry := range after {
+		if !slices.ContainsFunc(before, func(e os.DirEntry) bool { return e.Name() == entry.Name() }) {
+			created = append(created, entry.Name())
+		}
+	}
+	return created
+}
+
+// TestHourlyStartKeepsEarlierRecordingOfSameMinute covers an app restart: the
+// name history is empty, so only the file on disk and FFmpeg -n protect it.
+func TestHourlyStartKeepsEarlierRecordingOfSameMinute(t *testing.T) {
+	t.Parallel()
+
 	cfg := localOnDemandRecorder(t, "Studio")
-	dir := cfg.LocalPath
+	cfg.RecordingMode = types.RecordingHourly
 	recorder := NewGenericRecorder(GenericRecorderConfig{
 		Recorder:   cfg,
-		FFmpegPath: fakeFFmpeg,
+		FFmpegPath: noClobberFFmpeg(t),
 		SpoolDir:   t.TempDir(),
 	})
 
+	// Cover both minutes the start can fall in.
+	start := time.Now()
+	var earlier []string
+	for _, minute := range []time.Time{start, start.Add(time.Minute)} {
+		name := recorder.generateFilename(minute)
+		if err := os.WriteFile(filepath.Join(cfg.LocalPath, name), []byte("earlier"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		earlier = append(earlier, name)
+	}
+
+	// A start just before the hour may also rotate, so allow a second file.
+	created := recordOnce(t, recorder, cfg.LocalPath)
+	if len(created) == 0 {
+		t.Fatal("no new recording created")
+	}
+	for _, name := range earlier {
+		data, err := os.ReadFile(filepath.Join(cfg.LocalPath, name)) //nolint:gosec // Test temp dir.
+		if err != nil || string(data) != "earlier" {
+			t.Errorf("earlier recording %s = %q, %v; want it untouched", name, data, err)
+		}
+	}
+	// Named after the start minute, not the hour start (unless that is the same).
+	for _, name := range created {
+		if got, ok := util.FilenameTime(name); !ok || got.Before(start.Truncate(time.Minute)) {
+			t.Errorf("new recording %s starts at %v, want at or after %v", name, got, start.Truncate(time.Minute))
+		}
+	}
+}
+
+// TestRestartDoesNotReuseDeletedRecordingName simulates S3-only mode, where
+// the spool file is deleted after upload: the name must not come back within
+// usedFilenameWindow, or the next upload would reuse the earlier object's key.
+func TestRestartDoesNotReuseDeletedRecordingName(t *testing.T) {
+	t.Parallel()
+
+	cfg := localOnDemandRecorder(t, "Studio")
+	recorder := NewGenericRecorder(GenericRecorderConfig{
+		Recorder:   cfg,
+		FFmpegPath: noClobberFFmpeg(t),
+		SpoolDir:   t.TempDir(),
+	})
+
+	// Three runs: at most one minute change fits in them, so two share a minute.
 	seen := map[string]bool{}
 	for range 3 {
-		if err := recorder.Start(); err != nil {
-			t.Fatalf("Start() error = %v", err)
+		created := recordOnce(t, recorder, cfg.LocalPath)
+		if len(created) != 1 {
+			t.Fatalf("created files = %v, want one new recording", created)
 		}
-		deadline := time.Now().Add(5 * time.Second)
-		for recorder.Status().State != types.ProcessRunning {
-			if time.Now().After(deadline) {
-				t.Fatalf("recorder state = %+v, want running", recorder.Status())
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-		if err := recorder.Stop(); err != nil {
-			t.Fatalf("Stop() error = %v", err)
-		}
-		entries, err := os.ReadDir(dir)
-		if err != nil || len(entries) != 1 {
-			t.Fatalf("recording dir = %v, %v; want exactly one file", entries, err)
-		}
-		name := entries[0].Name()
+		name := created[0]
 		if seen[name] {
 			t.Fatalf("recording name %q reused after the earlier file was removed", name)
 		}
 		seen[name] = true
 		// Simulate the spool cleanup that follows a successful S3 upload.
-		if err := os.Remove(filepath.Join(dir, name)); err != nil {
+		if err := os.Remove(filepath.Join(cfg.LocalPath, name)); err != nil {
 			t.Fatal(err)
 		}
 	}

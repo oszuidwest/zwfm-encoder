@@ -64,7 +64,7 @@ type GenericRecorder struct {
 	// Current recording
 	currentFile   string
 	startTime     time.Time
-	usedFilenames map[string]time.Time // Started names, kept after S3 upload deletes the spool file.
+	usedFilenames map[string]time.Time // Names started within usedFilenameWindow by this process; S3-only mode deletes the file itself after upload.
 
 	// S3 client (cached, recreated when config changes)
 	s3Client    *s3.Client
@@ -522,6 +522,7 @@ func (r *GenericRecorder) startEncoderLocked() error {
 		// Local or Both: use configured LocalPath
 		outputDir = r.config.LocalPath
 	}
+	// A restart within the same minute must not reuse an earlier file's name.
 	filename := nextRecordingFilename(r.generateFilename(r.startTime), func(name string) bool {
 		if _, used := r.usedFilenames[name]; used {
 			return true
@@ -686,7 +687,7 @@ func (r *GenericRecorder) generateFilename(t time.Time) string {
 }
 
 // nextRecordingFilename returns name, or the first of name-2, name-3, ...
-// that is not taken, so a restart within the same minute never overwrites audio.
+// that is not taken.
 func nextRecordingFilename(name string, taken func(string) bool) string {
 	candidate := name
 	for suffix := 2; taken(candidate); suffix++ {
@@ -701,7 +702,8 @@ func withNumericSuffix(name string, n int) string {
 	return fmt.Sprintf("%s-%d%s", strings.TrimSuffix(name, extension), n, extension)
 }
 
-// Must be called with r.mu held.
+// rememberFilenameLocked reserves filename and forgets names older than
+// usedFilenameWindow. Must be called with r.mu held.
 func (r *GenericRecorder) rememberFilenameLocked(filename string) {
 	now := time.Now()
 	maps.DeleteFunc(r.usedFilenames, func(_ string, started time.Time) bool {
