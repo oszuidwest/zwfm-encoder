@@ -3,10 +3,14 @@ package recording
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -160,7 +164,7 @@ func (r *GenericRecorder) uploadWorker() {
 
 // uploadFile uploads to S3 and deletes temp files in S3-only mode.
 func (r *GenericRecorder) uploadFile(req uploadRequest) {
-	err := r.doUpload(req)
+	err := r.doUpload(&req)
 	if err != nil {
 		slog.Error("upload failed", "id", r.id, "s3_key", req.s3Key, "error", err)
 		r.logUploadEvent(eventlog.UploadFailed, filepath.Base(req.localPath), req.s3Key, err.Error(), 0)
@@ -173,12 +177,17 @@ func (r *GenericRecorder) uploadFile(req uploadRequest) {
 	r.deleteAfterUpload(req)
 }
 
-// doUpload performs the actual S3 upload using the transfer manager for
-// automatic multipart uploads. Returns nil on success.
-func (r *GenericRecorder) doUpload(req uploadRequest) error {
+// maxS3KeySuffix bounds the suffixed keys doUpload tries; each attempt sends
+// the whole file.
+const maxS3KeySuffix = 10
+
+// doUpload uploads with If-None-Match: * so an existing object is never
+// replaced. When the key is taken it retries under -2, -3, ... within the same
+// timeout; req.s3Key is left at the last key tried.
+func (r *GenericRecorder) doUpload(req *uploadRequest) error {
 	file, err := os.Open(req.localPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("open recording for upload: %w", err)
 	}
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil {
@@ -193,6 +202,7 @@ func (r *GenericRecorder) doUpload(req uploadRequest) error {
 
 	r.mu.RLock()
 	bucket := r.config.S3Bucket
+	contentType := r.config.Codec.ContentType()
 	r.mu.RUnlock()
 
 	// Create transfer manager with progress logging
@@ -221,14 +231,49 @@ func (r *GenericRecorder) doUpload(req uploadRequest) error {
 		"size_mb", req.fileSize/(1024*1024),
 		"timeout_min", timeoutMinutes)
 
-	_, err = tm.UploadObject(ctx, &transfermanager.UploadObjectInput{
-		Bucket:        aws.String(bucket),
-		Key:           aws.String(req.s3Key),
-		Body:          file,
-		ContentLength: aws.Int64(req.fileSize),
-		ContentType:   aws.String(r.config.Codec.ContentType()),
-	})
-	return err
+	baseKey := req.s3Key
+	for suffix := 2; ; suffix++ {
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return fmt.Errorf("rewind recording for upload: %w", err)
+		}
+
+		_, err = tm.UploadObject(ctx, &transfermanager.UploadObjectInput{
+			Bucket:        aws.String(bucket),
+			Key:           aws.String(req.s3Key),
+			Body:          file,
+			ContentLength: aws.Int64(req.fileSize),
+			ContentType:   aws.String(contentType),
+			IfNoneMatch:   aws.String("*"),
+		})
+		if !isS3KeyConflict(err) {
+			return err
+		}
+		if suffix > maxS3KeySuffix {
+			return fmt.Errorf("no free S3 key for %s after %d attempts: %w", baseKey, maxS3KeySuffix, err)
+		}
+
+		previousKey := req.s3Key
+		req.s3Key = withNumericSuffix(baseKey, suffix)
+		slog.Warn("S3 key taken, using suffixed key",
+			"id", r.id,
+			"taken_key", previousKey,
+			"new_key", req.s3Key)
+	}
+}
+
+// isS3KeyConflict reports whether a conditional upload failed because the key
+// is taken or another conditional write to it is in progress. The code also
+// covers CompleteMultipartUpload, which reports errors in an HTTP 200 body;
+// the status covers a 412 whose body has no parsable code.
+func isS3KeyConflict(err error) bool {
+	var apiErr interface{ ErrorCode() string }
+	if errors.As(err, &apiErr) {
+		if code := apiErr.ErrorCode(); code == "PreconditionFailed" || code == "ConditionalRequestConflict" {
+			return true
+		}
+	}
+	var responseErr interface{ HTTPStatusCode() int }
+	return errors.As(err, &responseErr) && responseErr.HTTPStatusCode() == http.StatusPreconditionFailed
 }
 
 var errNoS3Client = &noS3ClientError{}
@@ -240,11 +285,13 @@ type noS3ClientError struct{}
 
 func (e *noS3ClientError) Error() string { return "no S3 client available" }
 
-// uploadProgressListener logs upload progress.
+// uploadProgressListener logs upload progress. Multipart parts report
+// concurrently, so mu guards lastLoggedPct.
 type uploadProgressListener struct {
 	id            string
 	filename      string
 	fileSize      int64
+	mu            sync.Mutex
 	lastLoggedPct int
 }
 
@@ -255,6 +302,8 @@ func (l *uploadProgressListener) OnObjectBytesTransferred(
 		return
 	}
 	pct := int(e.BytesTransferred * 100 / l.fileSize)
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	// Log every 25%
 	if pct >= l.lastLoggedPct+25 {
 		l.lastLoggedPct = pct
@@ -394,7 +443,7 @@ func (r *GenericRecorder) retryUpload(p *pendingUpload) bool {
 		return true // Nothing to upload
 	}
 
-	err := r.doUpload(p.request)
+	err := r.doUpload(&p.request)
 	if err != nil {
 		p.lastError = err.Error()
 		slog.Error("retry upload failed", "id", r.id, "s3_key", p.request.s3Key, "error", err)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +26,10 @@ var errRecorderStopped = errors.New("recorder stopped")
 const (
 	// recorderAudioBufferChunks bounds backlog to about 3s of audio.
 	recorderAudioBufferChunks = 30
+	// usedFilenameWindow is how long a started filename stays reserved. A
+	// minute-based name only recurs within its minute or in the repeated hour
+	// of a DST fall-back.
+	usedFilenameWindow = 2 * time.Hour
 	// writerDrainTimeout bounds graceful writer drain before cancelling FFmpeg.
 	writerDrainTimeout = 5 * time.Second
 	// processStopTimeout bounds waiting before escalating to SIGTERM.
@@ -57,8 +62,9 @@ type GenericRecorder struct {
 	audioDrops atomic.Int64 // Lost chunks from overflow or teardown.
 
 	// Current recording
-	currentFile string
-	startTime   time.Time
+	currentFile   string
+	startTime     time.Time
+	usedFilenames map[string]time.Time // Names started within usedFilenameWindow by this process; S3-only mode deletes the file itself after upload.
 
 	// S3 client (cached, recreated when config changes)
 	s3Client    *s3.Client
@@ -105,6 +111,7 @@ func NewGenericRecorder(cfg GenericRecorderConfig) *GenericRecorder {
 		state:              types.ProcessStopped,
 		uploadQueue:        make(chan uploadRequest, 100),
 		uploadStopCh:       make(chan struct{}),
+		usedFilenames:      make(map[string]time.Time),
 	}
 }
 
@@ -506,15 +513,6 @@ func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 func (r *GenericRecorder) startEncoderLocked() error {
 	r.startTime = time.Now()
 
-	// Generate filename based on recording mode
-	var filename string
-	if r.config.RecordingMode == types.RecordingHourly {
-		hourStart := r.startTime.Truncate(time.Hour)
-		filename = r.generateFilename(hourStart)
-	} else {
-		filename = r.generateFilename(r.startTime)
-	}
-
 	// Determine output directory based on storage mode
 	var outputDir string
 	if r.config.StorageMode == types.StorageS3 {
@@ -524,6 +522,14 @@ func (r *GenericRecorder) startEncoderLocked() error {
 		// Local or Both: use configured LocalPath
 		outputDir = r.config.LocalPath
 	}
+	// A restart within the same minute must not reuse an earlier file's name.
+	filename := nextRecordingFilename(r.generateFilename(r.startTime), func(name string) bool {
+		if _, used := r.usedFilenames[name]; used {
+			return true
+		}
+		_, err := os.Stat(filepath.Join(outputDir, name))
+		return err == nil
+	})
 	r.currentFile = filepath.Join(outputDir, filename)
 
 	// Get codec configuration
@@ -538,7 +544,7 @@ func (r *GenericRecorder) startEncoderLocked() error {
 		"-f", format,
 		"-hide_banner",
 		"-loglevel", "warning",
-		"-y",
+		"-n",
 		r.currentFile,
 	)
 
@@ -548,6 +554,7 @@ func (r *GenericRecorder) startEncoderLocked() error {
 		return err
 	}
 
+	r.rememberFilenameLocked(filename)
 	r.result = result
 
 	// Scope writer state to this FFmpeg process; rotation creates fresh channels.
@@ -677,6 +684,32 @@ func (r *GenericRecorder) scheduleDurationLimitLocked() {
 func (r *GenericRecorder) generateFilename(t time.Time) string {
 	safeName := sanitizeFilename(r.config.Name)
 	return fmt.Sprintf("%s-%s.%s", safeName, t.Format(recordingTimestampLayout), r.config.Codec.FileExtension())
+}
+
+// nextRecordingFilename returns name, or the first of name-2, name-3, ...
+// that is not taken.
+func nextRecordingFilename(name string, taken func(string) bool) string {
+	candidate := name
+	for suffix := 2; taken(candidate); suffix++ {
+		candidate = withNumericSuffix(name, suffix)
+	}
+	return candidate
+}
+
+// withNumericSuffix inserts "-<n>" before the extension of a filename or S3 key.
+func withNumericSuffix(name string, n int) string {
+	extension := filepath.Ext(name)
+	return fmt.Sprintf("%s-%d%s", strings.TrimSuffix(name, extension), n, extension)
+}
+
+// rememberFilenameLocked reserves filename and forgets names older than
+// usedFilenameWindow. Must be called with r.mu held.
+func (r *GenericRecorder) rememberFilenameLocked(filename string) {
+	now := time.Now()
+	maps.DeleteFunc(r.usedFilenames, func(_ string, started time.Time) bool {
+		return now.Sub(started) > usedFilenameWindow
+	})
+	r.usedFilenames[filename] = now
 }
 
 func s3ObjectKey(recorderName, filename string) string {

@@ -56,12 +56,18 @@ func TestS3Connection(cfg *S3Config) error {
 	testKey := fmt.Sprintf("test-connection-%d.txt", time.Now().UnixNano())
 	testContent := []byte("ZuidWest FM encoder connection test")
 
+	// Recordings are uploaded with If-None-Match, so test that the store supports it.
 	_, err := client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:        aws.String(cfg.Bucket),
 		Key:           aws.String(testKey),
 		Body:          bytes.NewReader(testContent),
 		ContentLength: aws.Int64(int64(len(testContent))),
+		IfNoneMatch:   aws.String("*"),
 	})
+	var apiErr interface{ ErrorCode() string }
+	if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NotImplemented" {
+		return fmt.Errorf("storage does not support conditional writes (If-None-Match), which recordings need to never overwrite each other: %w", err)
+	}
 	if err != nil {
 		return fmt.Errorf("upload test file: %w", err)
 	}
