@@ -64,6 +64,11 @@ func TestRecordingFileTime(t *testing.T) {
 			wantOK:   true,
 		},
 		{
+			name:     "file of a recorder whose name extends ours with a timestamp",
+			safeName: "Studio",
+			filename: "Studio-2024-01-01-00-00-2026-09-28-14-37.ts",
+		},
+		{
 			name:     "unrelated file",
 			safeName: "Studio",
 			filename: "notes.txt",
@@ -100,12 +105,13 @@ func TestRecordingFileTime(t *testing.T) {
 func TestRecordingFileTimeMatchesGeneratedNames(t *testing.T) {
 	t.Parallel()
 
-	recorder := NewGenericRecorder(GenericRecorderConfig{Recorder: &types.Recorder{Name: "Studio B!", Codec: types.CodecMP3}})
 	start := time.Date(2026, time.September, 28, 14, 37, 0, 0, time.Local)
-
-	got, ok := recordingFileTime(sanitizeFilename("Studio B!"), recorder.generateFilename(start))
-	if !ok || !got.Equal(start) {
-		t.Fatalf("recordingFileTime(generateFilename(%v)) = %v, %t; want %v, true", start, got, ok, start)
+	for _, codec := range []types.Codec{types.CodecMP3, types.CodecOpus, types.CodecPCM} {
+		recorder := NewGenericRecorder(GenericRecorderConfig{Recorder: &types.Recorder{Name: "Studio B!", Codec: codec}})
+		name := recorder.generateFilename(start)
+		if got, ok := recordingFileTime(sanitizeFilename("Studio B!"), name); !ok || !got.Equal(start) {
+			t.Errorf("recordingFileTime(%q) = %v, %t; want %v, true", name, got, ok, start)
+		}
 	}
 }
 

@@ -158,7 +158,9 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 			key := aws.ToString(obj.Key)
 			filename := filepath.Base(key)
 
-			// Extract date from filename
+			// The recordings/<safeName>/ prefix already scopes the listing; after
+			// spool recovery a key can carry an old recorder name, so match only
+			// the timestamp.
 			fileDate, ok := util.FilenameTime(filename)
 			if !ok {
 				continue
@@ -188,7 +190,8 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 
 // recordingFileTime reports the start time encoded in a recording filename
 // ("<safeName>-YYYY-MM-DD-HH-MM[-N].<ext>") and whether the file belongs to
-// the recorder at all, so cleanup never touches another recorder's files.
+// the recorder at all, so local cleanup never deletes files of another
+// recorder sharing the directory.
 func recordingFileTime(safeName, filename string) (time.Time, bool) {
 	tail, ok := strings.CutPrefix(filename, safeName)
 	if !ok {
