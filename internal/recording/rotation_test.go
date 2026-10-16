@@ -123,7 +123,8 @@ func TestScheduleRotationTargetsNextHour(t *testing.T) {
 }
 
 // TestStopWaitsForRotatedFile stops the recorder while a rotation is still
-// finalizing the previous file: Stop must not return before that file is done.
+// finalizing the previous file: retention cleanup must leave that file alone,
+// and Stop must not return before it is done.
 func TestStopWaitsForRotatedFile(t *testing.T) {
 	neverRotate(t)
 	t.Setenv(fakeFFmpegFinalizeEnv, "500ms")
@@ -136,17 +137,29 @@ func TestStopWaitsForRotatedFile(t *testing.T) {
 	t.Setenv(fakeFFmpegFinalizeEnv, "0s")
 	go r.rotateFile()
 	deadline := time.Now().Add(5 * time.Second)
-	for r.IsCurrentFile(firstFile) {
+	for {
+		r.mu.RLock()
+		handedOver := r.currentFile != firstFile
+		r.mu.RUnlock()
+		if handedOver {
+			break
+		}
 		if time.Now().After(deadline) {
 			t.Fatal("rotation did not hand over to the next file")
 		}
 		time.Sleep(time.Millisecond)
+	}
+	if !r.IsCurrentFile(firstFile) {
+		t.Fatal("the file being finalized is not protected from retention cleanup")
 	}
 	if err := r.Stop(); err != nil {
 		t.Fatalf("Stop() error = %v", err)
 	}
 	if _, err := os.Stat(firstFile); err != nil {
 		t.Fatalf("Stop returned before the rotated file was finalized: %v", err)
+	}
+	if r.IsCurrentFile(firstFile) {
+		t.Fatal("the finalized file is still protected from retention cleanup")
 	}
 }
 
