@@ -22,9 +22,10 @@ import (
 const recordingTimestampLayout = "2006-01-02-15-04"
 
 // recordingNameTail matches what follows the recorder name in a recording
-// filename: the start minute, an optional collision suffix and a codec extension.
-var recordingNameTail = regexp.MustCompile(`^-(\d{4}-\d{2}-\d{2}-\d{2}-\d{2})(?:-\d+)?\.(?:` +
-	types.CodecMP3.FileExtension() + `|` + types.CodecOpus.FileExtension() + `|` + types.CodecPCM.FileExtension() + `)$`)
+// filename: the start minute, an optional collision suffix and the extension of
+// a current (mp3, ts) or removed (ogg, mkv, mp2) codec. Keep it in sync with
+// types.codecPresets, or files of a new codec never expire.
+var recordingNameTail = regexp.MustCompile(`^-(\d{4}-\d{2}-\d{2}-\d{2}-\d{2})(?:-\d+)?\.(?:mp3|ts|ogg|mkv|mp2)$`)
 
 // startCleanupScheduler runs hourly retention cleanup until stopCh closes.
 // Capturing stopCh avoids racing Stop's field reset.
@@ -157,8 +158,8 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 			key := aws.ToString(obj.Key)
 			filename := filepath.Base(key)
 
-			// Only process files matching this recorder's pattern.
-			fileDate, ok := recordingFileTime(safeName, filename)
+			// Extract date from filename
+			fileDate, ok := util.FilenameTime(filename)
 			if !ok {
 				continue
 			}

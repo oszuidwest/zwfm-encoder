@@ -676,7 +676,7 @@ func (r *GenericRecorder) scheduleDurationLimitLocked() {
 
 func (r *GenericRecorder) generateFilename(t time.Time) string {
 	safeName := sanitizeFilename(r.config.Name)
-	return fmt.Sprintf("%s-%s.%s", safeName, t.Format("2006-01-02-15-04"), r.config.Codec.FileExtension())
+	return fmt.Sprintf("%s-%s.%s", safeName, t.Format(recordingTimestampLayout), r.config.Codec.FileExtension())
 }
 
 func s3ObjectKey(recorderName, filename string) string {

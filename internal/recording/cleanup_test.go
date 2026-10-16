@@ -12,16 +12,7 @@ import (
 func TestRecordingFileTime(t *testing.T) {
 	t.Parallel()
 
-	wantTime := time.Date(
-		2026,
-		time.September,
-		28,
-		14,
-		37,
-		0,
-		0,
-		time.Local,
-	)
+	wantTime := time.Date(2026, time.September, 28, 14, 37, 0, 0, time.Local)
 	tests := []struct {
 		name     string
 		safeName string
@@ -49,9 +40,21 @@ func TestRecordingFileTime(t *testing.T) {
 			wantOK:   true,
 		},
 		{
-			name:     "wrong extension",
+			name:     "extension of a removed codec",
 			safeName: "Studio",
-			filename: "Studio-2026-09-28-14-37.wav",
+			filename: "Studio-2026-09-28-14-37.ogg",
+			wantTime: wantTime,
+			wantOK:   true,
+		},
+		{
+			name:     "file of another tool",
+			safeName: "Studio",
+			filename: "Studio-2026-09-28-14-37.json",
+		},
+		{
+			name:     "double extension",
+			safeName: "Studio",
+			filename: "Studio-2026-09-28-14-37.mp3.bak",
 		},
 		{
 			name:     "recorder name containing a timestamp",
@@ -66,7 +69,7 @@ func TestRecordingFileTime(t *testing.T) {
 			filename: "notes.txt",
 		},
 		{
-			name:     "silence dump timestamp",
+			name:     "underscore timestamp layout",
 			safeName: "Studio",
 			filename: "Studio-2026-09-28_14-37-00-2.mp3",
 		},
@@ -83,31 +86,35 @@ func TestRecordingFileTime(t *testing.T) {
 
 			gotTime, gotOK := recordingFileTime(tt.safeName, tt.filename)
 			if gotOK != tt.wantOK {
-				t.Fatalf(
-					"recordingFileTime(%q, %q) ok = %t, want %t",
-					tt.safeName,
-					tt.filename,
-					gotOK,
-					tt.wantOK,
-				)
+				t.Fatalf("recordingFileTime(%q, %q) ok = %t, want %t", tt.safeName, tt.filename, gotOK, tt.wantOK)
 			}
 			if tt.wantOK && !gotTime.Equal(tt.wantTime) {
-				t.Errorf(
-					"recordingFileTime(%q, %q) = %v, want %v",
-					tt.safeName,
-					tt.filename,
-					gotTime,
-					tt.wantTime,
-				)
+				t.Errorf("recordingFileTime(%q, %q) = %v, want %v", tt.safeName, tt.filename, gotTime, tt.wantTime)
 			}
 		})
+	}
+}
+
+// TestRecordingFileTimeMatchesGeneratedNames ties the matcher to the writer, so
+// a naming change cannot silently stop retention.
+func TestRecordingFileTimeMatchesGeneratedNames(t *testing.T) {
+	t.Parallel()
+
+	recorder := NewGenericRecorder(GenericRecorderConfig{Recorder: &types.Recorder{Name: "Studio B!", Codec: types.CodecMP3}})
+	start := time.Date(2026, time.September, 28, 14, 37, 0, 0, time.Local)
+
+	got, ok := recordingFileTime(sanitizeFilename("Studio B!"), recorder.generateFilename(start))
+	if !ok || !got.Equal(start) {
+		t.Fatalf("recordingFileTime(generateFilename(%v)) = %v, %t; want %v, true", start, got, ok, start)
 	}
 }
 
 func TestCleanupLocalFilesDeletesOnlyExpiredOwnedFiles(t *testing.T) {
 	t.Parallel()
 
-	directory := t.TempDir()
+	cfg := localOnDemandRecorder(t, "Studio")
+	cfg.RetentionDays = 1
+	directory := cfg.LocalPath
 	recentFile := "Studio-" + time.Now().Format(recordingTimestampLayout) + ".mp3"
 	files := []struct {
 		name       string
@@ -115,8 +122,9 @@ func TestCleanupLocalFilesDeletesOnlyExpiredOwnedFiles(t *testing.T) {
 	}{
 		{name: "Studio-2000-01-01-00-00.mp3"},
 		{name: "Studio-2000-01-01-00-01-2.mp3"},
-		{name: "Studio-2000-01-01-00-03.ts"},
+		{name: "Studio-2000-01-01-00-03.ogg"},
 		{name: "Studio-2000-01-01-00-02.mp3", wantExists: true},
+		{name: "Studio-2000-01-01-00-04.json", wantExists: true},
 		{name: recentFile, wantExists: true},
 		{name: "Studio-B-2000-01-01-00-00.mp3", wantExists: true},
 	}
@@ -125,16 +133,7 @@ func TestCleanupLocalFilesDeletesOnlyExpiredOwnedFiles(t *testing.T) {
 	}
 
 	currentFile := filepath.Join(directory, "Studio-2000-01-01-00-02.mp3")
-	recorder := NewGenericRecorder(GenericRecorderConfig{
-		Recorder: &types.Recorder{
-			ID:            "studio",
-			Name:          "Studio",
-			Codec:         types.CodecMP3,
-			StorageMode:   types.StorageLocal,
-			LocalPath:     directory,
-			RetentionDays: 1,
-		},
-	})
+	recorder := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg})
 	recorder.currentFile = currentFile
 
 	manager := &Manager{}
