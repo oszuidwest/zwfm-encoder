@@ -122,6 +122,12 @@ Monitors audio levels and sends alerts when silence is detected or recovered. Us
 | Duration | 15 s | 0.5 to 300 | Seconds of silence before alerting |
 | Recovery | 5 s | 0.5 to 60 | Seconds of audio before recovery |
 
+## Audio Input Recovery
+
+If the audio input disappears (a capture error, an unplugged USB interface, a Dante transmitter that stops sending), the encoder keeps reopening it. After a failed attempt it waits 3 seconds, doubling up to 10 seconds, plus up to 50% random jitter, so never more than 15 seconds. It never gives up, so audio resumes on its own when the input returns. A capture that keeps running but delivers no audio is treated as failed and reopened too: when no audio arrives within 30 seconds of opening the input, or audio stops for 10 seconds. Streams and recorders keep running in the meantime. The dashboard shows the reconnect attempts and the error of the last failed attempt.
+
+The first failure of an outage writes an `input_lost` event and alerts every configured audio channel (webhook, email, Zabbix). Once the input has delivered steady audio (no pause over 2 seconds) for 10 seconds again, an `input_restored` event with the outage duration follows. Like abandoned uploads, these alerts go to every channel configured at that moment, regardless of per-event toggles. An open outage survives stopping and starting the encoder (but not a restart of the process): it raises no second `input_lost`, and the next confirmed input, also from a newly selected device, closes it with a duration that includes the stopped time. `GET /health` reports `503` between reopen attempts; while a reopened capture runs it reports `200`, even before that capture delivers audio. If the process restarts during an outage, no `input_restored` follows: close the Zabbix problem manually.
+
 ## Channel Imbalance Detection
 
 Detects dead or mismatched stereo channels by comparing the left and right RMS levels. Imbalance is only evaluated while at least one channel is above the configured silence threshold, so normal silence is handled by silence detection instead of imbalance detection.
@@ -142,7 +148,7 @@ Channel imbalance events can trigger webhook, email, and Zabbix notifications, a
 - **File Log** - Appends JSON Lines for every audio event, including silence and channel imbalance events (always records all events, no per-event toggle).
 - **Zabbix** - Send trapper items to a Zabbix server; independently enable `silence_start`, `silence_end`, `channel_imbalance_start`, and `channel_imbalance_end` (no `audio_dump` - trapper items do not support file attachments).
 
-`silence_end` and `channel_imbalance_end` are sent immediately when recovery is confirmed; `audio_dump_ready` is dispatched as a separate event once the MP3 context for either incident type finishes encoding. Its `trigger` field is `silence` or `channel_imbalance`. Abandoned S3 uploads always alert every configured channel, regardless of per-event toggles.
+`silence_end` and `channel_imbalance_end` are sent immediately when recovery is confirmed; `audio_dump_ready` is dispatched as a separate event once the MP3 context for either incident type finishes encoding. Its `trigger` field is `silence` or `channel_imbalance`. Lost and restored audio inputs and abandoned S3 uploads always alert every configured channel, regardless of per-event toggles.
 
 Configure silence and channel imbalance detection under Settings -> Audio. Configure audio notifications under Settings -> Notifications.
 
@@ -164,7 +170,7 @@ The encoder warns when the secret expires within 30 days.
 2. Link the template to your encoder host
 3. Configure in the encoder: server, port (default 10051), host name (must match Zabbix exactly), silence key, imbalance key, and upload key
 
-The template creates triggers for SILENCE (Disaster), RECOVERY (Info), CHANNEL_IMBALANCE (High), CHANNEL_BALANCED (Info), TEST (Info), and UPLOAD_ABANDONED (High) events. Channel imbalance uses a separate `imbalance.alert` item; Zabbix imbalance notifications only work when `imbalance_key` is configured and the matching trapper item exists.
+The template creates triggers for SILENCE (Disaster), RECOVERY (Info), INPUT_LOST (Disaster, recovers on INPUT_RESTORED), CHANNEL_IMBALANCE (High), CHANNEL_BALANCED (Info), TEST (Info), and UPLOAD_ABANDONED (High) events. Input events use the silence key; re-import the template to add the INPUT_LOST trigger. Channel imbalance uses a separate `imbalance.alert` item; Zabbix imbalance notifications only work when `imbalance_key` is configured and the matching trapper item exists.
 
 ## Recording API
 

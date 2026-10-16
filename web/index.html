@@ -210,7 +210,7 @@
                 <div class="alert" role="alert" x-show="hasSourceIssue" x-cloak>
                     <span class="icon-container" x-html="icons.warning"></span>
                     <div>
-                        <span x-text="encoder.sourceRetryCount > 0 ? `Retry ${encoder.sourceRetryCount}/${encoder.sourceMaxRetries}` : 'Error'"></span>
+                        <span x-text="encoder.sourceRetryCount > 0 ? `Reconnecting input (attempt ${encoder.sourceRetryCount})` : 'Error'"></span>
                         <p x-show="encoder.lastError" x-text="encoder.lastError"></p>
                     </div>
                 </div>

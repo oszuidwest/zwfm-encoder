@@ -30,6 +30,15 @@ const (
 	LevelUpdateSamples = 12000
 	// distributorBufferSize holds ~100ms of PCM audio per read.
 	distributorBufferSize = audio.BytesPerSecond / 10
+	// inputCheckInterval is how often a running source is checked for audio.
+	inputCheckInterval = 250 * time.Millisecond
+	// inputAudioGap is the longest pause in PCM that still counts as steady
+	// audio; a longer pause restarts the stable window of a source run.
+	inputAudioGap = 2 * time.Second
+	// inputStartupTimeout ends a source run that delivers no audio at all for this long.
+	inputStartupTimeout = 30 * time.Second
+	// inputStallTimeout ends a source run whose audio stops for this long.
+	inputStallTimeout = 10 * time.Second
 )
 
 // ErrNoAudioInput is returned when no audio input device is configured.
@@ -63,6 +72,9 @@ type Encoder struct {
 	buildCaptureCommand func(device, ffmpegPath string) (string, []string, error)
 	openDanteSource     func(context.Context, string) (source, error)
 	streamRestartDelay  time.Duration
+	inputStableDelay    time.Duration
+	inputStartupTimeout time.Duration
+	inputStallTimeout   time.Duration
 	srtAvailable        bool
 	streamManager       *streaming.Manager
 	recordingManager    *recording.Manager
@@ -80,6 +92,11 @@ type Encoder struct {
 	startTime           time.Time
 	retryCount          int
 	backoff             *util.Backoff
+	inputLostAt         time.Time                         // start of the open outage; zero when no input_lost awaits its input_restored
+	audioMu             sync.Mutex                        // guards audioRunID, steadyAudioSince and lastAudioAt
+	audioRunID          uint64                            // source run the audio times belong to
+	steadyAudioSince    time.Time                         // start of audioRunID's PCM without pauses over inputAudioGap
+	lastAudioAt         time.Time                         // latest PCM of audioRunID
 	audioLevels         atomic.Pointer[audio.AudioLevels] // published lock-free; see AudioLevels
 	silenceDetect       *audio.SilenceDetector
 	imbalanceDetect     *audio.ImbalanceDetector
@@ -154,12 +171,15 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 			return dante.Open(ctx, input)
 		},
 		streamRestartDelay:  types.StreamRestartDelay,
+		inputStableDelay:    types.StableThreshold,
+		inputStartupTimeout: inputStartupTimeout,
+		inputStallTimeout:   inputStallTimeout,
 		srtAvailable:        srtUsable(srtAvailable, srtProbeErr),
 		streamManager:       streamMgr,
 		silenceDumpManager:  dumpManager,
 		eventLogger:         logger,
 		state:               types.StateStopped,
-		backoff:             util.NewBackoff(types.InitialRetryDelay, types.MaxRetryDelay),
+		backoff:             util.NewBackoff(types.InitialRetryDelay, types.SourceMaxRetryDelay),
 		silenceDetect:       audio.NewSilenceDetector(),
 		imbalanceDetect:     audio.NewImbalanceDetector(),
 		alertOrchestrator:   orchestrator,
@@ -357,7 +377,6 @@ func (e *Encoder) Status() types.EncoderStatus {
 		UptimeSeconds:    uptimeSeconds,
 		LastError:        e.lastError,
 		SourceRetryCount: e.retryCount,
-		SourceMaxRetries: types.MaxRetries,
 	}
 }
 
@@ -416,6 +435,10 @@ func (e *Encoder) Start() error {
 	e.stopChan = make(chan struct{})
 	e.retryCount = 0
 	e.backoff.Reset()
+	// inputLostAt deliberately survives Stop/Start, including the Restart after
+	// an audio input change: the outage stays open until an input is confirmed,
+	// so it raises no second input_lost and the next input_restored closes it.
+	// It is kept in memory only, so a process restart forgets an open outage.
 	e.silenceDetect.Reset()
 	e.imbalanceDetect.Reset()
 	e.alertOrchestrator.Reset()
@@ -672,7 +695,10 @@ func (e *Encoder) isStopping() bool {
 	return e.state == types.StateStopping || e.state == types.StateStopped
 }
 
-// runSourceLoop manages the audio capture lifecycle with automatic retry and backoff.
+// runSourceLoop keeps the audio source running for as long as the encoder runs.
+// It never gives up: a missing input is reopened with capped backoff, so the
+// encoder resumes by itself when the input returns. Streams and recorders keep
+// running meanwhile and resume when audio flows again.
 func (e *Encoder) runSourceLoop() {
 	for {
 		e.mu.Lock()
@@ -682,9 +708,7 @@ func (e *Encoder) runSourceLoop() {
 		}
 		e.mu.Unlock()
 
-		startTime := time.Now()
 		err := e.runSource()
-		runDuration := time.Since(startTime)
 
 		e.mu.Lock()
 		if e.isStopping() {
@@ -692,52 +716,32 @@ func (e *Encoder) runSourceLoop() {
 			return
 		}
 
+		errMsg := "audio capture stopped"
 		if err != nil {
-			errMsg := err.Error()
-			e.lastError = errMsg
-			slog.Error("source capture error", "error", errMsg)
-
-			if runDuration >= types.SuccessThreshold {
-				e.retryCount = 0
-				e.backoff.Reset()
-			} else {
-				e.retryCount++
-			}
-
-			if e.retryCount >= types.MaxRetries {
-				slog.Error("source capture failed, giving up", "attempts", types.MaxRetries)
-				e.state = types.StateStopping
-				e.lastError = fmt.Sprintf("Stopped after %d failed attempts: %s", types.MaxRetries, errMsg)
-				e.mu.Unlock()
-				for _, stopErr := range e.stopConsumers() {
-					slog.Error("failed to stop consumers during source failure", "error", stopErr)
-				}
-				e.resetDetection()
-				e.mu.Lock()
-				e.state = types.StateStopped
-				e.mu.Unlock()
-				return
-			}
+			errMsg = err.Error()
 		}
-
-		if err == nil {
-			e.retryCount = 0
-			e.backoff.Reset()
+		e.lastError = errMsg
+		e.retryCount++
+		newlyLost := e.inputLostAt.IsZero()
+		if newlyLost {
+			e.inputLostAt = time.Now()
 		}
-
-		if e.isStopping() {
-			e.mu.Unlock()
-			return
-		}
-
 		e.state = types.StateStarting
+		attempt := e.retryCount
 		retryDelay := e.backoff.Next()
+		stopChan := e.stopChan
 		e.mu.Unlock()
 
-		slog.Info("source stopped, waiting before restart",
-			"delay", retryDelay, "attempt", e.retryCount+1, "max_retries", types.MaxRetries)
+		slog.Warn("audio input failed, reopening", "error", errMsg, "delay", retryDelay, "attempt", attempt)
+		if newlyLost {
+			e.alertOrchestrator.HandleInputLost(notify.InputData{
+				Input: e.config.AudioInput(),
+				Error: errMsg,
+			})
+		}
+
 		select {
-		case <-e.stopChan:
+		case <-stopChan:
 			return
 		case <-time.After(retryDelay):
 		}
@@ -768,7 +772,57 @@ func (e *Encoder) runSource() error {
 	go e.runDistributor(runID)
 	go e.startEnabledStreamsAfterDelay(runID, stopChan, e.streamRestartDelay)
 
-	return src.Wait()
+	return e.superviseSource(runID, src, cancel)
+}
+
+// superviseSource waits for src to exit. Meanwhile it confirms the input once
+// it has delivered steady audio for the stable delay, and ends a run that
+// delivers no audio (within the startup timeout) or stops delivering it (for
+// the stall timeout), so it is reopened like a failed capture. Running here,
+// in the source loop's goroutine, keeps every input_restored ordered before
+// the input_lost of a later failure.
+//
+// After a timeout it waits for src to exit: capture processes are killed
+// after their WaitDelay and native sources close on cancellation.
+func (e *Encoder) superviseSource(runID uint64, src source, cancel context.CancelFunc) error {
+	exited := make(chan error, 1)
+	go func() { exited <- src.Wait() }()
+
+	ticker := time.NewTicker(inputCheckInterval)
+	defer ticker.Stop()
+	startedAt := time.Now()
+	confirmed := false
+
+	for {
+		select {
+		case err := <-exited:
+			return err
+		case <-ticker.C:
+		}
+
+		now := time.Now()
+		steadySince, lastAudio := e.audioTimes(runID)
+		var stallErr error
+		switch {
+		case lastAudio.IsZero() && now.Sub(startedAt) >= e.inputStartupTimeout:
+			stallErr = fmt.Errorf("no audio from input within %s", e.inputStartupTimeout)
+		case !lastAudio.IsZero() && now.Sub(lastAudio) >= e.inputStallTimeout:
+			stallErr = fmt.Errorf("no audio from input for %s", e.inputStallTimeout)
+		}
+		if stallErr != nil {
+			cancel()
+			// The exit error of a capture process often names the device problem.
+			if err := <-exited; err != nil {
+				slog.Warn("stalled audio capture exited", "error", err)
+			}
+			return stallErr
+		}
+		// Confirm once the steady audio received spans inputStableDelay.
+		if !confirmed && !lastAudio.IsZero() && lastAudio.Sub(steadySince) >= e.inputStableDelay {
+			confirmed = true
+			e.confirmInput(runID, steadySince)
+		}
+	}
 }
 
 // openSource selects native Dante or platform capture from the input URI.
@@ -832,7 +886,6 @@ func (e *Encoder) publishSource(src io.Reader) (runID uint64, stopChan <-chan st
 	e.sourceStdout = src
 	e.state = types.StateRunning
 	e.startTime = time.Now()
-	e.lastError = ""
 	return e.sourceRunID, e.stopChan, true
 }
 
@@ -845,6 +898,55 @@ func (e *Encoder) startEnabledStreamsAfterDelay(runID uint64, stopChan <-chan st
 		e.startEnabledStreams(runID)
 	case <-stopChan:
 	}
+}
+
+// confirmInput clears the retry state of a source run that delivers audio
+// steadily and reports the end of an input loss.
+func (e *Encoder) confirmInput(runID uint64, audioSince time.Time) {
+	e.mu.Lock()
+	if e.sourceRunID != runID || e.state != types.StateRunning {
+		e.mu.Unlock()
+		return
+	}
+	e.retryCount = 0
+	e.backoff.Reset()
+	e.lastError = ""
+	lostAt := e.inputLostAt
+	e.inputLostAt = time.Time{}
+	e.mu.Unlock()
+
+	if lostAt.IsZero() {
+		return
+	}
+	unavailable := audioSince.Sub(lostAt)
+	slog.Info("audio input restored", "unavailable", unavailable.Round(time.Second))
+	e.alertOrchestrator.HandleInputRestored(notify.InputData{
+		Input:      e.config.AudioInput(),
+		DurationMs: unavailable.Milliseconds(),
+	})
+}
+
+// noteAudio records that the distributor of runID received PCM.
+func (e *Encoder) noteAudio(runID uint64) {
+	now := time.Now()
+	e.audioMu.Lock()
+	defer e.audioMu.Unlock()
+	if e.audioRunID != runID || now.Sub(e.lastAudioAt) > inputAudioGap {
+		e.audioRunID = runID
+		e.steadyAudioSince = now
+	}
+	e.lastAudioAt = now
+}
+
+// audioTimes returns since when runID has delivered PCM without long pauses
+// and when it last did; zero times mean no PCM yet.
+func (e *Encoder) audioTimes(runID uint64) (steadySince, last time.Time) {
+	e.audioMu.Lock()
+	defer e.audioMu.Unlock()
+	if e.audioRunID != runID {
+		return time.Time{}, time.Time{}
+	}
+	return e.steadyAudioSince, e.lastAudioAt
 }
 
 func (e *Encoder) sourceRunActive(runID uint64) bool {
@@ -934,6 +1036,7 @@ func (e *Encoder) runDistributor(runID uint64) {
 		if n == 0 {
 			continue
 		}
+		e.noteAudio(runID)
 
 		chunk := buf[:n]
 

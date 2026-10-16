@@ -50,6 +50,10 @@ const (
 	ChannelImbalanceStart EventType = "channel_imbalance_start"
 	// ChannelImbalanceEnd indicates an L/R channel imbalance end event.
 	ChannelImbalanceEnd EventType = "channel_imbalance_end"
+	// InputLost indicates that audio capture from the configured input stopped.
+	InputLost EventType = "input_lost"
+	// InputRestored indicates that audio capture has run stably again after a loss.
+	InputRestored EventType = "input_restored"
 )
 
 const (
@@ -127,6 +131,13 @@ type ImbalanceDetails struct {
 	ImbalanceDB  float64 `json:"imbalance_db"`   // dB; abs(L-R)
 	ThresholdDB  float64 `json:"threshold_db"`   // dB
 	DurationMs   int64   `json:"duration_ms,omitempty"`
+}
+
+// InputDetails holds audio input loss and restoration information.
+type InputDetails struct {
+	Input      string `json:"input,omitempty"`
+	Error      string `json:"error,omitempty"`
+	DurationMs int64  `json:"duration_ms,omitempty"`
 }
 
 // RecorderDetails holds recorder event information.
@@ -295,6 +306,26 @@ func (l *Logger) LogChannelImbalanceEnd(t time.Time, details *ImbalanceDetails) 
 	})
 }
 
+// LogInputLost records when audio capture from the configured input stops.
+// t must be the event time, even if the write is deferred.
+func (l *Logger) LogInputLost(t time.Time, details *InputDetails) error {
+	return l.Log(&Event{
+		Timestamp: t,
+		Type:      InputLost,
+		Details:   details,
+	})
+}
+
+// LogInputRestored records when audio capture has run stably again after a loss.
+// t must be the event time, even if the write is deferred.
+func (l *Logger) LogInputRestored(t time.Time, details *InputDetails) error {
+	return l.Log(&Event{
+		Timestamp: t,
+		Type:      InputRestored,
+		Details:   details,
+	})
+}
+
 // LogRecorder records a recorder lifecycle or upload event. The details are
 // stored on the event as-is; callers must not mutate them afterwards.
 func (l *Logger) LogRecorder(eventType EventType, d *RecorderDetails) error {
@@ -332,7 +363,7 @@ const (
 	FilterAll TypeFilter = ""
 	// FilterStream selects stream events.
 	FilterStream TypeFilter = "stream"
-	// FilterAudio selects silence, audio dump, and channel imbalance events.
+	// FilterAudio selects silence, audio dump, channel imbalance, and input events.
 	FilterAudio TypeFilter = "audio"
 	// FilterRecorder selects recorder events.
 	FilterRecorder TypeFilter = "recorder"

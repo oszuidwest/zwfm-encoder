@@ -63,6 +63,8 @@ var eventClassifications = map[EventType]eventClassification{
 	AudioDumpReady:        {category: CategoryAudio, severity: SeverityInfo, reason: ReasonLifecycle},
 	ChannelImbalanceStart: {category: CategoryAudio, severity: SeverityWarning, reason: ReasonProblem},
 	ChannelImbalanceEnd:   {category: CategoryAudio, severity: SeveritySuccess, reason: ReasonRecovery},
+	InputLost:             {category: CategoryAudio, severity: SeverityError, reason: ReasonProblem},
+	InputRestored:         {category: CategoryAudio, severity: SeveritySuccess, reason: ReasonRecovery},
 	RecorderStarted:       {category: CategoryRecorder, severity: SeverityInfo, reason: ReasonLifecycle},
 	RecorderStopped:       {category: CategoryRecorder, severity: SeverityInfo, reason: ReasonLifecycle},
 	RecorderError:         {category: CategoryRecorder, severity: SeverityError, reason: ReasonProblem},

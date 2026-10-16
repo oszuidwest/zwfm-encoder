@@ -17,6 +17,10 @@ import (
 // logQueueDepth buffers ordered event-log writes from audio cycle handlers.
 const logQueueDepth = 16
 
+// inputQueueDepth buffers input alerts per channel. Outages are rare, so a full
+// queue means the channel is stuck; the oldest alerts then make way.
+const inputQueueDepth = 8
+
 // pendingRecoveryTTL keeps recovery context through capture and encoding delays.
 const pendingRecoveryTTL = time.Minute
 
@@ -27,8 +31,8 @@ type logJob struct {
 	fn        func()
 }
 
-// AlertOrchestrator coordinates silence, channel-imbalance, audio-dump, and
-// upload-abandonment alert lifecycles.
+// AlertOrchestrator coordinates silence, channel-imbalance, audio-dump,
+// audio-input, and upload-abandonment alert lifecycles.
 type AlertOrchestrator struct {
 	cfg         *config.Config
 	eventLogger *eventlog.Logger
@@ -41,10 +45,11 @@ type AlertOrchestrator struct {
 	notifyCtx               context.Context
 	notifyCancel            context.CancelFunc
 
-	logMu     sync.RWMutex
-	logQueue  chan logJob // serialized log writes; single worker guarantees JSONL write order
-	closeOnce sync.Once   // ensures Close drains and stops the worker exactly once
-	closed    bool
+	logMu       sync.RWMutex
+	logQueue    chan logJob   // serialized log writes; single worker guarantees JSONL write order
+	inputQueues []chan func() // per-channel input alert deliveries, index-aligned with dispatcher.Channels()
+	closeOnce   sync.Once     // ensures Close drains and stops the worker exactly once
+	closed      bool
 }
 
 // pendingRecoveryData holds recovery event data while waiting for the audio dump.
@@ -72,6 +77,18 @@ func NewAlertOrchestrator(cfg *config.Config, dispatcher *Dispatcher) *AlertOrch
 		pendingRecoveries: map[incidentKey]*pendingRecoveryData{},
 	}
 	go o.runLogWorker()
+	// One FIFO worker per channel delivers input alerts in the order they were
+	// raised, so a restoration never lands before its loss and an old
+	// restoration never lands after a newer loss and clears a live outage.
+	for range dispatcher.Channels() {
+		queue := make(chan func(), inputQueueDepth)
+		o.inputQueues = append(o.inputQueues, queue)
+		go func() {
+			for deliver := range queue {
+				deliver()
+			}
+		}()
+	}
 	return o
 }
 
@@ -308,9 +325,78 @@ func (o *AlertOrchestrator) HandleUploadAbandoned(params UploadAbandonedData) {
 	o.dispatcher.DispatchUploadAbandoned(ctx, cfg, params)
 }
 
+// HandleInputLost alerts every channel configured for audio alerts and logs an
+// audio input loss. Calls must be ordered with [AlertOrchestrator.HandleInputRestored].
+func (o *AlertOrchestrator) HandleInputLost(data InputData) {
+	o.handleInputEvent("input_lost", data, AlertChannel.SendInputLost, (*eventlog.Logger).LogInputLost)
+}
+
+// HandleInputRestored alerts every channel configured for audio alerts and
+// logs an audio input restoration.
+func (o *AlertOrchestrator) HandleInputRestored(data InputData) {
+	o.handleInputEvent("input_restored", data, AlertChannel.SendInputRestored, (*eventlog.Logger).LogInputRestored)
+}
+
+// handleInputEvent queues the alert on each channel's ordered worker. Like
+// upload abandonment, input alerts ignore per-event subscriptions.
+func (o *AlertOrchestrator) handleInputEvent(
+	eventType string, data InputData,
+	send func(AlertChannel, context.Context, *config.Snapshot, InputData) error,
+	write func(*eventlog.Logger, time.Time, *eventlog.InputDetails) error,
+) {
+	cfg := o.cfg.Snapshot()
+	o.mu.Lock()
+	ctx := o.notifyCtx
+	o.mu.Unlock()
+
+	now := time.Now()
+	o.logMu.RLock()
+	if !o.closed {
+		for i, ch := range o.dispatcher.Channels() {
+			if !ch.IsConfiguredForSilence(&cfg) {
+				continue
+			}
+			chCfg := cfg // Each channel gets its own Snapshot copy.
+			deliver := func() {
+				logNotifyResult(func() error { return send(ch, ctx, &chCfg, data) }, ch.Name(), eventType)
+			}
+			enqueueInputAlert(o.inputQueues[i], deliver, ch.Name(), eventType)
+		}
+	}
+	o.logMu.RUnlock()
+
+	o.enqueueLog(eventType, func() {
+		if err := write(o.eventLogger, now, &eventlog.InputDetails{
+			Input:      data.Input,
+			Error:      data.Error,
+			DurationMs: data.DurationMs,
+		}); err != nil {
+			slog.Warn("failed to log audio input event", "event_type", eventType, "error", err)
+		}
+	})
+}
+
+// enqueueInputAlert queues deliver, discarding the oldest queued alert when
+// the channel is backed up: the newest state matters most to a monitor that
+// shows the last value, so the latest loss or restoration is always kept.
+func enqueueInputAlert(queue chan func(), deliver func(), channel, eventType string) {
+	for {
+		select {
+		case queue <- deliver:
+			return
+		default:
+		}
+		select {
+		case <-queue:
+			slog.Warn("input alert queue full, oldest alert dropped", "channel", channel, "event_type", eventType)
+		default:
+		}
+	}
+}
+
 // Reset clears alert state for the current silence period, including any pending dump dispatch.
 // In-flight notifications are intentionally NOT cancelled here: Reset runs on encoder
-// start/stop/source-failure, and a short silence followed by a Stop would otherwise abort
+// start and stop, and a short silence followed by a Stop would otherwise abort
 // a still-pending silence_start delivery. The notify context is cancelled only on Close.
 func (o *AlertOrchestrator) Reset() {
 	o.mu.Lock()
@@ -351,6 +437,9 @@ func (o *AlertOrchestrator) Close() {
 		o.logMu.Lock()
 		o.closed = true
 		queue := o.logQueue
+		for _, inputQueue := range o.inputQueues {
+			close(inputQueue)
+		}
 		o.logMu.Unlock()
 
 		queue <- logJob{fn: func() { close(done) }}

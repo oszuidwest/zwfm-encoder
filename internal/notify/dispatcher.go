@@ -54,6 +54,17 @@ type AlertChannel interface {
 	SendAudioDump(ctx context.Context, cfg *config.Snapshot, data *AudioDumpData) error
 	// SendUploadAbandoned delivers an alert for a recording that exhausted upload retries.
 	SendUploadAbandoned(ctx context.Context, cfg *config.Snapshot, params UploadAbandonedData) error
+	// SendInputLost delivers an alert when audio capture from the input stops.
+	SendInputLost(ctx context.Context, cfg *config.Snapshot, data InputData) error
+	// SendInputRestored delivers an alert when audio capture runs stably again.
+	SendInputRestored(ctx context.Context, cfg *config.Snapshot, data InputData) error
+}
+
+// InputData describes an audio input loss or restoration.
+type InputData struct {
+	Input      string
+	Error      string // set for input loss
+	DurationMs int64  // set for input restoration
 }
 
 // UploadAbandonedData contains the retry context sent when a recorder upload is abandoned.
