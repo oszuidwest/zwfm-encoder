@@ -1,10 +1,12 @@
 package main
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -15,69 +17,57 @@ import (
 func TestSetupRoutesRejectsUnauthenticatedRequests(t *testing.T) {
 	t.Parallel()
 
-	publicRoutes := map[string]struct{}{
-		"/login":       {},
-		"/logout":      {},
-		"GET /health":  {},
-		"GET /ready":   {},
-		"/style.css":   {},
-		"/icons.js":    {},
-		"/favicon.svg": {},
-	}
-	apiKeyRoutes := map[string]struct{}{
-		"POST /api/recordings/start": {},
-		"POST /api/recordings/stop":  {},
+	// Routes that skip session auth; the API-key routes are covered by
+	// TestSetupRoutesAPIKeyAuth.
+	unprotected := map[string]bool{
+		"/login":                     true,
+		"/logout":                    true,
+		"GET /health":                true,
+		"GET /ready":                 true,
+		"/style.css":                 true,
+		"/icons.js":                  true,
+		"/favicon.svg":               true,
+		"POST /api/recordings/start": true,
+		"POST /api/recordings/stop":  true,
 	}
 
-	type testCase struct {
-		name   string
-		method string
-		path   string
+	patterns := setupRoutePatterns(t)
+	// probe resolves each request to the pattern it reaches, so a request that
+	// falls through to the protected "/" cannot pass for its own route.
+	probe := http.NewServeMux()
+	for _, pattern := range patterns {
+		probe.HandleFunc(pattern, func(http.ResponseWriter, *http.Request) {})
 	}
-	tests := []testCase{}
-	seenPublic := map[string]bool{}
-	seenAPIKey := map[string]bool{}
-	for _, pattern := range setupRoutePatterns(t) {
-		if _, ok := publicRoutes[pattern]; ok {
-			seenPublic[pattern] = true
-			continue
-		}
-		if _, ok := apiKeyRoutes[pattern]; ok {
-			seenAPIKey[pattern] = true
-			continue
-		}
-
-		method, path := requestForRoutePattern(pattern)
-		tests = append(tests, testCase{
-			name:   method + " " + path,
-			method: method,
-			path:   path,
-		})
-	}
-	assertAllowlistedRoutesRegistered(t, publicRoutes, seenPublic)
-	assertAllowlistedRoutesRegistered(t, apiKeyRoutes, seenAPIKey)
 
 	handler := newRouteTestServer(t).SetupRoutes()
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, pattern := range patterns {
+		if unprotected[pattern] {
+			delete(unprotected, pattern)
+			continue
+		}
+
+		method, path, found := strings.Cut(pattern, " ")
+		if !found {
+			method, path = http.MethodGet, pattern
+		}
+		t.Run(method+" "+path, func(t *testing.T) {
 			t.Parallel()
 
-			req := httptest.NewRequest(tt.method, tt.path, http.NoBody)
+			req := httptest.NewRequest(method, path, http.NoBody)
+			if _, got := probe.Handler(req); got != pattern {
+				t.Fatalf("request %s %s reaches pattern %q, want %q", method, path, got, pattern)
+			}
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, req)
 
-			if rec.Code == http.StatusUnauthorized {
-				return
-			}
-			if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/login" {
-				t.Fatalf(
-					"%s response = %d with Location %q, want 401 or redirect to /login",
-					tt.name,
-					rec.Code,
-					rec.Header().Get("Location"),
-				)
+			assertStatus(t, rec, http.StatusFound)
+			if location := rec.Header().Get("Location"); location != "/login" {
+				t.Fatalf("Location = %q, want /login", location)
 			}
 		})
+	}
+	for pattern := range unprotected {
+		t.Errorf("allowlisted route %q is not registered by SetupRoutes", pattern)
 	}
 }
 
@@ -86,38 +76,52 @@ func TestSetupRoutesAPIKeyAuth(t *testing.T) {
 
 	const apiKey = "route-test-api-key" //nolint:gosec // Test credential for route authentication.
 	tests := []struct {
-		name         string
-		configured   bool
-		providedKey  string
-		wantStatus   int
-		wantErrorMsg string
-		wantJSON     bool
+		name       string
+		configured bool
+		key        string
+		path       string
+		wantStatus int
+		wantBody   string
+		wantJSON   bool
 	}{
 		{
-			name:         "no key configured",
-			wantStatus:   http.StatusServiceUnavailable,
-			wantErrorMsg: "API key not configured",
+			name:       "no key configured",
+			path:       "/api/recordings/start",
+			wantStatus: http.StatusServiceUnavailable,
+			wantBody:   "API key not configured",
 		},
 		{
-			name:         "missing header",
-			configured:   true,
-			wantStatus:   http.StatusUnauthorized,
-			wantErrorMsg: "Unauthorized",
+			name:       "missing header",
+			configured: true,
+			path:       "/api/recordings/start",
+			wantStatus: http.StatusUnauthorized,
+			wantBody:   "Unauthorized",
 		},
 		{
-			name:         "wrong key",
-			configured:   true,
-			providedKey:  "wrong-key",
-			wantStatus:   http.StatusUnauthorized,
-			wantErrorMsg: "Unauthorized",
+			name:       "wrong key",
+			configured: true,
+			key:        "wrong-key",
+			path:       "/api/recordings/stop",
+			wantStatus: http.StatusUnauthorized,
+			wantBody:   "Unauthorized",
 		},
 		{
-			name:         "correct key calls handler",
-			configured:   true,
-			providedKey:  apiKey,
-			wantStatus:   http.StatusBadRequest,
-			wantErrorMsg: "recorder_id is required",
-			wantJSON:     true,
+			name:       "correct key reaches handler",
+			configured: true,
+			key:        apiKey,
+			path:       "/api/recordings/start",
+			wantStatus: http.StatusBadRequest,
+			wantBody:   "recorder_id is required",
+			wantJSON:   true,
+		},
+		{
+			name:       "recording not available",
+			configured: true,
+			key:        apiKey,
+			path:       "/api/recordings/stop?recorder_id=unknown",
+			wantStatus: http.StatusServiceUnavailable,
+			wantBody:   encoder.ErrRecordingNotAvailable.Error(),
+			wantJSON:   true,
 		},
 	}
 
@@ -132,69 +136,18 @@ func TestSetupRoutesAPIKeyAuth(t *testing.T) {
 				}
 			}
 
-			req := httptest.NewRequest(http.MethodPost, "/api/recordings/start", http.NoBody)
-			if tt.providedKey != "" {
-				req.Header.Set("X-API-Key", tt.providedKey)
-			}
-			rec := httptest.NewRecorder()
-			s.SetupRoutes().ServeHTTP(rec, req)
-
-			if rec.Code != tt.wantStatus {
-				t.Fatalf("status = %d, want %d", rec.Code, tt.wantStatus)
-			}
-			got := strings.TrimSpace(rec.Body.String())
-			if tt.wantJSON {
-				got = decodeError(t, rec.Body.Bytes())
-			}
-			if got != tt.wantErrorMsg {
-				t.Fatalf("body = %q, want %q", got, tt.wantErrorMsg)
-			}
-		})
-	}
-}
-
-func TestHandleExternalRecordingActionThroughRoute(t *testing.T) {
-	t.Parallel()
-
-	const apiKey = "external-recording-test-key" //nolint:gosec // Test credential for route authentication.
-	tests := []struct {
-		name         string
-		path         string
-		wantStatus   int
-		wantErrorMsg string
-	}{
-		{
-			name:         "missing recorder ID",
-			path:         "/api/recordings/start",
-			wantStatus:   http.StatusBadRequest,
-			wantErrorMsg: "recorder_id is required",
-		},
-		{
-			name:         "recording not available",
-			path:         "/api/recordings/stop?recorder_id=unknown",
-			wantStatus:   http.StatusServiceUnavailable,
-			wantErrorMsg: encoder.ErrRecordingNotAvailable.Error(),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			s := newRouteTestServer(t)
-			if err := s.config.SetRecordingAPIKey(apiKey); err != nil {
-				t.Fatalf("SetRecordingAPIKey() error = %v", err)
-			}
 			req := httptest.NewRequest(http.MethodPost, tt.path, http.NoBody)
-			req.Header.Set("X-API-Key", apiKey)
+			if tt.key != "" {
+				req.Header.Set("X-API-Key", tt.key)
+			}
 			rec := httptest.NewRecorder()
 			s.SetupRoutes().ServeHTTP(rec, req)
 
-			if rec.Code != tt.wantStatus {
-				t.Fatalf("status = %d, want %d", rec.Code, tt.wantStatus)
-			}
-			if got := decodeError(t, rec.Body.Bytes()); got != tt.wantErrorMsg {
-				t.Fatalf("error = %q, want %q", got, tt.wantErrorMsg)
+			assertStatus(t, rec, tt.wantStatus)
+			if tt.wantJSON {
+				assertErrorEqual(t, rec, tt.wantBody)
+			} else if got := strings.TrimSpace(rec.Body.String()); got != tt.wantBody {
+				t.Fatalf("body = %q, want %q", got, tt.wantBody)
 			}
 		})
 	}
@@ -206,26 +159,16 @@ func TestSecurityHeadersOnPublicResponse(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/login", http.NoBody)
 	rec := httptest.NewRecorder()
 	newRouteTestServer(t).SetupRoutes().ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
-	}
+	assertStatus(t, rec, http.StatusOK)
 
-	tests := []struct {
-		name  string
-		value string
-	}{
-		{name: "X-Frame-Options", value: "DENY"},
-		{name: "X-Content-Type-Options", value: "nosniff"},
-		{name: "Referrer-Policy", value: "strict-origin-when-cross-origin"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			if got := rec.Header().Get(tt.name); got != tt.value {
-				t.Fatalf("header %s = %q, want %q", tt.name, got, tt.value)
-			}
-		})
+	for name, want := range map[string]string{
+		"X-Frame-Options":        "DENY",
+		"X-Content-Type-Options": "nosniff",
+		"Referrer-Policy":        "strict-origin-when-cross-origin",
+	} {
+		if got := rec.Header().Get(name); got != want {
+			t.Errorf("header %s = %q, want %q", name, got, want)
+		}
 	}
 }
 
@@ -238,51 +181,38 @@ func newRouteTestServer(t *testing.T) *Server {
 	return s
 }
 
-// setupRoutePatterns reads every mux registration from server.go so a route
-// added to SetupRoutes is covered without editing this test.
+// setupRoutePatterns parses server.go and returns every Handle/HandleFunc
+// pattern, so a route added to SetupRoutes is covered without editing this test.
 func setupRoutePatterns(t *testing.T) []string {
 	t.Helper()
 
-	source, err := os.ReadFile("server.go")
+	file, err := parser.ParseFile(token.NewFileSet(), "server.go", nil, 0)
 	if err != nil {
-		t.Fatalf("read server.go: %v", err)
+		t.Fatalf("parse server.go: %v", err)
 	}
 	var patterns []string
-	for _, match := range routeRegistration.FindAllStringSubmatch(string(source), -1) {
-		if match[1] == "" {
-			t.Fatalf("route registration %q does not use a string literal pattern", match[0])
+	ast.Inspect(file, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
 		}
-		patterns = append(patterns, match[1])
-	}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || (selector.Sel.Name != "Handle" && selector.Sel.Name != "HandleFunc") {
+			return true
+		}
+		literal, ok := call.Args[0].(*ast.BasicLit)
+		if !ok || literal.Kind != token.STRING {
+			t.Fatalf("route registration %s does not use a string literal pattern", selector.Sel.Name)
+		}
+		pattern, err := strconv.Unquote(literal.Value)
+		if err != nil {
+			t.Fatalf("route pattern %s: %v", literal.Value, err)
+		}
+		patterns = append(patterns, pattern)
+		return true
+	})
 	if len(patterns) == 0 {
-		t.Fatal("SetupRoutes contains no route registrations")
+		t.Fatal("server.go contains no route registrations")
 	}
 	return patterns
-}
-
-var (
-	routeRegistration = regexp.MustCompile(`mux\.Handle(?:Func)?\((?:"([^"]+)")?`)
-	routeWildcard     = regexp.MustCompile(`\{[^}]*\}`)
-)
-
-func requestForRoutePattern(pattern string) (method, path string) {
-	method, path, found := strings.Cut(pattern, " ")
-	if !found {
-		method, path = http.MethodGet, pattern
-	}
-	return method, routeWildcard.ReplaceAllString(path, "test")
-}
-
-func assertAllowlistedRoutesRegistered(
-	t *testing.T,
-	allowlist map[string]struct{},
-	seen map[string]bool,
-) {
-	t.Helper()
-
-	for pattern := range allowlist {
-		if !seen[pattern] {
-			t.Errorf("allowlisted route %q is not registered by SetupRoutes", pattern)
-		}
-	}
 }
