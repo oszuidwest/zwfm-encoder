@@ -81,11 +81,6 @@ func TestHourlyRotationLosesNoAudio(t *testing.T) {
 	if drops := r.Status().AudioDrops; drops != 0 {
 		t.Fatalf("AudioDrops = %d, want 0", drops)
 	}
-	// Named after the wall clock at the rotation, rounded to the minute.
-	if got, ok := util.FilenameTime(filepath.Base(secondFile)); !ok ||
-		(!got.Equal(rotatedAt.Round(time.Minute)) && !got.Equal(time.Now().Round(time.Minute))) {
-		t.Fatalf("rotated file = %s, want it named after %v", filepath.Base(secondFile), rotatedAt.Round(time.Minute))
-	}
 
 	var recorded []byte
 	for _, file := range []string{firstFile, secondFile} {
@@ -101,6 +96,29 @@ func TestHourlyRotationLosesNoAudio(t *testing.T) {
 	if !bytes.Equal(recorded, input) {
 		t.Fatalf("recorded %d bytes across the rotation, want the %d input bytes unchanged (first difference at byte %d)",
 			len(recorded), len(input), firstDifference(recorded, input))
+	}
+	// Named after the wall clock at the rotation, rounded to the minute.
+	if got, ok := util.FilenameTime(filepath.Base(secondFile)); !ok ||
+		(!got.Equal(rotatedAt.Round(time.Minute)) && !got.Equal(time.Now().Round(time.Minute))) {
+		t.Fatalf("rotated file = %s, want it named after %v", filepath.Base(secondFile), rotatedAt.Round(time.Minute))
+	}
+}
+
+func TestScheduleRotationTargetsNextHour(t *testing.T) {
+	var delay time.Duration
+	afterFunc = func(d time.Duration, _ func()) *time.Timer {
+		delay = d
+		return time.NewTimer(math.MaxInt64)
+	}
+	t.Cleanup(func() { afterFunc = time.AfterFunc })
+
+	// A rotation at a boundary schedules the next one a full hour later, also
+	// when it ran a moment early and its time was rounded up to the boundary.
+	boundary := time.Now().Truncate(time.Hour).Add(time.Hour)
+	(&GenericRecorder{}).scheduleRotationLocked(boundary)
+	want := boundary.Add(time.Hour)
+	if got := time.Now().Add(delay); got.Sub(want).Abs() > time.Second {
+		t.Fatalf("next rotation at %v, want %v", got, want)
 	}
 }
 
@@ -129,6 +147,33 @@ func TestStopWaitsForRotatedFile(t *testing.T) {
 	}
 	if _, err := os.Stat(firstFile); err != nil {
 		t.Fatalf("Stop returned before the rotated file was finalized: %v", err)
+	}
+}
+
+// TestFailedRotationKeepsRecording covers a next file that cannot start: the
+// recorder keeps writing into the current file instead of stopping.
+func TestFailedRotationKeepsRecording(t *testing.T) {
+	neverRotate(t)
+	r := startHourlyTestRecorder(t, "fallback")
+	r.mu.Lock()
+	firstFile := r.currentFile
+	r.ffmpegPath = filepath.Join(t.TempDir(), "missing-ffmpeg")
+	r.mu.Unlock()
+
+	chunk := make([]byte, audio.BytesPerSecond/10)
+	r.WriteAudio(chunk)
+	r.rotateFile()
+	if got := r.Status().State; got != types.ProcessRunning || !r.IsCurrentFile(firstFile) {
+		t.Fatalf("after failed rotation: state %q, current file kept %t; want running in %s",
+			got, r.IsCurrentFile(firstFile), filepath.Base(firstFile))
+	}
+	r.WriteAudio(chunk)
+	if err := r.Stop(); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	data, err := os.ReadFile(firstFile) //nolint:gosec // G304: test reads its own temp recording.
+	if err != nil || len(data) != 2*len(chunk) {
+		t.Fatalf("current file holds %d bytes, %v; want both chunks (%d bytes)", len(data), err, 2*len(chunk))
 	}
 }
 

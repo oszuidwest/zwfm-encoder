@@ -23,8 +23,12 @@ func TestMain(m *testing.M) {
 	if os.Getenv(fakeFFmpegEnv) == "1" {
 		os.Exit(runFakeFFmpeg(os.Args[1:]))
 	}
-	// FFmpeg processes started by the tests inherit this.
+	// FFmpeg processes started by the tests inherit these. A race-enabled fake
+	// would otherwise sleep 1s at exit (GORACE atexit_sleep_ms).
 	if err := os.Setenv(fakeFFmpegEnv, "1"); err != nil {
+		panic(err)
+	}
+	if err := os.Setenv("GORACE", "atexit_sleep_ms=0 "+os.Getenv("GORACE")); err != nil {
 		panic(err)
 	}
 	os.Exit(m.Run())
@@ -32,8 +36,9 @@ func TestMain(m *testing.M) {
 
 // runFakeFFmpeg copies stdin to the output file (the last argument), so
 // recordings hold the exact PCM written. Like the real FFmpeg with -n it never
-// overwrites a file, and it refuses to run without -n. The file appears only
-// when the fake exits, as a finalized recording would.
+// overwrites a file, and it refuses to run without -n. Unlike the real FFmpeg,
+// which creates its file at start, the fake writes it only when it exits, so
+// its existence shows the recording was finalized.
 func runFakeFFmpeg(args []string) int {
 	if !slices.Contains(args, "-n") {
 		return 2
