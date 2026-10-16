@@ -51,12 +51,11 @@ func TestRotationIntoRepeatedDSTHourGetsSuffix(t *testing.T) {
 	if err != nil {
 		t.Skipf("time zone data unavailable: %v", err)
 	}
-	cfg := &types.Recorder{Name: "Archive", Codec: types.CodecMP3}
-	never := func(string) bool { return false }
+	r := NewGenericRecorder(GenericRecorderConfig{Recorder: &types.Recorder{Name: "Archive", Codec: types.CodecMP3}})
 	// 00:00 and 01:00 UTC on 25 October 2026 are both 02:00 local time.
-	summer := nextRecordingFilename(cfg, time.Date(2026, 10, 25, 0, 0, 0, 0, time.UTC).In(amsterdam), never, nil)
-	used := map[string]struct{}{summer: {}}
-	winter := nextRecordingFilename(cfg, time.Date(2026, 10, 25, 1, 0, 0, 0, time.UTC).In(amsterdam), never, used)
+	summer := r.generateFilename(time.Date(2026, 10, 25, 0, 0, 0, 0, time.UTC).In(amsterdam))
+	winter := nextRecordingFilename(r.generateFilename(time.Date(2026, 10, 25, 1, 0, 0, 0, time.UTC).In(amsterdam)),
+		func(name string) bool { return name == summer })
 	if summer != "Archive-2026-10-25-02-00.mp3" || winter != "Archive-2026-10-25-02-00-2.mp3" {
 		t.Fatalf("repeated hour files = %q, %q; want the second one suffixed", summer, winter)
 	}
