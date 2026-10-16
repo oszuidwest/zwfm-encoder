@@ -20,6 +20,9 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
+// afterFunc schedules hourly rotations; tests replace it to rotate by hand.
+var afterFunc = time.AfterFunc
+
 // errRecorderStopped marks intentional stop/rotation cancellation.
 var errRecorderStopped = errors.New("recorder stopped")
 
@@ -63,7 +66,6 @@ type GenericRecorder struct {
 
 	// Current recording
 	currentFile   string
-	startTime     time.Time
 	usedFilenames map[string]time.Time // Names started within usedFilenameWindow by this process; S3-only mode deletes the file itself after upload.
 
 	// S3 client (cached, recreated when config changes)
@@ -83,6 +85,10 @@ type GenericRecorder struct {
 
 	// Rotation timer (hourly mode)
 	rotationTimer *time.Timer
+	// retiring tracks files that a rotation is still finalizing; Stop waits
+	// for them so they are queued for upload before intake closes.
+	retiring      sync.WaitGroup
+	retiringFiles map[string]struct{} // Files rotations are finalizing; protected from cleanup until queued.
 
 	// Max duration timer (on-demand mode)
 	durationTimer *time.Timer
@@ -112,6 +118,7 @@ func NewGenericRecorder(cfg GenericRecorderConfig) *GenericRecorder {
 		uploadQueue:        make(chan uploadRequest, 100),
 		uploadStopCh:       make(chan struct{}),
 		usedFilenames:      make(map[string]time.Time),
+		retiringFiles:      make(map[string]struct{}),
 	}
 }
 
@@ -159,11 +166,13 @@ func (r *GenericRecorder) getOrCreateS3Client() *s3.Client {
 	return r.s3Client
 }
 
-// IsCurrentFile reports whether the given path is the currently recording file.
+// IsCurrentFile reports whether the recorder is still writing or finalizing
+// path, so retention cleanup must leave it alone.
 func (r *GenericRecorder) IsCurrentFile(path string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.currentFile == path
+	_, retiring := r.retiringFiles[path]
+	return path != "" && (path == r.currentFile || retiring)
 }
 
 // Start starts the recorder.
@@ -228,7 +237,7 @@ func (r *GenericRecorder) startAsync() {
 	}
 
 	// Start FFmpeg encoder
-	if err := r.startEncoderLocked(); err != nil {
+	if err := r.startEncoderLocked(time.Now()); err != nil {
 		r.state = types.ProcessError
 		r.lastError = err.Error()
 		r.mu.Unlock()
@@ -246,7 +255,7 @@ func (r *GenericRecorder) startAsync() {
 
 	// Schedule based on recording mode
 	if r.config.RecordingMode == types.RecordingHourly {
-		r.scheduleRotationLocked()
+		r.scheduleRotationLocked(time.Now())
 	} else if r.maxDurationMinutes > 0 {
 		r.scheduleDurationLimitLocked()
 	}
@@ -317,10 +326,13 @@ func (r *GenericRecorder) Stop() error {
 	}
 	r.mu.Unlock()
 
-	// Queue the final file before stopping the worker.
+	// Queue the final file, and any file a rotation is still finalizing,
+	// before stopping the worker. Stopping state keeps new rotations out.
 	r.stopEncoderAndUpload()
+	r.retiring.Wait()
 
-	// Late rotation uploads go to durable retry storage after this point.
+	// Nothing should queue uploads after this point; uploadClosed still sends
+	// a late file to retry storage.
 	r.mu.Lock()
 	r.uploadClosed = true
 	r.mu.Unlock()
@@ -357,9 +369,8 @@ func (r *GenericRecorder) WriteAudio(pcm []byte) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	// Rotation may still own a live writer.
 	ch := r.audioCh
-	if ch == nil || (r.state != types.ProcessRunning && r.state != types.ProcessRotating) {
+	if ch == nil || r.state != types.ProcessRunning {
 		return
 	}
 
@@ -509,10 +520,10 @@ func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 	return nil
 }
 
+// startEncoderLocked starts FFmpeg on a new file named after fileTime: the
+// start time, or for a rotation the wall clock rounded to the minute.
 // Must be called with r.mu held.
-func (r *GenericRecorder) startEncoderLocked() error {
-	r.startTime = time.Now()
-
+func (r *GenericRecorder) startEncoderLocked(fileTime time.Time) error {
 	// Determine output directory based on storage mode
 	var outputDir string
 	if r.config.StorageMode == types.StorageS3 {
@@ -523,7 +534,7 @@ func (r *GenericRecorder) startEncoderLocked() error {
 		outputDir = r.config.LocalPath
 	}
 	// A restart within the same minute must not reuse an earlier file's name.
-	filename := nextRecordingFilename(r.generateFilename(r.startTime), func(name string) bool {
+	filename := nextRecordingFilename(r.generateFilename(fileTime), func(name string) bool {
 		if _, used := r.usedFilenames[name]; used {
 			return true
 		}
@@ -571,103 +582,128 @@ func (r *GenericRecorder) startEncoderLocked() error {
 	return nil
 }
 
-// stopEncoderAndUpload claims the active FFmpeg process and queues its file.
-// Stuck writers are cancelled instead of taking stdinMu.
-func (r *GenericRecorder) stopEncoderAndUpload() {
-	// The claim winner is the only channel closer.
-	r.mu.Lock()
-	result := r.result
-	audioCh := r.audioCh
-	writerDone := r.writerDone
-	currentFile := r.currentFile
+// encoderRun is one FFmpeg process with its writer state and output file.
+type encoderRun struct {
+	result     *ffmpeg.StartResult
+	audioCh    chan []byte
+	writerDone chan struct{}
+	file       string
+}
+
+// claimEncoderLocked detaches the active FFmpeg process so that the caller
+// alone finishes it. Must be called with r.mu held.
+func (r *GenericRecorder) claimEncoderLocked() encoderRun {
+	run := encoderRun{
+		result:     r.result,
+		audioCh:    r.audioCh,
+		writerDone: r.writerDone,
+		file:       r.currentFile,
+	}
 	r.result = nil
 	r.audioCh = nil
 	r.writerDone = nil
-	r.mu.Unlock()
+	return run
+}
 
-	if result == nil {
+// stopEncoderAndUpload claims the active FFmpeg process and queues its file.
+func (r *GenericRecorder) stopEncoderAndUpload() {
+	r.mu.Lock()
+	run := r.claimEncoderLocked()
+	r.mu.Unlock()
+	r.finishEncoder(run)
+}
+
+// finishEncoder closes a claimed FFmpeg process and queues its file.
+// Stuck writers are cancelled instead of taking stdinMu.
+func (r *GenericRecorder) finishEncoder(run encoderRun) {
+	if run.result == nil {
 		return
 	}
 
-	// Closing audioCh lets the claimed writer drain buffered chunks.
-	close(audioCh)
+	// The claimer is the only channel closer; closing lets the writer drain
+	// buffered chunks.
+	close(run.audioCh)
 
 	select {
-	case <-writerDone:
+	case <-run.writerDone:
 		// Writer exited; stdin is idle, so EOF can finalize the file.
-		result.CloseStdin()
-		r.drainProcess(result)
+		run.result.CloseStdin()
+		r.drainProcess(run.result)
 	case <-time.After(writerDrainTimeout):
 		// WriteStdin holds stdinMu; cancel FFmpeg to unblock it.
-		slog.Warn("recorder writer stuck, cancelling ffmpeg to break the pipe", "id", r.id)
-		result.Cancel(errRecorderStopped)
-		r.drainProcess(result)
-		<-writerDone
+		slog.Warn("recorder writer stuck, cancelling ffmpeg to break the pipe", "id", r.id, "file", filepath.Base(run.file))
+		run.result.Cancel(errRecorderStopped)
+		r.drainProcess(run.result)
+		<-run.writerDone
 	}
 
 	// writerDone has fired; remaining buffered chunks are teardown loss.
-	if abandoned := len(audioCh); abandoned > 0 {
+	if abandoned := len(run.audioCh); abandoned > 0 {
 		drops := r.audioDrops.Add(int64(abandoned))
 		slog.Warn("recorder abandoned buffered audio during teardown",
-			"id", r.id, "chunks", abandoned, "total_drops", drops)
+			"id", r.id, "file", filepath.Base(run.file), "chunks", abandoned, "total_drops", drops)
 	}
 
 	// queueForUpload handles local-only and missing S3 config.
-	if currentFile != "" {
-		r.queueForUpload(currentFile)
+	if run.file != "" {
+		r.queueForUpload(run.file)
 	}
 }
 
-// Must be called with r.mu held.
-func (r *GenericRecorder) scheduleRotationLocked() {
-	duration := util.TimeUntilNextHour(time.Now())
-	r.rotationTimer = time.AfterFunc(duration, r.rotateFile)
+// scheduleRotationLocked arms the rotation for the first hour boundary after
+// from. Must be called with r.mu held.
+func (r *GenericRecorder) scheduleRotationLocked(from time.Time) {
+	next := from.Truncate(time.Hour).Add(time.Hour)
+	r.rotationTimer = afterFunc(time.Until(next), r.rotateFile)
 }
 
-// rotateFile handles hourly file rotation, stopping the current encoder and starting a new one.
+// rotateFile hands the recording over to a new file at the hour boundary.
+// The next FFmpeg process starts and takes over the audio before the current
+// one is closed, so no audio is lost between the two files.
 func (r *GenericRecorder) rotateFile() {
 	r.mu.Lock()
-
 	if r.state != types.ProcessRunning {
 		r.mu.Unlock()
 		return
 	}
 
-	// Set rotating state before releasing lock to prevent Stop() interference
-	r.state = types.ProcessRotating
-	slog.Info("recorder rotating file at hour boundary", "id", r.id)
+	// The wall clock names the file: a timer that fires a moment early still
+	// gives HH-00, a late one its real start, and after a clock step the name
+	// and the next boundary follow the corrected time.
+	at := time.Now().Round(time.Minute)
+
+	// Swap processes under one lock: WriteAudio sends every chunk either to the
+	// current file or, from here on, to the next one.
+	previous := r.claimEncoderLocked()
+	r.retiring.Add(1)
+	defer r.retiring.Done()
+	if err := r.startEncoderLocked(at); err != nil {
+		// The current encoder still runs: keep recording into its file instead
+		// of stopping until the hourly retry.
+		slog.Error("failed to start the next hourly file, continuing in the current one",
+			"id", r.id, "file", filepath.Base(previous.file), "error", err)
+		r.result, r.audioCh, r.writerDone, r.currentFile = previous.result, previous.audioCh, previous.writerDone, previous.file
+		r.lastError = err.Error()
+		previous = encoderRun{}
+	} else {
+		r.retiringFiles[previous.file] = struct{}{}
+		r.lastError = "" // Clears the error of an earlier failed rotation.
+		slog.Info("recorder rotated file", "id", r.id, "from", filepath.Base(previous.file), "to", filepath.Base(r.currentFile))
+	}
+	r.scheduleRotationLocked(at)
 	r.mu.Unlock()
 
-	// Stop current encoder and upload
-	r.stopEncoderAndUpload()
+	r.finishEncoder(previous)
+	r.mu.Lock()
+	delete(r.retiringFiles, previous.file)
+	r.mu.Unlock()
 
 	// Process the retry queue off the rotation path: a slow or unreachable S3
-	// endpoint may block for many minutes per pending file, and audio is
-	// discarded until the next encoder starts. Safe concurrently: the queue is
-	// snapshotted and cleared under r.mu, so an overlapping run sees it empty.
+	// endpoint may block for many minutes per pending file, and Stop waits for
+	// this rotation through retiring. Safe concurrently:
+	// the queue is snapshotted and cleared under r.mu, so an overlapping run
+	// sees it empty.
 	go r.processRetryQueue()
-
-	r.mu.Lock()
-	// Re-check state after reacquiring lock - Stop() may have been called
-	if r.state != types.ProcessRotating {
-		// State changed (likely Stop() was called) - don't continue rotation
-		r.mu.Unlock()
-		return
-	}
-
-	// Start new encoder
-	if err := r.startEncoderLocked(); err != nil {
-		slog.Error("failed to start new recording file after rotation", "id", r.id, "error", err)
-		r.state = types.ProcessError
-		r.lastError = err.Error()
-		r.mu.Unlock()
-		return // Don't schedule next rotation - hourly retry will pick this up
-	}
-
-	// Schedule next rotation
-	r.scheduleRotationLocked()
-	r.state = types.ProcessRunning
-	r.mu.Unlock()
 }
 
 // Must be called with r.mu held.

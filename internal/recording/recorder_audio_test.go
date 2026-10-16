@@ -82,20 +82,6 @@ func TestWriteAudioNoopWhenNotRecording(t *testing.T) {
 	}
 }
 
-func TestWriteAudioEnqueuesWhileRotating(t *testing.T) {
-	t.Parallel()
-	r := &GenericRecorder{id: "r1", state: types.ProcessRotating, audioCh: make(chan []byte, 2)}
-	r.WriteAudio([]byte{1})
-	if got := len(r.audioCh); got != 1 {
-		t.Fatalf("rotating recorder with a live channel buffered %d chunks, want 1", got)
-	}
-	r.audioCh = nil
-	r.WriteAudio([]byte{2})
-	if got := r.audioDrops.Load(); got != 0 {
-		t.Fatalf("audioDrops after nil-channel rotating write = %d, want 0", got)
-	}
-}
-
 func TestStatusReportsAudioDrops(t *testing.T) {
 	t.Parallel()
 	r := &GenericRecorder{id: "r1", state: types.ProcessRunning}

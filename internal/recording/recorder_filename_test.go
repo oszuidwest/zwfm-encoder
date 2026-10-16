@@ -4,7 +4,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"testing"
 	"time"
@@ -70,28 +69,6 @@ func TestRememberFilenameForgetsNamesAfterWindow(t *testing.T) {
 	}
 }
 
-// noClobberFFmpeg writes a fake FFmpeg that, like the real one with -n, never
-// overwrites its output file, and that refuses to run without -n.
-func noClobberFFmpeg(t *testing.T) string {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("fake FFmpeg is a POSIX shell script")
-	}
-
-	path := filepath.Join(t.TempDir(), "ffmpeg")
-	script := `#!/bin/sh
-noclobber=
-for arg; do [ "$arg" = -n ] && noclobber=1; out=$arg; done
-[ -n "$noclobber" ] || exit 1
-set -C
-cat > "$out"
-`
-	if err := os.WriteFile(path, []byte(script), 0o700); err != nil { //nolint:gosec // Test executable.
-		t.Fatal(err)
-	}
-	return path
-}
-
 // recordOnce starts and stops the recorder and returns the files it created in dir.
 func recordOnce(t *testing.T, recorder *GenericRecorder, dir string) []string {
 	t.Helper()
@@ -103,13 +80,7 @@ func recordOnce(t *testing.T, recorder *GenericRecorder, dir string) []string {
 	if err := recorder.Start(); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for recorder.Status().State != types.ProcessRunning {
-		if time.Now().After(deadline) {
-			t.Fatalf("recorder state = %+v, want running", recorder.Status())
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitForRecorderState(t, recorder, types.ProcessRunning)
 	if err := recorder.Stop(); err != nil {
 		t.Fatalf("Stop() error = %v", err)
 	}
@@ -135,7 +106,7 @@ func TestHourlyStartKeepsEarlierRecordingOfSameMinute(t *testing.T) {
 	cfg.RecordingMode = types.RecordingHourly
 	recorder := NewGenericRecorder(GenericRecorderConfig{
 		Recorder:   cfg,
-		FFmpegPath: noClobberFFmpeg(t),
+		FFmpegPath: os.Args[0],
 		SpoolDir:   t.TempDir(),
 	})
 
@@ -178,7 +149,7 @@ func TestRestartDoesNotReuseDeletedRecordingName(t *testing.T) {
 	cfg := localOnDemandRecorder(t, "Studio")
 	recorder := NewGenericRecorder(GenericRecorderConfig{
 		Recorder:   cfg,
-		FFmpegPath: noClobberFFmpeg(t),
+		FFmpegPath: os.Args[0],
 		SpoolDir:   t.TempDir(),
 	})
 

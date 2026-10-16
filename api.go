@@ -1119,9 +1119,7 @@ func readyRecorders(
 			notReady = append(notReady, recorder.ID)
 			continue
 		}
-		if recorder.RecordingMode == types.RecordingHourly &&
-			status.State != types.ProcessRunning &&
-			status.State != types.ProcessRotating {
+		if recorder.RecordingMode == types.RecordingHourly && status.State != types.ProcessRunning {
 			notReady = append(notReady, recorder.ID)
 		}
 	}
