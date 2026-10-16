@@ -264,6 +264,44 @@ func TestSourceWithoutAudioIsReopenedAndNeverRestored(t *testing.T) {
 	}
 }
 
+func TestInputOutageSpansStopAndStart(t *testing.T) {
+	e := newSourceLifecycleTestEncoder(t, "exit")
+	logPath := attachEventLog(t, e)
+	e.backoff = util.NewBackoff(time.Millisecond, 2*time.Millisecond)
+	e.inputStableDelay = 300 * time.Millisecond
+	var healthy atomic.Bool
+	e.buildCaptureCommand = func(device, ffmpegPath string) (string, []string, error) {
+		mode := "exit"
+		if healthy.Load() {
+			mode = "pcm"
+		}
+		return helperCaptureCommand(mode)(device, ffmpegPath)
+	}
+
+	if err := e.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	waitForCondition(t, 10*time.Second, "input_lost logged", func() bool {
+		return countEvents(t, e, logPath, eventlog.InputLost) == 1
+	})
+	if err := e.Stop(); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+
+	// Restarted with a working input: the outage reported before the stop
+	// must still be closed, or its incident and Zabbix problem stay open.
+	healthy.Store(true)
+	if err := e.Start(); err != nil {
+		t.Fatalf("second Start() error = %v", err)
+	}
+	waitForCondition(t, 10*time.Second, "input_restored logged after restart", func() bool {
+		return countEvents(t, e, logPath, eventlog.InputRestored) == 1
+	})
+	if got := countEvents(t, e, logPath, eventlog.InputLost); got != 1 {
+		t.Fatalf("input_lost events = %d, want 1 for the single outage", got)
+	}
+}
+
 func TestSparseAudioDoesNotRestoreInput(t *testing.T) {
 	e := newSourceLifecycleTestEncoder(t, "exit")
 	logPath := attachEventLog(t, e)

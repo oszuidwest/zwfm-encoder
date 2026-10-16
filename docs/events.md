@@ -395,7 +395,7 @@ and recovery settings.
 |-------|------|-------------|
 | `input` | string | Configured audio input (device name or `dante://` URI) |
 | `error` | string | Capture error that ended the input (`input_lost` only) |
-| `duration_ms` | int | How long the input was unavailable: from the failure until steady audio flowed again (`input_restored` only) |
+| `duration_ms` | int | How long the input was unavailable: from the failure until the start of the steady audio that confirmed the input, excluding the 10-second confirmation itself (`input_restored` only) |
 
 ---
 
@@ -422,7 +422,7 @@ and recovery settings.
 
 - **Severity:** `success`
 - **UI Label:** Input Restored
-- **Triggered:** When the input has delivered steady audio (no pause over 2 seconds) for 10 seconds again after an `input_lost`. Sent to every channel configured for audio alerts at that moment; a channel that also received the `input_lost` gets it after that. When a channel is backed up, its oldest queued input alerts are dropped so the latest state still arrives.
+- **Triggered:** When the input has delivered steady audio (no pause over 2 seconds) for 10 seconds again after an `input_lost`. An outage stays open across stopping and starting the encoder within one process, so the first confirmed input after a restart, also from a newly selected device, closes it. Sent to every channel configured for audio alerts at that moment; a channel that also received the `input_lost` gets it after that. When a channel is backed up, its oldest queued input alerts are dropped so the latest state still arrives.
 
 ```json
 {

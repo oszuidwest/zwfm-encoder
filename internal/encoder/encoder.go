@@ -436,6 +436,9 @@ func (e *Encoder) Start() error {
 	e.stopChan = make(chan struct{})
 	e.retryCount = 0
 	e.backoff.Reset()
+	// inputLostAt deliberately survives Stop/Start: an outage reported as
+	// input_lost stays open until an input is confirmed, so its incident and
+	// any Zabbix problem are always closed by an input_restored.
 	e.silenceDetect.Reset()
 	e.imbalanceDetect.Reset()
 	e.alertOrchestrator.Reset()
