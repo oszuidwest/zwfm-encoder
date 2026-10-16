@@ -54,25 +54,30 @@ func TestWebhookChannelSendPayloads(t *testing.T) {
 				})
 			},
 			want: map[string]any{
-				"event":        "channel_imbalance_start",
-				"balance_db":   49.8,
-				"imbalance_db": 49.8,
-				"threshold":    12.0,
+				"event":          "channel_imbalance_start",
+				"level_left_db":  -6.2,
+				"level_right_db": -56.0,
+				"balance_db":     49.8,
+				"imbalance_db":   49.8,
+				"threshold":      12.0,
 			},
 		},
 		{
 			name: "channel imbalance end",
 			send: func(channel *WebhookChannel, cfg *config.Snapshot) error {
 				return channel.SendChannelImbalanceEnd(context.Background(), cfg, ChannelImbalanceData{
-					LevelL: -8, LevelR: -9.5, BalanceDB: 1.5, ImbalanceDB: 1.5, ThresholdDB: 12, DurationMs: 180000,
+					LevelL: -8, LevelR: -9.5, ThresholdDB: 12, DurationMs: 180000,
 				})
 			},
+			// A zero balance must still be sent.
 			want: map[string]any{
-				"event":        "channel_imbalance_end",
-				"balance_db":   1.5,
-				"duration_ms":  float64(180000),
-				"imbalance_db": 1.5,
-				"threshold":    12.0,
+				"event":          "channel_imbalance_end",
+				"level_left_db":  -8.0,
+				"level_right_db": -9.5,
+				"balance_db":     0.0,
+				"duration_ms":    float64(180000),
+				"imbalance_db":   0.0,
+				"threshold":      12.0,
 			},
 		},
 		{

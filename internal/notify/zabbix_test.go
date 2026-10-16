@@ -208,6 +208,32 @@ func TestSendZabbixPayloadChecksReply(t *testing.T) {
 	}
 }
 
+// TestSendZabbixTestReportsRejectedItem covers the UI test button, which used
+// to report success for an item Zabbix dropped.
+func TestSendZabbixTestReportsRejectedItem(t *testing.T) {
+	t.Parallel()
+
+	server, port, captures := startFakeZabbixTrapper(t, framedZabbixReply(
+		[]byte(`{"response":"success","info":"processed: 0; failed: 1; total: 1; seconds spent: 0.000055"}`),
+	))
+	err := SendZabbixTest(server, port, "encoder-host", "encoder.silence")
+	if err == nil || !strings.Contains(err.Error(), "did not accept the item") {
+		t.Fatalf("SendZabbixTest() error = %v, want a rejected item error", err)
+	}
+
+	capture := awaitCall(t, captures, "fake Zabbix trapper")
+	var body struct {
+		Data []zabbixItem `json:"data"`
+	}
+	if err := json.Unmarshal(capture.body, &body); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	// The template's test trigger matches TEST.
+	if len(body.Data) != 1 || body.Data[0].Value != "event=TEST source=zwfm-encoder" {
+		t.Fatalf("test items = %+v, want one event=TEST value", body.Data)
+	}
+}
+
 func TestZabbixChannelSubscribesOnlyToEnabledEvents(t *testing.T) {
 	t.Parallel()
 
