@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -32,12 +34,17 @@ func TestS3UploadDoesNotOverwriteObjectAfterProcessRestart(t *testing.T) {
 			http.Error(w, fmt.Sprintf("If-None-Match = %q, want *", got), http.StatusBadRequest)
 			return
 		}
-		if _, err := io.Copy(io.Discard, req.Body); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		// Every attempt must send the whole file, not what is left after the last one.
+		if body, err := io.ReadAll(req.Body); err != nil || string(body) != "audio" {
+			http.Error(w, fmt.Sprintf("body = %q, %v; want %q", body, err, "audio"), http.StatusBadRequest)
 			return
 		}
 
-		key := req.URL.Path[len("/bucket/"):]
+		key, ok := strings.CutPrefix(req.URL.Path, "/bucket/")
+		if !ok {
+			http.Error(w, "unexpected bucket", http.StatusBadRequest)
+			return
+		}
 		mu.Lock()
 		requests = append(requests, key)
 		mu.Unlock()
@@ -82,13 +89,7 @@ func TestS3UploadDoesNotOverwriteObjectAfterProcessRestart(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	wantRequests := []string{originalKey, suffixedKey}
-	if len(requests) != len(wantRequests) {
+	if wantRequests := []string{originalKey, suffixedKey}; !slices.Equal(requests, wantRequests) {
 		t.Fatalf("upload keys = %v, want %v", requests, wantRequests)
-	}
-	for i := range wantRequests {
-		if requests[i] != wantRequests[i] {
-			t.Fatalf("upload key %d = %q, want %q", i, requests[i], wantRequests[i])
-		}
 	}
 }

@@ -6,11 +6,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -245,7 +244,7 @@ func (r *GenericRecorder) doUpload(req *uploadRequest) error {
 		}
 
 		previousKey := req.s3Key
-		req.s3Key = s3KeyWithSuffix(baseKey, suffix)
+		req.s3Key = withNumericSuffix(baseKey, suffix)
 		slog.Warn("S3 object already exists, using suffixed key",
 			"id", r.id,
 			"existing_key", previousKey,
@@ -253,30 +252,18 @@ func (r *GenericRecorder) doUpload(req *uploadRequest) error {
 	}
 }
 
-func s3KeyWithSuffix(key string, suffix int) string {
-	extension := path.Ext(key)
-	return fmt.Sprintf("%s-%d%s", strings.TrimSuffix(key, extension), suffix, extension)
-}
-
 func isS3KeyConflict(err error) bool {
-	if err == nil {
-		return false
-	}
-
 	var apiErr interface{ ErrorCode() string }
 	if errors.As(err, &apiErr) {
-		switch apiErr.ErrorCode() {
-		case "PreconditionFailed", "ConditionalRequestConflict":
-			return true
-		default:
-			return false
-		}
+		code := apiErr.ErrorCode()
+		return code == "PreconditionFailed" || code == "ConditionalRequestConflict"
 	}
 
+	// A conflict response with an unparsable body carries only its status.
 	var responseErr interface{ HTTPStatusCode() int }
 	if errors.As(err, &responseErr) {
 		status := responseErr.HTTPStatusCode()
-		return status == 409 || status == 412
+		return status == http.StatusConflict || status == http.StatusPreconditionFailed
 	}
 	return false
 }
