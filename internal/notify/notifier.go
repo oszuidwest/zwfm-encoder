@@ -77,8 +77,9 @@ func NewAlertOrchestrator(cfg *config.Config, dispatcher *Dispatcher) *AlertOrch
 		pendingRecoveries: map[incidentKey]*pendingRecoveryData{},
 	}
 	go o.runLogWorker()
-	// One worker per channel delivers input alerts in order, so a restoration
-	// never overtakes the loss before it and resolves a live outage.
+	// One FIFO worker per channel delivers input alerts in the order they were
+	// raised, so a restoration never lands before its loss and an old
+	// restoration never lands after a newer loss and clears a live outage.
 	for range dispatcher.Channels() {
 		queue := make(chan func(), inputQueueDepth)
 		o.inputQueues = append(o.inputQueues, queue)
@@ -395,7 +396,7 @@ func enqueueInputAlert(queue chan func(), deliver func(), channel, eventType str
 
 // Reset clears alert state for the current silence period, including any pending dump dispatch.
 // In-flight notifications are intentionally NOT cancelled here: Reset runs on encoder
-// start/stop/source-failure, and a short silence followed by a Stop would otherwise abort
+// start and stop, and a short silence followed by a Stop would otherwise abort
 // a still-pending silence_start delivery. The notify context is cancelled only on Close.
 func (o *AlertOrchestrator) Reset() {
 	o.mu.Lock()

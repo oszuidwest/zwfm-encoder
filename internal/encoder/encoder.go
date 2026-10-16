@@ -74,6 +74,7 @@ type Encoder struct {
 	streamRestartDelay  time.Duration
 	inputStableDelay    time.Duration
 	inputStartupTimeout time.Duration
+	inputStallTimeout   time.Duration
 	srtAvailable        bool
 	streamManager       *streaming.Manager
 	recordingManager    *recording.Manager
@@ -91,8 +92,8 @@ type Encoder struct {
 	startTime           time.Time
 	retryCount          int
 	backoff             *util.Backoff
-	inputLostAt         time.Time                         // zero while the input is healthy
-	audioMu             sync.Mutex                        // guards the audio* fields below
+	inputLostAt         time.Time                         // start of the open outage; zero when no input_lost awaits its input_restored
+	audioMu             sync.Mutex                        // guards audioRunID, steadyAudioSince and lastAudioAt
 	audioRunID          uint64                            // source run the audio times belong to
 	steadyAudioSince    time.Time                         // start of audioRunID's PCM without pauses over inputAudioGap
 	lastAudioAt         time.Time                         // latest PCM of audioRunID
@@ -172,6 +173,7 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 		streamRestartDelay:  types.StreamRestartDelay,
 		inputStableDelay:    types.StableThreshold,
 		inputStartupTimeout: inputStartupTimeout,
+		inputStallTimeout:   inputStallTimeout,
 		srtAvailable:        srtUsable(srtAvailable, srtProbeErr),
 		streamManager:       streamMgr,
 		silenceDumpManager:  dumpManager,
@@ -433,9 +435,10 @@ func (e *Encoder) Start() error {
 	e.stopChan = make(chan struct{})
 	e.retryCount = 0
 	e.backoff.Reset()
-	// inputLostAt deliberately survives Stop/Start: an outage reported as
-	// input_lost stays open until an input is confirmed, so its incident and
-	// any Zabbix problem are always closed by an input_restored.
+	// inputLostAt deliberately survives Stop/Start, including the Restart after
+	// an audio input change: the outage stays open until an input is confirmed,
+	// so it raises no second input_lost and the next input_restored closes it.
+	// It is kept in memory only, so a process restart forgets an open outage.
 	e.silenceDetect.Reset()
 	e.imbalanceDetect.Reset()
 	e.alertOrchestrator.Reset()
@@ -803,16 +806,19 @@ func (e *Encoder) superviseSource(runID uint64, src source, cancel context.Cance
 		switch {
 		case lastAudio.IsZero() && now.Sub(startedAt) >= e.inputStartupTimeout:
 			stallErr = fmt.Errorf("no audio from input within %s", e.inputStartupTimeout)
-		case !lastAudio.IsZero() && now.Sub(lastAudio) >= inputStallTimeout:
-			stallErr = fmt.Errorf("no audio from input for %s", inputStallTimeout)
+		case !lastAudio.IsZero() && now.Sub(lastAudio) >= e.inputStallTimeout:
+			stallErr = fmt.Errorf("no audio from input for %s", e.inputStallTimeout)
 		}
 		if stallErr != nil {
 			cancel()
-			<-exited //nolint:errcheck // The cancelled capture's exit error only echoes the stall.
+			// The exit error of a capture process often names the device problem.
+			if err := <-exited; err != nil {
+				slog.Warn("stalled audio capture exited", "error", err)
+			}
 			return stallErr
 		}
-		if !confirmed && !lastAudio.IsZero() &&
-			now.Sub(steadySince) >= e.inputStableDelay && now.Sub(lastAudio) <= inputAudioGap {
+		// Confirm once the steady audio received spans inputStableDelay.
+		if !confirmed && !lastAudio.IsZero() && lastAudio.Sub(steadySince) >= e.inputStableDelay {
 			confirmed = true
 			e.confirmInput(runID, steadySince)
 		}
@@ -880,7 +886,6 @@ func (e *Encoder) publishSource(src io.Reader) (runID uint64, stopChan <-chan st
 	e.sourceStdout = src
 	e.state = types.StateRunning
 	e.startTime = time.Now()
-	e.lastError = ""
 	return e.sourceRunID, e.stopChan, true
 }
 
@@ -905,6 +910,7 @@ func (e *Encoder) confirmInput(runID uint64, audioSince time.Time) {
 	}
 	e.retryCount = 0
 	e.backoff.Reset()
+	e.lastError = ""
 	lostAt := e.inputLostAt
 	e.inputLostAt = time.Time{}
 	e.mu.Unlock()

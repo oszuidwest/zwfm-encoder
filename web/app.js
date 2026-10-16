@@ -484,8 +484,9 @@ document.addEventListener('alpine:init', () => {
          * @returns {boolean} True if source needs attention
          */
         get hasSourceIssue() {
+            // The encoder clears lastError once a reopened input is confirmed.
             return (this.encoder.sourceRetryCount > 0 && this.encoder.state !== 'stopped') ||
-                   (this.encoder.lastError && this.encoder.state !== 'running');
+                   Boolean(this.encoder.lastError);
         },
 
         get encoderRunning() {

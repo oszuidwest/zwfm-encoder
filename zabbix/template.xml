@@ -52,7 +52,8 @@
                             <name>Audio Input Lost</name>
                             <opdata>{ITEM.LASTVALUE}</opdata>
                             <priority>DISASTER</priority>
-                            <description>The encoder cannot capture audio from its input. It keeps retrying; the trigger recovers when the input has delivered steady audio for 10 seconds again.</description>
+                            <description>The encoder cannot capture audio from its input. It keeps retrying; the trigger recovers when the input has delivered steady audio for 10 seconds again. If the encoder process restarts during an outage, no INPUT_RESTORED is sent: close the problem manually.</description>
+                            <manual_close>YES</manual_close>
                         </trigger>
                         <trigger>
                             <uuid>6b003bc3fb6b4b1abdbbca315219508c</uuid>

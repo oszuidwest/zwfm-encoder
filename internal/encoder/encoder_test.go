@@ -163,8 +163,8 @@ func TestSourceKeepsRetryingAndReportsLossOnce(t *testing.T) {
 	if err := e.Start(); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
-	// Well past the 10 attempts after which the source used to give up.
-	waitForCondition(t, 20*time.Second, "source retries past the old limit", func() bool {
+	// More than 15 attempts: the source loop has no retry limit.
+	waitForCondition(t, 20*time.Second, "source retries past 15 attempts", func() bool {
 		e.mu.RLock()
 		defer e.mu.RUnlock()
 		return e.retryCount > 15
@@ -299,36 +299,6 @@ func TestInputOutageSpansStopAndStart(t *testing.T) {
 	})
 	if got := countEvents(t, e, logPath, eventlog.InputLost); got != 1 {
 		t.Fatalf("input_lost events = %d, want 1 for the single outage", got)
-	}
-}
-
-func TestSparseAudioDoesNotRestoreInput(t *testing.T) {
-	e := newSourceLifecycleTestEncoder(t, "exit")
-	logPath := attachEventLog(t, e)
-	e.backoff = util.NewBackoff(time.Millisecond, 2*time.Millisecond)
-	e.inputStableDelay = 3 * time.Second
-	var attempts atomic.Int32
-	e.buildCaptureCommand = func(device, ffmpegPath string) (string, []string, error) {
-		mode := "sparse"
-		if attempts.Add(1) == 1 {
-			mode = "exit"
-		}
-		return helperCaptureCommand(mode)(device, ffmpegPath)
-	}
-
-	if err := e.Start(); err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
-	waitForCondition(t, 5*time.Second, "sparse source running", func() bool {
-		return attempts.Load() == 2 && e.State() == types.StateRunning
-	})
-	// Two chunks 2.5 s apart span the 3 s stable delay without being steady.
-	time.Sleep(6 * time.Second)
-	if got := countEvents(t, e, logPath, eventlog.InputRestored); got != 0 {
-		t.Fatalf("input_restored events = %d, want 0 for audio with pauses over %s", got, inputAudioGap)
-	}
-	if got := e.Status().SourceRetryCount; got == 0 {
-		t.Fatal("SourceRetryCount reset by sparse audio, want the outage to stay open")
 	}
 }
 
@@ -529,6 +499,7 @@ func newSourceLifecycleTestEncoder(t *testing.T, helperMode string, helperArgs .
 		streamRestartDelay:  testStreamRestartDelay,
 		inputStableDelay:    types.StableThreshold,
 		inputStartupTimeout: inputStartupTimeout,
+		inputStallTimeout:   inputStallTimeout,
 		streamManager:       streaming.NewManager(""),
 		recordingManager:    recordingManager,
 		silenceDumpManager:  silencedump.NewManager("", 0, false, 0, nil),
@@ -646,20 +617,32 @@ func TestEncoderCaptureHelperProcess(t *testing.T) {
 			case <-time.After(100 * time.Millisecond):
 			}
 		}
-	case "sparse":
-		// One chunk every 2.5 s: audio keeps arriving, but never steadily.
-		chunk := make([]byte, audio.BytesPerSecond/10)
-		for range 24 {
-			if _, err := os.Stdout.Write(chunk); err != nil {
-				os.Exit(0)
-			}
-			time.Sleep(2500 * time.Millisecond)
-		}
-		os.Exit(0)
+	case "burst":
+		runBurstCapture()
 	default:
 		os.Exit(2)
 	}
 }
+
+// runBurstCapture writes PCM spanning 3.2 s with a 2.5 s pause, then stays
+// alive without writing until it is signalled.
+func runBurstCapture() {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, util.ShutdownSignals()...)
+	chunk := make([]byte, audio.BytesPerSecond/10)
+	for _, pause := range []time.Duration{100, 100, 2500, 100, 100, 100, 100, 100, 100} {
+		if _, err := os.Stdout.Write(chunk); err != nil {
+			os.Exit(0)
+		}
+		time.Sleep(pause * time.Millisecond)
+	}
+	select {
+	case <-signals:
+	case <-time.After(time.Minute):
+	}
+	os.Exit(0)
+}
+
 func waitForCondition(t *testing.T, timeout time.Duration, description string, condition func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -678,5 +661,31 @@ func assertManagersStopped(t *testing.T, e *Encoder, reason string) {
 	}
 	if e.silenceDumpManager.IsRunning() {
 		t.Fatalf("silence dump manager is running: %s", reason)
+	}
+}
+
+func TestSourceThatStopsDeliveringIsReopenedAndNeverRestored(t *testing.T) {
+	e := newSourceLifecycleTestEncoder(t, "exit")
+	logPath := attachEventLog(t, e)
+	e.backoff = util.NewBackoff(time.Millisecond, 2*time.Millisecond)
+	e.inputStableDelay = 3 * time.Second
+	e.inputStallTimeout = 3 * time.Second
+	var attempts atomic.Int32
+	e.buildCaptureCommand = func(device, ffmpegPath string) (string, []string, error) {
+		mode := "burst"
+		if attempts.Add(1) == 1 {
+			mode = "exit"
+		}
+		return helperCaptureCommand(mode)(device, ffmpegPath)
+	}
+
+	if err := e.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	waitForCondition(t, 15*time.Second, "stalled source reopened", func() bool {
+		return e.Status().LastError == "no audio from input for 3s"
+	})
+	if got := countEvents(t, e, logPath, eventlog.InputRestored); got != 0 {
+		t.Fatalf("input_restored events = %d, want 0 for bursts that never stay steady", got)
 	}
 }

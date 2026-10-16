@@ -70,8 +70,8 @@ const (
 	InitialRetryDelay = 3 * time.Second
 	// MaxRetryDelay is the maximum delay between retry attempts.
 	MaxRetryDelay = 60 * time.Second
-	// SourceMaxRetryDelay caps the delay between attempts to reopen the audio
-	// input, so audio resumes soon after the input returns.
+	// SourceMaxRetryDelay caps the base delay between attempts to reopen the
+	// audio input (jitter adds up to 50%), so audio resumes soon after the input returns.
 	SourceMaxRetryDelay = 10 * time.Second
 	// SuccessThreshold is the duration after which retry count resets.
 	SuccessThreshold = 30 * time.Second

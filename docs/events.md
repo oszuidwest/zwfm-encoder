@@ -394,8 +394,8 @@ and recovery settings.
 | Field | Type | Description |
 |-------|------|-------------|
 | `input` | string | Configured audio input (device name or `dante://` URI) |
-| `error` | string | Capture error that ended the input (`input_lost` only) |
-| `duration_ms` | int | How long the input was unavailable: from the failure until the start of the steady audio that confirmed the input, excluding the 10-second confirmation itself (`input_restored` only) |
+| `error` | string | Why the first failed attempt of the outage ended: the capture error, or `no audio from input within 30s` / `no audio from input for 10s` (`input_lost` only) |
+| `duration_ms` | int | How long the input was unavailable: from when the encoder declared it lost (for an input that stopped sending audio, about 10 seconds after its last audio) until the start of the steady audio that confirmed it, excluding the 10-second confirmation itself (`input_restored` only) |
 
 ---
 
@@ -422,7 +422,7 @@ and recovery settings.
 
 - **Severity:** `success`
 - **UI Label:** Input Restored
-- **Triggered:** When the input has delivered steady audio (no pause over 2 seconds) for 10 seconds again after an `input_lost`. An outage stays open across stopping and starting the encoder within one process, so the first confirmed input after a restart, also from a newly selected device, closes it. Sent to every channel configured for audio alerts at that moment; a channel that also received the `input_lost` gets it after that. When a channel is backed up, its oldest queued input alerts are dropped so the latest state still arrives.
+- **Triggered:** When the input has delivered steady audio (no pause over 2 seconds) for 10 seconds again after an `input_lost`. An outage stays open across stopping and starting the encoder within one process, so the first confirmed input after the encoder is started again, also from a newly selected device, closes it. A restart of the process forgets an open outage, so no `input_restored` follows it and the incident stays ongoing. Sent to every channel configured for audio alerts at that moment, each in the order the events happened. When a channel is backed up, its oldest queued input alerts are dropped, so the latest state is never the one dropped.
 
 ```json
 {
