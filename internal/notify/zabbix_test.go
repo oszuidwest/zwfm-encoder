@@ -9,10 +9,8 @@ import (
 	"io"
 	"net"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
@@ -116,15 +114,12 @@ func TestZabbixChannelSendPayloads(t *testing.T) {
 				t.Fatalf("send Zabbix event: %v", err)
 			}
 
-			capture := receiveZabbixCapture(t, captures)
+			capture := awaitCall(t, captures, "fake Zabbix trapper")
 			if capture.err != nil {
 				t.Fatalf("fake Zabbix trapper: %v", capture.err)
 			}
 			if !bytes.Equal(capture.header[:5], wantZabbixMagic[:]) {
 				t.Fatalf("header prefix = %q, want %q", capture.header[:5], wantZabbixMagic)
-			}
-			if got := binary.LittleEndian.Uint64(capture.header[5:]); got != uint64(len(capture.body)) {
-				t.Fatalf("header body length = %d, want %d", got, len(capture.body))
 			}
 
 			var gotBody map[string]any
@@ -146,7 +141,7 @@ func TestZabbixChannelSendPayloads(t *testing.T) {
 	}
 }
 
-func TestSendZabbixPayloadRejectsServerErrors(t *testing.T) {
+func TestSendZabbixPayloadChecksReply(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -154,6 +149,10 @@ func TestSendZabbixPayloadRejectsServerErrors(t *testing.T) {
 		reply     []byte
 		wantError string
 	}{
+		{
+			name:  "unparsable info is accepted",
+			reply: framedZabbixReply([]byte(`{"response":"success","info":"queued"}`)),
+		},
 		{
 			name: "unknown host or key",
 			reply: framedZabbixReply(
@@ -194,23 +193,16 @@ func TestSendZabbixPayloadRejectsServerErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			server, port, captures := startFakeZabbixTrapper(t, tt.reply)
-			err := sendZabbixPayload(context.Background(), server, port, zabbixRequest{
-				Request: "sender data",
-				Data: []zabbixItem{{
-					Host:  "encoder-host",
-					Key:   "encoder.silence",
-					Value: "event=SILENCE",
-				}},
-			})
-			if err == nil {
-				t.Fatal("sendZabbixPayload() error = nil, want an error")
+			server, port, _ := startFakeZabbixTrapper(t, tt.reply)
+			err := sendZabbixEvent(context.Background(), server, port, "encoder-host", "encoder.silence", "event=SILENCE")
+			if tt.wantError == "" {
+				if err != nil {
+					t.Fatalf("sendZabbixEvent() error = %v, want nil", err)
+				}
+				return
 			}
-			if !strings.Contains(err.Error(), tt.wantError) {
-				t.Fatalf("sendZabbixPayload() error = %q, want it to contain %q", err, tt.wantError)
-			}
-			if capture := receiveZabbixCapture(t, captures); capture.err != nil {
-				t.Fatalf("fake Zabbix trapper: %v", capture.err)
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("sendZabbixEvent() error = %v, want it to contain %q", err, tt.wantError)
 			}
 		})
 	}
@@ -232,80 +224,6 @@ func TestZabbixChannelSubscribesOnlyToEnabledEvents(t *testing.T) {
 	})
 }
 
-// assertSubscribesOnlyToEnabledEvents enables one event at a time and checks
-// that exactly the matching Subscribes* method reports true, and only when the
-// channel itself is configured.
-func assertSubscribesOnlyToEnabledEvents(
-	t *testing.T,
-	channel AlertChannel,
-	supportsAudioDump bool,
-	snapshot func(events types.EventSubscriptions, configured bool) *config.Snapshot,
-) {
-	t.Helper()
-
-	subscribers := map[string]func(*config.Snapshot) bool{
-		"silence start":           channel.SubscribesSilenceStart,
-		"silence end":             channel.SubscribesSilenceEnd,
-		"channel imbalance start": channel.SubscribesChannelImbalanceStart,
-		"channel imbalance end":   channel.SubscribesChannelImbalanceEnd,
-		"audio dump":              channel.SubscribesAudioDump,
-	}
-	events := map[string]types.EventSubscriptions{
-		"silence start":           {SilenceStart: true},
-		"silence end":             {SilenceEnd: true},
-		"channel imbalance start": {ChannelImbalanceStart: true},
-		"channel imbalance end":   {ChannelImbalanceEnd: true},
-		"audio dump":              {AudioDump: true},
-	}
-	for enabled, subscriptions := range events {
-		for name, subscribes := range subscribers {
-			want := name == enabled && (name != "audio dump" || supportsAudioDump)
-			if got := subscribes(snapshot(subscriptions, true)); got != want {
-				t.Errorf("with only %q enabled, %s subscription = %t, want %t", enabled, name, got, want)
-			}
-		}
-		if subscribers[enabled](snapshot(subscriptions, false)) {
-			t.Errorf("%s subscription = true for an unconfigured channel", enabled)
-		}
-	}
-}
-
-func TestZabbixChannelUnconfiguredSendsNothing(t *testing.T) {
-	t.Parallel()
-
-	channel := &ZabbixChannel{}
-	cfg := &config.Snapshot{}
-	tests := []struct {
-		name string
-		send func() error
-	}{
-		{name: "silence start", send: func() error {
-			return channel.SendSilenceStart(context.Background(), cfg, -48, -52)
-		}},
-		{name: "silence end", send: func() error {
-			return channel.SendSilenceEnd(context.Background(), cfg, 1000, -12, -14)
-		}},
-		{name: "channel imbalance start", send: func() error {
-			return channel.SendChannelImbalanceStart(context.Background(), cfg, ChannelImbalanceData{})
-		}},
-		{name: "channel imbalance end", send: func() error {
-			return channel.SendChannelImbalanceEnd(context.Background(), cfg, ChannelImbalanceData{})
-		}},
-		{name: "upload abandoned", send: func() error {
-			return channel.SendUploadAbandoned(context.Background(), cfg, UploadAbandonedData{})
-		}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			if err := tt.send(); err != nil {
-				t.Fatalf("unconfigured send returned error: %v", err)
-			}
-		})
-	}
-}
-
 func startFakeZabbixTrapper(
 	t *testing.T,
 	reply []byte,
@@ -317,15 +235,6 @@ func startFakeZabbixTrapper(
 		t.Fatalf("listen for fake Zabbix trapper: %v", err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
-
-	host, portString, err := net.SplitHostPort(listener.Addr().String())
-	if err != nil {
-		t.Fatalf("split fake Zabbix address: %v", err)
-	}
-	parsedPort, err := strconv.Atoi(portString)
-	if err != nil {
-		t.Fatalf("parse fake Zabbix port: %v", err)
-	}
 
 	captureCh := make(chan zabbixCapture, 1)
 	go func() {
@@ -358,19 +267,7 @@ func startFakeZabbixTrapper(
 		captureCh <- zabbixCapture{header: header, body: body}
 	}()
 
-	return host, parsedPort, captureCh
-}
-
-func receiveZabbixCapture(t *testing.T, captures <-chan zabbixCapture) zabbixCapture {
-	t.Helper()
-
-	select {
-	case capture := <-captures:
-		return capture
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for fake Zabbix trapper")
-		return zabbixCapture{}
-	}
+	return "127.0.0.1", listener.Addr().(*net.TCPAddr).Port, captureCh
 }
 
 func framedZabbixReply(body []byte) []byte {

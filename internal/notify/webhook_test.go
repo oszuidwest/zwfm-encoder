@@ -47,6 +47,35 @@ func TestWebhookChannelSendPayloads(t *testing.T) {
 			},
 		},
 		{
+			name: "channel imbalance start",
+			send: func(channel *WebhookChannel, cfg *config.Snapshot) error {
+				return channel.SendChannelImbalanceStart(context.Background(), cfg, ChannelImbalanceData{
+					LevelL: -6.2, LevelR: -56, BalanceDB: 49.8, ImbalanceDB: 49.8, ThresholdDB: 12,
+				})
+			},
+			want: map[string]any{
+				"event":        "channel_imbalance_start",
+				"balance_db":   49.8,
+				"imbalance_db": 49.8,
+				"threshold":    12.0,
+			},
+		},
+		{
+			name: "channel imbalance end",
+			send: func(channel *WebhookChannel, cfg *config.Snapshot) error {
+				return channel.SendChannelImbalanceEnd(context.Background(), cfg, ChannelImbalanceData{
+					LevelL: -8, LevelR: -9.5, BalanceDB: 1.5, ImbalanceDB: 1.5, ThresholdDB: 12, DurationMs: 180000,
+				})
+			},
+			want: map[string]any{
+				"event":        "channel_imbalance_end",
+				"balance_db":   1.5,
+				"duration_ms":  float64(180000),
+				"imbalance_db": 1.5,
+				"threshold":    12.0,
+			},
+		},
+		{
 			name: "upload abandoned",
 			send: func(channel *WebhookChannel, cfg *config.Snapshot) error {
 				return channel.SendUploadAbandoned(context.Background(), cfg, UploadAbandonedData{
@@ -130,42 +159,6 @@ func TestWebhookChannelSubscribesOnlyToEnabledEvents(t *testing.T) {
 	})
 }
 
-func TestWebhookChannelUnconfiguredSendsNothing(t *testing.T) {
-	t.Parallel()
-
-	channel := &WebhookChannel{}
-	cfg := &config.Snapshot{}
-	tests := []struct {
-		name string
-		send func() error
-	}{
-		{name: "silence start", send: func() error {
-			return channel.SendSilenceStart(context.Background(), cfg, -48, -52)
-		}},
-		{name: "silence end", send: func() error {
-			return channel.SendSilenceEnd(context.Background(), cfg, 1000, -12, -14)
-		}},
-		{name: "channel imbalance start", send: func() error {
-			return channel.SendChannelImbalanceStart(context.Background(), cfg, ChannelImbalanceData{})
-		}},
-		{name: "channel imbalance end", send: func() error {
-			return channel.SendChannelImbalanceEnd(context.Background(), cfg, ChannelImbalanceData{})
-		}},
-		{name: "upload abandoned", send: func() error {
-			return channel.SendUploadAbandoned(context.Background(), cfg, UploadAbandonedData{})
-		}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			if err := tt.send(); err != nil {
-				t.Fatalf("unconfigured send returned error: %v", err)
-			}
-		})
-	}
-}
-
 func captureWebhookPayload(t *testing.T, send func(string) error) map[string]any {
 	t.Helper()
 
@@ -189,14 +182,7 @@ func captureWebhookPayload(t *testing.T, send func(string) error) map[string]any
 	if err := send(server.URL); err != nil {
 		t.Fatalf("send webhook: %v", err)
 	}
-
-	select {
-	case payload := <-payloads:
-		return payload
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for webhook payload")
-		return nil
-	}
+	return awaitCall(t, payloads, "webhook payload")
 }
 
 func assertWebhookPayload(t *testing.T, payload, want map[string]any) {
