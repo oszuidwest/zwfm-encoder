@@ -444,7 +444,7 @@ func TestConcurrentRetryEnqueueKeepsOnePersistedIdentity(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 10 {
 		wg.Go(func() {
-			r.addToRetryQueue(&pendingUpload{request: uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: 5}, lastError: "down"})
+			r.enqueuePendingUpload(&pendingUpload{request: uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: 5}, lastError: "down"})
 		})
 	}
 	wg.Wait()

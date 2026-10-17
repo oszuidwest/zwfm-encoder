@@ -101,7 +101,7 @@ func TestPendingUploadsPersistAndReload(t *testing.T) {
 		fileSize:          5,
 		deleteAfterUpload: true,
 	}
-	recorder.addToRetryQueue(&pendingUpload{request: req, lastError: "s3 down"})
+	recorder.addToRetryQueue(req, "s3 down")
 	if got := len(recorder.retryQueue); got != 1 {
 		t.Fatalf("retryQueue len = %d, want 1", got)
 	}

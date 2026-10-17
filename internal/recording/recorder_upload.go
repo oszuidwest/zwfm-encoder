@@ -74,7 +74,7 @@ func (r *GenericRecorder) queueForUpload(filePath string) {
 		reason = "upload worker stopped"
 	}
 	slog.Warn("queuing upload via retry queue", "id", r.id, "reason", reason)
-	r.addToRetryQueue(&pendingUpload{request: req, lastError: reason})
+	r.addToRetryQueue(req, reason)
 }
 
 // uploadDirectly bypasses a worker that Stop may be draining.
@@ -170,7 +170,7 @@ func (r *GenericRecorder) uploadWorker() {
 func (r *GenericRecorder) uploadFile(req uploadRequest) {
 	pending := pendingUpload{request: req}
 	if !r.uploadPending(&pending) {
-		r.addToRetryQueue(&pending)
+		r.enqueuePendingUpload(&pending)
 	}
 }
 
@@ -348,7 +348,12 @@ func (r *GenericRecorder) deleteAfterUpload(req uploadRequest) {
 }
 
 // addToRetryQueue adds a failed upload to the retry queue.
-func (r *GenericRecorder) addToRetryQueue(pending *pendingUpload) {
+func (r *GenericRecorder) addToRetryQueue(req uploadRequest, errMsg string) {
+	r.enqueuePendingUpload(&pendingUpload{request: req, lastError: errMsg})
+}
+
+// enqueuePendingUpload preserves the identity/window of an already attempted upload.
+func (r *GenericRecorder) enqueuePendingUpload(pending *pendingUpload) {
 	r.retryEnqueueMu.Lock()
 	defer r.retryEnqueueMu.Unlock()
 	r.mu.RLock()
