@@ -316,16 +316,13 @@ func discoveryNetworks(interfaces []net.Interface) (map[int][]*net.IPNet, error)
 }
 
 func validDiscoverySource(source *net.UDPAddr, ifIndex int, networks map[int][]*net.IPNet) bool {
-	if source == nil || source.Port != 5353 || source.IP.To4() == nil || ifIndex <= 0 {
+	if source == nil || source.Port != 5353 {
 		return false
 	}
 	// RFC 6762 section 11 checks legacy unicast replies against local subnets.
-	for _, network := range networks[ifIndex] {
-		if network.Contains(source.IP) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(networks[ifIndex], func(network *net.IPNet) bool {
+		return network.Contains(source.IP)
+	})
 }
 
 // sendDiscoveryQuery succeeds when any interface accepts the query.

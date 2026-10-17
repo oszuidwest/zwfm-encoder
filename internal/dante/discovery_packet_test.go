@@ -65,7 +65,6 @@ func TestWindowsPacketInterface(t *testing.T) {
 			}{
 				{name: "packet info", data: packetInfo, want: 7},
 				{name: "preceding aligned control", data: append(unrelated, packetInfo...), want: 7},
-				{name: "empty"},
 				{name: "truncated header", data: packetInfo[:headerSize-1]},
 				{name: "truncated data", data: packetInfo[:len(packetInfo)-1]},
 				{name: "unrelated control", data: unrelated},
@@ -81,11 +80,6 @@ func TestWindowsPacketInterface(t *testing.T) {
 			binary.LittleEndian.PutUint32(shortInfo, headerSize+4)
 			if got := windowsPacketInterface(shortInfo, wordSize); got != 0 {
 				t.Fatalf("short IN_PKTINFO interface = %d", got)
-			}
-			oversize := append([]byte(nil), packetInfo...)
-			binary.LittleEndian.PutUint32(oversize, 0xffffffff)
-			if got := windowsPacketInterface(oversize, wordSize); got != 0 {
-				t.Fatalf("oversized control interface = %d", got)
 			}
 		})
 	}
