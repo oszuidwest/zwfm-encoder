@@ -3,10 +3,10 @@ package recording
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -16,7 +16,7 @@ import (
 )
 
 func TestRotationDiscardsReplacedTimer(t *testing.T) {
-	for _, mode := range []string{"reschedule", "restart"} {
+	for _, mode := range []string{"reschedule", "restart", "restart on demand"} {
 		t.Run(mode, func(t *testing.T) {
 			var callbacks []func()
 			var timers []*time.Timer
@@ -28,9 +28,17 @@ func TestRotationDiscardsReplacedTimer(t *testing.T) {
 			}
 			t.Cleanup(func() { afterFunc = time.AfterFunc })
 			r := startHourlyTestRecorder(t, "stale-timer")
-			if mode == "restart" {
+			wantCallbacks := 2
+			if mode != "reschedule" {
 				if err := r.Stop(); err != nil {
 					t.Fatal(err)
+				}
+				if mode == "restart on demand" {
+					// An on-demand restart arms no rotation timer of its own.
+					r.mu.Lock()
+					r.config.RecordingMode = types.RecordingOnDemand
+					r.mu.Unlock()
+					wantCallbacks = 1
 				}
 				if err := r.Start(); err != nil {
 					t.Fatal(err)
@@ -50,7 +58,7 @@ func TestRotationDiscardsReplacedTimer(t *testing.T) {
 			callbacks[0]() // Models a callback already queued before Timer.Stop.
 			r.mu.RLock()
 			defer r.mu.RUnlock()
-			if r.currentFile != current || r.rotationTimer != timer || len(callbacks) != 2 {
+			if r.currentFile != current || r.rotationTimer != timer || len(callbacks) != wantCallbacks {
 				t.Fatal("stale callback rotated the current recording or armed another timer")
 			}
 		})
@@ -65,8 +73,8 @@ func TestRecorderRejectsStartDuringStop(t *testing.T) {
 	go func() { done <- r.Stop() }()
 	waitForRecorderState(t, r, types.ProcessStopping)
 	err := r.Start()
-	if err == nil || !strings.Contains(err.Error(), "stopping") {
-		t.Errorf("Start during Stop = %v, want stopping error", err)
+	if !errors.Is(err, ErrRecorderStopping) {
+		t.Errorf("Start during Stop = %v, want ErrRecorderStopping", err)
 	}
 	if err != nil && r.Status().State != types.ProcessStopping {
 		t.Error("rejected Start changed the stopping state")
@@ -74,6 +82,30 @@ func TestRecorderRejectsStartDuringStop(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestWriteErrorDuringStopKeepsStartRejected(t *testing.T) {
+	neverRotate(t)
+	r := startHourlyTestRecorder(t, "write-error-stop")
+	// Models a write failure that takes r.mu after Stop set Stopping but
+	// before Stop claimed the encoder.
+	r.mu.Lock()
+	r.state = types.ProcessStopping
+	result, audioCh, writerDone := r.result, r.audioCh, r.writerDone
+	r.mu.Unlock()
+	r.handleWriteError(result, errors.New("broken pipe"))
+	close(audioCh) // The failing audioWriter returns after handleWriteError.
+	if err := r.Start(); !errors.Is(err, ErrRecorderStopping) {
+		t.Errorf("Start after a write error during Stop = %v, want ErrRecorderStopping", err)
+	}
+	if status := r.Status(); status.State != types.ProcessStopping || status.Error != "broken pipe" {
+		t.Errorf("status = %+v, want stopping with the write error", status)
+	}
+	<-writerDone
+	_ = result.Wait() // Write-error cleanup owns the detached FFmpeg.
+	r.mu.Lock()
+	r.state = types.ProcessError // Let the cleanup Stop finish the modeled teardown.
+	r.mu.Unlock()
 }
 
 // neverRotate replaces the hourly timer so a test rotates by hand and a real

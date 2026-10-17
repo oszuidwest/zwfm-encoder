@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,18 +22,10 @@ func TestRefusedRecordingIsNotUploaded(t *testing.T) {
 	t.Setenv(fakeFFmpegRefuseEnv, "1")
 	for _, termination := range []string{"write failure", "stop"} {
 		t.Run(termination, func(t *testing.T) {
-			var uploads atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-				_, _ = io.Copy(io.Discard, req.Body)
-				if req.Method == http.MethodPut {
-					uploads.Add(1)
-				}
-				w.Header().Set("ETag", `"test"`)
-			}))
-			defer server.Close()
+			endpoint, uploads := conditionalPutServer(t, "", func(http.ResponseWriter, string) bool { return false })
 			cfg := testS3Recorder()
 			cfg.RecordingMode, cfg.StorageMode = types.RecordingOnDemand, types.StorageBoth
-			cfg.LocalPath, cfg.S3Endpoint = t.TempDir(), server.URL
+			cfg.LocalPath, cfg.S3Endpoint = t.TempDir(), endpoint
 			r, path := errorTestRecorder(t, cfg)
 			if err := r.Start(); err != nil {
 				t.Fatal(err)
@@ -67,7 +58,7 @@ func TestRefusedRecordingIsNotUploaded(t *testing.T) {
 			if termination == "write failure" && !strings.Contains(message, "already exists") {
 				t.Errorf("recorder error = %q, want FFmpeg's refusal", message)
 			}
-			if got := uploads.Load(); got != 0 {
+			if got := len(uploads()); got != 0 {
 				t.Errorf("uploaded refused file %d times", got)
 			}
 			if data, err := os.ReadFile(file); err != nil || string(data) != "another recording" { //nolint:gosec // Test temp output.
@@ -189,8 +180,7 @@ func TestWriteErrorRecoveryUploadDoesNotDelayStop(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		release()
-		<-stopped
-		t.Fatal("Stop waited for the recovery upload")
+		t.Fatalf("Stop waited for the recovery upload, then returned %v", <-stopped)
 	}
 	if data, err := os.ReadFile(file); err != nil || len(data) != 4096 { //nolint:gosec // Test temp recording.
 		t.Fatalf("preserved partial recording = %d bytes, %v", len(data), err)
