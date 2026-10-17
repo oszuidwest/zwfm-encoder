@@ -3,6 +3,7 @@ package recording
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -59,8 +60,8 @@ func TestRefusedRecordingIsNotUploaded(t *testing.T) {
 			if err := r.Stop(); err != nil {
 				t.Fatal(err)
 			}
-			if termination == "write failure" && !strings.Contains(message, "already exists") {
-				t.Errorf("recorder error = %q, want FFmpeg's refusal", message)
+			if want := fmt.Sprintf("File '%s' already exists. Exiting.", file); termination == "write failure" && message != want {
+				t.Errorf("recorder error = %q, want only FFmpeg's refusal %q", message, want)
 			}
 			if got := len(uploads()); got != 0 {
 				t.Errorf("uploaded refused file %d times", got)

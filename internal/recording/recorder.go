@@ -528,8 +528,8 @@ func (r *GenericRecorder) drainProcess(result *ffmpeg.StartResult) error {
 		func() { slog.Error("recorder ffmpeg force killed", "id", r.id) })
 
 	// FFmpeg's -n refusal can exit successfully, even after accepting stdin.
-	if outputRefused(result.Stderr()) {
-		return errors.New(strings.TrimSpace(result.Stderr()))
+	if line, ok := refusalLine(result.Stderr()); ok {
+		return errors.New(line)
 	}
 	if err != nil {
 		if message := util.ExtractLastError(result.Stderr()); message != "" {
@@ -540,7 +540,18 @@ func (r *GenericRecorder) drainProcess(result *ffmpeg.StartResult) error {
 }
 
 func outputRefused(stderr string) bool {
-	return strings.Contains(stderr, "already exists. Exiting.")
+	_, ok := refusalLine(stderr)
+	return ok
+}
+
+// refusalLine finds FFmpeg's -n refusal among warnings and the error lines that follow it.
+func refusalLine(stderr string) (string, bool) {
+	for line := range strings.Lines(stderr) {
+		if strings.Contains(line, "already exists. Exiting.") {
+			return strings.TrimSpace(line), true
+		}
+	}
+	return "", false
 }
 
 // Status returns the recorder process status.

@@ -59,7 +59,8 @@ func runFakeFFmpeg(args []string) int {
 		if _, err := os.Stat(output); err != nil { //nolint:gosec // G703: path comes from the recorder under test.
 			return 1
 		}
-		_, _ = fmt.Fprintf(os.Stderr, "File '%s' already exists. Exiting.\n", output)
+		// Real FFmpeg can print warnings before the refusal and an error after it.
+		_, _ = fmt.Fprintf(os.Stderr, "Guessed Channel Layout: stereo\nFile '%s' already exists. Exiting.\nError opening output file %s.\n", output, output)
 		return 0
 	}
 	reader := io.Reader(os.Stdin)
