@@ -129,8 +129,21 @@ func (p *captureProcess) Wait() error {
 
 // New creates a new Encoder with the given configuration and FFmpeg binary path.
 func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
+	return newEncoder(cfg, ffmpegPath, eventlog.DefaultLogPath(cfg.Snapshot().WebPort))
+}
+
+func newEncoder(cfg *config.Config, ffmpegPath, eventLogPath string) (*Encoder, error) {
 	graphCfg := cfg.GraphConfig()
 	snap := cfg.Snapshot()
+	logger, err := eventlog.NewLogger(eventLogPath)
+	if err != nil {
+		return nil, fmt.Errorf("create event logger at %s: %w", eventLogPath, err)
+	}
+	// A missed input_restored is better than refusing to start the encoder.
+	lostAt, err := logger.InputLostAt()
+	if err != nil {
+		slog.Warn("could not restore an open input outage from the event log", "path", eventLogPath, "error", err)
+	}
 
 	webhookCh := &notify.WebhookChannel{}
 	emailCh := &notify.EmailChannel{}
@@ -145,12 +158,6 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 		snap.SilenceDumpRetentionDays,
 		orchestrator.OnDumpReady,
 	)
-
-	eventLogPath := eventlog.DefaultLogPath(snap.WebPort)
-	logger, err := eventlog.NewLogger(eventLogPath)
-	if err != nil {
-		return nil, fmt.Errorf("create event logger at %s: %w", eventLogPath, err)
-	}
 
 	orchestrator.SetEventLogger(logger)
 
@@ -179,6 +186,7 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 		streamManager:       streamMgr,
 		silenceDumpManager:  dumpManager,
 		eventLogger:         logger,
+		inputLostAt:         lostAt,
 		state:               types.StateStopped,
 		backoff:             util.NewBackoff(types.InitialRetryDelay, types.SourceMaxRetryDelay),
 		silenceDetect:       audio.NewSilenceDetector(),
@@ -442,7 +450,7 @@ func (e *Encoder) Start() error {
 	// inputLostAt deliberately survives Stop/Start, including the Restart after
 	// an audio input change: the outage stays open until an input is confirmed,
 	// so it raises no second input_lost and the next input_restored closes it.
-	// It is kept in memory only, so a process restart forgets an open outage.
+	// New also restores an open outage from the event log after a process restart.
 	e.silenceDetect.Reset()
 	e.imbalanceDetect.Reset()
 	e.alertOrchestrator.Reset()
@@ -926,7 +934,8 @@ func (e *Encoder) confirmInput(runID uint64, audioSince time.Time) {
 	if lostAt.IsZero() {
 		return
 	}
-	unavailable := audioSince.Sub(lostAt)
+	// A restored lostAt is wall-clock time, which can jump before NTP syncs.
+	unavailable := max(audioSince.Sub(lostAt), 0)
 	slog.Info("audio input restored", "unavailable", unavailable.Round(time.Second))
 	e.alertOrchestrator.HandleInputRestored(notify.InputData{
 		Input:      e.config.AudioInput(),
