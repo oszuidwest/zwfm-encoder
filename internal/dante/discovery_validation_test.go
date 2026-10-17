@@ -35,7 +35,8 @@ func TestDiscoveryRequiresLocalMDNSSource(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := validDiscoverySource(&net.UDPAddr{IP: net.ParseIP(tt.ip), Port: tt.port}, tt.ifIndex, map[int][]*net.IPNet{1: {network}, 2: {other}}); got != tt.want {
+			// Index 0 is listed too, so missing metadata must be rejected by itself.
+			if got := validDiscoverySource(&net.UDPAddr{IP: net.ParseIP(tt.ip), Port: tt.port}, tt.ifIndex, map[int][]*net.IPNet{0: {network}, 1: {network}, 2: {other}}); got != tt.want {
 				t.Fatalf("validDiscoverySource = %t, want %t", got, tt.want)
 			}
 		})

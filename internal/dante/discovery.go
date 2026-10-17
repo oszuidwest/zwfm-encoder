@@ -316,7 +316,8 @@ func discoveryNetworks(interfaces []net.Interface) (map[int][]*net.IPNet, error)
 }
 
 func validDiscoverySource(source *net.UDPAddr, ifIndex int, networks map[int][]*net.IPNet) bool {
-	if source == nil || source.Port != 5353 {
+	// A packet without receive-interface metadata (index 0) is never trusted.
+	if source == nil || source.Port != 5353 || ifIndex <= 0 {
 		return false
 	}
 	// RFC 6762 section 11 checks legacy unicast replies against local subnets.
