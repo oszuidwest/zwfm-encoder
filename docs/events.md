@@ -422,7 +422,7 @@ and recovery settings.
 
 - **Severity:** `success`
 - **UI Label:** Input Restored
-- **Triggered:** When the input has delivered steady audio (no pause over 2 seconds) for 10 seconds again after an `input_lost`. An outage stays open across stopping and starting the encoder within one process, so the first confirmed input after the encoder is started again, also from a newly selected device, closes it. A restart of the process forgets an open outage, so no `input_restored` follows it and the incident stays ongoing. Sent to every channel configured for audio alerts at that moment, each in the order the events happened. When a channel is backed up, its oldest queued input alerts are dropped, so the latest state is never the one dropped.
+- **Triggered:** When the input has delivered steady audio (no pause over 2 seconds) for 10 seconds again after an `input_lost`. An outage stays open across stopping and starting the encoder, so the first confirmed input after the encoder is started again, also from a newly selected device, closes it. After a process restart, the latest input event in the retained active and rotated logs restores an open outage; its duration includes the restart. If that event is already `input_restored`, no extra recovery is sent. Sent to every channel configured for audio alerts at that moment, each in the order the events happened. When a channel is backed up, its oldest queued input alerts are dropped, so the latest state is never the one dropped.
 
 ```json
 {
@@ -669,7 +669,7 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
 
 - **Severity:** `error`
 - **UI Label:** Abandoned
-- **Triggered:** When an upload is abandoned after exceeding the 24-hour retry limit. The `error` field contains the last upload error encountered. The local file remains on disk but will no longer be retried. This event also triggers alerts to all configured notification channels (webhook, email, Zabbix).
+- **Triggered:** When an upload is abandoned after exceeding the 24-hour retry limit. The `error` field contains the last upload error encountered. The recording and upload metadata remain on disk, including in S3-only mode; automatic retries pause for this process. After fixing S3 configuration/connectivity, restart the encoder process to re-queue abandoned uploads with a fresh 24-hour window and their original object keys. This event also triggers alerts to all configured notification channels (webhook, email, Zabbix).
 
 ```json
 {

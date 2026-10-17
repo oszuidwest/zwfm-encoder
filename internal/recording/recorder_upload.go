@@ -35,6 +35,7 @@ type pendingUpload struct {
 	retryCount   int
 	lastError    string
 	metadataPath string
+	abandoned    bool
 }
 
 // MaxUploadRetryAge is the maximum age for retrying uploads.
@@ -371,8 +372,10 @@ func (r *GenericRecorder) processRetryQueue() {
 			r.logUploadEvent(eventlog.UploadAbandoned,
 				filepath.Base(p.request.localPath), p.request.s3Key,
 				p.lastError, p.retryCount)
-			r.deleteAbandonedSpoolFile(p.request)
-			r.removePendingMetadata(p)
+			p.abandoned = true
+			if err := r.savePendingUpload(p); err != nil {
+				slog.Error("failed to persist abandoned upload", "id", r.id, "file", filepath.Base(p.request.localPath), "error", err)
+			}
 			if r.onUploadAbandoned != nil {
 				r.mu.RLock()
 				recorderName := r.config.Name
@@ -406,21 +409,6 @@ func (r *GenericRecorder) processRetryQueue() {
 			r.mu.Unlock()
 		}
 	}
-}
-
-// deleteAbandonedSpoolFile removes spool-only files after upload retries expire.
-func (r *GenericRecorder) deleteAbandonedSpoolFile(req uploadRequest) {
-	if !req.deleteAfterUpload {
-		return
-	}
-
-	if err := os.Remove(req.localPath); err != nil {
-		if !os.IsNotExist(err) {
-			slog.Warn("failed to delete abandoned spool file", "id", r.id, "path", req.localPath, "error", err)
-		}
-		return
-	}
-	slog.Debug("deleted abandoned spool file", "id", r.id, "path", req.localPath)
 }
 
 // retryUpload performs the upload and returns true on success.

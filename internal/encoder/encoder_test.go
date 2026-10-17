@@ -3,6 +3,16 @@ package encoder
 import (
 	"context"
 	"errors"
+	"io"
+	"net"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
@@ -12,19 +22,89 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/streaming"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
-	"io"
-	"net"
-	"os"
-	"os/signal"
-	"path/filepath"
-	"sync/atomic"
-	"testing"
-	"time"
 )
 
 const testStreamRestartDelay = 200 * time.Millisecond
 
 const nonexistentFFmpeg = "/nonexistent/ffmpeg-binary-for-test"
+
+func TestStopTimeoutPreventsOverlappingSourceLoops(t *testing.T) {
+	e := newSourceLifecycleTestEncoder(t, "exit")
+	e.config.Audio.Input = "dante://studio-tx/Left/Right"
+	stuck, release := context.WithCancel(context.Background())
+	t.Cleanup(release)
+	var opens atomic.Int32
+	e.openDanteSource = func(ctx context.Context, _ string) (source, error) {
+		if opens.Add(1) == 1 {
+			return pipeDanteSource(ctx, stuck.Done()), nil
+		}
+		return pipeDanteSource(ctx, ctx.Done()), nil
+	}
+	if err := e.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitForCondition(t, time.Second, "first source running", func() bool {
+		return e.State() == types.StateRunning
+	})
+	if err := e.Stop(); err == nil || !strings.Contains(err.Error(), "shutdown timeout") {
+		t.Fatalf("Stop() error = %v, want shutdown timeout", err)
+	}
+	if state := e.State(); state != types.StateStopping {
+		t.Errorf("State after timeout = %q, want stopping", state)
+	}
+	if err := e.Start(); !errors.Is(err, ErrAlreadyRunning) {
+		t.Fatalf("Start while old source is alive = %v, want ErrAlreadyRunning", err)
+	}
+	if got := opens.Load(); got != 1 {
+		t.Fatalf("sources opened while stopping = %d, want 1", got)
+	}
+	release()
+	waitForCondition(t, time.Second, "late source shutdown completes", func() bool {
+		return e.State() == types.StateStopped
+	})
+	if err := e.Start(); err != nil {
+		t.Fatalf("Start after old loop finished: %v", err)
+	}
+	waitForCondition(t, time.Second, "new source running", func() bool {
+		e.mu.RLock()
+		defer e.mu.RUnlock()
+		return opens.Load() == 2 && e.state == types.StateRunning && e.sourceCancel != nil && e.sourceStdout != nil
+	})
+	if err := e.Stop(); err != nil {
+		t.Fatalf("Stop new source: %v", err)
+	}
+}
+
+func TestStopWaitsForDistributorAfterSourceExit(t *testing.T) {
+	e := newSourceLifecycleTestEncoder(t, "exit")
+	e.config.Audio.Input = "dante://studio-tx/Left/Right"
+	reader, writer := io.Pipe()
+	t.Cleanup(func() { _ = writer.Close() })
+	e.openDanteSource = func(ctx context.Context, _ string) (source, error) {
+		// Wait returns on cancel, but reads stay blocked until the writer closes.
+		return fakeDanteSource{reader, ctx.Done()}, nil
+	}
+	if err := e.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitForCondition(t, time.Second, "source running", func() bool {
+		return e.State() == types.StateRunning
+	})
+	stopped := make(chan error, 1)
+	go func() { stopped <- e.Stop() }()
+	select {
+	case err := <-stopped:
+		t.Fatalf("Stop() = %v while the distributor was still reading", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if state := e.State(); state != types.StateStopping {
+		t.Fatalf("State while the distributor reads = %q, want stopping", state)
+	}
+	_ = writer.Close()
+	if err := <-stopped; err != nil {
+		t.Fatalf("Stop() after the reader exited = %v", err)
+	}
+}
 
 func TestStartRejectsStateStopping(t *testing.T) {
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
@@ -110,19 +190,19 @@ func TestDelayedStarterReturnsWhenStopChanClosed(t *testing.T) {
 	assertManagersStopped(t, e, "closed stopChan delayed starter ran")
 }
 func TestStopBeforeStreamDelayCancelsDelayedStarter(t *testing.T) {
-	readyPath := filepath.Join(t.TempDir(), "capture-ready")
-	e := newSourceLifecycleTestEncoder(t, "sleep", readyPath)
+	// A pipe source cannot spend the pre-delay window starting a subprocess.
+	e := newSourceLifecycleTestEncoder(t, "exit")
+	e.config.Audio.Input = "dante://studio-tx/Left/Right"
+	e.openDanteSource = func(ctx context.Context, _ string) (source, error) {
+		return pipeDanteSource(ctx, ctx.Done()), nil
+	}
 	if err := e.Start(); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
 	waitForCondition(t, time.Second, "source running", func() bool {
 		e.mu.RLock()
 		defer e.mu.RUnlock()
-		return e.state == types.StateRunning && e.sourceCancel != nil && e.sourceRunID > 0
-	})
-	waitForCondition(t, testStreamRestartDelay/2, "capture helper signal readiness", func() bool {
-		_, err := os.Stat(readyPath)
-		return err == nil
+		return e.state == types.StateRunning && e.sourceCancel != nil && e.sourceStdout != nil && e.sourceRunID > 0
 	})
 	if err := e.Stop(); err != nil {
 		t.Fatalf("Stop() error = %v", err)
@@ -135,9 +215,7 @@ func TestNativeDanteSourceUsesEncoderLifecycle(t *testing.T) {
 	e := newSourceLifecycleTestEncoder(t, "exit")
 	e.config.Audio.Input = "dante://studio-tx/Left/Right"
 	e.openDanteSource = func(ctx context.Context, _ string) (source, error) {
-		reader, writer := io.Pipe()
-		context.AfterFunc(ctx, func() { _ = writer.Close() }) // Cancellation must unblock reads.
-		return fakeDanteSource{reader, ctx.Done()}, nil
+		return pipeDanteSource(ctx, ctx.Done()), nil
 	}
 
 	if err := e.Start(); err != nil {
@@ -148,6 +226,9 @@ func TestNativeDanteSourceUsesEncoderLifecycle(t *testing.T) {
 		defer e.mu.RUnlock()
 		return e.state == types.StateRunning && e.sourceCancel != nil && e.sourceStdout != nil
 	})
+	if e.Status().InputReady {
+		t.Fatal("running input without PCM is ready")
+	}
 	if err := e.Stop(); err != nil {
 		t.Fatalf("Stop() error = %v", err)
 	}
@@ -205,8 +286,8 @@ func TestSourceRecoveryReportsInputRestored(t *testing.T) {
 	waitForCondition(t, 10*time.Second, "input_restored logged", func() bool {
 		return countEvents(t, e, logPath, eventlog.InputRestored) == 1
 	})
-	if got := e.Status().SourceRetryCount; got != 0 {
-		t.Fatalf("SourceRetryCount = %d after recovery, want 0", got)
+	if status := e.Status(); status.SourceRetryCount != 0 || !status.InputReady {
+		t.Fatalf("after recovery: SourceRetryCount = %d, InputReady = %t; want 0, true", status.SourceRetryCount, status.InputReady)
 	}
 	if got := countEvents(t, e, logPath, eventlog.InputLost); got != 1 {
 		t.Fatalf("input_lost events = %d, want 1", got)
@@ -253,8 +334,8 @@ func TestSourceWithoutAudioIsReopenedAndNeverRestored(t *testing.T) {
 		defer e.mu.RUnlock()
 		return e.retryCount >= 2
 	})
-	if got := e.Status().LastError; got != "no audio from input within 300ms" {
-		t.Fatalf("Status().LastError = %q, want the stall error", got)
+	if status := e.Status(); status.LastError != "no audio from input within 300ms" || status.InputReady {
+		t.Fatalf("Status() LastError = %q, InputReady = %t; want the stall error, false", status.LastError, status.InputReady)
 	}
 	if got := countEvents(t, e, logPath, eventlog.InputLost); got != 1 {
 		t.Fatalf("input_lost events = %d, want 1", got)
@@ -481,7 +562,7 @@ func freeUDPPort(t *testing.T) int {
 	}()
 	return conn.LocalAddr().(*net.UDPAddr).Port
 }
-func newSourceLifecycleTestEncoder(t *testing.T, helperMode string, helperArgs ...string) *Encoder {
+func newSourceLifecycleTestEncoder(t *testing.T, helperMode string) *Encoder {
 	t.Helper()
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	cfg.Audio.Input = "test-device"
@@ -495,7 +576,7 @@ func newSourceLifecycleTestEncoder(t *testing.T, helperMode string, helperArgs .
 	e := &Encoder{
 		config:              cfg,
 		ffmpegPath:          "ffmpeg",
-		buildCaptureCommand: helperCaptureCommand(helperMode, helperArgs...),
+		buildCaptureCommand: helperCaptureCommand(helperMode),
 		streamRestartDelay:  testStreamRestartDelay,
 		inputStableDelay:    types.StableThreshold,
 		inputStartupTimeout: inputStartupTimeout,
@@ -551,10 +632,9 @@ func countEvents(t *testing.T, e *Encoder, logPath string, eventType eventlog.Ev
 	return count
 }
 
-func helperCaptureCommand(mode string, extraArgs ...string) func(string, string) (string, []string, error) {
+func helperCaptureCommand(mode string) func(string, string) (string, []string, error) {
 	return func(_, _ string) (string, []string, error) {
 		args := []string{"-test.run=TestEncoderCaptureHelperProcess", "--", mode}
-		args = append(args, extraArgs...)
 		return os.Args[0], args, nil
 	}
 }
@@ -567,6 +647,13 @@ type fakeDanteSource struct {
 func (s fakeDanteSource) Wait() error {
 	<-s.done
 	return nil
+}
+
+// pipeDanteSource returns a fake source whose Wait returns when done closes.
+func pipeDanteSource(ctx context.Context, done <-chan struct{}) fakeDanteSource {
+	reader, writer := io.Pipe()
+	context.AfterFunc(ctx, func() { _ = writer.Close() }) // Cancellation must unblock reads.
+	return fakeDanteSource{reader, done}
 }
 func TestEncoderCaptureHelperProcess(t *testing.T) {
 	helperArgs := []string{}
@@ -586,13 +673,6 @@ func TestEncoderCaptureHelperProcess(t *testing.T) {
 	case "sleep":
 		signals := make(chan os.Signal, 1)
 		signal.Notify(signals, util.ShutdownSignals()...)
-		if len(helperArgs) > 1 {
-			//nolint:gosec // G703: helperArgs[1] is a temp-file path created by this test process.
-			if err := os.WriteFile(helperArgs[1], []byte("ready"), 0o600); err != nil {
-				signal.Stop(signals)
-				os.Exit(2)
-			}
-		}
 		select {
 		case <-signals:
 		case <-time.After(time.Minute):

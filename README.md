@@ -92,6 +92,8 @@ Set `audio.input` in `config.json` to a Dante-compatible input URI:
 
 The URI format is `dante://TRANSMITTER/LEFT_CHANNEL/RIGHT_CHANNEL?interface=INTERFACE`. Percent-encode spaces and other reserved characters in channel names.
 
+Device and channel names are limited to 31 ASCII characters. Device names contain only letters, digits and hyphens, and cannot start or end with a hyphen; do not include a port or `.local` suffix. Channel names use printable ASCII except `=`, `.` and `@`. Spaces and percent-encoded `/`, `?` and `#` remain supported. Invalid names are rejected before discovery starts.
+
 The web interface shows a configured Dante-compatible input in the Input Device selector; choosing another device there replaces it. Dante-compatible inputs are set in `config.json` only.
 
 The interface is optional; when omitted, mDNS runs on all interfaces and the source address the OS routes toward the transmitter is used. The transmitter must run at 48 kHz and advertise 16-, 24-, or 32-bit PCM. The encoder and transmitter must be on a network where mDNS multicast and the Dante-compatible UDP traffic are permitted.
@@ -124,9 +126,11 @@ Monitors audio levels and sends alerts when silence is detected or recovered. Us
 
 ## Audio Input Recovery
 
+If stopping an input exceeds the shutdown timeout, the encoder remains `stopping` and rejects a new start until the old source and its audio reader have exited. Once shutdown completes it becomes `stopped` and can be started again.
+
 If the audio input disappears (a capture error, an unplugged USB interface, a Dante transmitter that stops sending), the encoder keeps reopening it. After a failed attempt it waits 3 seconds, doubling up to 10 seconds, plus up to 50% random jitter, so never more than 15 seconds. It never gives up, so audio resumes on its own when the input returns. A capture that keeps running but delivers no audio is treated as failed and reopened too: when no audio arrives within 30 seconds of opening the input, or audio stops for 10 seconds. Streams and recorders keep running in the meantime. The dashboard shows the reconnect attempts and the error of the last failed attempt.
 
-The first failure of an outage writes an `input_lost` event and alerts every configured audio channel (webhook, email, Zabbix). Once the input has delivered steady audio (no pause over 2 seconds) for 10 seconds again, an `input_restored` event with the outage duration follows. Like abandoned uploads, these alerts go to every channel configured at that moment, regardless of per-event toggles. An open outage survives stopping and starting the encoder (but not a restart of the process): it raises no second `input_lost`, and the next confirmed input, also from a newly selected device, closes it with a duration that includes the stopped time. `GET /health` reports `503` between reopen attempts; while a reopened capture runs it reports `200`, even before that capture delivers audio. If the process restarts during an outage, no `input_restored` follows: close the Zabbix problem manually.
+The first failure of an outage writes an `input_lost` event and alerts every configured audio channel (webhook, email, Zabbix). Once the input has delivered steady audio (no pause over 2 seconds) for 10 seconds again, an `input_restored` event with the outage duration follows. Like abandoned uploads, these alerts go to every channel configured at that moment, regardless of per-event toggles. An open outage survives stopping and starting the encoder: it raises no second `input_lost`, and the next confirmed input, also from a newly selected device, closes it with a duration that includes the stopped time. After a process restart, the encoder restores an open outage from the latest input event in the retained event logs (including the rotated log). The next confirmed input then closes the incident and Zabbix problem as usual; an already-restored input does not produce another recovery. `GET /health` reports `503` between reopen attempts; while a reopened capture runs it reports `200`, even before that capture delivers audio.
 
 ## Channel Imbalance Detection
 
@@ -143,7 +147,7 @@ Channel imbalance events can trigger webhook, email, and Zabbix notifications, a
 ## Alerting
 
 **Audio alerting options** (can use multiple simultaneously, each with per-event control):
-- **Webhook** - POST request to a URL; independently enable `silence_start`, `silence_end`, `audio_dump`, `channel_imbalance_start`, and `channel_imbalance_end`.
+- **Webhook** - POST request to a URL (redirects are rejected, so configure the final URL); independently enable `silence_start`, `silence_end`, `audio_dump`, `channel_imbalance_start`, and `channel_imbalance_end`.
 - **Email** - Microsoft Graph API notification; independently enable `silence_start`, `silence_end`, `audio_dump`, `channel_imbalance_start`, and `channel_imbalance_end`.
 - **File Log** - Appends JSON Lines for every audio event, including silence and channel imbalance events (always records all events, no per-event toggle).
 - **Zabbix** - Send trapper items to a Zabbix server; independently enable `silence_start`, `silence_end`, `channel_imbalance_start`, and `channel_imbalance_end` (no `audio_dump` - trapper items do not support file attachments).
@@ -174,11 +178,17 @@ The template creates triggers for SILENCE (Disaster), RECOVERY (Info), INPUT_LOS
 
 ## Hourly Recording
 
+Recorder names must produce unique filename prefixes, compared case-insensitively. For example, `Studio` and `Studio!`, or `Studio B` and `Studio-B`, cannot be used together. Conflicting names are rejected when saving a recorder or loading an existing config; rename one of the conflicting recorders before starting the encoder.
+
 Hourly recorders start a new file on every whole hour (whole UTC hours, which are the local hours in time zones with a whole-hour offset), named after the local time of the hand-over rounded to the minute, such as `<recorder>-YYYY-MM-DD-HH-00.<ext>`; the first file after a start is named after its start minute. At the boundary the next file is started before the current one is finalized, so the hand-over itself drops no audio; the previous file is then closed and queued for upload when S3 is configured. When the local clock repeats an hour, as at the end of daylight saving time, the second file of that hour gets a `-2` suffix instead of overwriting the first.
 
 A successfully finalized run that received no PCM (for example during an input outage) is removed without uploading. Partial hours and digital silence are kept. Failed finalizations retain the file for inspection and report a recorder error; in S3-only mode such a retained file is still uploaded when the recorder is recreated at the next start.
 
+On Linux, a recorder starts its first file only once the kernel reports the system clock as NTP-synchronized, because file names and retention cleanup come from the clock and a Raspberry Pi has no real-time clock. Until then it stays `starting` with the error `waiting for system clock synchronization`; a waiting hourly recorder makes `GET /ready` not ready, an on-demand recording can still be stopped, and streaming is not affected. The installer enables NTP. systemd-timesyncd and chrony (Debian's default `rtcsync`) mark the clock synchronized; a system that keeps time without such a client never starts recording, and ntpsec before Debian trixie marks the clock synchronized at startup, so it gives no protection. If the synchronization state cannot be read, recording starts with a warning.
+
 ## Recording API
+
+S3 upload retries pause after 24 hours and raise an `upload_abandoned` alert. The recording and its upload metadata are retained, including in S3-only mode (in local+S3 mode, local retention still applies to the local copy). Fix S3 configuration/connectivity and restart the encoder process (not just the audio input) to re-queue abandoned uploads with their original object keys and a fresh retry window. There is no automatic disk-space eviction of unuploaded spool recordings: monitor free space and respond to upload alerts. On Linux the default spool is `/var/lib/encoder/recordings`, with recordings under `recorders/<id>/` and metadata under `uploads/<id>/`.
 
 On-demand recordings can be started and stopped via the REST API without going through the web interface. Useful for automation or external systems that need to trigger recordings.
 
@@ -260,9 +270,11 @@ No authentication required.
 
 ## Readiness Endpoint
 
-`GET /ready` is a public production-readiness endpoint. It returns 200 only when the process is usable for broadcast monitoring: FFmpeg is available, the encoder is running, enabled caller streams are stable, no silence alarm is active, no channel imbalance alarm is active, enabled hourly recorders are running, no recorder is in error, and no recording uploads are pending retry. Local pull listener streams are excluded from production-readiness because a running listener means "waiting for clients", not "connected remote output".
+`GET /ready` is a public production-readiness endpoint. It returns 200 only when the process is usable for broadcast monitoring: FFmpeg is available, the encoder is running, the current input has delivered PCM within the last 2 seconds with no open input outage, enabled caller streams are stable, no silence alarm is active, no channel imbalance alarm is active, enabled hourly recorders are running, no recorder is in error, and no recording uploads are pending retry. Local pull listener streams are excluded from production-readiness because a running listener means "waiting for clients", not "connected remote output".
 
-The readiness rollup is intentionally strict: one pending recording upload makes the overall endpoint return `503` because the archive path is degraded. A confirmed channel imbalance (for example one dead channel) makes the `channel_imbalance` component not ready, since the broadcast is degraded even though the encoder keeps running. Monitoring that should only page for live broadcast impact should alert on the relevant components in the JSON body, such as `process`, `streams`, `silence`, and `channel_imbalance`, instead of the aggregate `status`. Planned off-air periods or other intentional silence also make the `silence` component not ready while the silence alarm is active.
+The `input` component fails before the first PCM arrives, when audio stops arriving for over 2 seconds, and while an input outage awaits confirmation of stable audio after recovery. Opening the device again alone does not clear an outage. The encoder status exposes the same condition as `input_ready`. `/health` retains its process-health meaning and can still return 200 for an open device that is not delivering audio.
+
+The readiness rollup is intentionally strict: one pending recording upload makes the overall endpoint return `503` because the archive path is degraded. A confirmed channel imbalance (for example one dead channel) makes the `channel_imbalance` component not ready, since the broadcast is degraded even though the encoder keeps running. Monitoring that should only page for live broadcast impact should alert on the relevant components in the JSON body, such as `process`, `input`, `streams`, `silence`, and `channel_imbalance`, instead of the aggregate `status`. Planned off-air periods or other intentional silence also make the `silence` component not ready while the silence alarm is active.
 
 When any component is not ready, the endpoint returns 503 with component details:
 
