@@ -22,7 +22,7 @@ name: CI
       - 'bun.lock'
       - 'biome.json'
       - '.htmlhintrc'
-  # Include stacked PRs so their deterministic receiver tests run under -race too.
+  # Include stacked PRs so their tests run under -race too.
   pull_request:
 
 permissions:
