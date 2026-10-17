@@ -120,6 +120,13 @@ if [ "$KEEP_CONFIG" != "y" ]; then
   # Web port
   prompt_user "WEB_PORT" "8080" "Enter the web interface port" "num"
 
+  # Production access goes through a local TLS proxy or an SSH tunnel.
+  prompt_user "WEB_EXPOSE_LAN" "n" "Expose plain HTTP to the LAN? (n: use a local TLS proxy or SSH tunnel)" "y/n"
+  WEB_BIND_ADDRESS="127.0.0.1"
+  if [ "$WEB_EXPOSE_LAN" == "y" ]; then
+    WEB_BIND_ADDRESS="0.0.0.0"
+  fi
+
   # Timezone with validation (retry loop)
   while true; do
     prompt_user "TIMEZONE" "Europe/Amsterdam" "Enter your timezone (e.g. Europe/Amsterdam, Europe/London, Europe/Berlin)" "str"
@@ -162,6 +169,7 @@ else
   echo -e "Web username:     ${BOLD}${WEB_USERNAME}${NC}"
   echo -e "Web password:     ${BOLD}********${NC}"
   echo -e "Web port:         ${BOLD}${WEB_PORT}${NC}"
+  echo -e "Web bind address: ${BOLD}${WEB_BIND_ADDRESS}${NC}"
   echo -e "Timezone:         ${BOLD}${TIMEZONE}${NC}"
   echo -e "Heartbeat:        ${BOLD}${ENABLE_HEARTBEAT}${NC}"
   if [ "$ENABLE_HEARTBEAT" == "y" ]; then
@@ -315,19 +323,32 @@ else
 
   # Generate configuration file using jq (minimal config, app fills defaults)
   echo -e "${BLUE}►► Generating configuration file...${NC}"
-  jq -n \
+  WEB_CREDENTIAL_FIELD="password_hash"
+  ENCODER_HELP=$("${INSTALL_DIR}/encoder" -help 2>&1)
+  if printf '%s' "$ENCODER_HELP" | grep -F -- '-hash-password' > /dev/null; then
+    WEB_CREDENTIAL=$(printf '%s' "$WEB_PASSWORD" | "${INSTALL_DIR}/encoder" -hash-password)
+  else
+    # shortcut: older releases lack hashing/bind support, remove after enforcing a newer minimum version.
+    WEB_CREDENTIAL_FIELD="password"
+    WEB_CREDENTIAL="$WEB_PASSWORD"
+    echo -e "${YELLOW}This older release stores plaintext and ignores the bind IP. Firewall its HTTP port; upgrade and migrate using the Admin security guide.${NC}"
+  fi
+  unset WEB_PASSWORD
+  printf '%s' "$WEB_CREDENTIAL" | jq -Rs \
     --arg station_name "$STATION_NAME" \
     --arg username "$WEB_USERNAME" \
-    --arg password "$WEB_PASSWORD" \
+    --arg credential_field "$WEB_CREDENTIAL_FIELD" \
+    --arg bind_address "$WEB_BIND_ADDRESS" \
     --argjson port "$WEB_PORT" \
     '{
-      system: { port: $port, username: $username, password: $password },
+      system: ({ port: $port, bind_address: $bind_address, username: $username } + {($credential_field): .}),
       web: { station_name: $station_name }
     }' > "$CONFIG_FILE"
 
   # Set proper ownership and permissions
   chown encoder:encoder "$CONFIG_FILE"
   chmod 600 "$CONFIG_FILE"
+  unset WEB_CREDENTIAL WEB_CREDENTIAL_FIELD ENCODER_HELP
   echo -e "${GREEN}✓ Configuration saved to ${CONFIG_FILE}${NC}"
 fi
 
@@ -382,7 +403,14 @@ echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━
 DISPLAY_PORT=$(jq -r '.system.port // 8080' "$CONFIG_FILE" 2>/dev/null || echo "8080")
 
 echo -e "\n${BOLD}Web Interface${NC}"
-echo -e "  URL:      ${BOLD}http://${FIRST_IP}:${DISPLAY_PORT}${NC}"
+DISPLAY_BIND=$(jq -r '.system.bind_address // "0.0.0.0"' "$CONFIG_FILE")
+if [ "$DISPLAY_BIND" == "127.0.0.1" ] && "${INSTALL_DIR}/encoder" -help 2>&1 | grep -F -- '-hash-password' > /dev/null; then
+  echo -e "  URL:      ${BOLD}http://127.0.0.1:${DISPLAY_PORT}${NC} (local only)"
+  echo -e "  Remote access: configure a local TLS reverse proxy, or tunnel with:"
+  echo -e "  ${BOLD}ssh -L ${DISPLAY_PORT}:127.0.0.1:${DISPLAY_PORT} <user>@${FIRST_IP}${NC}"
+else
+  echo -e "  URL:      ${BOLD}http://${FIRST_IP}:${DISPLAY_PORT}${NC} (check configured bind address)"
+fi
 if [ "$KEEP_CONFIG" == "y" ]; then
   echo -e "  Credentials: ${BOLD}(as previously configured)${NC}"
 else

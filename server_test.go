@@ -22,7 +22,6 @@ func TestSetupRoutesRejectsUnauthenticatedRequests(t *testing.T) {
 	// TestSetupRoutesAPIKeyAuth.
 	unprotected := map[string]bool{
 		"/login":                     true,
-		"/logout":                    true,
 		"GET /health":                true,
 		"GET /ready":                 true,
 		"/style.css":                 true,
