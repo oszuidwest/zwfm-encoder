@@ -92,7 +92,8 @@ type GenericRecorder struct {
 	retryQueue []pendingUpload
 
 	// Rotation timer (hourly mode)
-	rotationTimer *time.Timer
+	rotationTimer      *time.Timer
+	rotationGeneration uint64
 	// retiring tracks files that a rotation is still finalizing; Stop waits
 	// for them so they are queued for upload before intake closes.
 	retiring      sync.WaitGroup
@@ -190,6 +191,9 @@ func (r *GenericRecorder) Start() error {
 
 	if r.state == types.ProcessRunning || r.state == types.ProcessStarting {
 		return ErrAlreadyRecording
+	}
+	if r.state == types.ProcessStopping {
+		return ErrRecorderStopping
 	}
 
 	// Clear any previous error and set starting state
@@ -363,6 +367,7 @@ func (r *GenericRecorder) Stop() error {
 		r.rotationTimer.Stop()
 		r.rotationTimer = nil
 	}
+	r.rotationGeneration++
 	if r.durationTimer != nil {
 		r.durationTimer.Stop()
 		r.durationTimer = nil
@@ -458,7 +463,10 @@ func (r *GenericRecorder) handleWriteError(result *ffmpeg.StartResult, writeErr 
 		r.mu.Unlock()
 		return
 	}
-	r.state = types.ProcessError
+	// A running Stop owns the state; Error would let Start overlap its teardown.
+	if r.state != types.ProcessStopping {
+		r.state = types.ProcessError
+	}
 	r.lastError = writeErr.Error()
 	capturedFile := r.currentFile
 	r.result = nil
@@ -696,16 +704,21 @@ func (r *GenericRecorder) finishEncoder(run encoderRun) {
 // scheduleRotationLocked arms the rotation for the first hour boundary after
 // from. Must be called with r.mu held.
 func (r *GenericRecorder) scheduleRotationLocked(from time.Time) {
+	if r.rotationTimer != nil {
+		r.rotationTimer.Stop()
+	}
+	r.rotationGeneration++
+	generation := r.rotationGeneration
 	next := from.Truncate(time.Hour).Add(time.Hour)
-	r.rotationTimer = afterFunc(time.Until(next), r.rotateFile)
+	r.rotationTimer = afterFunc(time.Until(next), func() { r.rotateFile(generation) })
 }
 
 // rotateFile hands the recording over to a new file at the hour boundary.
 // The next FFmpeg process starts and takes over the audio before the current
 // one is closed, so no audio is lost between the two files.
-func (r *GenericRecorder) rotateFile() {
+func (r *GenericRecorder) rotateFile(generation uint64) {
 	r.mu.Lock()
-	if r.state != types.ProcessRunning {
+	if r.state != types.ProcessRunning || generation != r.rotationGeneration {
 		r.mu.Unlock()
 		return
 	}
