@@ -1,6 +1,7 @@
 package dante
 
 import (
+	"cmp"
 	"net"
 	"testing"
 
@@ -44,33 +45,36 @@ func TestDiscoveryRequiresLocalMDNSSource(t *testing.T) {
 func TestDNSResponseRejectsInvalidProtocolFields(t *testing.T) {
 	t.Parallel()
 	requested := "Left@tx" + serviceSuffix
+	question := func(name string, questionType dnsmessage.Type, class dnsmessage.Class) *dnsmessage.Question {
+		return &dnsmessage.Question{Name: dnsmessage.MustNewName(name), Type: questionType, Class: class}
+	}
+	// Rows describe a valid response unless they set query or override a field.
 	for _, tt := range []struct {
 		name     string
+		query    bool
 		header   dnsmessage.Header
 		question *dnsmessage.Question
 		class    dnsmessage.Class
 		want     bool
 	}{
-		{name: "valid", header: dnsmessage.Header{Response: true}, class: dnsmessage.ClassINET, want: true},
-		{name: "cache flush", header: dnsmessage.Header{Response: true}, class: dnsmessage.ClassINET | 0x8000, want: true},
-		{name: "matching question", header: dnsmessage.Header{Response: true}, class: dnsmessage.ClassINET, want: true,
-			question: &dnsmessage.Question{Name: dnsmessage.MustNewName(requested), Type: dnsmessage.TypeSRV, Class: dnsmessage.ClassINET}},
-		{name: "query", class: dnsmessage.ClassINET},
-		{name: "opcode", header: dnsmessage.Header{Response: true, OpCode: 1}, class: dnsmessage.ClassINET},
-		{name: "unrelated id", header: dnsmessage.Header{Response: true, ID: 123}, class: dnsmessage.ClassINET},
-		{name: "rcode", header: dnsmessage.Header{Response: true, RCode: dnsmessage.RCodeServerFailure}, class: dnsmessage.ClassINET},
-		{name: "truncated", header: dnsmessage.Header{Response: true, Truncated: true}, class: dnsmessage.ClassINET},
-		{name: "wrong resource class", header: dnsmessage.Header{Response: true}, class: dnsmessage.ClassCHAOS},
-		{name: "unrelated question", header: dnsmessage.Header{Response: true}, class: dnsmessage.ClassINET,
-			question: &dnsmessage.Question{Name: dnsmessage.MustNewName("Other@tx" + serviceSuffix), Type: dnsmessage.TypeSRV, Class: dnsmessage.ClassINET}},
-		{name: "wrong question class", header: dnsmessage.Header{Response: true}, class: dnsmessage.ClassINET,
-			question: &dnsmessage.Question{Name: dnsmessage.MustNewName(requested), Type: dnsmessage.TypeSRV, Class: dnsmessage.ClassCHAOS}},
-		{name: "unrequested question type", header: dnsmessage.Header{Response: true}, class: dnsmessage.ClassINET,
-			question: &dnsmessage.Question{Name: dnsmessage.MustNewName(requested), Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET}},
+		{name: "valid", want: true},
+		{name: "cache flush", class: dnsmessage.ClassINET | 0x8000, want: true},
+		{name: "matching question", question: question(requested, dnsmessage.TypeSRV, dnsmessage.ClassINET), want: true},
+		{name: "query", query: true},
+		{name: "opcode", header: dnsmessage.Header{OpCode: 1}},
+		{name: "unrelated id", header: dnsmessage.Header{ID: 123}},
+		{name: "rcode", header: dnsmessage.Header{RCode: dnsmessage.RCodeServerFailure}},
+		{name: "truncated", header: dnsmessage.Header{Truncated: true}},
+		{name: "wrong resource class", class: dnsmessage.ClassCHAOS},
+		{name: "unrelated question", question: question("Other@tx"+serviceSuffix, dnsmessage.TypeSRV, dnsmessage.ClassINET)},
+		{name: "wrong question class", question: question(requested, dnsmessage.TypeSRV, dnsmessage.ClassCHAOS)},
+		{name: "unrequested question type", question: question(requested, dnsmessage.TypeA, dnsmessage.ClassINET)},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			builder := dnsmessage.NewBuilder(nil, tt.header)
+			header := tt.header
+			header.Response = !tt.query
+			builder := dnsmessage.NewBuilder(nil, header)
 			if tt.question != nil {
 				if err := builder.StartQuestions(); err != nil {
 					t.Fatal(err)
@@ -82,7 +86,7 @@ func TestDNSResponseRejectsInvalidProtocolFields(t *testing.T) {
 			if err := builder.StartAnswers(); err != nil {
 				t.Fatal(err)
 			}
-			resource := dnsmessage.ResourceHeader{Name: dnsmessage.MustNewName(requested), Class: tt.class, TTL: 120}
+			resource := dnsmessage.ResourceHeader{Name: dnsmessage.MustNewName(requested), Class: cmp.Or(tt.class, dnsmessage.ClassINET), TTL: 120}
 			if err := builder.SRVResource(resource, dnsmessage.SRVResource{Port: 4455, Target: dnsmessage.MustNewName("tx.local.")}); err != nil {
 				t.Fatal(err)
 			}
