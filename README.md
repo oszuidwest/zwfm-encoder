@@ -143,7 +143,7 @@ Channel imbalance events can trigger webhook, email, and Zabbix notifications, a
 ## Alerting
 
 **Audio alerting options** (can use multiple simultaneously, each with per-event control):
-- **Webhook** - POST request to a URL; independently enable `silence_start`, `silence_end`, `audio_dump`, `channel_imbalance_start`, and `channel_imbalance_end`.
+- **Webhook** - POST request to a URL (redirects are rejected, so configure the final URL); independently enable `silence_start`, `silence_end`, `audio_dump`, `channel_imbalance_start`, and `channel_imbalance_end`.
 - **Email** - Microsoft Graph API notification; independently enable `silence_start`, `silence_end`, `audio_dump`, `channel_imbalance_start`, and `channel_imbalance_end`.
 - **File Log** - Appends JSON Lines for every audio event, including silence and channel imbalance events (always records all events, no per-event toggle).
 - **Zabbix** - Send trapper items to a Zabbix server; independently enable `silence_start`, `silence_end`, `channel_imbalance_start`, and `channel_imbalance_end` (no `audio_dump` - trapper items do not support file attachments).
