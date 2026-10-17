@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -479,8 +480,8 @@ func TestCompletedUploadKeepsIdentityWhileSpoolFileRemains(t *testing.T) {
 	cfg.S3Endpoint = endpoint
 	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
 	file := writeSpoolFile(t, r.spoolDir, r.id, "kept.mp3", "audio")
-	if os.Geteuid() == 0 {
-		t.Skip("root can delete from a read-only directory")
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("directory permissions do not stop root or Windows from deleting the file")
 	}
 	// A read-only spool directory makes deleting the uploaded copy fail.
 	dir := filepath.Dir(file)
