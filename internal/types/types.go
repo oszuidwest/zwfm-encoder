@@ -80,8 +80,6 @@ const (
 const (
 	// ShutdownTimeout is the duration to wait for graceful shutdown.
 	ShutdownTimeout = 3 * time.Second
-	// PollInterval is the interval for polling process state.
-	PollInterval = 50 * time.Millisecond
 )
 
 // Codec identifies an audio encoding format.

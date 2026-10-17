@@ -3,6 +3,16 @@ package encoder
 import (
 	"context"
 	"errors"
+	"io"
+	"net"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
@@ -12,16 +22,6 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/streaming"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
-	"io"
-	"net"
-	"os"
-	"os/signal"
-	"path/filepath"
-	"strings"
-	"sync"
-	"sync/atomic"
-	"testing"
-	"time"
 )
 
 const testStreamRestartDelay = 200 * time.Millisecond
@@ -31,17 +31,14 @@ const nonexistentFFmpeg = "/nonexistent/ffmpeg-binary-for-test"
 func TestStopTimeoutPreventsOverlappingSourceLoops(t *testing.T) {
 	e := newSourceLifecycleTestEncoder(t, "exit")
 	e.config.Audio.Input = "dante://studio-tx/Left/Right"
-	release := make(chan struct{})
-	var releaseOnce sync.Once
-	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	stuck, release := context.WithCancel(context.Background())
+	t.Cleanup(release)
 	var opens atomic.Int32
 	e.openDanteSource = func(ctx context.Context, _ string) (source, error) {
-		reader, writer := io.Pipe()
-		context.AfterFunc(ctx, func() { _ = writer.Close() })
 		if opens.Add(1) == 1 {
-			return fakeDanteSource{reader, release}, nil
+			return pipeDanteSource(ctx, stuck.Done()), nil
 		}
-		return fakeDanteSource{reader, ctx.Done()}, nil
+		return pipeDanteSource(ctx, ctx.Done()), nil
 	}
 	if err := e.Start(); err != nil {
 		t.Fatal(err)
@@ -61,7 +58,7 @@ func TestStopTimeoutPreventsOverlappingSourceLoops(t *testing.T) {
 	if got := opens.Load(); got != 1 {
 		t.Fatalf("sources opened while stopping = %d, want 1", got)
 	}
-	releaseOnce.Do(func() { close(release) })
+	release()
 	waitForCondition(t, time.Second, "late source shutdown completes", func() bool {
 		return e.State() == types.StateStopped
 	})
@@ -75,6 +72,37 @@ func TestStopTimeoutPreventsOverlappingSourceLoops(t *testing.T) {
 	})
 	if err := e.Stop(); err != nil {
 		t.Fatalf("Stop new source: %v", err)
+	}
+}
+
+func TestStopWaitsForDistributorAfterSourceExit(t *testing.T) {
+	e := newSourceLifecycleTestEncoder(t, "exit")
+	e.config.Audio.Input = "dante://studio-tx/Left/Right"
+	reader, writer := io.Pipe()
+	t.Cleanup(func() { _ = writer.Close() })
+	e.openDanteSource = func(ctx context.Context, _ string) (source, error) {
+		// Wait returns on cancel, but reads stay blocked until the writer closes.
+		return fakeDanteSource{reader, ctx.Done()}, nil
+	}
+	if err := e.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitForCondition(t, time.Second, "source running", func() bool {
+		return e.State() == types.StateRunning
+	})
+	stopped := make(chan error, 1)
+	go func() { stopped <- e.Stop() }()
+	select {
+	case err := <-stopped:
+		t.Fatalf("Stop() = %v while the distributor was still reading", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if state := e.State(); state != types.StateStopping {
+		t.Fatalf("State while the distributor reads = %q, want stopping", state)
+	}
+	_ = writer.Close()
+	if err := <-stopped; err != nil {
+		t.Fatalf("Stop() after the reader exited = %v", err)
 	}
 }
 
@@ -166,9 +194,7 @@ func TestStopBeforeStreamDelayCancelsDelayedStarter(t *testing.T) {
 	e := newSourceLifecycleTestEncoder(t, "exit")
 	e.config.Audio.Input = "dante://studio-tx/Left/Right"
 	e.openDanteSource = func(ctx context.Context, _ string) (source, error) {
-		reader, writer := io.Pipe()
-		context.AfterFunc(ctx, func() { _ = writer.Close() })
-		return fakeDanteSource{reader, ctx.Done()}, nil
+		return pipeDanteSource(ctx, ctx.Done()), nil
 	}
 	if err := e.Start(); err != nil {
 		t.Fatalf("Start() error = %v", err)
@@ -189,9 +215,7 @@ func TestNativeDanteSourceUsesEncoderLifecycle(t *testing.T) {
 	e := newSourceLifecycleTestEncoder(t, "exit")
 	e.config.Audio.Input = "dante://studio-tx/Left/Right"
 	e.openDanteSource = func(ctx context.Context, _ string) (source, error) {
-		reader, writer := io.Pipe()
-		context.AfterFunc(ctx, func() { _ = writer.Close() }) // Cancellation must unblock reads.
-		return fakeDanteSource{reader, ctx.Done()}, nil
+		return pipeDanteSource(ctx, ctx.Done()), nil
 	}
 
 	if err := e.Start(); err != nil {
@@ -620,6 +644,13 @@ type fakeDanteSource struct {
 func (s fakeDanteSource) Wait() error {
 	<-s.done
 	return nil
+}
+
+// pipeDanteSource returns a fake source whose Wait returns when done closes.
+func pipeDanteSource(ctx context.Context, done <-chan struct{}) fakeDanteSource {
+	reader, writer := io.Pipe()
+	context.AfterFunc(ctx, func() { _ = writer.Close() }) // Cancellation must unblock reads.
+	return fakeDanteSource{reader, done}
 }
 func TestEncoderCaptureHelperProcess(t *testing.T) {
 	helperArgs := []string{}
