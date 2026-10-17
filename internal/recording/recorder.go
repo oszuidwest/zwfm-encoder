@@ -668,10 +668,22 @@ func (r *GenericRecorder) finishEncoder(run encoderRun) {
 			"id", r.id, "file", filepath.Base(run.file), "chunks", abandoned, "total_drops", drops)
 	}
 
-	// queueForUpload handles local-only and missing S3 config.
-	if run.file != "" && !outputRefused(run.result.Stderr()) {
-		r.queueForUpload(run.file)
+	if run.file == "" || outputRefused(run.result.Stderr()) {
+		return
 	}
+	if run.result.BytesWritten() == 0 {
+		// Only successful finalization proves this is our empty output to remove.
+		if finalizeErr == nil {
+			if err := os.Remove(run.file); err != nil && !errors.Is(err, os.ErrNotExist) {
+				r.reportError(run.file, fmt.Errorf("remove empty recording: %w", err))
+				return
+			}
+			slog.Info("discarded recording without audio", "id", r.id, "file", filepath.Base(run.file))
+		}
+		return
+	}
+	// queueForUpload handles local-only and missing S3 config.
+	r.queueForUpload(run.file)
 }
 
 // scheduleRotationLocked arms the rotation for the first hour boundary after
