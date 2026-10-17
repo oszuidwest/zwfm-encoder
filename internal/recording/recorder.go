@@ -23,6 +23,13 @@ import (
 // afterFunc schedules hourly rotations; tests replace it to rotate by hand.
 var afterFunc = time.AfterFunc
 
+// clockSynced and clockSyncPoll gate the first file on a synchronized clock;
+// tests replace them.
+var (
+	clockSynced   = clockSynchronized
+	clockSyncPoll = time.Second
+)
+
 // errRecorderStopped marks intentional stop/rotation cancellation.
 var errRecorderStopped = errors.New("recorder stopped")
 
@@ -55,6 +62,7 @@ type GenericRecorder struct {
 	spoolDir  string
 	state     types.ProcessState
 	lastError string
+	startGen  uint64 // Identifies the latest Start; an older start must not launch.
 
 	// FFmpeg process (encapsulates cmd, stdin, stderr with thread-safe access)
 	result *ffmpeg.StartResult
@@ -190,12 +198,47 @@ func (r *GenericRecorder) Start() error {
 	r.state = types.ProcessStarting
 
 	// Start async validation and startup
-	go r.startAsync()
+	r.startGen++
+	go r.startAsync(r.startGen)
 
 	return nil
 }
 
-func (r *GenericRecorder) startAsync() {
+// waitForClockSync holds the first file until the system clock is synchronized:
+// file names and retention dates come from it, and a Raspberry Pi has no
+// real-time clock. It reports false when Stop or a newer Start took over.
+func (r *GenericRecorder) waitForClockSync(gen uint64) bool {
+	if clockSynced() {
+		return true
+	}
+	slog.Warn("system clock is not synchronized, recording starts once it is", "id", r.id)
+	for !clockSynced() {
+		r.mu.Lock()
+		current := r.state == types.ProcessStarting && r.startGen == gen
+		if current {
+			r.lastError = "waiting for system clock synchronization"
+		}
+		r.mu.Unlock()
+		if !current {
+			return false
+		}
+		time.Sleep(clockSyncPoll)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current := r.state == types.ProcessStarting && r.startGen == gen
+	if current {
+		r.lastError = ""
+	}
+	return current
+}
+
+func (r *GenericRecorder) startAsync(gen uint64) {
+	// Wait before validating, so a configuration changed meanwhile is the one checked.
+	if !r.waitForClockSync(gen) {
+		return
+	}
+
 	// Read config values we need for validation
 	r.mu.RLock()
 	storageMode := r.config.StorageMode
@@ -230,8 +273,8 @@ func (r *GenericRecorder) startAsync() {
 	// Now lock and start the encoder
 	r.mu.Lock()
 
-	// Re-check state in case Stop() was called during validation
-	if r.state != types.ProcessStarting {
+	// Re-check state in case Stop() or a newer Start() took over during validation
+	if r.state != types.ProcessStarting || r.startGen != gen {
 		r.mu.Unlock()
 		return
 	}
