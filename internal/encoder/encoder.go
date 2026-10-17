@@ -362,6 +362,7 @@ func (e *Encoder) AudioLevels() audio.AudioLevels {
 func (e *Encoder) Status() types.EncoderStatus {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
+	_, lastAudio := e.audioTimes(e.sourceRunID)
 
 	var uptime string
 	var uptimeSeconds int64
@@ -377,6 +378,7 @@ func (e *Encoder) Status() types.EncoderStatus {
 		UptimeSeconds:    uptimeSeconds,
 		LastError:        e.lastError,
 		SourceRetryCount: e.retryCount,
+		InputReady:       e.state == types.StateRunning && e.inputLostAt.IsZero() && !lastAudio.IsZero() && time.Since(lastAudio) <= inputAudioGap,
 	}
 }
 
