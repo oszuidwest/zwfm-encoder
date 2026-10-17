@@ -56,6 +56,7 @@ func TestDNSResponseRejectsInvalidProtocolFields(t *testing.T) {
 		question *dnsmessage.Question
 		class    dnsmessage.Class
 		want     bool
+		ignored  bool // Skipped like an unrelated record, without a parse error.
 	}{
 		{name: "valid", want: true},
 		{name: "cache flush", class: dnsmessage.ClassINET | 0x8000, want: true},
@@ -65,7 +66,7 @@ func TestDNSResponseRejectsInvalidProtocolFields(t *testing.T) {
 		{name: "unrelated id", header: dnsmessage.Header{ID: 123}},
 		{name: "rcode", header: dnsmessage.Header{RCode: dnsmessage.RCodeServerFailure}},
 		{name: "truncated", header: dnsmessage.Header{Truncated: true}},
-		{name: "wrong resource class", class: dnsmessage.ClassCHAOS},
+		{name: "wrong resource class", class: dnsmessage.ClassCHAOS, ignored: true},
 		{name: "unrelated question", question: question("Other@tx"+serviceSuffix, dnsmessage.TypeSRV, dnsmessage.ClassINET)},
 		{name: "wrong question class", question: question(requested, dnsmessage.TypeSRV, dnsmessage.ClassCHAOS)},
 		{name: "unrequested question type", question: question(requested, dnsmessage.TypeA, dnsmessage.ClassINET)},
@@ -104,6 +105,9 @@ func TestDNSResponseRejectsInvalidProtocolFields(t *testing.T) {
 			}
 			if !tt.want && info.address != nil {
 				t.Fatalf("rejected packet contributed discovery state: %+v", info)
+			}
+			if tt.ignored && err != nil {
+				t.Fatalf("ignored record reported error %v", err)
 			}
 		})
 	}
