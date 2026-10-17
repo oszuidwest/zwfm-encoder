@@ -232,6 +232,10 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 	}()
 
 	packetConn := ipv4.NewPacketConn(conn)
+	readPacket, err := discoveryPacketReader(conn)
+	if err != nil {
+		return channelInfo{}, fmt.Errorf("enable discovery receive interface: %w", err)
+	}
 	lookupCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
 	stopInterrupt := context.AfterFunc(lookupCtx, func() {
@@ -260,7 +264,7 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 		if err := conn.SetReadDeadline(deadline); err != nil {
 			return channelInfo{}, fmt.Errorf("set discovery deadline: %w", err)
 		}
-		n, source, err := conn.ReadFromUDP(buffer)
+		n, source, ifIndex, err := readPacket(buffer)
 		if err != nil {
 			if lookupErr := lookupCtx.Err(); lookupErr != nil {
 				if contextErr := ctx.Err(); contextErr != nil {
@@ -281,7 +285,7 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 			return channelInfo{}, fmt.Errorf("receive discovery response for %q: %w", channel, err)
 		}
 
-		if !validDiscoverySource(source, networks) {
+		if !validDiscoverySource(source, ifIndex, networks) {
 			continue
 		}
 		complete, parseErr := mergeDiscoveryResponse(&info, buffer[:n], source.IP, instance, requiredSource)
@@ -295,8 +299,8 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 	}
 }
 
-func discoveryNetworks(interfaces []net.Interface) ([]*net.IPNet, error) {
-	var networks []*net.IPNet
+func discoveryNetworks(interfaces []net.Interface) (map[int][]*net.IPNet, error) {
+	networks := make(map[int][]*net.IPNet)
 	for i := range interfaces {
 		addresses, err := interfaces[i].Addrs()
 		if err != nil {
@@ -304,19 +308,19 @@ func discoveryNetworks(interfaces []net.Interface) ([]*net.IPNet, error) {
 		}
 		for _, address := range addresses {
 			if network, ok := address.(*net.IPNet); ok && network.IP.To4() != nil && !network.IP.IsLoopback() {
-				networks = append(networks, network)
+				networks[interfaces[i].Index] = append(networks[interfaces[i].Index], network)
 			}
 		}
 	}
 	return networks, nil
 }
 
-func validDiscoverySource(source *net.UDPAddr, networks []*net.IPNet) bool {
-	if source.Port != 5353 || source.IP.To4() == nil {
+func validDiscoverySource(source *net.UDPAddr, ifIndex int, networks map[int][]*net.IPNet) bool {
+	if source == nil || source.Port != 5353 || source.IP.To4() == nil || ifIndex <= 0 {
 		return false
 	}
 	// RFC 6762 section 11 checks legacy unicast replies against local subnets.
-	for _, network := range networks {
+	for _, network := range networks[ifIndex] {
 		if network.Contains(source.IP) {
 			return true
 		}
