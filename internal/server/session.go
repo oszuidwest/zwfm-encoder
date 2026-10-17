@@ -190,17 +190,15 @@ var (
 
 // verifyPasswordHash runs one verification at a time: PBKDF2 takes about a
 // second of CPU on a Raspberry Pi 4, and logins must not starve the audio
-// pipeline. A login gives up when several are already waiting, its request
-// ends, or its turn does not come within a few seconds.
+// pipeline. A login gives up when too many are already waiting or its request
+// ends; the waiter cap also bounds how long a turn can take.
 func verifyPasswordHash(ctx context.Context, password, hash string) bool {
-	if hashWaiters.Add(1) > 8 {
+	if hashWaiters.Add(1) > 16 {
 		hashWaiters.Add(-1)
 		slog.Warn("login rejected: password verification is busy")
 		return false
 	}
 	defer hashWaiters.Add(-1)
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 	select {
 	case hashSlot <- struct{}{}:
 	case <-ctx.Done():
