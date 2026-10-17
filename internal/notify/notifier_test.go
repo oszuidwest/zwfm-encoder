@@ -913,6 +913,13 @@ func TestInputEventsReachAudioChannelsAndEventLog(t *testing.T) {
 		if got := awaitCall(t, channel.inputRestoredCalled, "SendInputRestored"); got.DurationMs != 65000 {
 			t.Fatalf("%s SendInputRestored data = %+v", channel.name, got)
 		}
+	}
+	for _, queue := range o.inputQueues {
+		done := make(chan struct{})
+		queue <- func() { close(done) }
+		awaitCall(t, done, "input delivery barrier")
+	}
+	for _, channel := range channels {
 		assertNoCall(t, channel.inputRestoredCalled, "duplicate input restored")
 	}
 	assertNoCall(t, unconfigured.inputLostCalled, "unconfigured input lost")
