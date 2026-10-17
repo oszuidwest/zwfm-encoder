@@ -74,9 +74,18 @@ const EVENT_GROUP_FILTER_KEYS = EVENT_GROUP_FILTERS.map(filter => filter.key);
  * error lists are exposed on err.errors.
  */
 const requestJSON = async (url, { method = 'GET', body } = {}) => {
+    method = method.toUpperCase();
     const options = { method };
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+        if (new URL(url, window.location.href).origin !== window.location.origin) {
+            throw new Error('Admin requests must be same-origin');
+        }
+        const token = document.querySelector('meta[name="csrf-token"]')?.content;
+        if (!token) throw new Error('Reload this page before making changes');
+        options.headers = { 'X-CSRF-Token': token };
+    }
     if (body !== undefined) {
-        options.headers = { 'Content-Type': 'application/json' };
+        options.headers = { ...options.headers, 'Content-Type': 'application/json' };
         options.body = JSON.stringify(body);
     }
     const response = await fetch(url, options);
@@ -2082,6 +2091,15 @@ document.addEventListener('alpine:init', () => {
                 const toast = this.toasts[index];
                 if (toast.timeoutId) clearTimeout(toast.timeoutId);
                 this.toasts.splice(index, 1);
+            }
+        },
+
+        async signOut() {
+            try {
+                await requestJSON('/logout', { method: 'POST' });
+                window.location.assign('/login');
+            } catch (error) {
+                this.showToast(error.message, 'error');
             }
         },
 

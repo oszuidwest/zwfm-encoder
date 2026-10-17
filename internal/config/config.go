@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
@@ -36,6 +37,8 @@ var (
 const (
 	// DefaultWebPort is the default HTTP server port (8080).
 	DefaultWebPort = 8080
+	// DefaultWebBindAddress keeps new configurations local until a proxy is configured.
+	DefaultWebBindAddress = "127.0.0.1"
 	// DefaultWebUsername is the default web interface username (admin).
 	DefaultWebUsername = "admin"
 	// DefaultWebPassword is the default web interface password (encoder).
@@ -70,10 +73,14 @@ type SystemConfig struct {
 	FFmpegPath string `json:"ffmpeg_path"`
 	// Port is the HTTP server port to listen on.
 	Port int `json:"port"`
+	// BindAddress is a numeric IP; empty preserves the legacy all-interface listener.
+	BindAddress string `json:"bind_address,omitempty"`
 	// Username is the web interface login username.
 	Username string `json:"username"`
 	// Password is the web interface login password.
-	Password string `json:"password"` //nolint:gosec // G117: intentional config field for web UI auth
+	Password string `json:"password,omitempty"` //nolint:gosec // G117: legacy config credential; prefer PasswordHash.
+	// PasswordHash is a salted password hash, mutually exclusive with Password.
+	PasswordHash string `json:"password_hash,omitempty"`
 }
 
 // WebConfig holds web UI branding settings.
@@ -204,9 +211,10 @@ func New(filePath string) *Config {
 func defaultConfig(filePath string) *Config {
 	return &Config{
 		System: SystemConfig{
-			Port:     DefaultWebPort,
-			Username: DefaultWebUsername,
-			Password: DefaultWebPassword,
+			Port:        DefaultWebPort,
+			BindAddress: DefaultWebBindAddress,
+			Username:    DefaultWebUsername,
+			Password:    DefaultWebPassword,
 		},
 		Web: WebConfig{
 			StationName: DefaultStationName,
@@ -243,6 +251,11 @@ func (c *Config) Load() error {
 	data, err := os.ReadFile(c.filePath)
 	if os.IsNotExist(err) {
 		cfg := defaultConfig(c.filePath)
+		cfg.System.PasswordHash, err = util.HashPassword(cfg.System.Password)
+		if err != nil {
+			return fmt.Errorf("hash default password: %w", err)
+		}
+		cfg.System.Password = ""
 		if err := cfg.validate(); err != nil {
 			return err
 		}
@@ -280,6 +293,13 @@ func applyOptionalDefaults(data []byte, cfg *Config) error {
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(data, &root); err != nil {
 		return err
+	}
+	system, err := presentObjectFields(root, "system")
+	if err != nil {
+		return err
+	}
+	if bytes.Equal(bytes.TrimSpace(system["bind_address"]), []byte("null")) {
+		return fmt.Errorf("system.bind_address: must not be null")
 	}
 
 	web, err := presentObjectFields(root, "web")
@@ -492,7 +512,19 @@ func (c *Config) validateSystem() error {
 	if strings.TrimSpace(c.System.Username) == "" {
 		return fmt.Errorf("invalid system.username: is required")
 	}
-	if c.System.Password == "" {
+	if c.System.BindAddress != "" {
+		if _, err := netip.ParseAddr(c.System.BindAddress); err != nil {
+			return fmt.Errorf("invalid system.bind_address: must be a numeric IPv4 or IPv6 address")
+		}
+	}
+	if c.System.PasswordHash != "" {
+		if c.System.Password != "" {
+			return fmt.Errorf("invalid system.password_hash: remove plaintext system.password")
+		}
+		if err := util.ValidatePasswordHash(c.System.PasswordHash); err != nil {
+			return fmt.Errorf("invalid system.password_hash: %w", err)
+		}
+	} else if c.System.Password == "" {
 		return fmt.Errorf("invalid system.password: is required")
 	}
 	return nil
@@ -930,10 +962,14 @@ func (c *Config) SetRecordingAPIKey(key string) error {
 type Snapshot struct {
 	// WebPort is the HTTP server port to listen on.
 	WebPort int
+	// WebBindAddress is the HTTP listener's numeric IP, or empty for all interfaces.
+	WebBindAddress string
 	// WebUser is the web interface login username.
 	WebUser string
 	// WebPassword is the web interface login password.
 	WebPassword string
+	// WebPasswordHash is the configured salted password hash, if present.
+	WebPasswordHash string
 
 	// StationName is the station display name shown in the web UI header.
 	StationName string
@@ -1046,9 +1082,11 @@ func (c *Config) Snapshot() Snapshot {
 
 	return Snapshot{
 		// System
-		WebPort:     c.System.Port,
-		WebUser:     c.System.Username,
-		WebPassword: c.System.Password,
+		WebPort:         c.System.Port,
+		WebBindAddress:  c.System.BindAddress,
+		WebUser:         c.System.Username,
+		WebPassword:     c.System.Password,
+		WebPasswordHash: c.System.PasswordHash,
 
 		// Web/Branding
 		StationName:       c.Web.StationName,

@@ -298,7 +298,7 @@ func TestSessionManagerLogin(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/login", http.NoBody)
 			rec := httptest.NewRecorder()
 
-			ok := sm.Login(rec, req, tt.username, tt.password, "admin", "secret")
+			ok := sm.Login(rec, req, tt.username, tt.password, "admin", "secret", "")
 			if ok != tt.wantOK {
 				t.Fatalf("Login() = %t, want %t", ok, tt.wantOK)
 			}

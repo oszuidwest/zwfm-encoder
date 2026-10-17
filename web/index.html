@@ -32,6 +32,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="format-detection" content="telephone=no">
     <meta name="description" content="{{.StationName}} - Audio Encoder">
+    <meta name="csrf-token" content="{{.CSRFToken}}">
     <title>{{.StationName}}</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="canonical" href="/">
@@ -119,9 +120,9 @@
                     <button class="icon-btn" type="button" tabindex="0" title="Settings" aria-label="Settings" @click="showSettings()">
                         <span class="icon-container" x-html="icons.settings"></span>
                     </button>
-                    <a class="icon-btn" href="/logout" tabindex="0" title="Sign out" aria-label="Sign out">
+                    <button class="icon-btn" type="button" title="Sign out" aria-label="Sign out" @click="signOut()">
                         <span class="icon-container" x-html="icons.logout"></span>
-                    </a>
+                    </button>
                 </div>
             </header>
 

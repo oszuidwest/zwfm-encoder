@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 const (
@@ -21,6 +23,7 @@ const (
 // A session represents an authenticated user session.
 type session struct {
 	expiresAt time.Time
+	csrf      string
 }
 
 // A csrfToken represents a CSRF token with expiration.
@@ -30,16 +33,18 @@ type csrfToken struct {
 
 // SessionManager manages user authentication sessions and CSRF tokens.
 type SessionManager struct {
-	sessions   map[string]*session
-	csrfTokens map[string]*csrfToken
-	mu         sync.RWMutex
+	sessions      map[string]*session
+	csrfTokens    map[string]*csrfToken
+	loginAttempts map[string]loginAttempt
+	mu            sync.RWMutex
 }
 
 // NewSessionManager creates a new session manager.
 func NewSessionManager() *SessionManager {
 	return &SessionManager{
-		sessions:   make(map[string]*session),
-		csrfTokens: make(map[string]*csrfToken),
+		sessions:      make(map[string]*session),
+		csrfTokens:    make(map[string]*csrfToken),
+		loginAttempts: make(map[string]loginAttempt),
 	}
 }
 
@@ -55,7 +60,8 @@ func generateToken() string {
 // Create creates a new session and returns the token.
 func (sm *SessionManager) Create() string {
 	token := generateToken()
-	if token == "" {
+	csrf := generateToken()
+	if token == "" || csrf == "" {
 		return ""
 	}
 
@@ -73,6 +79,7 @@ func (sm *SessionManager) Create() string {
 
 	sm.sessions[token] = &session{
 		expiresAt: now.Add(sessionDuration),
+		csrf:      csrf,
 	}
 	return token
 }
@@ -116,16 +123,36 @@ func (sm *SessionManager) Delete(token string) {
 func (sm *SessionManager) AuthMiddleware() func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			if cookie, err := r.Cookie(sessionCookieName); err == nil {
-				if sm.Validate(cookie.Value) {
-					next(w, r)
-					return
+			if csrf := sm.CSRFToken(r); csrf != "" {
+				if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+					if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(csrf)) != 1 {
+						http.Error(w, "Invalid CSRF token", http.StatusForbidden)
+						return
+					}
 				}
+				w.Header().Set("Cache-Control", "no-store")
+				next(w, r)
+				return
 			}
 
 			http.Redirect(w, r, "/login", http.StatusFound)
 		}
 	}
+}
+
+// CSRFToken returns the request's session-bound token, or empty without a live session.
+func (sm *SessionManager) CSRFToken(r *http.Request) string {
+	cookie, err := r.Cookie(sessionCookieName)
+	if err != nil {
+		return ""
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	sess := sm.sessions[cookie.Value]
+	if sess == nil || !time.Now().Before(sess.expiresAt) {
+		return ""
+	}
+	return sess.csrf
 }
 
 // setSessionCookie sets or clears the session cookie.
@@ -145,10 +172,13 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, value string, maxA
 // Login reports whether login succeeded and creates a session if valid.
 func (sm *SessionManager) Login(
 	w http.ResponseWriter, r *http.Request,
-	username, password, configUser, configPass string,
+	username, password, configUser, configPass, configHash string,
 ) bool {
 	userMatch := subtle.ConstantTimeCompare([]byte(username), []byte(configUser)) == 1
 	passMatch := subtle.ConstantTimeCompare([]byte(password), []byte(configPass)) == 1
+	if configHash != "" {
+		passMatch = configPass == "" && util.VerifyPasswordHash(password, configHash)
+	}
 	if !userMatch || !passMatch {
 		return false
 	}
@@ -187,6 +217,12 @@ func (sm *SessionManager) CreateCSRFToken() string {
 		maps.DeleteFunc(sm.csrfTokens, func(_ string, v *csrfToken) bool {
 			return now.After(v.expiresAt)
 		})
+	}
+	if len(sm.csrfTokens) >= 4096 {
+		maps.DeleteFunc(sm.csrfTokens, func(_ string, v *csrfToken) bool { return !now.Before(v.expiresAt) })
+		if len(sm.csrfTokens) >= 4096 {
+			return ""
+		}
 	}
 
 	sm.csrfTokens[token] = &csrfToken{
