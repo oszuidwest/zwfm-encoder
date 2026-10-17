@@ -94,13 +94,32 @@ func buildDNSQuery(instance string) ([]byte, error) {
 	return packet, nil
 }
 
+func startDNSResponse(parser *dnsmessage.Parser, packet []byte, requested string) error {
+	header, err := parser.Start(packet)
+	if err != nil {
+		return fmt.Errorf("parse DNS header: %w", err)
+	}
+	if !header.Response || header.OpCode != 0 || header.ID != 0 || header.RCode != dnsmessage.RCodeSuccess || header.Truncated {
+		return errors.New("invalid legacy mDNS response header")
+	}
+	questions, err := parser.AllQuestions()
+	if err != nil {
+		return fmt.Errorf("parse DNS questions: %w", err)
+	}
+	for i := range questions {
+		question := &questions[i]
+		if !strings.EqualFold(question.Name.String(), requested) || question.Class&0x7fff != dnsmessage.ClassINET ||
+			(question.Type != dnsmessage.TypeSRV && question.Type != dnsmessage.TypeTXT) {
+			return errors.New("mDNS response contains an unrelated question")
+		}
+	}
+	return nil
+}
+
 func parseDNSResponse(packet []byte, requested string) (uint16, *channelInfo, error) {
 	var parser dnsmessage.Parser
-	if _, err := parser.Start(packet); err != nil {
-		return 0, nil, fmt.Errorf("parse DNS header: %w", err)
-	}
-	if err := parser.SkipAllQuestions(); err != nil {
-		return 0, nil, fmt.Errorf("parse DNS questions: %w", err)
+	if err := startDNSResponse(&parser, packet, requested); err != nil {
+		return 0, nil, err
 	}
 
 	resources, err := parser.AllAnswers()
@@ -121,7 +140,7 @@ func parseDNSResponse(packet []byte, requested string) (uint16, *channelInfo, er
 	resources = append(resources, additionals...)
 	for index := range resources {
 		resource := &resources[index]
-		if !strings.EqualFold(resource.Header.Name.String(), requested) {
+		if !strings.EqualFold(resource.Header.Name.String(), requested) || resource.Header.Class&0x7fff != dnsmessage.ClassINET {
 			continue
 		}
 		switch body := resource.Body.(type) {
@@ -200,6 +219,10 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 	if err != nil {
 		return channelInfo{}, err
 	}
+	networks, err := discoveryNetworks(interfaces)
+	if err != nil {
+		return channelInfo{}, err
+	}
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero})
 	if err != nil {
 		return channelInfo{}, fmt.Errorf("open discovery socket: %w", err)
@@ -258,6 +281,9 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 			return channelInfo{}, fmt.Errorf("receive discovery response for %q: %w", channel, err)
 		}
 
+		if !validDiscoverySource(source, networks) {
+			continue
+		}
 		complete, parseErr := mergeDiscoveryResponse(&info, buffer[:n], source.IP, instance, requiredSource)
 		if parseErr != nil {
 			lastParseErr = parseErr
@@ -267,6 +293,35 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 			return info, nil
 		}
 	}
+}
+
+func discoveryNetworks(interfaces []net.Interface) ([]*net.IPNet, error) {
+	var networks []*net.IPNet
+	for i := range interfaces {
+		addresses, err := interfaces[i].Addrs()
+		if err != nil {
+			return nil, fmt.Errorf("network interface %q addresses: %w", interfaces[i].Name, err)
+		}
+		for _, address := range addresses {
+			if network, ok := address.(*net.IPNet); ok && network.IP.To4() != nil && !network.IP.IsLoopback() {
+				networks = append(networks, network)
+			}
+		}
+	}
+	return networks, nil
+}
+
+func validDiscoverySource(source *net.UDPAddr, networks []*net.IPNet) bool {
+	if source.Port != 5353 || source.IP.To4() == nil {
+		return false
+	}
+	// RFC 6762 section 11 checks legacy unicast replies against local subnets.
+	for _, network := range networks {
+		if network.Contains(source.IP) {
+			return true
+		}
+	}
+	return false
 }
 
 // sendDiscoveryQuery succeeds when any interface accepts the query.
