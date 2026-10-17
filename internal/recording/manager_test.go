@@ -1,6 +1,7 @@
 package recording
 
 import (
+	"encoding/json"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"os"
 	"path/filepath"
@@ -188,9 +189,7 @@ func TestProcessRetryQueueAbandonsExpiredUploadButKeepsRecoveryState(t *testing.
 	if got := len(recorder.retryQueue); got != 0 {
 		t.Fatalf("retryQueue len = %d, want 0", got)
 	}
-	if _, err := os.Stat(pending.metadataPath); err != nil {
-		t.Fatalf("abandoned upload metadata was removed: %v", err)
-	}
+	assertAbandonedMetadata(t, pending.metadataPath)
 	if data, err := os.ReadFile(filePath); err != nil || string(data) != "audio" { //nolint:gosec // Test temp recording.
 		t.Fatalf("abandoned recording = %q, %v; want preserved audio", data, err)
 	}
@@ -230,9 +229,7 @@ func TestProcessRetryQueueKeepsLocalFileForExpiredBothUpload(t *testing.T) {
 	if got := len(recorder.retryQueue); got != 0 {
 		t.Fatalf("retryQueue len = %d, want 0", got)
 	}
-	if _, err := os.Stat(pending.metadataPath); err != nil {
-		t.Fatalf("abandoned upload metadata was removed: %v", err)
-	}
+	assertAbandonedMetadata(t, pending.metadataPath)
 	if _, err := os.Stat(filePath); err != nil {
 		t.Fatalf("stat local file: %v", err)
 	}
@@ -289,4 +286,17 @@ func writeSpoolFile(t *testing.T, spoolDir, recorderID, name, data string) strin
 		t.Fatalf("write spool file: %v", err)
 	}
 	return path
+}
+
+// assertAbandonedMetadata checks that expiry kept the metadata and marked it abandoned.
+func assertAbandonedMetadata(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path) //nolint:gosec // Test temp metadata.
+	if err != nil {
+		t.Fatalf("abandoned upload metadata was removed: %v", err)
+	}
+	var meta pendingUploadMetadata
+	if err := json.Unmarshal(data, &meta); err != nil || !meta.Abandoned {
+		t.Fatalf("abandoned upload metadata = %s, %v; want abandoned", data, err)
+	}
 }
