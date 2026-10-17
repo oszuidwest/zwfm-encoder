@@ -65,6 +65,13 @@ func TestBuildReadyResponseFailures(t *testing.T) {
 			},
 		},
 		{
+			name:      "input without recent confirmed audio",
+			component: "input",
+			mutate: func(in *readyInputs) {
+				in.encoderStatus.InputReady = false
+			},
+		},
+		{
 			name:      "stream not stable",
 			component: "streams",
 			mutate: func(in *readyInputs) {
@@ -327,7 +334,8 @@ func readyFixture() readyInputs {
 		ffmpegAvailable:    true,
 		recordingAvailable: true,
 		encoderStatus: types.EncoderStatus{
-			State: types.StateRunning,
+			State:      types.StateRunning,
+			InputReady: true,
 		},
 		streams: []types.Stream{
 			{

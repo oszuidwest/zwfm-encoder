@@ -148,6 +148,9 @@ func TestNativeDanteSourceUsesEncoderLifecycle(t *testing.T) {
 		defer e.mu.RUnlock()
 		return e.state == types.StateRunning && e.sourceCancel != nil && e.sourceStdout != nil
 	})
+	if e.Status().InputReady {
+		t.Fatal("running input without PCM is ready")
+	}
 	if err := e.Stop(); err != nil {
 		t.Fatalf("Stop() error = %v", err)
 	}
@@ -205,8 +208,8 @@ func TestSourceRecoveryReportsInputRestored(t *testing.T) {
 	waitForCondition(t, 10*time.Second, "input_restored logged", func() bool {
 		return countEvents(t, e, logPath, eventlog.InputRestored) == 1
 	})
-	if got := e.Status().SourceRetryCount; got != 0 {
-		t.Fatalf("SourceRetryCount = %d after recovery, want 0", got)
+	if status := e.Status(); status.SourceRetryCount != 0 || !status.InputReady {
+		t.Fatalf("after recovery: SourceRetryCount = %d, InputReady = %t; want 0, true", status.SourceRetryCount, status.InputReady)
 	}
 	if got := countEvents(t, e, logPath, eventlog.InputLost); got != 1 {
 		t.Fatalf("input_lost events = %d, want 1", got)
@@ -253,8 +256,8 @@ func TestSourceWithoutAudioIsReopenedAndNeverRestored(t *testing.T) {
 		defer e.mu.RUnlock()
 		return e.retryCount >= 2
 	})
-	if got := e.Status().LastError; got != "no audio from input within 300ms" {
-		t.Fatalf("Status().LastError = %q, want the stall error", got)
+	if status := e.Status(); status.LastError != "no audio from input within 300ms" || status.InputReady {
+		t.Fatalf("Status() LastError = %q, InputReady = %t; want the stall error, false", status.LastError, status.InputReady)
 	}
 	if got := countEvents(t, e, logPath, eventlog.InputLost); got != 1 {
 		t.Fatalf("input_lost events = %d, want 1", got)
