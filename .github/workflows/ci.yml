@@ -22,8 +22,8 @@ name: CI
       - 'bun.lock'
       - 'biome.json'
       - '.htmlhintrc'
+  # Include stacked PRs so their tests run under -race too.
   pull_request:
-    branches: ['main']
 
 permissions:
   contents: read
