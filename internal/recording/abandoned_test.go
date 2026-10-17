@@ -159,8 +159,13 @@ func TestUploadExpiredWhileOfflineRequeuesOnStartup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	restoredAfter := time.Now()
 	if err := restarted.AddRecorder(cfg); err != nil {
 		t.Fatal(err)
+	}
+	restored := restarted.recorders[cfg.ID].retryQueue[0]
+	if restored.retryCount != 0 || restored.firstAttempt.Before(restoredAfter) || restored.firstAttempt.After(time.Now()) {
+		t.Fatalf("startup did not reset the expired retry window: %+v", restored)
 	}
 	restarted.processUploadRetryQueues()
 	if uploaded.Load() != 1 {
