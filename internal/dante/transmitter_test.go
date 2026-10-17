@@ -19,23 +19,24 @@ type testFlow struct {
 }
 
 type fakeTransmitter struct {
-	network                  packetNetwork
-	dns, control, media      *memoryPacketConn
-	channels                 [2]channelInfo
-	interfaces               []net.Interface
-	addresses                []net.Addr
-	queries                  chan string
-	flows                    chan testFlow
-	stops                    chan []byte
-	dropChannel              string
-	malformedChannel         string
-	dropFlow                 bool
-	flowStatus               uint16
-	flowBody                 []byte
-	failListenAt, failDialAt int
-	listenCount, dialCount   int
-	wg                       sync.WaitGroup
-	restore                  func()
+	network                   packetNetwork
+	dns, control, media       *memoryPacketConn
+	channels                  [2]channelInfo
+	interfaces                []net.Interface
+	addresses                 []net.Addr
+	queries                   chan string
+	flows                     chan testFlow
+	stops                     chan []byte
+	dropChannel               string
+	malformedChannel          string
+	dropFlow                  bool
+	flowStatus                uint16
+	flowBody                  []byte
+	failListenAt, failDialAt  int
+	listenCount, dialCount    int
+	failReaderAt, readerCount int
+	wg                        sync.WaitGroup
+	restore                   func()
 }
 
 func newFakeTransmitter() *fakeTransmitter {
@@ -60,9 +61,11 @@ func newFakeTransmitter() *fakeTransmitter {
 func (h *fakeTransmitter) install() {
 	oldList, oldLookup, oldAddresses := listInterfaces, lookupInterface, interfaceAddresses
 	oldListen, oldDial, oldQuery := listenDanteUDP, dialDanteUDP, queryDante
+	oldReader := readDanteDiscovery
 	h.restore = func() {
 		listInterfaces, lookupInterface, interfaceAddresses = oldList, oldLookup, oldAddresses
 		listenDanteUDP, dialDanteUDP, queryDante = oldListen, oldDial, oldQuery
+		readDanteDiscovery = oldReader
 	}
 	listInterfaces = func() ([]net.Interface, error) { return slices.Clone(h.interfaces), nil }
 	lookupInterface = func(name string) (*net.Interface, error) {
@@ -97,6 +100,17 @@ func (h *fakeTransmitter) install() {
 		_, err := conn.WriteTo(query, destination)
 		return err
 	}
+	readDanteDiscovery = func(conn net.PacketConn) (func([]byte) (int, *net.UDPAddr, int, error), error) {
+		h.readerCount++
+		if h.readerCount == h.failReaderAt {
+			return nil, errors.New("injected receive metadata failure")
+		}
+		return func(buffer []byte) (int, *net.UDPAddr, int, error) {
+			n, address, err := conn.ReadFrom(buffer)
+			source, _ := address.(*net.UDPAddr)
+			return n, source, 7, err
+		}, nil
+	}
 }
 
 func (h *fakeTransmitter) start(t *testing.T) {
@@ -128,7 +142,7 @@ func (h *fakeTransmitter) serveDNS(t *testing.T, responses map[string][]byte) {
 			continue
 		}
 		instance := message.Questions[0].Name.String()
-		if message.Header.Response || message.Questions[0].Type != dnsmessage.TypeSRV || message.Questions[1].Type != dnsmessage.TypeTXT ||
+		if message.Response || message.Questions[0].Type != dnsmessage.TypeSRV || message.Questions[1].Type != dnsmessage.TypeTXT ||
 			message.Questions[0].Class != dnsmessage.ClassINET || message.Questions[1].Class != dnsmessage.ClassINET ||
 			message.Questions[1].Name.String() != instance {
 			t.Errorf("unexpected discovery questions: %+v", message)

@@ -213,6 +213,7 @@ func TestOpenCleansPartialSetupFailures(t *testing.T) {
 		{name: "no usable interface", want: "no up, multicast", configure: func(h *fakeTransmitter) { h.interfaces = nil }},
 		{name: "left discovery socket", want: "open discovery socket", configure: func(h *fakeTransmitter) { h.failListenAt = 1 }},
 		{name: "right discovery socket", want: "open discovery socket", configure: func(h *fakeTransmitter) { h.failListenAt = 2 }},
+		{name: "receive interface metadata", want: "enable discovery receive interface", configure: func(h *fakeTransmitter) { h.failReaderAt = 1 }},
 		{name: "left discovery timeout", want: "context deadline exceeded", configure: func(h *fakeTransmitter) { h.dropChannel = "Left" }},
 		{name: "right malformed discovery", want: "malformed response", configure: func(h *fakeTransmitter) { h.malformedChannel = "Right" }},
 		{name: "route selection", want: "select local address", configure: func(h *fakeTransmitter) { h.failDialAt = 1 }},
