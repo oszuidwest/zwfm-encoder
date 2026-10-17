@@ -17,6 +17,7 @@ const (
 	fakeFFmpegFinalizeEnv     = "ZWFM_RECORDING_FAKE_FFMPEG_FINALIZE"
 	fakeFFmpegRefuseEnv       = "ZWFM_RECORDING_FAKE_FFMPEG_REFUSE"
 	fakeFFmpegFailFinalizeEnv = "ZWFM_RECORDING_FAKE_FFMPEG_FAIL_FINALIZE"
+	fakeFFmpegEmptyHeaderEnv  = "ZWFM_RECORDING_FAKE_FFMPEG_EMPTY_HEADER"
 	// fakeFFmpegFinalize is how long the fake takes to exit after stdin closes,
 	// like a real encoder flushing and finalizing its file.
 	fakeFFmpegFinalize = 100 * time.Millisecond
@@ -61,6 +62,9 @@ func runFakeFFmpeg(args []string) int {
 	data, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return 1
+	}
+	if len(data) == 0 && os.Getenv(fakeFFmpegEmptyHeaderEnv) == "1" {
+		data = []byte("header without audio")
 	}
 	finalize := fakeFFmpegFinalize
 	if d, err := time.ParseDuration(os.Getenv(fakeFFmpegFinalizeEnv)); err == nil {

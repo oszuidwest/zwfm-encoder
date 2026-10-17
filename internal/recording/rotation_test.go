@@ -129,6 +129,7 @@ func TestStopWaitsForRotatedFile(t *testing.T) {
 	neverRotate(t)
 	t.Setenv(fakeFFmpegFinalizeEnv, "500ms")
 	r := startHourlyTestRecorder(t, "retiring")
+	r.WriteAudio([]byte{1, 2, 3, 4})
 	r.mu.RLock()
 	firstFile := r.currentFile
 	r.mu.RUnlock()
