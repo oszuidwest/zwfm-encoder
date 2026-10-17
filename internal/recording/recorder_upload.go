@@ -335,16 +335,17 @@ func (l *uploadProgressListener) OnObjectBytesTransferred(
 }
 
 // deleteAfterUpload removes spool-only files after successful upload.
-func (r *GenericRecorder) deleteAfterUpload(req uploadRequest) {
+func (r *GenericRecorder) deleteAfterUpload(req uploadRequest) bool {
 	if !req.deleteAfterUpload {
-		return
+		return true
 	}
 
-	if err := os.Remove(req.localPath); err != nil {
+	if err := os.Remove(req.localPath); err != nil && !os.IsNotExist(err) {
 		slog.Warn("failed to delete spool file after upload", "id", r.id, "path", req.localPath, "error", err)
-	} else {
-		slog.Debug("deleted spool file after upload", "id", r.id, "path", req.localPath)
+		return false
 	}
+	slog.Debug("deleted spool file after upload", "id", r.id, "path", req.localPath)
+	return true
 }
 
 // addToRetryQueue adds a failed upload to the retry queue.
@@ -464,7 +465,9 @@ func (r *GenericRecorder) uploadPending(p *pendingUpload) bool {
 
 	slog.Info("upload completed", "id", r.id, "s3_key", p.request.s3Key)
 	r.logUploadEvent(eventlog.UploadCompleted, filepath.Base(p.request.localPath), p.request.s3Key, "", p.retryCount)
-	r.removePendingMetadata(p)
-	r.deleteAfterUpload(p.request)
+	// Keep the identity while a spool copy remains, so a restart recognizes the upload.
+	if r.deleteAfterUpload(p.request) {
+		r.removePendingMetadata(p)
+	}
 	return true
 }
