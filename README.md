@@ -50,8 +50,6 @@ sudo su
 
 The web interface will be available at `http://<raspberry-pi-ip>:8080`
 
-The installer enables systemd-timesyncd and its time-sync wait service. Installation and the encoder's startup after boot wait for the first successful time synchronization, so recordings on a Raspberry Pi without a real-time clock are not named after a stale boot time. If NTP is unreachable, restore access to your configured time servers; inspect `systemctl status systemd-timesyncd systemd-time-wait-sync` to diagnose a wait. This also applies when updating an existing installation.
-
 **Default credentials:** `admin` / `encoder`
 
 ## Updating
@@ -177,6 +175,8 @@ The template creates triggers for SILENCE (Disaster), RECOVERY (Info), INPUT_LOS
 ## Hourly Recording
 
 Hourly recorders start a new file on every whole hour (whole UTC hours, which are the local hours in time zones with a whole-hour offset), named after the local time of the hand-over rounded to the minute, such as `<recorder>-YYYY-MM-DD-HH-00.<ext>`; the first file after a start is named after its start minute. At the boundary the next file is started before the current one is finalized, so the hand-over itself drops no audio; the previous file is then closed and queued for upload when S3 is configured. When the local clock repeats an hour, as at the end of daylight saving time, the second file of that hour gets a `-2` suffix instead of overwriting the first.
+
+On Linux, a recorder starts its first file only once the kernel reports the system clock as NTP-synchronized, because file names and retention cleanup come from the clock and a Raspberry Pi has no real-time clock. Until then it stays `starting` with the error `waiting for system clock synchronization`; a waiting hourly recorder makes `GET /ready` not ready, an on-demand recording can still be stopped, and streaming is not affected. The installer enables NTP. systemd-timesyncd and chrony (Debian's default `rtcsync`) mark the clock synchronized; a system that keeps time without such a client never starts recording, and ntpsec before Debian trixie marks the clock synchronized at startup, so it gives no protection. If the synchronization state cannot be read, recording starts with a warning.
 
 ## Recording API
 
