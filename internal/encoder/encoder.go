@@ -138,10 +138,10 @@ func newEncoder(cfg *config.Config, ffmpegPath, eventLogPath string) (*Encoder, 
 	if err != nil {
 		return nil, fmt.Errorf("create event logger at %s: %w", eventLogPath, err)
 	}
+	// A missed input_restored is better than refusing to start the encoder.
 	lostAt, err := logger.InputLostAt()
 	if err != nil {
-		_ = logger.Close()
-		return nil, fmt.Errorf("restore input outage from %s: %w", eventLogPath, err)
+		slog.Warn("could not restore an open input outage from the event log", "path", eventLogPath, "error", err)
 	}
 
 	webhookCh := &notify.WebhookChannel{}
@@ -926,7 +926,8 @@ func (e *Encoder) confirmInput(runID uint64, audioSince time.Time) {
 	if lostAt.IsZero() {
 		return
 	}
-	unavailable := audioSince.Sub(lostAt)
+	// A restored lostAt is wall-clock time, which can jump before NTP syncs.
+	unavailable := max(audioSince.Sub(lostAt), 0)
 	slog.Info("audio input restored", "unavailable", unavailable.Round(time.Second))
 	e.alertOrchestrator.HandleInputRestored(notify.InputData{
 		Input:      e.config.AudioInput(),

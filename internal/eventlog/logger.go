@@ -514,12 +514,29 @@ func matchesFilter(t EventType, filter TypeFilter) bool {
 
 // InputLostAt returns the start of an open input outage in the retained logs.
 func (l *Logger) InputLostAt() (time.Time, error) {
-	events, _, err := ReadLast(l.filePath, 1, 0, FilterInput)
-	if err != nil {
-		return time.Time{}, err
+	var last Event
+	for _, path := range []string{l.filePath, util.RotatedPath(l.filePath)} {
+		err := readLinesReverse(path, func(line []byte) (bool, error) {
+			// Most lines are not input events; skip decoding them.
+			if !bytes.Contains(line, []byte(`"input_`)) {
+				return true, nil
+			}
+			event, ok := parseEventLine(line)
+			if ok && matchesFilter(event.Type, FilterInput) {
+				last = event
+				return false, nil
+			}
+			return true, nil
+		})
+		if err != nil && !os.IsNotExist(err) {
+			return time.Time{}, err
+		}
+		if last.Type != "" {
+			break
+		}
 	}
-	if len(events) > 0 && events[0].Type == InputLost {
-		return events[0].Timestamp, nil
+	if last.Type == InputLost {
+		return last.Timestamp, nil
 	}
 	return time.Time{}, nil
 }
