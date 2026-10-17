@@ -4,6 +4,7 @@ import (
 	"os"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
@@ -44,25 +45,28 @@ func TestRecorderWaitsForClockSync(t *testing.T) {
 }
 
 func TestStopRecorderCancelsClockWait(t *testing.T) {
-	synced := fakeClockSync(t)
-	cfg := localOnDemandRecorder(t, "clock-cancel")
-	m, err := NewManager("", t.TempDir(), 0, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := m.AddRecorder(cfg); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.StartRecorder(cfg.ID); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(50 * time.Millisecond)
-	if err := m.StopRecorder(cfg.ID); err != nil {
-		t.Fatalf("StopRecorder while waiting for the clock = %v", err)
-	}
-	synced.Store(true)
-	time.Sleep(100 * time.Millisecond) // Several polls of the cancelled start.
-	if state := m.recorders[cfg.ID].Status().State; state != types.ProcessStopped {
-		t.Fatalf("state after a cancelled start = %q, want stopped", state)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		synced := fakeClockSync(t)
+		cfg := localOnDemandRecorder(t, "clock-cancel")
+		m, err := NewManager("", t.TempDir(), 0, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := m.AddRecorder(cfg); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.StartRecorder(cfg.ID); err != nil {
+			t.Fatal(err)
+		}
+		synctest.Wait() // The start now sleeps in its clock poll.
+		if err := m.StopRecorder(cfg.ID); err != nil {
+			t.Fatalf("StopRecorder while waiting for the clock = %v", err)
+		}
+		synced.Store(true)
+		time.Sleep(clockSyncPoll)
+		synctest.Wait() // The cancelled start has polled again; synctest fails if it never returns.
+		if state := m.recorders[cfg.ID].Status().State; state != types.ProcessStopped {
+			t.Fatalf("state after a cancelled start = %q, want stopped", state)
+		}
+	})
 }
