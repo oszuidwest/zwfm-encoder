@@ -38,6 +38,10 @@ func TestAllSessionMutationRoutesRequireCSRF(t *testing.T) {
 func TestAdminHTTPSLoginMutationAndLogout(t *testing.T) {
 	t.Parallel()
 	s := newRouteTestServer(t)
+	// A busy anonymous token pool must not block a legitimate login.
+	for range 4096 {
+		s.sessions.CreateCSRFToken()
+	}
 	ts := httptest.NewTLSServer(s.SetupRoutes())
 	defer ts.Close()
 	client := ts.Client()
@@ -192,18 +196,31 @@ func TestLoginRejectsMalformedOrQueryCredentials(t *testing.T) {
 	t.Parallel()
 	s := newRouteTestServer(t)
 	handler := s.SetupRoutes()
-	for _, tc := range []struct{ name, query, body string }{
-		{name: "query credentials", query: "?username=admin&password=encoder"},
-		{name: "invalid encoding", body: "username=admin&password=%xx"},
-		{name: "oversized body", body: "username=admin&password=" + strings.Repeat("p", 4097)},
+	for _, tc := range []struct {
+		name, query, body string
+		wantStatus        int
+	}{
+		{name: "query credentials", query: "?username=admin&password=encoder", wantStatus: http.StatusOK},
+		{name: "invalid encoding", body: "username=admin&password=%xx", wantStatus: http.StatusBadRequest},
+		{name: "oversized body", body: "username=admin&password=" + strings.Repeat("p", 4097), wantStatus: http.StatusBadRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/login"+tc.query, strings.NewReader(tc.body))
+			body := tc.body
+			if tc.query != "" {
+				page := httptest.NewRecorder()
+				handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/login", http.NoBody))
+				token := adminToken(t, page.Body.String(), `name="csrf_token" value="([a-f0-9]+)"`)
+				body = url.Values{"csrf_token": {token}}.Encode()
+			}
+			req := httptest.NewRequest(http.MethodPost, "/login"+tc.query, strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, req)
-			if rec.Code != http.StatusBadRequest || len(rec.Result().Cookies()) != 0 {
+			if rec.Code != tc.wantStatus || len(rec.Result().Cookies()) != 0 || rec.Header().Get("Location") != "" {
 				t.Fatalf("invalid form = %d, cookies %v", rec.Code, rec.Result().Cookies())
+			}
+			if tc.query != "" && !strings.Contains(rec.Body.String(), `id="login-error"`) {
+				t.Fatal("query-only credentials must reach a failed-login page")
 			}
 		})
 	}

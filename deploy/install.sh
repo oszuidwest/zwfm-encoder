@@ -121,7 +121,11 @@ if [ "$KEEP_CONFIG" != "y" ]; then
   prompt_user "WEB_PORT" "8080" "Enter the web interface port" "num"
 
   # Production access goes through a local TLS proxy or an SSH tunnel.
-  prompt_user "WEB_BIND_ADDRESS" "127.0.0.1" "Web bind IP (127.0.0.1 for TLS proxy/SSH; 0.0.0.0 exposes plain HTTP to the LAN)" "str"
+  prompt_user "WEB_EXPOSE_LAN" "n" "Expose plain HTTP to the LAN? (n: use a local TLS proxy or SSH tunnel)" "y/n"
+  WEB_BIND_ADDRESS="127.0.0.1"
+  if [ "$WEB_EXPOSE_LAN" == "y" ]; then
+    WEB_BIND_ADDRESS="0.0.0.0"
+  fi
 
   # Timezone with validation (retry loop)
   while true; do

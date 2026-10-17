@@ -206,11 +206,13 @@ func TestLoginCSRFPoolIsBoundedAndRecovers(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		sm := NewSessionManager()
-		for i := range 4096 {
+		for i := range 4095 {
 			sm.csrfTokens[fmt.Sprint(i)] = &csrfToken{expiresAt: time.Now().Add(csrfTokenDuration)}
 		}
-		if sm.CreateCSRFToken() != "" || len(sm.csrfTokens) != 4096 {
-			t.Fatal("full login token pool failed open")
+		sm.csrfTokens["oldest"] = &csrfToken{expiresAt: time.Now().Add(time.Second)}
+		token := sm.CreateCSRFToken()
+		if token == "" || len(sm.csrfTokens) != 4096 || sm.ValidateCSRFToken("oldest") {
+			t.Fatal("full login token pool must evict its oldest token, not block login")
 		}
 		time.Sleep(csrfTokenDuration)
 		if sm.CreateCSRFToken() == "" || len(sm.csrfTokens) != 1 {

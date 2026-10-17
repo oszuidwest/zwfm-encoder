@@ -221,7 +221,15 @@ func (sm *SessionManager) CreateCSRFToken() string {
 	if len(sm.csrfTokens) >= 4096 {
 		maps.DeleteFunc(sm.csrfTokens, func(_ string, v *csrfToken) bool { return !now.Before(v.expiresAt) })
 		if len(sm.csrfTokens) >= 4096 {
-			return ""
+			// Anonymous GETs must not prevent every new user from obtaining a login form.
+			var oldestToken string
+			var oldestExpiry time.Time
+			for key, value := range sm.csrfTokens {
+				if oldestToken == "" || value.expiresAt.Before(oldestExpiry) {
+					oldestToken, oldestExpiry = key, value.expiresAt
+				}
+			}
+			delete(sm.csrfTokens, oldestToken)
 		}
 	}
 

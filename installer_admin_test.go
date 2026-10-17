@@ -92,3 +92,45 @@ func installerAdminFragment(t *testing.T) string {
 	// Exercise the actual block, without running root/service/network operations.
 	return "set -euo pipefail\n# Generate configuration file using jq" + fragment
 }
+
+func TestInstallerBindChoice(t *testing.T) {
+	t.Parallel()
+	script, err := os.ReadFile("deploy/install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, fragment, found := strings.Cut(string(script), "  # Production access goes through a local TLS proxy or an SSH tunnel.")
+	if !found {
+		t.Fatal("installer bind prompt missing")
+	}
+	fragment, _, found = strings.Cut(fragment, "  # Timezone with validation")
+	if !found {
+		t.Fatal("installer bind prompt end missing")
+	}
+	// The shared prompt owns y/n validation; require that contract, not a free-form string.
+	stub := `set -euo pipefail
+prompt_user() {
+  [ "$4" = "y/n" ] || exit 1
+  case "$AUTH_TEST_EXPOSE" in
+    y|n) printf -v "$1" '%s' "$AUTH_TEST_EXPOSE" ;;
+    *) exit 2 ;;
+  esac
+}
+`
+	for _, tc := range []struct{ input, want string }{{"n", "127.0.0.1"}, {"y", "0.0.0.0"}, {"localhost", ""}, {"127.0.0.1:8080", ""}} {
+		t.Run(tc.input, func(t *testing.T) {
+			cmd := util.CommandContext(t.Context(), "bash", "-c", stub+fragment+`printf '%s' "$WEB_BIND_ADDRESS"`)
+			cmd.Env = append(os.Environ(), "AUTH_TEST_EXPOSE="+tc.input)
+			out, err := cmd.CombinedOutput()
+			if tc.want == "" {
+				if err == nil {
+					t.Fatal("invalid free-form choice accepted")
+				}
+				return
+			}
+			if err != nil || string(out) != tc.want {
+				t.Fatalf("installer bind = %q, %v, want %q", out, err, tc.want)
+			}
+		})
+	}
+}

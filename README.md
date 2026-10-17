@@ -48,7 +48,7 @@ sudo su
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/oszuidwest/zwfm-encoder/main/deploy/install.sh)"
 ```
 
-New installations bind the web interface to `127.0.0.1:8080`. Use a local TLS reverse proxy or an SSH tunnel for remote access; see [Admin security](#admin-security). Selecting `0.0.0.0` in the installer exposes plain HTTP to the LAN and is only suitable behind a trusted network boundary.
+New installations bind the web interface to `127.0.0.1:8080`. Use a local TLS reverse proxy or an SSH tunnel for remote access; see [Admin security](#admin-security). Answering yes to the installer's LAN-exposure prompt selects `0.0.0.0` and is only suitable behind a trusted network boundary. For a specific IPv4/IPv6 bind, edit `system.bind_address` in the config before restarting.
 
 **Default credentials:** `admin` / `encoder`
 
@@ -248,6 +248,8 @@ Without a proxy, keep loopback and tunnel from your workstation: `ssh -L 8080:12
 ### Login limits and API clients
 
 The server allows five login attempts per peer IP and ten per submitted username per minute, including successful attempts. Both limits are reserved atomically before password verification. Throttled attempts receive HTTP 429 with `Retry-After: 60`; wait before retrying. These bounded, in-memory limits reset on restart; they are not a distributed lockout or a substitute for proxy/network controls. Forwarded IP headers are not trusted, so clients behind one proxy share its IP limit. A proxy can additionally apply a per-client rate limit. Do not repeatedly restart the encoder to evade throttling.
+
+Login forms use one-use tokens that expire after ten minutes; the oldest form tokens may be evicted earlier when the bounded anonymous token pool is busy. Reload an expired form to obtain a fresh token. A full pool does not block new login forms.
 
 Every session-authenticated mutation (POST/PUT/PATCH/DELETE) requires `X-CSRF-Token` matching that session's random token; the authenticated page supplies it in `<meta name="csrf-token">`, and the UI sends it automatically. Tokens expire/revoke with the session, and responses containing them are not cached. Logout is now `POST /logout` with this header; GET does not log out. Browser cross-origin unsafe requests are also rejected using Go's cross-origin protection, including login. This follows the [OWASP synchronizer-token pattern](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html).
 
