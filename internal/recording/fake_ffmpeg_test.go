@@ -35,6 +35,8 @@ func TestMain(m *testing.M) {
 	if err := os.Setenv("GORACE", "atexit_sleep_ms=0 "+os.Getenv("GORACE")); err != nil {
 		panic(err)
 	}
+	// Recorder tests must not depend on the host's NTP state.
+	clockSynced = func() bool { return true }
 	os.Exit(m.Run())
 }
 

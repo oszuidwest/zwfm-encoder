@@ -17,7 +17,12 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 )
 
-var webhookClient = &http.Client{Timeout: 10 * time.Second}
+var webhookClient = &http.Client{
+	Timeout: 10 * time.Second,
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
 
 // WebhookPayload is the JSON body sent to webhook endpoints.
 // Only the fields relevant to the event type are populated.

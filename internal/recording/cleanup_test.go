@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 func TestRecordingFileTime(t *testing.T) {
@@ -115,7 +116,7 @@ func TestRecordingFileTimeMatchesGeneratedNames(t *testing.T) {
 	for _, codec := range []types.Codec{types.CodecMP3, types.CodecOpus, types.CodecPCM} {
 		recorder := NewGenericRecorder(GenericRecorderConfig{Recorder: &types.Recorder{Name: "Studio B!", Codec: codec}})
 		name := recorder.generateFilename(start)
-		if got, ok := recordingFileTime(sanitizeFilename("Studio B!"), name); !ok || !got.Equal(start) {
+		if got, ok := recordingFileTime(util.SanitizeFilename("Studio B!"), name); !ok || !got.Equal(start) {
 			t.Errorf("recordingFileTime(%q) = %v, %t; want %v, true", name, got, ok, start)
 		}
 	}
