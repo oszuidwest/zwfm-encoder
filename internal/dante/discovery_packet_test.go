@@ -15,7 +15,7 @@ func TestDiscoveryReadsReceivingInterface(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = conn.Close() }()
-	readPacket, err := discoveryPacketReader(conn)
+	readPacket, err := readDanteDiscovery(conn)
 	if err != nil {
 		t.Fatal(err)
 	}
