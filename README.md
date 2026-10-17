@@ -50,6 +50,8 @@ sudo su
 
 The web interface will be available at `http://<raspberry-pi-ip>:8080`
 
+The installer enables systemd-timesyncd and its time-sync wait service. Installation and the encoder's startup after boot wait for the first successful time synchronization, so recordings on a Raspberry Pi without a real-time clock are not named after a stale boot time. If NTP is unreachable, restore access to your configured time servers; inspect `systemctl status systemd-timesyncd systemd-time-wait-sync` to diagnose a wait. This also applies when updating an existing installation.
+
 **Default credentials:** `admin` / `encoder`
 
 ## Updating

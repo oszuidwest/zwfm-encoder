@@ -190,7 +190,6 @@ echo -e "\n${BLUE}►► Starting installation...${NC}\n"
 if [ "$KEEP_CONFIG" != "y" ]; then
   set_timezone "$TIMEZONE"
 fi
-set_time_sync
 
 # Configure journald storage limits
 set_journald_limits
@@ -201,8 +200,12 @@ if [ "$DO_UPDATES" == "y" ]; then
 fi
 
 # Install dependencies (including jq for config generation)
-echo -e "${BLUE}►► Installing FFmpeg, alsa-utils, and jq...${NC}"
-apt_install --silent ffmpeg alsa-utils jq
+echo -e "${BLUE}►► Installing FFmpeg, alsa-utils, jq, and time synchronization...${NC}"
+apt_install --silent ffmpeg alsa-utils jq systemd-timesyncd
+
+# time-sync.target only waits for NTP when the wait service is enabled.
+set_time_sync
+systemctl enable --now systemd-timesyncd.service systemd-time-wait-sync.service
 
 # Stop existing service if running
 if systemctl is-active --quiet encoder 2>/dev/null; then
