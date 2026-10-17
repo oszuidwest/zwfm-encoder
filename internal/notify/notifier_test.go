@@ -888,25 +888,32 @@ func TestInputEventsReachAudioChannelsAndEventLog(t *testing.T) {
 	defer logger.Close() //nolint:errcheck // Test teardown.
 
 	// Input alerts ignore the silence per-event toggles, like upload abandonment.
-	send := newTestChannel(false)
-	send.name = "send"
-	send.subscribesStart = false
-	send.subscribesEnd = false
+	channels := []*testChannel{newTestChannel(false), newTestChannel(false), newTestChannel(false)}
+	for i, channel := range channels {
+		channel.name = []string{"webhook", "email", "zabbix"}[i]
+		channel.subscribesStart = false
+		channel.subscribesEnd = false
+	}
 	unconfigured := newTestChannel(false)
 	unconfigured.name = "unconfigured"
 	unconfigured.configuredSilence.Store(false)
 
-	o := NewAlertOrchestrator(config.New(""), NewDispatcher(send, unconfigured))
+	o := NewAlertOrchestrator(config.New(""), NewDispatcher(channels[0], channels[1], channels[2], unconfigured))
 	t.Cleanup(o.Close)
 	o.SetEventLogger(logger)
 
 	o.HandleInputLost(InputData{Input: "hw:1", Error: "device disconnected"})
-	if got := awaitCall(t, send.inputLostCalled, "SendInputLost"); got.Input != "hw:1" || got.Error != "device disconnected" {
-		t.Fatalf("SendInputLost data = %+v", got)
+	for _, channel := range channels {
+		if got := awaitCall(t, channel.inputLostCalled, "SendInputLost"); got.Input != "hw:1" || got.Error != "device disconnected" {
+			t.Fatalf("%s SendInputLost data = %+v", channel.name, got)
+		}
 	}
 	o.HandleInputRestored(InputData{Input: "hw:1", DurationMs: 65000})
-	if got := awaitCall(t, send.inputRestoredCalled, "SendInputRestored"); got.DurationMs != 65000 {
-		t.Fatalf("SendInputRestored data = %+v", got)
+	for _, channel := range channels {
+		if got := awaitCall(t, channel.inputRestoredCalled, "SendInputRestored"); got.DurationMs != 65000 {
+			t.Fatalf("%s SendInputRestored data = %+v", channel.name, got)
+		}
+		assertNoCall(t, channel.inputRestoredCalled, "duplicate input restored")
 	}
 	assertNoCall(t, unconfigured.inputLostCalled, "unconfigured input lost")
 	assertNoCall(t, unconfigured.inputRestoredCalled, "unconfigured input restored")
