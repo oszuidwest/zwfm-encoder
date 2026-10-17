@@ -54,16 +54,21 @@ func runFakeFFmpeg(args []string) int {
 		if _, err := io.ReadFull(os.Stdin, make([]byte, 4096)); err != nil {
 			return 1
 		}
-		if err := os.WriteFile(output, []byte("another recording"), 0o600); err != nil { //nolint:gosec // Test temp output.
+		// Only an existing output is refused.
+		if _, err := os.Stat(output); err != nil { //nolint:gosec // G703: path comes from the recorder under test.
 			return 1
 		}
 		_, _ = fmt.Fprintf(os.Stderr, "File '%s' already exists. Exiting.\n", output)
 		return 0
 	}
 	reader := io.Reader(os.Stdin)
-	failWrite := os.Getenv(fakeFFmpegFailWriteEnv) == "1"
-	if failWrite {
-		reader = io.LimitReader(reader, 4096)
+	failWrite := os.Getenv(fakeFFmpegFailWriteEnv)
+	if failWrite != "" {
+		limit := int64(4096)
+		if failWrite == "empty" { // Fails before encoding any audio.
+			limit = 0
+		}
+		reader = io.LimitReader(reader, limit)
 	}
 	data, err := io.ReadAll(reader)
 	if err != nil {
@@ -89,7 +94,7 @@ func runFakeFFmpeg(args []string) int {
 	if err := file.Close(); err != nil {
 		return 1
 	}
-	if failWrite {
+	if failWrite != "" {
 		_, _ = fmt.Fprintln(os.Stderr, "simulated write failure")
 		return 1
 	}
