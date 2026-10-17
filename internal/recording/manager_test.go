@@ -159,7 +159,7 @@ func TestReconcilePendingUploadsRecoversS3OnlySpoolFilesWithoutMetadata(t *testi
 		t.Fatalf("stat recovered metadata: %v", err)
 	}
 }
-func TestProcessRetryQueueAbandonsExpiredUploadAndRemovesMetadata(t *testing.T) {
+func TestProcessRetryQueueAbandonsExpiredUploadButKeepsRecoveryState(t *testing.T) {
 	t.Parallel()
 	spoolDir := t.TempDir()
 	cfg := testS3Recorder()
@@ -188,11 +188,11 @@ func TestProcessRetryQueueAbandonsExpiredUploadAndRemovesMetadata(t *testing.T) 
 	if got := len(recorder.retryQueue); got != 0 {
 		t.Fatalf("retryQueue len = %d, want 0", got)
 	}
-	if _, err := os.Stat(pending.metadataPath); !os.IsNotExist(err) {
-		t.Fatalf("metadata stat error = %v, want not exist", err)
+	if _, err := os.Stat(pending.metadataPath); err != nil {
+		t.Fatalf("abandoned upload metadata was removed: %v", err)
 	}
-	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
-		t.Fatalf("file stat error = %v, want not exist", err)
+	if data, err := os.ReadFile(filePath); err != nil || string(data) != "audio" { //nolint:gosec // Test temp recording.
+		t.Fatalf("abandoned recording = %q, %v; want preserved audio", data, err)
 	}
 }
 func TestProcessRetryQueueKeepsLocalFileForExpiredBothUpload(t *testing.T) {
@@ -230,8 +230,8 @@ func TestProcessRetryQueueKeepsLocalFileForExpiredBothUpload(t *testing.T) {
 	if got := len(recorder.retryQueue); got != 0 {
 		t.Fatalf("retryQueue len = %d, want 0", got)
 	}
-	if _, err := os.Stat(pending.metadataPath); !os.IsNotExist(err) {
-		t.Fatalf("metadata stat error = %v, want not exist", err)
+	if _, err := os.Stat(pending.metadataPath); err != nil {
+		t.Fatalf("abandoned upload metadata was removed: %v", err)
 	}
 	if _, err := os.Stat(filePath); err != nil {
 		t.Fatalf("stat local file: %v", err)
