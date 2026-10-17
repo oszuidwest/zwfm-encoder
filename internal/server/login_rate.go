@@ -1,6 +1,7 @@
 package server
 
 import (
+	"log/slog"
 	"maps"
 	"net"
 	"net/http"
@@ -23,6 +24,8 @@ type loginAttempt struct {
 func (sm *SessionManager) AllowLogin(r *http.Request, username string, trustedProxies []string) bool {
 	ip := loginClientAddress(r, trustedProxies).Unmap()
 	if !ip.IsValid() || ip.IsUnspecified() || ip.IsMulticast() {
+		slog.Warn("login rejected: unusable client address",
+			"remote", r.RemoteAddr, "forwarded_for", r.Header.Values("X-Forwarded-For"))
 		return false
 	}
 	host := ip.String()
@@ -31,7 +34,6 @@ func (sm *SessionManager) AllowLogin(r *http.Request, username string, trustedPr
 	}
 	keys := [2]string{"ip:" + host, "user:" + username}
 	// The account window is fixed: rejected attempts must never prolong it.
-	limits := [2]int{5, 10}
 	now := time.Now()
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -39,9 +41,9 @@ func (sm *SessionManager) AllowLogin(r *http.Request, username string, trustedPr
 		return !now.Before(attempt.expiresAt)
 	})
 	newBuckets := 0
-	for i, key := range keys {
+	for _, key := range keys {
 		attempt, exists := sm.loginAttempts[key]
-		if attempt.count >= limits[i] {
+		if attempt.count >= loginLimit(key) {
 			return false
 		}
 		if !exists {
@@ -49,7 +51,10 @@ func (sm *SessionManager) AllowLogin(r *http.Request, username string, trustedPr
 		}
 	}
 	for len(sm.loginAttempts)+newBuckets > maxLoginBuckets {
-		sm.evictLoginBucket(keys)
+		if !sm.evictLoginBucket(keys) {
+			slog.Warn("login rejected: every rate-limit bucket is exhausted", "remote", r.RemoteAddr)
+			return false
+		}
 	}
 	for _, key := range keys {
 		attempt := sm.loginAttempts[key]
@@ -62,19 +67,33 @@ func (sm *SessionManager) AllowLogin(r *http.Request, username string, trustedPr
 	return true
 }
 
-// evictLoginBucket keeps a full cache from blocking unrelated clients; sm.mu is held.
-func (sm *SessionManager) evictLoginBucket(keep [2]string) {
+// loginLimit is the number of attempts per window for a bucket key.
+func loginLimit(key string) int {
+	if strings.HasPrefix(key, "ip:") {
+		return 5
+	}
+	return 10
+}
+
+// evictLoginBucket keeps a full cache from blocking unrelated clients. It never
+// evicts an exhausted bucket, so a flood of new clients cannot reset the limit
+// of an address or account under attack; sm.mu is held.
+func (sm *SessionManager) evictLoginBucket(keep [2]string) bool {
 	var oldestKey string
 	var oldestExpiry time.Time
 	for key, value := range sm.loginAttempts {
-		if key == keep[0] || key == keep[1] {
+		if key == keep[0] || key == keep[1] || value.count >= loginLimit(key) {
 			continue
 		}
 		if oldestKey == "" || value.expiresAt.Before(oldestExpiry) {
 			oldestKey, oldestExpiry = key, value.expiresAt
 		}
 	}
+	if oldestKey == "" {
+		return false
+	}
 	delete(sm.loginAttempts, oldestKey)
+	return true
 }
 
 func loginClientAddress(r *http.Request, trustedProxies []string) netip.Addr {

@@ -379,7 +379,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == http.MethodPost {
-		r.Body = http.MaxBytesReader(w, r.Body, 4096)
+		// Room for a 4096-byte password URL-encoded (up to 3x) plus the other fields.
+		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
 			return
@@ -387,10 +388,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		username := r.PostForm.Get("username")
 		csrfToken := r.PostForm.Get("csrf_token")
 		if !s.sessions.ValidateCSRFToken(csrfToken) {
+			slog.Warn("login rejected: invalid form token", "remote", r.RemoteAddr)
 			http.Error(w, "Invalid request", http.StatusBadRequest)
 			return
 		}
 		if !s.sessions.AllowLogin(r, username, cfg.TrustedProxies) {
+			slog.Warn("login rate limited", "remote", r.RemoteAddr, "username", username)
 			w.Header().Set("Retry-After", "60")
 			http.Error(w, "Too many login attempts. Try again later.", http.StatusTooManyRequests)
 			return
@@ -402,6 +405,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/", http.StatusFound)
 			return
 		}
+		slog.Warn("login failed", "remote", r.RemoteAddr, "username", username)
 
 		data.Error = true
 	}

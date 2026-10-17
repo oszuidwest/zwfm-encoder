@@ -126,3 +126,22 @@ func TestFullLoginCacheKeepsCurrentLimits(t *testing.T) {
 		t.Fatal("eviction lost the active counter")
 	}
 }
+
+func TestLoginEvictionKeepsExhaustedBuckets(t *testing.T) {
+	t.Parallel()
+	sm := NewSessionManager()
+	now := time.Now()
+	// The exhausted account bucket is the oldest, so plain oldest-first eviction would reset it.
+	sm.loginAttempts["user:admin"] = loginAttempt{count: 10, expiresAt: now.Add(time.Second)}
+	for i := range maxLoginBuckets - 1 {
+		sm.loginAttempts[fmt.Sprint("ip:", i)] = loginAttempt{count: 1, expiresAt: now.Add(time.Minute)}
+	}
+	r := httptest.NewRequest(http.MethodPost, "/login", http.NoBody)
+	r.RemoteAddr = "192.0.2.9:1234"
+	if !sm.AllowLogin(r, "guess", nil) {
+		t.Fatal("new client refused although unexhausted buckets can be evicted")
+	}
+	if sm.loginAttempts["user:admin"].count != 10 {
+		t.Fatal("eviction reset an exhausted account limit")
+	}
+}

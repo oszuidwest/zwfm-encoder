@@ -26,8 +26,8 @@ func TestSessionMutationsRejectMissingOrUnboundCSRF(t *testing.T) {
 				req.Header.Set("X-CSRF-Token", token)
 				rec := httptest.NewRecorder()
 				sm.AuthMiddleware()(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })(rec, req)
-				if rec.Code != http.StatusForbidden {
-					t.Fatalf("mutation with unbound token = %d, want 403", rec.Code)
+				if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), `"error":`) {
+					t.Fatalf("mutation with unbound token = %d %q, want 403 with a JSON error", rec.Code, rec.Body)
 				}
 			}
 		})

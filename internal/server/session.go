@@ -2,13 +2,16 @@
 package server
 
 import (
+	"context"
 	cryptorand "crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"log/slog"
 	"maps"
 	"math/rand/v2"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
@@ -126,7 +129,10 @@ func (sm *SessionManager) AuthMiddleware() func(http.HandlerFunc) http.HandlerFu
 			if csrf := sm.CSRFToken(r); csrf != "" {
 				if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
 					if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(csrf)) != 1 {
-						http.Error(w, "Invalid CSRF token", http.StatusForbidden)
+						// JSON so the page's request helper can show why: usually a tab from an older session.
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusForbidden)
+						_, _ = w.Write([]byte(`{"error":"Invalid CSRF token; reload this page"}`))
 						return
 					}
 				}
@@ -135,6 +141,13 @@ func (sm *SessionManager) AuthMiddleware() func(http.HandlerFunc) http.HandlerFu
 				return
 			}
 
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				// fetch would follow a redirect to the login page and report success.
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":"Session expired; reload this page"}`))
+				return
+			}
 			http.Redirect(w, r, "/login", http.StatusFound)
 		}
 	}
@@ -169,6 +182,35 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, value string, maxA
 	})
 }
 
+// hashSlot and hashWaiters bound password-hash verification across all logins.
+var (
+	hashSlot    = make(chan struct{}, 1)
+	hashWaiters atomic.Int32
+)
+
+// verifyPasswordHash runs one verification at a time: PBKDF2 takes about a
+// second of CPU on a Raspberry Pi 4, and logins must not starve the audio
+// pipeline. A login gives up when several are already waiting, its request
+// ends, or its turn does not come within a few seconds.
+func verifyPasswordHash(ctx context.Context, password, hash string) bool {
+	if hashWaiters.Add(1) > 8 {
+		hashWaiters.Add(-1)
+		slog.Warn("login rejected: password verification is busy")
+		return false
+	}
+	defer hashWaiters.Add(-1)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	select {
+	case hashSlot <- struct{}{}:
+	case <-ctx.Done():
+		slog.Warn("login rejected: password verification is busy")
+		return false
+	}
+	defer func() { <-hashSlot }()
+	return util.VerifyPasswordHash(password, hash)
+}
+
 // Login reports whether login succeeded and creates a session if valid.
 func (sm *SessionManager) Login(
 	w http.ResponseWriter, r *http.Request,
@@ -177,7 +219,7 @@ func (sm *SessionManager) Login(
 	userMatch := subtle.ConstantTimeCompare([]byte(username), []byte(configUser)) == 1
 	passMatch := subtle.ConstantTimeCompare([]byte(password), []byte(configPass)) == 1
 	if configHash != "" {
-		passMatch = configPass == "" && util.VerifyPasswordHash(password, configHash)
+		passMatch = configPass == "" && verifyPasswordHash(r.Context(), password, configHash)
 	}
 	if !userMatch || !passMatch {
 		return false

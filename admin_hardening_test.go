@@ -150,7 +150,7 @@ func checkAdminLogout(t *testing.T, s *Server, request func(string, string, stri
 	revoked := request(http.MethodPost, "/api/recording/regenerate-key", token, "")
 	defer func() { _ = revoked.Body.Close() }()
 	_ = readAdminBody(t, revoked)
-	if revoked.StatusCode != http.StatusFound {
+	if revoked.StatusCode != http.StatusUnauthorized {
 		t.Fatal("revoked session still reaches a mutation")
 	}
 }
@@ -256,20 +256,27 @@ func TestLoginRejectsMalformedOrQueryCredentials(t *testing.T) {
 	s := newRouteTestServer(t)
 	handler := s.SetupRoutes()
 	for _, tc := range []struct {
-		name, query, body string
-		wantStatus        int
+		name, query, body, password string
+		wantStatus                  int
 	}{
 		{name: "query credentials", query: "?username=admin&password=encoder", wantStatus: http.StatusOK},
 		{name: "invalid encoding", body: "username=admin&password=%xx", wantStatus: http.StatusBadRequest},
-		{name: "oversized body", body: "username=admin&password=" + strings.Repeat("p", 4097), wantStatus: http.StatusBadRequest},
+		// Both carry a valid form token, so only the body limit decides.
+		{name: "oversized body", password: strings.Repeat("p", 16<<10), wantStatus: http.StatusBadRequest},
+		{name: "longest password URL-encoded", password: strings.Repeat("%", 4096), wantStatus: http.StatusOK},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body := tc.body
-			if tc.query != "" {
+			if tc.query != "" || tc.password != "" {
 				page := httptest.NewRecorder()
 				handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/login", http.NoBody))
 				token := adminToken(t, page.Body.String(), `name="csrf_token" value="([a-f0-9]+)"`)
-				body = url.Values{"csrf_token": {token}}.Encode()
+				values := url.Values{"csrf_token": {token}}
+				if tc.password != "" {
+					values.Set("username", "admin")
+					values.Set("password", tc.password)
+				}
+				body = values.Encode()
 			}
 			req := httptest.NewRequest(http.MethodPost, "/login"+tc.query, strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
