@@ -49,7 +49,7 @@ func (s *Server) writeConfigError(w http.ResponseWriter, err error) {
 		s.writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	if errors.Is(err, config.ErrInvalidStreamConfig) {
+	if errors.Is(err, config.ErrInvalidStreamConfig) || errors.Is(err, config.ErrInvalidRecorderConfig) {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

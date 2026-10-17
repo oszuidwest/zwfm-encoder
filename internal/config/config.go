@@ -29,6 +29,9 @@ var (
 	// ErrInvalidStreamConfig is returned when a stream change would make config invalid.
 	ErrInvalidStreamConfig = errors.New("invalid stream config")
 
+	// ErrInvalidRecorderConfig is returned when a recorder change would make config invalid.
+	ErrInvalidRecorderConfig = errors.New("invalid recorder config")
+
 	// ErrRecorderNotFound is returned when a recorder ID does not exist in config.
 	ErrRecorderNotFound = errors.New("recorder not found")
 )
@@ -551,6 +554,20 @@ func (c *Config) validateRecorders() error {
 		if err := recorder.Validate(); err != nil {
 			return fmt.Errorf("invalid recording.recorders[%d]: %w", i, err)
 		}
+		if err := c.validateRecorderName(recorder.Name, recorder.ID); err != nil {
+			return fmt.Errorf("invalid recording.recorders[%d]: %w", i, err)
+		}
+	}
+	return nil
+}
+
+func (c *Config) validateRecorderName(name, exceptID string) error {
+	safeName := util.SanitizeFilename(name)
+	for i := range c.Recording.Recorders {
+		existing := &c.Recording.Recorders[i]
+		if existing.ID != exceptID && strings.EqualFold(safeName, util.SanitizeFilename(existing.Name)) {
+			return fmt.Errorf("%w: name: %q conflicts with recorder %q (filename prefix %q)", ErrInvalidRecorderConfig, name, existing.Name, safeName)
+		}
 	}
 	return nil
 }
@@ -828,6 +845,9 @@ func (c *Config) AddRecorder(recorder *types.Recorder) error {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := c.validateRecorderName(recorder.Name, ""); err != nil {
+		return err
+	}
 
 	// Generate unique ID
 	shortID, err := generateShortID()
@@ -872,6 +892,9 @@ func (c *Config) UpdateRecorder(recorder *types.Recorder) error {
 	i := c.findRecorderIndex(recorder.ID)
 	if i == -1 {
 		return fmt.Errorf("%w: %s", ErrRecorderNotFound, recorder.ID)
+	}
+	if err := c.validateRecorderName(recorder.Name, recorder.ID); err != nil {
+		return err
 	}
 
 	c.Recording.Recorders[i] = *recorder
