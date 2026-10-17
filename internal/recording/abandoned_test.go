@@ -175,3 +175,28 @@ func TestUploadExpiredWhileOfflineRequeuesOnStartup(t *testing.T) {
 		t.Fatalf("successfully recovered spool file remains: %v", err)
 	}
 }
+
+func TestAbandonedUploadRequeuesAfterClockRollback(t *testing.T) {
+	t.Parallel()
+	cfg := testS3Recorder()
+	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
+	file := writeSpoolFile(t, r.spoolDir, r.id, "rollback.mp3", "audio")
+	// A boot clock behind the abandonment makes the retry window look unexpired.
+	pending := pendingUpload{
+		request:      uploadRequest{localPath: file, s3Key: "recordings/Test/rollback.mp3", fileSize: 5, deleteAfterUpload: true},
+		firstAttempt: time.Now().Add(-time.Hour), retryCount: 3, abandoned: true,
+	}
+	if err := r.savePendingUpload(&pending); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := NewManager("", r.spoolDir, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.AddRecorder(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if restored := restarted.recorders[cfg.ID].retryQueue[0]; restored.retryCount != 0 || time.Since(restored.firstAttempt) > time.Second {
+		t.Fatalf("startup did not reset the abandoned retry window: %+v", restored)
+	}
+}
