@@ -227,7 +227,11 @@ func TestOpenCleansPartialSetupFailures(t *testing.T) {
 		{name: "unsupported rate", want: "unsupported sample rate", configure: func(h *fakeTransmitter) { h.channels[0].rate = 44100; h.channels[1].rate = 44100 }},
 		{name: "mono transmitter", want: "need 2", configure: func(h *fakeTransmitter) { h.channels[0].nchan = 1; h.channels[1].nchan = 1 }},
 		{name: "unsupported bits", want: "unsupported bits", configure: func(h *fakeTransmitter) { h.channels[0].bits = 8; h.channels[1].bits = 8 }},
-		{name: "FPP exceeds MTU", want: "exceeds the MTU budget", configure: func(h *fakeTransmitter) { h.channels[0].fppMax = 500; h.channels[0].fppMin = 400 }},
+		{name: "FPP exceeds MTU", want: "exceeds the MTU budget", configure: func(h *fakeTransmitter) {
+			// Both channels agree, so only the MTU budget rejects the range.
+			h.channels[0].fppMax, h.channels[0].fppMin = 500, 400
+			h.channels[1].fppMax, h.channels[1].fppMin = 500, 400
+		}},
 		{name: "FPP has no common bounds", want: "minimum of 64", configure: func(h *fakeTransmitter) {
 			h.channels[0].fppMax = 128
 			h.channels[0].fppMin = 64
