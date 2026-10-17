@@ -3,8 +3,10 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -147,6 +149,32 @@ func TestWebhookChannelRejectsNonSuccessStatus(t *testing.T) {
 			}, -48, -52)
 			if err == nil {
 				t.Fatalf("SendSilenceStart() error = nil for status %d", status)
+			}
+		})
+	}
+}
+
+func TestWebhookChannelRejectsRedirects(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []int{301, 302, 303, 307, 308} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/target" {
+					t.Error("webhook followed redirect")
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				http.Redirect(w, r, "/target", status)
+			}))
+			defer server.Close()
+
+			err := (&WebhookChannel{}).SendSilenceStart(t.Context(), &config.Snapshot{
+				WebhookURL: server.URL,
+			}, -48, -52)
+			if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("status %d", status)) {
+				t.Fatalf("SendSilenceStart() error = %v, want redirect status %d", err, status)
 			}
 		})
 	}
