@@ -179,7 +179,6 @@ func TestProcessRetryQueueAbandonsExpiredUploadButKeepsRecoveryState(t *testing.
 		retryCount:   3,
 		lastError:    "still down",
 	}
-	pending.metadataPath = recorder.pendingUploadMetadataPath(pending.request)
 	if err := recorder.savePendingUpload(&pending); err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +220,6 @@ func TestProcessRetryQueueKeepsLocalFileForExpiredBothUpload(t *testing.T) {
 		retryCount:   3,
 		lastError:    "still down",
 	}
-	pending.metadataPath = recorder.pendingUploadMetadataPath(pending.request)
 	if err := recorder.savePendingUpload(&pending); err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +252,6 @@ func TestProcessRetryQueueRemovesMetadataForMissingFile(t *testing.T) {
 		firstAttempt: time.Now(),
 		lastError:    "missing",
 	}
-	pending.metadataPath = recorder.pendingUploadMetadataPath(pending.request)
 	if err := recorder.savePendingUpload(&pending); err != nil {
 		t.Fatal(err)
 	}
