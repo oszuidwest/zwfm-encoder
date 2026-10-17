@@ -25,6 +25,7 @@ type pendingUploadMetadata struct {
 	FirstAttempt      time.Time `json:"first_attempt"`
 	RetryCount        int       `json:"retry_count"`
 	LastError         string    `json:"last_error,omitempty"`
+	Abandoned         bool      `json:"abandoned,omitempty"`
 }
 
 func (r *GenericRecorder) reconcilePendingUploads() error {
@@ -108,8 +109,10 @@ func (r *GenericRecorder) loadPendingUpload(path string) (pendingUpload, bool, e
 	if meta.FileSize == 0 {
 		meta.FileSize = info.Size()
 	}
-	if meta.FirstAttempt.IsZero() {
+	// Restart also re-queues uploads whose retry window expired while offline.
+	if meta.FirstAttempt.IsZero() || meta.Abandoned || time.Since(meta.FirstAttempt) > MaxUploadRetryAge {
 		meta.FirstAttempt = time.Now()
+		meta.RetryCount = 0
 	}
 
 	return pendingUpload{
@@ -197,6 +200,7 @@ func (r *GenericRecorder) savePendingUpload(p *pendingUpload) error {
 		FirstAttempt:      p.firstAttempt,
 		RetryCount:        p.retryCount,
 		LastError:         p.lastError,
+		Abandoned:         p.abandoned,
 	}
 
 	data, err := json.MarshalIndent(&meta, "", "  ")

@@ -669,7 +669,7 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
 
 - **Severity:** `error`
 - **UI Label:** Abandoned
-- **Triggered:** When an upload is abandoned after exceeding the 24-hour retry limit. The `error` field contains the last upload error encountered. The local file remains on disk but will no longer be retried. This event also triggers alerts to all configured notification channels (webhook, email, Zabbix).
+- **Triggered:** When an upload is abandoned after exceeding the 24-hour retry limit. The `error` field contains the last upload error encountered. The recording and upload metadata remain on disk, including in S3-only mode; automatic retries pause for this process. After fixing S3 configuration/connectivity, restart the encoder process to re-queue abandoned uploads with a fresh 24-hour window and their original object keys. This event also triggers alerts to all configured notification channels (webhook, email, Zabbix).
 
 ```json
 {
