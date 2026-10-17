@@ -718,7 +718,7 @@ func (r *GenericRecorder) scheduleDurationLimitLocked() {
 }
 
 func (r *GenericRecorder) generateFilename(t time.Time) string {
-	safeName := sanitizeFilename(r.config.Name)
+	safeName := util.SanitizeFilename(r.config.Name)
 	return fmt.Sprintf("%s-%s.%s", safeName, t.Format(recordingTimestampLayout), r.config.Codec.FileExtension())
 }
 
@@ -750,7 +750,7 @@ func (r *GenericRecorder) rememberFilenameLocked(filename string) {
 
 func s3ObjectKey(recorderName, filename string) string {
 	// Prefix: recordings/{sanitized-recorder-name}/filename
-	safeName := sanitizeFilename(recorderName)
+	safeName := util.SanitizeFilename(recorderName)
 	return fmt.Sprintf("recordings/%s/%s", safeName, filename)
 }
 
@@ -761,23 +761,6 @@ func (r *GenericRecorder) isS3Configured() bool {
 
 func (r *GenericRecorder) createS3Client() *s3.Client {
 	return createS3Client(RecorderToS3Config(&r.config))
-}
-
-func sanitizeFilename(name string) string {
-	result := strings.Map(func(c rune) rune {
-		switch {
-		case (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_':
-			return c
-		case c == ' ':
-			return '-'
-		default:
-			return -1
-		}
-	}, name)
-	if result == "" {
-		return "recording"
-	}
-	return result
 }
 
 // TestRecorderS3Connection tests S3 connectivity for a recorder configuration.
