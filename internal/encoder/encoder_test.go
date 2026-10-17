@@ -17,6 +17,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,6 +27,56 @@ import (
 const testStreamRestartDelay = 200 * time.Millisecond
 
 const nonexistentFFmpeg = "/nonexistent/ffmpeg-binary-for-test"
+
+func TestStopTimeoutPreventsOverlappingSourceLoops(t *testing.T) {
+	e := newSourceLifecycleTestEncoder(t, "exit")
+	e.config.Audio.Input = "dante://studio-tx/Left/Right"
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	var opens atomic.Int32
+	e.openDanteSource = func(ctx context.Context, _ string) (source, error) {
+		reader, writer := io.Pipe()
+		context.AfterFunc(ctx, func() { _ = writer.Close() })
+		if opens.Add(1) == 1 {
+			return fakeDanteSource{reader, release}, nil
+		}
+		return fakeDanteSource{reader, ctx.Done()}, nil
+	}
+	if err := e.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitForCondition(t, time.Second, "first source running", func() bool {
+		return e.State() == types.StateRunning
+	})
+	if err := e.Stop(); err == nil || !strings.Contains(err.Error(), "shutdown timeout") {
+		t.Fatalf("Stop() error = %v, want shutdown timeout", err)
+	}
+	if state := e.State(); state != types.StateStopping {
+		t.Errorf("State after timeout = %q, want stopping", state)
+	}
+	if err := e.Start(); !errors.Is(err, ErrAlreadyRunning) {
+		t.Fatalf("Start while old source is alive = %v, want ErrAlreadyRunning", err)
+	}
+	if got := opens.Load(); got != 1 {
+		t.Fatalf("sources opened while stopping = %d, want 1", got)
+	}
+	releaseOnce.Do(func() { close(release) })
+	waitForCondition(t, time.Second, "late source shutdown completes", func() bool {
+		return e.State() == types.StateStopped
+	})
+	if err := e.Start(); err != nil {
+		t.Fatalf("Start after old loop finished: %v", err)
+	}
+	waitForCondition(t, time.Second, "new source running", func() bool {
+		e.mu.RLock()
+		defer e.mu.RUnlock()
+		return opens.Load() == 2 && e.state == types.StateRunning && e.sourceCancel != nil && e.sourceStdout != nil
+	})
+	if err := e.Stop(); err != nil {
+		t.Fatalf("Stop new source: %v", err)
+	}
+}
 
 func TestStartRejectsStateStopping(t *testing.T) {
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
