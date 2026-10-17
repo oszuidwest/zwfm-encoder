@@ -180,6 +180,8 @@ A run that received no PCM (for example during an input outage) is never uploade
 
 ## Recording API
 
+Recorder startup, hourly file preparation and concurrent configuration changes do not hold up audio capture for streams or other recorders. During hourly preparation the current file keeps receiving audio until the replacement is ready. If an individual recorder's writer stops consuming audio, its bounded buffer drops new chunks and reports `audio_drops`; recording control operations may still wait for that recorder's filesystem.
+
 On-demand recordings can be started and stopped via the REST API without going through the web interface. Useful for automation or external systems that need to trigger recordings.
 
 ```bash

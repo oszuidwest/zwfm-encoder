@@ -23,6 +23,9 @@ import (
 // afterFunc schedules hourly rotations; tests replace it to rotate by hand.
 var afterFunc = time.AfterFunc
 
+// recordingStat lets tests hold a filename check like an unresponsive network share.
+var recordingStat = os.Stat
+
 // errRecorderStopped marks intentional stop/rotation cancellation.
 var errRecorderStopped = errors.New("recorder stopped")
 
@@ -60,8 +63,10 @@ type GenericRecorder struct {
 	result *ffmpeg.StartResult
 
 	// Per-process writer state; reset with each FFmpeg process.
+	audioMu    sync.RWMutex // Protects audioCh from capture/close; never held across I/O.
 	audioCh    chan []byte
 	writerDone chan struct{}
+	recording  atomic.Bool  // Capture must not take mu behind filesystem/process startup.
 	audioDrops atomic.Int64 // Lost chunks from overflow or teardown.
 
 	// Current recording
@@ -265,6 +270,7 @@ func (r *GenericRecorder) startAsync() {
 	}
 
 	r.state = types.ProcessRunning
+	r.recording.Store(true)
 
 	// Capture log params while holding lock
 	logParams := r.captureLogParamsLocked()
@@ -280,6 +286,7 @@ func (r *GenericRecorder) setError(msg string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.state = types.ProcessError
+	r.recording.Store(false)
 	r.lastError = msg
 	slog.Error("recorder error", "id", r.id, "error", msg)
 
@@ -330,6 +337,7 @@ func (r *GenericRecorder) Stop() error {
 	}
 
 	r.state = types.ProcessStopping
+	r.recording.Store(false)
 
 	// Always stop timers (may be running even after write error)
 	if r.rotationTimer != nil {
@@ -382,23 +390,25 @@ func (r *GenericRecorder) Stop() error {
 // The caller must not mutate pcm after the call. Full buffers drop the newest
 // chunk and increment AudioDrops.
 func (r *GenericRecorder) WriteAudio(pcm []byte) {
-	// Keep send under r.mu because teardown may close ch.
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	// Only the short audio lock serializes capture with channel hand-over/close.
+	r.audioMu.RLock()
 
 	ch := r.audioCh
-	if ch == nil || r.state != types.ProcessRunning {
+	if ch == nil || !r.recording.Load() {
+		r.audioMu.RUnlock()
 		return
 	}
 
+	var drops int64
 	select {
 	case ch <- pcm:
 	default:
-		drops := r.audioDrops.Add(1)
-		if drops == 1 || drops%100 == 0 {
-			slog.Warn("recorder audio buffer full, dropping chunk; recording will have a gap",
-				"id", r.id, "total_drops", drops)
-		}
+		drops = r.audioDrops.Add(1)
+	}
+	r.audioMu.RUnlock()
+	if drops == 1 || drops > 0 && drops%100 == 0 {
+		slog.Warn("recorder audio buffer full, dropping chunk; recording will have a gap",
+			"id", r.id, "total_drops", drops)
 	}
 }
 
@@ -433,11 +443,14 @@ func (r *GenericRecorder) handleWriteError(result *ffmpeg.StartResult, writeErr 
 		return
 	}
 	r.state = types.ProcessError
+	r.recording.Store(false)
 	r.lastError = writeErr.Error()
 	capturedFile := r.currentFile
 	r.result = nil
 	r.currentFile = ""
+	r.audioMu.Lock()
 	r.audioCh = nil
+	r.audioMu.Unlock()
 	// audioWriter closes writerDone on return.
 	r.writerDone = nil
 	r.retiring.Add(1)
@@ -517,9 +530,7 @@ func (r *GenericRecorder) PendingUploadCount() int {
 
 // IsRecording reports whether recording is currently in progress.
 func (r *GenericRecorder) IsRecording() bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.state == types.ProcessRunning
+	return r.recording.Load()
 }
 
 // UpdateConfig updates the recorder configuration.
@@ -558,7 +569,7 @@ func (r *GenericRecorder) startEncoderLocked(fileTime time.Time) error {
 		if _, used := r.usedFilenames[name]; used {
 			return true
 		}
-		_, err := os.Stat(filepath.Join(outputDir, name))
+		_, err := recordingStat(filepath.Join(outputDir, name))
 		return err == nil
 	})
 	r.currentFile = filepath.Join(outputDir, filename)
@@ -589,7 +600,9 @@ func (r *GenericRecorder) startEncoderLocked(fileTime time.Time) error {
 	r.result = result
 
 	// Scope writer state to this FFmpeg process; rotation creates fresh channels.
+	r.audioMu.Lock()
 	r.audioCh = make(chan []byte, recorderAudioBufferChunks)
+	r.audioMu.Unlock()
 	r.writerDone = make(chan struct{})
 	go r.audioWriter(result, r.audioCh, r.writerDone)
 
@@ -620,7 +633,12 @@ func (r *GenericRecorder) claimEncoderLocked() encoderRun {
 		file:       r.currentFile,
 	}
 	r.result = nil
-	r.audioCh = nil
+	// A rotation keeps feeding the old channel until its replacement is ready.
+	if !r.recording.Load() {
+		r.audioMu.Lock()
+		r.audioCh = nil
+		r.audioMu.Unlock()
+	}
 	r.writerDone = nil
 	return run
 }
@@ -642,7 +660,9 @@ func (r *GenericRecorder) finishEncoder(run encoderRun) {
 
 	// The claimer is the only channel closer; closing lets the writer drain
 	// buffered chunks.
+	r.audioMu.Lock()
 	close(run.audioCh)
+	r.audioMu.Unlock()
 
 	var finalizeErr error
 	select {
@@ -713,8 +733,8 @@ func (r *GenericRecorder) rotateFile(generation uint64) {
 	// and the next boundary follow the corrected time.
 	at := time.Now().Round(time.Minute)
 
-	// Swap processes under one lock: WriteAudio sends every chunk either to the
-	// current file or, from here on, to the next one.
+	// Capture keeps feeding the current channel while startup holds mu; only
+	// the channel hand-over takes the separate audio lock.
 	previous := r.claimEncoderLocked()
 	r.retiring.Add(1)
 	defer r.retiring.Done()
@@ -723,7 +743,7 @@ func (r *GenericRecorder) rotateFile(generation uint64) {
 	if startErr != nil {
 		// The current encoder still runs: keep recording into its file instead
 		// of stopping until the hourly retry.
-		r.result, r.audioCh, r.writerDone, r.currentFile = previous.result, previous.audioCh, previous.writerDone, previous.file
+		r.result, r.writerDone, r.currentFile = previous.result, previous.writerDone, previous.file
 		previous = encoderRun{}
 	} else {
 		r.retiringFiles[previous.file] = struct{}{}
