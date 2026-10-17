@@ -101,7 +101,7 @@ func TestPendingUploadsPersistAndReload(t *testing.T) {
 		fileSize:          5,
 		deleteAfterUpload: true,
 	}
-	recorder.addToRetryQueue(req, "s3 down")
+	recorder.addToRetryQueue(&pendingUpload{request: req, lastError: "s3 down"})
 	if got := len(recorder.retryQueue); got != 1 {
 		t.Fatalf("retryQueue len = %d, want 1", got)
 	}
@@ -179,7 +179,6 @@ func TestProcessRetryQueueAbandonsExpiredUploadButKeepsRecoveryState(t *testing.
 		retryCount:   3,
 		lastError:    "still down",
 	}
-	pending.metadataPath = recorder.pendingUploadMetadataPath(pending.request)
 	if err := recorder.savePendingUpload(&pending); err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +220,6 @@ func TestProcessRetryQueueKeepsLocalFileForExpiredBothUpload(t *testing.T) {
 		retryCount:   3,
 		lastError:    "still down",
 	}
-	pending.metadataPath = recorder.pendingUploadMetadataPath(pending.request)
 	if err := recorder.savePendingUpload(&pending); err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +252,6 @@ func TestProcessRetryQueueRemovesMetadataForMissingFile(t *testing.T) {
 		firstAttempt: time.Now(),
 		lastError:    "missing",
 	}
-	pending.metadataPath = recorder.pendingUploadMetadataPath(pending.request)
 	if err := recorder.savePendingUpload(&pending); err != nil {
 		t.Fatal(err)
 	}

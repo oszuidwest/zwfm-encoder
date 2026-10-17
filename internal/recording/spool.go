@@ -1,12 +1,14 @@
 package recording
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -20,6 +22,8 @@ type pendingUploadMetadata struct {
 	RecorderID        string    `json:"recorder_id"`
 	LocalPath         string    `json:"local_path"`
 	S3Key             string    `json:"s3_key"`
+	BaseKey           string    `json:"base_s3_key,omitempty"`
+	UploadID          string    `json:"upload_id,omitempty"`
 	FileSize          int64     `json:"file_size"`
 	DeleteAfterUpload bool      `json:"delete_after_upload"`
 	FirstAttempt      time.Time `json:"first_attempt"`
@@ -67,8 +71,8 @@ func (r *GenericRecorder) loadPendingUploads() ([]pendingUpload, error) {
 			continue
 		}
 
-		path := filepath.Join(r.pendingUploadDir(), entry.Name())
-		item, ok, err := r.loadPendingUpload(path)
+		metadataPath := filepath.Join(r.pendingUploadDir(), entry.Name())
+		item, ok, err := r.loadPendingUpload(metadataPath)
 		if err != nil {
 			return nil, err
 		}
@@ -79,30 +83,30 @@ func (r *GenericRecorder) loadPendingUploads() ([]pendingUpload, error) {
 	return pending, nil
 }
 
-func (r *GenericRecorder) loadPendingUpload(path string) (pendingUpload, bool, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // Path comes from the recorder-owned spool directory.
+func (r *GenericRecorder) loadPendingUpload(metadataPath string) (pendingUpload, bool, error) {
+	data, err := os.ReadFile(metadataPath) //nolint:gosec // Path comes from the recorder-owned spool directory.
 	if err != nil {
 		return pendingUpload{}, false, fmt.Errorf("read pending upload metadata: %w", err)
 	}
 
 	var meta pendingUploadMetadata
 	if err := json.Unmarshal(data, &meta); err != nil {
-		slog.Warn("removing invalid pending upload metadata", "id", r.id, "path", path, "error", err)
-		return pendingUpload{}, false, os.Remove(path)
+		slog.Warn("removing invalid pending upload metadata", "id", r.id, "path", metadataPath, "error", err)
+		return pendingUpload{}, false, os.Remove(metadataPath)
 	}
 	if meta.RecorderID != "" && meta.RecorderID != r.id {
 		return pendingUpload{}, false, nil
 	}
 	if meta.LocalPath == "" || meta.S3Key == "" {
-		slog.Warn("removing incomplete pending upload metadata", "id", r.id, "path", path)
-		return pendingUpload{}, false, os.Remove(path)
+		slog.Warn("removing incomplete pending upload metadata", "id", r.id, "path", metadataPath)
+		return pendingUpload{}, false, os.Remove(metadataPath)
 	}
 
 	info, err := os.Stat(meta.LocalPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			slog.Warn("removing pending upload metadata for missing file", "id", r.id, "path", meta.LocalPath)
-			return pendingUpload{}, false, os.Remove(path)
+			return pendingUpload{}, false, os.Remove(metadataPath)
 		}
 		return pendingUpload{}, false, fmt.Errorf("stat pending upload file: %w", err)
 	}
@@ -116,6 +120,10 @@ func (r *GenericRecorder) loadPendingUpload(path string) (pendingUpload, bool, e
 	if meta.Abandoned {
 		meta.RetryCount = 0
 	}
+	if meta.BaseKey == "" {
+		// Older metadata only kept the last key tried; the local filename is the base.
+		meta.BaseKey = path.Join(path.Dir(meta.S3Key), filepath.Base(meta.LocalPath))
+	}
 
 	return pendingUpload{
 		request: uploadRequest{
@@ -124,10 +132,12 @@ func (r *GenericRecorder) loadPendingUpload(path string) (pendingUpload, bool, e
 			fileSize:          meta.FileSize,
 			deleteAfterUpload: meta.DeleteAfterUpload,
 		},
+		baseKey:      meta.BaseKey,
+		uploadID:     meta.UploadID,
 		firstAttempt: meta.FirstAttempt,
 		retryCount:   meta.RetryCount,
 		lastError:    meta.LastError,
-		metadataPath: path,
+		metadataPath: metadataPath,
 	}, true, nil
 }
 
@@ -147,8 +157,8 @@ func (r *GenericRecorder) recoverOrphanSpoolFiles(existing []pendingUpload) ([]p
 	}
 
 	known := make(map[string]struct{}, len(existing))
-	for _, item := range existing {
-		known[item.request.localPath] = struct{}{}
+	for i := range existing {
+		known[existing[i].request.localPath] = struct{}{}
 	}
 
 	recovered := []pendingUpload{}
@@ -157,8 +167,8 @@ func (r *GenericRecorder) recoverOrphanSpoolFiles(existing []pendingUpload) ([]p
 			continue
 		}
 
-		path := filepath.Join(dir, entry.Name())
-		if _, ok := known[path]; ok {
+		filePath := filepath.Join(dir, entry.Name())
+		if _, ok := known[filePath]; ok {
 			continue
 		}
 
@@ -168,7 +178,7 @@ func (r *GenericRecorder) recoverOrphanSpoolFiles(existing []pendingUpload) ([]p
 		}
 		pending := pendingUpload{
 			request: uploadRequest{
-				localPath:         path,
+				localPath:         filePath,
 				s3Key:             s3ObjectKey(cfg.Name, entry.Name()),
 				fileSize:          info.Size(),
 				deleteAfterUpload: true,
@@ -176,7 +186,6 @@ func (r *GenericRecorder) recoverOrphanSpoolFiles(existing []pendingUpload) ([]p
 			firstAttempt: time.Now(),
 			lastError:    "recovered from spool without upload metadata",
 		}
-		pending.metadataPath = r.pendingUploadMetadataPath(pending.request)
 		if err := r.savePendingUpload(&pending); err != nil {
 			return nil, err
 		}
@@ -186,8 +195,17 @@ func (r *GenericRecorder) recoverOrphanSpoolFiles(existing []pendingUpload) ([]p
 }
 
 func (r *GenericRecorder) savePendingUpload(p *pendingUpload) error {
+	if p.baseKey == "" {
+		p.baseKey = p.request.s3Key
+	}
+	if p.uploadID == "" {
+		p.uploadID = rand.Text()
+	}
+	if p.firstAttempt.IsZero() {
+		p.firstAttempt = time.Now()
+	}
 	if p.metadataPath == "" {
-		p.metadataPath = r.pendingUploadMetadataPath(p.request)
+		p.metadataPath = r.pendingUploadMetadataPath(p)
 	}
 	if err := os.MkdirAll(filepath.Dir(p.metadataPath), 0o755); err != nil { //nolint:gosec // Spool metadata directory needs to be readable.
 		return fmt.Errorf("create pending upload directory: %w", err)
@@ -197,6 +215,8 @@ func (r *GenericRecorder) savePendingUpload(p *pendingUpload) error {
 		RecorderID:        r.id,
 		LocalPath:         p.request.localPath,
 		S3Key:             p.request.s3Key,
+		BaseKey:           p.baseKey,
+		UploadID:          p.uploadID,
 		FileSize:          p.request.fileSize,
 		DeleteAfterUpload: p.request.deleteAfterUpload,
 		FirstAttempt:      p.firstAttempt,
@@ -234,7 +254,11 @@ func (r *GenericRecorder) pendingUploadDir() string {
 	return filepath.Join(r.spoolDir, "uploads", r.id)
 }
 
-func (r *GenericRecorder) pendingUploadMetadataPath(req uploadRequest) string {
-	sum := sha256.Sum256([]byte(req.localPath + "\x00" + req.s3Key))
+func (r *GenericRecorder) pendingUploadMetadataPath(p *pendingUpload) string {
+	baseKey := p.baseKey
+	if baseKey == "" {
+		baseKey = p.request.s3Key
+	}
+	sum := sha256.Sum256([]byte(p.request.localPath + "\x00" + baseKey))
 	return filepath.Join(r.pendingUploadDir(), hex.EncodeToString(sum[:8])+pendingUploadMetadataSuffix)
 }

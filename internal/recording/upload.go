@@ -3,6 +3,7 @@ package recording
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -55,6 +56,7 @@ func TestS3Connection(cfg *S3Config) error {
 
 	testKey := fmt.Sprintf("test-connection-%d.txt", time.Now().UnixNano())
 	testContent := []byte("ZuidWest FM encoder connection test")
+	uploadID := rand.Text()
 
 	// Recordings are uploaded with If-None-Match, so test that the store supports it.
 	_, err := client.PutObject(ctx, &s3.PutObjectInput{
@@ -63,6 +65,7 @@ func TestS3Connection(cfg *S3Config) error {
 		Body:          bytes.NewReader(testContent),
 		ContentLength: aws.Int64(int64(len(testContent))),
 		IfNoneMatch:   aws.String("*"),
+		Metadata:      map[string]string{"zwfm-upload-id": uploadID},
 	})
 	var apiErr interface{ ErrorCode() string }
 	if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NotImplemented" {
@@ -71,6 +74,9 @@ func TestS3Connection(cfg *S3Config) error {
 	if err != nil {
 		return fmt.Errorf("upload test file: %w", err)
 	}
+	head, headErr := client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(cfg.Bucket), Key: aws.String(testKey),
+	})
 
 	_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(cfg.Bucket),
@@ -78,6 +84,12 @@ func TestS3Connection(cfg *S3Config) error {
 	})
 	if err != nil {
 		slog.Warn("failed to delete test file", "key", testKey, "error", err)
+	}
+	if headErr != nil {
+		return fmt.Errorf("read test object metadata (HeadObject permission is required for idempotent uploads): %w", headErr)
+	}
+	if head.Metadata["zwfm-upload-id"] != uploadID {
+		return errors.New("storage does not preserve upload identity metadata, which recordings need to avoid duplicate uploads")
 	}
 
 	return nil

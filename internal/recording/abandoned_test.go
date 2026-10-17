@@ -90,7 +90,9 @@ func TestAbandonedSpoolUploadsAfterConfigFixAndRestart(t *testing.T) {
 func abandonedUploadHandler(t *testing.T, fixed *atomic.Bool, attempts, uploads *atomic.Int32) http.Handler {
 	t.Helper()
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		attempts.Add(1)
+		if req.Method == http.MethodPut {
+			attempts.Add(1)
+		}
 		body, err := io.ReadAll(req.Body)
 		if err != nil {
 			t.Error(err)
