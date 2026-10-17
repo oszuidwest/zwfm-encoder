@@ -83,6 +83,7 @@ type Encoder struct {
 	sourceCancel        context.CancelFunc
 	sourceStdout        io.Reader
 	sourceRunID         uint64
+	sourceLoopDone      chan struct{}
 	state               types.EncoderState
 	stopChan            chan struct{}
 	mu                  sync.RWMutex
@@ -433,6 +434,7 @@ func (e *Encoder) Start() error {
 
 	e.state = types.StateStarting
 	e.stopChan = make(chan struct{})
+	e.sourceLoopDone = make(chan struct{})
 	e.retryCount = 0
 	e.backoff.Reset()
 	// inputLostAt deliberately survives Stop/Start, including the Restart after
@@ -444,7 +446,7 @@ func (e *Encoder) Start() error {
 	e.alertOrchestrator.Reset()
 	e.peakHolder.Reset()
 
-	go e.runSourceLoop()
+	go e.runSourceLoop(e.stopChan, e.sourceLoopDone)
 
 	return nil
 }
@@ -465,6 +467,7 @@ func (e *Encoder) Stop() error {
 	}
 
 	sourceCancel := e.sourceCancel
+	loopDone := e.sourceLoopDone
 	e.mu.Unlock()
 
 	errs := e.stopConsumers()
@@ -474,30 +477,26 @@ func (e *Encoder) Stop() error {
 		sourceCancel()
 	}
 
-	pollCtx, pollCancel := context.WithCancel(context.Background())
-	defer pollCancel()
-
-	stopped := e.pollUntil(pollCtx, func() bool {
-		e.mu.RLock()
-		defer e.mu.RUnlock()
-		return e.sourceCancel == nil
-	})
+	stopped := make(chan struct{})
+	// A timed-out Stop must keep Start out until the old loop and cleanup finish.
+	go func() {
+		if loopDone != nil {
+			<-loopDone
+		}
+		e.resetDetection()
+		e.mu.Lock()
+		e.state = types.StateStopped
+		e.mu.Unlock()
+		close(stopped)
+	}()
 
 	select {
 	case <-stopped:
 		slog.Info("source capture stopped gracefully")
 	case <-time.After(types.ShutdownTimeout):
-		pollCancel()
 		slog.Warn("source capture did not stop in time")
 		errs = append(errs, fmt.Errorf("source shutdown timeout"))
 	}
-
-	e.resetDetection()
-
-	e.finishSource()
-	e.mu.Lock()
-	e.state = types.StateStopped
-	e.mu.Unlock()
 
 	return errors.Join(errs...)
 }
@@ -699,7 +698,8 @@ func (e *Encoder) isStopping() bool {
 // It never gives up: a missing input is reopened with capped backoff, so the
 // encoder resumes by itself when the input returns. Streams and recorders keep
 // running meanwhile and resume when audio flows again.
-func (e *Encoder) runSourceLoop() {
+func (e *Encoder) runSourceLoop(stopChan <-chan struct{}, done chan<- struct{}) {
+	defer close(done)
 	for {
 		e.mu.Lock()
 		if e.isStopping() {
@@ -729,7 +729,6 @@ func (e *Encoder) runSourceLoop() {
 		e.state = types.StateStarting
 		attempt := e.retryCount
 		retryDelay := e.backoff.Next()
-		stopChan := e.stopChan
 		e.mu.Unlock()
 
 		slog.Warn("audio input failed, reopening", "error", errMsg, "delay", retryDelay, "attempt", attempt)
@@ -769,10 +768,17 @@ func (e *Encoder) runSource() error {
 	}
 
 	e.resetAudioLevels()
-	go e.runDistributor(runID)
+	distributorDone := make(chan struct{})
+	go func() {
+		defer close(distributorDone)
+		e.runDistributor(runID)
+	}()
 	go e.startEnabledStreamsAfterDelay(runID, stopChan, e.streamRestartDelay)
 
-	return e.superviseSource(runID, src, cancel)
+	err = e.superviseSource(runID, src, cancel)
+	cancel()
+	<-distributorDone
+	return err
 }
 
 // superviseSource waits for src to exit. Meanwhile it confirms the input once
@@ -1066,24 +1072,6 @@ func (e *Encoder) updateAudioLevels(levels *audio.AudioLevels) {
 func (e *Encoder) resetAudioLevels() {
 	levels := silentAudioLevels
 	e.audioLevels.Store(&levels)
-}
-
-// pollUntil closes its result when condition succeeds or ctx is cancelled.
-func (e *Encoder) pollUntil(ctx context.Context, condition func() bool) <-chan struct{} {
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		ticker := time.NewTicker(types.PollInterval)
-		defer ticker.Stop()
-		for !condition() {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-			}
-		}
-	}()
-	return done
 }
 
 // AddRecorder creates a new recorder.
