@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
@@ -14,19 +15,18 @@ func TestInputOutageRestoredFromPreparedLog(t *testing.T) {
 	for _, mode := range []string{"open", "closed", "none", "rotated"} {
 		t.Run(mode, func(t *testing.T) {
 			path, lostAt := prepareInputLog(t, mode)
-			logger, err := eventlog.NewLogger(path)
+			cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
+			if err := cfg.Load(); err != nil {
+				t.Fatal(err)
+			}
+			cfg.Audio.Input = "test-device"
+			e, err := newEncoder(cfg, "ffmpeg", path)
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { _ = logger.Close() })
-			e := newSourceLifecycleTestEncoder(t, "pcm")
 			t.Cleanup(func() { _ = e.Stop(); _ = e.Close() })
-			e.alertOrchestrator.SetEventLogger(logger)
+			e.buildCaptureCommand = helperCaptureCommand("pcm")
 			e.inputStableDelay = 100 * time.Millisecond
-			e.inputLostAt, err = logger.InputLostAt()
-			if err != nil {
-				t.Fatal(err)
-			}
 			wantRecovery := mode == "open" || mode == "rotated"
 			if wantRecovery && !e.inputLostAt.Equal(lostAt) {
 				t.Fatalf("restored lost timestamp = %v, want %v", e.inputLostAt, lostAt)
