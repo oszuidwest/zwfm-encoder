@@ -203,11 +203,7 @@ fi
 echo -e "${BLUE}►► Installing FFmpeg, alsa-utils, jq, and time synchronization...${NC}"
 apt_install --silent ffmpeg alsa-utils jq systemd-timesyncd
 
-# time-sync.target only waits for NTP when the wait service is enabled.
-set_time_sync
-systemctl enable --now systemd-timesyncd.service systemd-time-wait-sync.service
-
-# Stop existing service if running
+# Stop existing captures before the clock changes or synchronization waits.
 if systemctl is-active --quiet encoder 2>/dev/null; then
   echo -e "${BLUE}►► Stopping existing encoder service...${NC}"
   systemctl stop encoder
@@ -217,6 +213,10 @@ fi
 if pkill -x encoder 2>/dev/null; then
   echo -e "${YELLOW}Killed orphaned encoder process(es)${NC}"
 fi
+
+# time-sync.target only waits for NTP when the wait service is enabled.
+set_time_sync
+systemctl enable --now systemd-timesyncd.service systemd-time-wait-sync.service
 
 # Create dedicated service user
 if ! id -u encoder &>/dev/null; then
