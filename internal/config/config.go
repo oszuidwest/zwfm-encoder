@@ -75,6 +75,8 @@ type SystemConfig struct {
 	Port int `json:"port"`
 	// BindAddress is a numeric IP; empty preserves the legacy all-interface listener.
 	BindAddress string `json:"bind_address,omitempty"`
+	// TrustedProxies lists proxy CIDRs allowed to supply X-Forwarded-For for login limits.
+	TrustedProxies []string `json:"trusted_proxies,omitempty"`
 	// Username is the web interface login username.
 	Username string `json:"username"`
 	// Password is the web interface login password.
@@ -527,6 +529,12 @@ func (c *Config) validateSystem() error {
 	} else if c.System.Password == "" {
 		return fmt.Errorf("invalid system.password: is required")
 	}
+	for _, value := range c.System.TrustedProxies {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil || prefix.Bits() == 0 {
+			return fmt.Errorf("invalid system.trusted_proxies: must contain explicit proxy CIDRs, never /0")
+		}
+	}
 	return nil
 }
 
@@ -964,6 +972,8 @@ type Snapshot struct {
 	WebPort int
 	// WebBindAddress is the HTTP listener's numeric IP, or empty for all interfaces.
 	WebBindAddress string
+	// TrustedProxies lists explicitly trusted forwarding peers, copied for caller isolation.
+	TrustedProxies []string
 	// WebUser is the web interface login username.
 	WebUser string
 	// WebPassword is the web interface login password.
@@ -1084,6 +1094,7 @@ func (c *Config) Snapshot() Snapshot {
 		// System
 		WebPort:         c.System.Port,
 		WebBindAddress:  c.System.BindAddress,
+		TrustedProxies:  slices.Clone(c.System.TrustedProxies),
 		WebUser:         c.System.Username,
 		WebPassword:     c.System.Password,
 		WebPasswordHash: c.System.PasswordHash,

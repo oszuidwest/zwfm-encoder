@@ -385,14 +385,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		username := r.PostForm.Get("username")
-		if !s.sessions.AllowLogin(r, username) {
-			w.Header().Set("Retry-After", "60")
-			http.Error(w, "Too many login attempts. Try again later.", http.StatusTooManyRequests)
-			return
-		}
 		csrfToken := r.PostForm.Get("csrf_token")
 		if !s.sessions.ValidateCSRFToken(csrfToken) {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
+			return
+		}
+		if !s.sessions.AllowLogin(r, username, cfg.TrustedProxies) {
+			w.Header().Set("Retry-After", "60")
+			http.Error(w, "Too many login attempts. Try again later.", http.StatusTooManyRequests)
 			return
 		}
 

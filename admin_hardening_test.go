@@ -182,6 +182,9 @@ func TestLoginThrottleAndCrossOriginRejection(t *testing.T) {
 		if len(rec.Result().Cookies()) != 0 {
 			t.Fatal("failed/throttled login set a session")
 		}
+		if s.sessions.ValidateCSRFToken(token) {
+			t.Fatal("a submitted valid login token must remain one-use, even when throttled")
+		}
 	}
 	req := httptest.NewRequest(http.MethodPost, "/login", http.NoBody)
 	req.Header.Set("Origin", "https://attacker.example")
@@ -189,6 +192,62 @@ func TestLoginThrottleAndCrossOriginRejection(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("cross-origin login = %d", rec.Code)
+	}
+}
+
+func TestInvalidLoginCSRFCannotConsumeLoginBudget(t *testing.T) {
+	t.Parallel()
+	s := newRouteTestServer(t)
+	handler := s.SetupRoutes()
+	for range 20 {
+		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=admin&password=wrong&csrf_token=invalid"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("invalid CSRF consumed login budget: %d", rec.Code)
+		}
+	}
+	page := httptest.NewRecorder()
+	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/login", http.NoBody))
+	token := adminToken(t, page.Body.String(), `name="csrf_token" value="([a-f0-9]+)"`)
+	form := url.Values{"username": {config.DefaultWebUsername}, "password": {config.DefaultWebPassword}, "csrf_token": {token}}
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound || len(rec.Result().Cookies()) != 1 {
+		t.Fatal("invalid CSRF attempts blocked a legitimate login")
+	}
+}
+
+func TestTrustedProxyDoesNotShareClientIPBudget(t *testing.T) {
+	t.Parallel()
+	s := newRouteTestServer(t)
+	s.config.System.TrustedProxies = []string{"127.0.0.1/32"}
+	handler := s.SetupRoutes()
+	for i := range 6 {
+		page := httptest.NewRecorder()
+		handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/login", http.NoBody))
+		token := adminToken(t, page.Body.String(), `name="csrf_token" value="([a-f0-9]+)"`)
+		password, ip := "wrong", "198.51.100.1" //nolint:gosec // G101: intentionally wrong login fixture, not an application credential.
+		want := http.StatusOK
+		if i == 5 {
+			password, ip, want = config.DefaultWebPassword, "198.51.100.2", http.StatusFound //nolint:gosec // G101: testing the documented default login in a temporary config.
+		}
+		form := url.Values{"username": {config.DefaultWebUsername}, "password": {password}, "csrf_token": {token}}
+		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("X-Forwarded-For", ip)
+		req.RemoteAddr = "127.0.0.1:1234"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != want {
+			t.Fatalf("proxy client attempt %d = %d, want %d", i, rec.Code, want)
+		}
+		if i == 5 && len(rec.Result().Cookies()) != 1 {
+			t.Fatal("another proxy client could not log in")
+		}
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -89,4 +90,62 @@ func TestNewConfigUsesHashedPasswordAndLoopback(t *testing.T) {
 func TestExplicitNullBindAddressIsRejected(t *testing.T) {
 	t.Parallel()
 	assertLoadErrorContains(t, `{"system":{"port":8080,"username":"admin","password":"encoder","bind_address":null}}`, "system.bind_address: must not be null")
+}
+
+func TestTrustedProxyConfig(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		proxies []string
+		valid   bool
+	}{
+		{name: "none", valid: true},
+		{name: "explicit peers", proxies: []string{"127.0.0.1/32", "::1/128", "10.0.0.2/32"}, valid: true},
+		{name: "hostname", proxies: []string{"localhost"}},
+		{name: "missing prefix", proxies: []string{"127.0.0.1"}},
+		{name: "all IPv4", proxies: []string{"0.0.0.0/0"}},
+		{name: "all IPv6", proxies: []string{"::/0"}},
+		{name: "empty entry", proxies: []string{""}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := defaultConfig("")
+			cfg.System.TrustedProxies = tc.proxies
+			data, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := writeConfig(t, string(data))
+			loaded := New(path)
+			err = loaded.Load()
+			if !tc.valid {
+				if err == nil || !strings.Contains(err.Error(), "system.trusted_proxies") {
+					t.Fatalf("Load=%v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot := loaded.Snapshot()
+			if len(snapshot.TrustedProxies) != len(tc.proxies) {
+				t.Fatal("proxy config did not reach snapshot")
+			}
+			if len(snapshot.TrustedProxies) > 0 {
+				snapshot.TrustedProxies[0] = "0.0.0.0/0"
+				if loaded.Snapshot().TrustedProxies[0] != tc.proxies[0] {
+					t.Fatal("snapshot aliases trusted-proxy config")
+				}
+			}
+			if err := loaded.SetRecordingAPIKey("test"); err != nil {
+				t.Fatal(err)
+			}
+			reloaded := New(path)
+			if err := reloaded.Load(); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(reloaded.Snapshot().TrustedProxies, tc.proxies) {
+				t.Fatal("saving lost trusted proxies")
+			}
+		})
+	}
 }
