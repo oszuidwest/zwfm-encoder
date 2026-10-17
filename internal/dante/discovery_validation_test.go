@@ -13,19 +13,28 @@ func TestDiscoveryRequiresLocalMDNSSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, other, err := net.ParseCIDR("198.51.100.10/24")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, tt := range []struct {
 		name, ip string
 		port     int
+		ifIndex  int
 		want     bool
 	}{
-		{name: "local mDNS", ip: "192.0.2.11", port: 5353, want: true},
-		{name: "wrong port", ip: "192.0.2.11", port: 4455},
-		{name: "off link", ip: "198.51.100.11", port: 5353},
-		{name: "ipv6", ip: "2001:db8::1", port: 5353},
+		{name: "local mDNS", ip: "192.0.2.11", port: 5353, ifIndex: 1, want: true},
+		{name: "wrong port", ip: "192.0.2.11", port: 4455, ifIndex: 1},
+		{name: "off link", ip: "203.0.113.11", port: 5353, ifIndex: 1},
+		{name: "ipv6", ip: "2001:db8::1", port: 5353, ifIndex: 1},
+		{name: "other selected interface subnet", ip: "198.51.100.11", port: 5353, ifIndex: 1},
+		{name: "other selected interface local", ip: "198.51.100.11", port: 5353, ifIndex: 2, want: true},
+		{name: "missing receive interface", ip: "192.0.2.11", port: 5353},
+		{name: "unselected receive interface", ip: "192.0.2.11", port: 5353, ifIndex: 3},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := validDiscoverySource(&net.UDPAddr{IP: net.ParseIP(tt.ip), Port: tt.port}, []*net.IPNet{network}); got != tt.want {
+			if got := validDiscoverySource(&net.UDPAddr{IP: net.ParseIP(tt.ip), Port: tt.port}, tt.ifIndex, map[int][]*net.IPNet{1: {network}, 2: {other}}); got != tt.want {
 				t.Fatalf("validDiscoverySource = %t, want %t", got, tt.want)
 			}
 		})
