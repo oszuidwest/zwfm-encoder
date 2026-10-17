@@ -185,7 +185,7 @@ func (r *GenericRecorder) Start() error {
 		return ErrAlreadyRecording
 	}
 	if r.state == types.ProcessStopping {
-		return errors.New("recorder is stopping")
+		return ErrRecorderStopping
 	}
 
 	// Clear any previous error and set starting state
@@ -432,7 +432,10 @@ func (r *GenericRecorder) handleWriteError(result *ffmpeg.StartResult, writeErr 
 		r.mu.Unlock()
 		return
 	}
-	r.state = types.ProcessError
+	// A running Stop owns the state; Error would let Start overlap its teardown.
+	if r.state != types.ProcessStopping {
+		r.state = types.ProcessError
+	}
 	r.lastError = writeErr.Error()
 	capturedFile := r.currentFile
 	r.result = nil
