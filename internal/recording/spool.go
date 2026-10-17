@@ -113,11 +113,9 @@ func (r *GenericRecorder) loadPendingUpload(metadataPath string) (pendingUpload,
 	if meta.FileSize == 0 {
 		meta.FileSize = info.Size()
 	}
-	if meta.FirstAttempt.IsZero() || meta.Abandoned {
+	// Restart also re-queues uploads whose retry window expired while offline.
+	if meta.FirstAttempt.IsZero() || meta.Abandoned || time.Since(meta.FirstAttempt) > MaxUploadRetryAge {
 		meta.FirstAttempt = time.Now()
-	}
-	// A process restart explicitly re-queues abandoned uploads with a fresh window.
-	if meta.Abandoned {
 		meta.RetryCount = 0
 	}
 	if meta.BaseKey == "" {

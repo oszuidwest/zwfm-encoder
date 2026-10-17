@@ -131,3 +131,42 @@ func assertAbandonmentAlert(t *testing.T, eventPath string, alert UploadAbandone
 		t.Fatalf("upload_abandoned events = %d, want 1", abandoned)
 	}
 }
+
+func TestUploadExpiredWhileOfflineRequeuesOnStartup(t *testing.T) {
+	t.Parallel()
+	var uploaded atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		body, err := io.ReadAll(req.Body)
+		if err != nil || string(body) != "audio" || req.Method != http.MethodPut {
+			t.Errorf("unexpected recovered request: %s %q, %v", req.Method, body, err)
+		}
+		uploaded.Add(1)
+		w.Header().Set("ETag", `"test"`)
+	}))
+	defer server.Close()
+	cfg := testS3Recorder()
+	cfg.S3Endpoint = server.URL
+	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
+	file := writeSpoolFile(t, r.spoolDir, r.id, "offline.mp3", "audio")
+	pending := pendingUpload{
+		request:      uploadRequest{localPath: file, s3Key: "recordings/Test/offline.mp3", fileSize: 5, deleteAfterUpload: true},
+		firstAttempt: time.Now().Add(-MaxUploadRetryAge - time.Hour), retryCount: 3,
+	}
+	if err := r.savePendingUpload(&pending); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := NewManager("", r.spoolDir, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.AddRecorder(cfg); err != nil {
+		t.Fatal(err)
+	}
+	restarted.processUploadRetryQueues()
+	if uploaded.Load() != 1 {
+		t.Fatal("expired, unmarked metadata was abandoned again instead of re-queued")
+	}
+	if _, err := os.Stat(file); !os.IsNotExist(err) {
+		t.Fatalf("successfully recovered spool file remains: %v", err)
+	}
+}
