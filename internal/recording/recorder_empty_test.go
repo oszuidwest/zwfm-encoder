@@ -46,13 +46,13 @@ func TestEmptyRecordingsAreDiscardedButSilentAudioIsKept(t *testing.T) {
 			r.mu.RLock()
 			emptyRotation := r.currentFile
 			r.mu.RUnlock()
-			r.rotateFile()
+			rotateTestRecorder(r)
 			assertNoRecording(t, emptyRotation)
 			r.mu.RLock()
 			withAudio := r.currentFile
 			r.mu.RUnlock()
 			r.WriteAudio(pcm)
-			r.rotateFile()
+			rotateTestRecorder(r)
 			r.mu.RLock()
 			emptyStop := r.currentFile
 			r.mu.RUnlock()
