@@ -95,7 +95,7 @@ func TestFailedFinalizeReportsErrorAndKeepsPartialAudio(t *testing.T) {
 	pcm := bytes.Repeat([]byte{1, 2, 3, 4}, 4096)
 	r.WriteAudio(pcm)
 	t.Setenv(fakeFFmpegFailFinalizeEnv, "")
-	r.rotateFile()
+	rotateTestRecorder(r)
 	if r.Status().State != types.ProcessRunning {
 		t.Fatal("failed finalize stopped the next hourly recording")
 	}
@@ -138,7 +138,7 @@ func TestFailedRotationStartEmitsRecorderError(t *testing.T) {
 	previous := r.currentFile
 	r.ffmpegPath = filepath.Join(t.TempDir(), "missing-ffmpeg")
 	r.mu.Unlock()
-	r.rotateFile()
+	rotateTestRecorder(r)
 	details := assertRecorderErrorEvent(t, path, "", "missing-ffmpeg")
 	filename, ok := details["filename"].(string)
 	if !ok || filename == "" || filename == filepath.Base(previous) {
