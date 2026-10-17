@@ -37,6 +37,8 @@ dante://<transmitter>/<left channel>/<right channel>[?interface=<name>]
 ```
 
 - `<transmitter>` is the URL host and must be non-empty.
+- Device names contain 1-31 ASCII letters, digits or hyphens, without a leading or trailing hyphen. Ports and `.local` suffixes are not part of a device name.
+- Decoded channel names contain 1-31 printable ASCII characters, excluding `=`, `.` and `@`. Validate all names before opening sockets.
 - The path must have exactly two non-empty segments. Each segment is percent-decoded (so `Program%20L` means `Program L` and `A%2FB` means `A/B`). Split the escaped path before decoding.
 - `interface` (optional) names the local network interface to use.
 - Any other shape is an error with a helpful message showing the format.

@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
@@ -30,8 +31,9 @@ type StartResult struct {
 	stderr *bytes.Buffer
 	stdout io.ReadCloser
 
-	stdin   io.WriteCloser
-	stdinMu sync.Mutex // protects stdin field
+	stdin        io.WriteCloser
+	stdinMu      sync.Mutex // protects stdin field
+	bytesWritten atomic.Int64
 
 	waitOnce sync.Once
 	waitErr  error
@@ -112,7 +114,14 @@ func (r *StartResult) WriteStdin(data []byte) (int, error) {
 		return 0, ErrStdinClosed
 	}
 
-	return r.stdin.Write(data)
+	n, err := r.stdin.Write(data)
+	r.bytesWritten.Add(int64(n))
+	return n, err
+}
+
+// BytesWritten returns the number of bytes accepted by the process stdin, including partial writes.
+func (r *StartResult) BytesWritten() int64 {
+	return r.bytesWritten.Load()
 }
 
 // CloseStdin closes stdin in a thread-safe manner.
