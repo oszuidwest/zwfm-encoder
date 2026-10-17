@@ -468,7 +468,8 @@ func (r *GenericRecorder) cleanupAfterWriteError(result *ffmpeg.StartResult, cur
 
 	// Persist recovery before releasing Stop; network retries run independently.
 	if currentFile != "" && result.BytesWritten() > 0 && !outputRefused(result.Stderr()) {
-		if req, ok := r.prepareUploadRequest(currentFile); ok {
+		// Accepted stdin does not mean FFmpeg wrote anything to the file.
+		if req, ok := r.prepareUploadRequest(currentFile); ok && req.fileSize > 0 {
 			r.addToRetryQueue(req, writeErr.Error())
 			go r.processRetryQueue()
 		}
