@@ -501,6 +501,8 @@ type EncoderStatus struct {
 	LastError        string       `json:"last_error,omitzero"`
 	StreamCount      int          `json:"stream_count"`
 	SourceRetryCount int          `json:"source_retry_count,omitzero"`
+	// InputReady reports recent PCM from the current run with no open input outage.
+	InputReady bool `json:"input_ready"`
 }
 
 // WSRuntimeStatus contains runtime status sent to clients periodically.
