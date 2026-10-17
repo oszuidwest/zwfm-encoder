@@ -61,14 +61,16 @@ func TestAbandonedSpoolUploadsAfterConfigFixAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	before := time.Now()
 	if err := restarted.AddRecorder(cfg); err != nil {
 		t.Fatal(err)
 	}
+	after := time.Now()
 	if got := restarted.PendingUploadCount(); got != 1 {
 		t.Fatalf("startup scan restored %d uploads, want 1", got)
 	}
 	restored := restarted.recorders[cfg.ID].retryQueue[0]
-	if restored.retryCount != 0 || time.Since(restored.firstAttempt) > time.Second {
+	if restored.retryCount != 0 || restored.firstAttempt.Before(before) || restored.firstAttempt.After(after) {
 		t.Fatalf("startup did not reset the abandoned retry window: %+v", restored)
 	}
 	if err := restarted.Start(); err != nil {
@@ -191,10 +193,12 @@ func TestAbandonedUploadRequeuesAfterClockRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	before := time.Now()
 	if err := restarted.AddRecorder(cfg); err != nil {
 		t.Fatal(err)
 	}
-	if restored := restarted.recorders[cfg.ID].retryQueue[0]; restored.retryCount != 0 || time.Since(restored.firstAttempt) > time.Second {
+	after := time.Now()
+	if restored := restarted.recorders[cfg.ID].retryQueue[0]; restored.retryCount != 0 || restored.firstAttempt.Before(before) || restored.firstAttempt.After(after) {
 		t.Fatalf("startup did not reset the abandoned retry window: %+v", restored)
 	}
 }
