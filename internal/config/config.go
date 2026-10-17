@@ -542,6 +542,7 @@ func normalizeStreamDefaults(stream *types.Stream) {
 
 func (c *Config) validateRecorders() error {
 	seen := make(map[string]int, len(c.Recording.Recorders))
+	prefixes := make(map[string]int, len(c.Recording.Recorders))
 	for i := range c.Recording.Recorders {
 		recorder := &c.Recording.Recorders[i]
 		if strings.TrimSpace(recorder.ID) == "" {
@@ -554,20 +555,13 @@ func (c *Config) validateRecorders() error {
 		if err := recorder.Validate(); err != nil {
 			return fmt.Errorf("invalid recording.recorders[%d]: %w", i, err)
 		}
-		if err := c.validateRecorderName(recorder.Name, recorder.ID); err != nil {
-			return fmt.Errorf("invalid recording.recorders[%d]: %w", i, err)
+		// Recorders sharing a filename prefix would share and clean up each other's files.
+		prefix := strings.ToLower(util.SanitizeFilename(recorder.Name))
+		if first, ok := prefixes[prefix]; ok {
+			return fmt.Errorf("invalid recording.recorders[%d].name: %q has the same filename prefix as recorder %q",
+				i, recorder.Name, c.Recording.Recorders[first].Name)
 		}
-	}
-	return nil
-}
-
-func (c *Config) validateRecorderName(name, exceptID string) error {
-	safeName := util.SanitizeFilename(name)
-	for i := range c.Recording.Recorders {
-		existing := &c.Recording.Recorders[i]
-		if existing.ID != exceptID && strings.EqualFold(safeName, util.SanitizeFilename(existing.Name)) {
-			return fmt.Errorf("%w: name: %q conflicts with recorder %q (filename prefix %q)", ErrInvalidRecorderConfig, name, existing.Name, safeName)
-		}
+		prefixes[prefix] = i
 	}
 	return nil
 }
@@ -845,9 +839,6 @@ func (c *Config) AddRecorder(recorder *types.Recorder) error {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if err := c.validateRecorderName(recorder.Name, ""); err != nil {
-		return err
-	}
 
 	// Generate unique ID
 	shortID, err := generateShortID()
@@ -863,6 +854,10 @@ func (c *Config) AddRecorder(recorder *types.Recorder) error {
 	recorder.CreatedAt = time.Now().UnixMilli()
 
 	c.Recording.Recorders = append(c.Recording.Recorders, *recorder)
+	if err := c.validateRecorders(); err != nil {
+		c.Recording.Recorders = c.Recording.Recorders[:len(c.Recording.Recorders)-1]
+		return fmt.Errorf("%w: %w", ErrInvalidRecorderConfig, err)
+	}
 	return c.saveLocked()
 }
 
@@ -893,11 +888,12 @@ func (c *Config) UpdateRecorder(recorder *types.Recorder) error {
 	if i == -1 {
 		return fmt.Errorf("%w: %s", ErrRecorderNotFound, recorder.ID)
 	}
-	if err := c.validateRecorderName(recorder.Name, recorder.ID); err != nil {
-		return err
-	}
-
+	old := c.Recording.Recorders[i]
 	c.Recording.Recorders[i] = *recorder
+	if err := c.validateRecorders(); err != nil {
+		c.Recording.Recorders[i] = old
+		return fmt.Errorf("%w: %w", ErrInvalidRecorderConfig, err)
+	}
 	return c.saveLocked()
 }
 
