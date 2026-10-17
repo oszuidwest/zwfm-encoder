@@ -74,17 +74,6 @@ func (r *GenericRecorder) queueForUpload(filePath string) {
 	r.addToRetryQueue(req, reason)
 }
 
-// uploadDirectly bypasses a worker that Stop may be draining.
-func (r *GenericRecorder) uploadDirectly(filePath string) {
-	req, ok := r.prepareUploadRequest(filePath)
-	if !ok {
-		return
-	}
-
-	slog.Info("uploading file directly (error recovery)", "id", r.id, "file", filepath.Base(filePath))
-	r.uploadFile(req)
-}
-
 // prepareUploadRequest validates and creates an upload request for the given file.
 // Returns false if the file should not be uploaded.
 func (r *GenericRecorder) prepareUploadRequest(filePath string) (uploadRequest, bool) {

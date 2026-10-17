@@ -536,7 +536,7 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
 
 - **Severity:** `error`
 - **UI Label:** Error
-- **Triggered:** When a recorder encounters an error (path not writable, FFmpeg failure, etc.).
+- **Triggered:** When a recorder encounters an error (path not writable, FFmpeg write or finalize failure, failure to start the next hourly file, etc.). File-specific failures include `filename` and FFmpeg's error. A failed hourly finalize reports an error even while the next file keeps recording; partial audio is preserved. A refused existing output file is left untouched and is not uploaded.
 
 ```json
 {
