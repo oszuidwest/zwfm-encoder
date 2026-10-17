@@ -393,7 +393,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !s.sessions.AllowLogin(r, username, cfg.TrustedProxies) {
-			slog.Warn("login rate limited", "remote", r.RemoteAddr, "username", username)
+			slog.Warn("login rate limited", "remote", r.RemoteAddr)
 			w.Header().Set("Retry-After", "60")
 			http.Error(w, "Too many login attempts. Try again later.", http.StatusTooManyRequests)
 			return
@@ -405,7 +405,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/", http.StatusFound)
 			return
 		}
-		slog.Warn("login failed", "remote", r.RemoteAddr, "username", username)
+		slog.Warn("login failed", "remote", r.RemoteAddr)
 
 		data.Error = true
 	}
