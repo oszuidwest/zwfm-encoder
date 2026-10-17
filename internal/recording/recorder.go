@@ -85,8 +85,8 @@ type GenericRecorder struct {
 
 	// Rotation timer (hourly mode)
 	rotationTimer *time.Timer
-	// retiring tracks files that a rotation is still finalizing; Stop waits
-	// for them so they are queued for upload before intake closes.
+	// retiring tracks files being finalized; Stop waits until their uploads
+	// are queued or durably registered for recovery before intake closes.
 	retiring      sync.WaitGroup
 	retiringFiles map[string]struct{} // Files rotations are finalizing; protected from cleanup until queued.
 
@@ -443,7 +443,7 @@ func (r *GenericRecorder) handleWriteError(result *ffmpeg.StartResult, writeErr 
 	go r.cleanupAfterWriteError(result, capturedFile, writeErr)
 }
 
-// cleanupAfterWriteError closes a broken FFmpeg process and uploads its partial file.
+// cleanupAfterWriteError closes a broken FFmpeg process and preserves its partial file for upload.
 // The failing write has released stdinMu, so CloseStdin cannot deadlock.
 func (r *GenericRecorder) cleanupAfterWriteError(result *ffmpeg.StartResult, currentFile string, writeErr error) {
 	defer r.retiring.Done()
@@ -458,9 +458,12 @@ func (r *GenericRecorder) cleanupAfterWriteError(result *ffmpeg.StartResult, cur
 	}
 	r.reportError(currentFile, writeErr)
 
-	// Bypass the worker queue; Stop may be draining or closed.
+	// Persist recovery before releasing Stop; network retries run independently.
 	if currentFile != "" && result.BytesWritten() > 0 && !outputRefused(result.Stderr()) {
-		r.uploadDirectly(currentFile)
+		if req, ok := r.prepareUploadRequest(currentFile); ok {
+			r.addToRetryQueue(req, writeErr.Error())
+			go r.processRetryQueue()
+		}
 	}
 }
 

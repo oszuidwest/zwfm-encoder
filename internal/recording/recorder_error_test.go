@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -102,6 +103,11 @@ func TestFailedFinalizeReportsErrorAndKeepsPartialAudio(t *testing.T) {
 		t.Fatalf("partial recording = %d bytes, %v; want %d preserved bytes", len(data), err, len(pcm))
 	}
 	assertRecorderErrorEvent(t, path, filepath.Base(file), "No space left on device")
+	assertRecorderErrorLog(t, logs, filepath.Base(file))
+}
+
+func assertRecorderErrorLog(t *testing.T, logs chan slog.Record, wantFile string) {
+	t.Helper()
 	for len(logs) > 0 {
 		record := <-logs
 		var filename string
@@ -111,7 +117,7 @@ func TestFailedFinalizeReportsErrorAndKeepsPartialAudio(t *testing.T) {
 			}
 			return true
 		})
-		if record.Level >= slog.LevelError && filename == filepath.Base(file) {
+		if record.Level >= slog.LevelError && filename == wantFile {
 			return
 		}
 	}
@@ -120,6 +126,7 @@ func TestFailedFinalizeReportsErrorAndKeepsPartialAudio(t *testing.T) {
 
 func TestFailedRotationStartEmitsRecorderError(t *testing.T) {
 	neverRotate(t)
+	logs := captureRecorderErrors(t)
 	cfg := localOnDemandRecorder(t, "rotation-error")
 	cfg.RecordingMode = types.RecordingHourly
 	r, path := errorTestRecorder(t, cfg)
@@ -128,10 +135,80 @@ func TestFailedRotationStartEmitsRecorderError(t *testing.T) {
 	}
 	waitForRecorderState(t, r, types.ProcessRunning)
 	r.mu.Lock()
+	previous := r.currentFile
 	r.ffmpegPath = filepath.Join(t.TempDir(), "missing-ffmpeg")
 	r.mu.Unlock()
 	r.rotateFile()
-	assertRecorderErrorEvent(t, path, "", "missing-ffmpeg")
+	details := assertRecorderErrorEvent(t, path, "", "missing-ffmpeg")
+	filename, ok := details["filename"].(string)
+	if !ok || filename == "" || filename == filepath.Base(previous) {
+		t.Fatalf("rotation failure filename = %q, want attempted new output, not %q", filename, filepath.Base(previous))
+	}
+	assertRecorderErrorLog(t, logs, filename)
+}
+
+func TestWriteErrorRecoveryUploadDoesNotDelayStop(t *testing.T) {
+	t.Setenv(fakeFFmpegFailWriteEnv, "1")
+	entered := make(chan struct{}, 1)
+	unblock := make(chan struct{})
+	release := sync.OnceFunc(func() { close(unblock) })
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		_, _ = io.Copy(io.Discard, req.Body)
+		entered <- struct{}{}
+		<-unblock
+		w.Header().Set("ETag", `"test"`)
+	}))
+	defer server.Close()
+	defer release()
+	cfg := testS3Recorder()
+	cfg.RecordingMode, cfg.S3Endpoint = types.RecordingOnDemand, server.URL
+	r, eventPath := errorTestRecorder(t, cfg)
+	if err := r.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitForRecorderState(t, r, types.ProcessRunning)
+	r.mu.RLock()
+	file := r.currentFile
+	r.mu.RUnlock()
+	deadline := time.Now().Add(3 * time.Second)
+	for r.Status().State == types.ProcessRunning && time.Now().Before(deadline) {
+		r.WriteAudio(make([]byte, 16384))
+		time.Sleep(5 * time.Millisecond)
+	}
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("partial recording was not retried")
+	}
+	stopped := make(chan error, 1)
+	go func() { stopped <- r.Stop() }()
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		release()
+		<-stopped
+		t.Fatal("Stop waited for the recovery upload")
+	}
+	if data, err := os.ReadFile(file); err != nil || len(data) != 4096 { //nolint:gosec // Test temp recording.
+		t.Fatalf("preserved partial recording = %d bytes, %v", len(data), err)
+	}
+	metadata, err := os.ReadDir(r.pendingUploadDir())
+	if err != nil || len(metadata) != 1 {
+		t.Fatalf("durable retry metadata = %v, %v", metadata, err)
+	}
+	assertRecorderErrorEvent(t, eventPath, filepath.Base(file), "simulated write failure")
+	release()
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(file); os.IsNotExist(err) {
+			return // Successful S3-only upload removes the spool, even after Stop.
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("recovery upload did not finish after Stop")
 }
 
 func errorTestRecorder(t *testing.T, cfg *types.Recorder) (recorder *GenericRecorder, eventPath string) {
@@ -147,7 +224,7 @@ func errorTestRecorder(t *testing.T, cfg *types.Recorder) (recorder *GenericReco
 	return r, path
 }
 
-func assertRecorderErrorEvent(t *testing.T, path, filename, cause string) {
+func assertRecorderErrorEvent(t *testing.T, path, filename, cause string) map[string]any {
 	t.Helper()
 	events, _, err := eventlog.ReadLast(path, 100, 0, eventlog.FilterRecorder)
 	if err != nil {
@@ -163,10 +240,11 @@ func assertRecorderErrorEvent(t *testing.T, path, filename, cause string) {
 		}
 		message, _ := details["error"].(string)
 		if strings.Contains(message, cause) && (filename == "" || details["filename"] == filename) {
-			return
+			return details
 		}
 	}
 	t.Fatalf("no recorder_error for %q containing %q: %+v", filename, cause, events)
+	return nil
 }
 
 type recorderErrorCapture struct {

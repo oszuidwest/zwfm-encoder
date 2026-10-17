@@ -17,6 +17,7 @@ const (
 	fakeFFmpegFinalizeEnv     = "ZWFM_RECORDING_FAKE_FFMPEG_FINALIZE"
 	fakeFFmpegRefuseEnv       = "ZWFM_RECORDING_FAKE_FFMPEG_REFUSE"
 	fakeFFmpegFailFinalizeEnv = "ZWFM_RECORDING_FAKE_FFMPEG_FAIL_FINALIZE"
+	fakeFFmpegFailWriteEnv    = "ZWFM_RECORDING_FAKE_FFMPEG_FAIL_WRITE"
 	// fakeFFmpegFinalize is how long the fake takes to exit after stdin closes,
 	// like a real encoder flushing and finalizing its file.
 	fakeFFmpegFinalize = 100 * time.Millisecond
@@ -58,7 +59,12 @@ func runFakeFFmpeg(args []string) int {
 		_, _ = fmt.Fprintf(os.Stderr, "File '%s' already exists. Exiting.\n", output)
 		return 0
 	}
-	data, err := io.ReadAll(os.Stdin)
+	reader := io.Reader(os.Stdin)
+	failWrite := os.Getenv(fakeFFmpegFailWriteEnv) == "1"
+	if failWrite {
+		reader = io.LimitReader(reader, 4096)
+	}
+	data, err := io.ReadAll(reader)
 	if err != nil {
 		return 1
 	}
@@ -77,6 +83,10 @@ func runFakeFFmpeg(args []string) int {
 		return 1
 	}
 	if err := file.Close(); err != nil {
+		return 1
+	}
+	if failWrite {
+		_, _ = fmt.Fprintln(os.Stderr, "simulated write failure")
 		return 1
 	}
 	if os.Getenv(fakeFFmpegFailFinalizeEnv) == "1" {
