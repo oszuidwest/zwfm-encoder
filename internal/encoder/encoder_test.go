@@ -110,21 +110,19 @@ func TestDelayedStarterReturnsWhenStopChanClosed(t *testing.T) {
 	assertManagersStopped(t, e, "closed stopChan delayed starter ran")
 }
 func TestStopBeforeStreamDelayCancelsDelayedStarter(t *testing.T) {
-	// A pipe source cannot spend the pre-delay window starting a subprocess.
-	e := newSourceLifecycleTestEncoder(t, "exit")
-	e.config.Audio.Input = "dante://studio-tx/Left/Right"
-	e.openDanteSource = func(ctx context.Context, _ string) (source, error) {
-		reader, writer := io.Pipe()
-		context.AfterFunc(ctx, func() { _ = writer.Close() })
-		return fakeDanteSource{reader, ctx.Done()}, nil
-	}
+	readyPath := filepath.Join(t.TempDir(), "capture-ready")
+	e := newSourceLifecycleTestEncoder(t, "sleep", readyPath)
 	if err := e.Start(); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
 	waitForCondition(t, time.Second, "source running", func() bool {
 		e.mu.RLock()
 		defer e.mu.RUnlock()
-		return e.state == types.StateRunning && e.sourceCancel != nil && e.sourceStdout != nil && e.sourceRunID > 0
+		return e.state == types.StateRunning && e.sourceCancel != nil && e.sourceRunID > 0
+	})
+	waitForCondition(t, testStreamRestartDelay/2, "capture helper signal readiness", func() bool {
+		_, err := os.Stat(readyPath)
+		return err == nil
 	})
 	if err := e.Stop(); err != nil {
 		t.Fatalf("Stop() error = %v", err)
@@ -483,7 +481,7 @@ func freeUDPPort(t *testing.T) int {
 	}()
 	return conn.LocalAddr().(*net.UDPAddr).Port
 }
-func newSourceLifecycleTestEncoder(t *testing.T, helperMode string) *Encoder {
+func newSourceLifecycleTestEncoder(t *testing.T, helperMode string, helperArgs ...string) *Encoder {
 	t.Helper()
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	cfg.Audio.Input = "test-device"
@@ -497,7 +495,7 @@ func newSourceLifecycleTestEncoder(t *testing.T, helperMode string) *Encoder {
 	e := &Encoder{
 		config:              cfg,
 		ffmpegPath:          "ffmpeg",
-		buildCaptureCommand: helperCaptureCommand(helperMode),
+		buildCaptureCommand: helperCaptureCommand(helperMode, helperArgs...),
 		streamRestartDelay:  testStreamRestartDelay,
 		inputStableDelay:    types.StableThreshold,
 		inputStartupTimeout: inputStartupTimeout,
@@ -553,9 +551,10 @@ func countEvents(t *testing.T, e *Encoder, logPath string, eventType eventlog.Ev
 	return count
 }
 
-func helperCaptureCommand(mode string) func(string, string) (string, []string, error) {
+func helperCaptureCommand(mode string, extraArgs ...string) func(string, string) (string, []string, error) {
 	return func(_, _ string) (string, []string, error) {
 		args := []string{"-test.run=TestEncoderCaptureHelperProcess", "--", mode}
+		args = append(args, extraArgs...)
 		return os.Args[0], args, nil
 	}
 }
@@ -587,6 +586,13 @@ func TestEncoderCaptureHelperProcess(t *testing.T) {
 	case "sleep":
 		signals := make(chan os.Signal, 1)
 		signal.Notify(signals, util.ShutdownSignals()...)
+		if len(helperArgs) > 1 {
+			//nolint:gosec // G703: helperArgs[1] is a temp-file path created by this test process.
+			if err := os.WriteFile(helperArgs[1], []byte("ready"), 0o600); err != nil {
+				signal.Stop(signals)
+				os.Exit(2)
+			}
+		}
 		select {
 		case <-signals:
 		case <-time.After(time.Minute):
