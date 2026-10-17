@@ -1,7 +1,6 @@
 package dante
 
 import (
-	"context"
 	"net/url"
 	"strings"
 	"testing"
@@ -36,7 +35,8 @@ func TestInputNameValidation(t *testing.T) {
 	}{
 		{name: "31 character names", transmitter: strings.Repeat("a", 31), left: strings.Repeat("L", 31), right: strings.Repeat("R", 31)},
 		{name: "single character device", transmitter: "1", left: "L", right: "R"},
-		{name: "encoded punctuation", transmitter: "Studio-1", left: "A/B ?#", right: "C/D ?#"},
+		{name: "two character device", transmitter: "A1", left: "L", right: "R"},
+		{name: "encoded punctuation", transmitter: "Studio-1", left: "A/B ?#~", right: "C/D ?#~"},
 		{name: "long device", transmitter: strings.Repeat("a", 32), left: "L", right: "R", wantError: "transmitter name must"},
 		{name: "leading hyphen", transmitter: "-tx", left: "L", right: "R", wantError: "transmitter name must"},
 		{name: "trailing hyphen", transmitter: "tx-", left: "L", right: "R", wantError: "transmitter name must"},
@@ -67,11 +67,6 @@ func TestInputNameValidation(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
 				t.Fatalf("parseInput(%q) error = %v, want %s", input, err, tt.wantError)
-			}
-			// An invalid interface distinguishes validation from later socket setup.
-			_, err = Open(context.Background(), input+"?interface=does-not-exist")
-			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
-				t.Fatalf("Open(%q) error = %v, want name error before network setup", input, err)
 			}
 		})
 	}

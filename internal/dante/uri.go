@@ -10,7 +10,7 @@ import (
 
 const inputFormat = "dante://<transmitter>/<left channel>/<right channel>[?interface=<name>]"
 
-var deviceNamePattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$`)
+var deviceNamePattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,29}[A-Za-z0-9])?$`)
 
 type inputConfig struct {
 	transmitter string
@@ -46,7 +46,7 @@ func parseInputURL(input string) (inputConfig, error) {
 		return inputConfig{}, errors.New("user information is not supported")
 	case u.Fragment != "":
 		return inputConfig{}, errors.New("fragments are not supported")
-	case len(u.Host) > 31 || !deviceNamePattern.MatchString(u.Host):
+	case !deviceNamePattern.MatchString(u.Host):
 		return inputConfig{}, errors.New("transmitter name must be 1-31 ASCII letters, digits or hyphens, without a leading or trailing hyphen")
 	}
 
@@ -85,13 +85,10 @@ func parseInputURL(input string) (inputConfig, error) {
 }
 
 func validateChannelName(name string) error {
-	if name == "" || len(name) > 31 {
-		return errors.New("name must contain 1-31 printable ASCII characters")
-	}
-	for _, char := range name {
-		if char < 0x20 || char > 0x7e || strings.ContainsRune("=.@", char) {
-			return errors.New("name must contain only printable ASCII characters except '=', '.' and '@'")
-		}
+	if name == "" || len(name) > 31 || strings.ContainsFunc(name, func(r rune) bool {
+		return r < 0x20 || r > 0x7e || strings.ContainsRune("=.@", r)
+	}) {
+		return errors.New("name must be 1-31 printable ASCII characters except '=', '.' and '@'")
 	}
 	return nil
 }
