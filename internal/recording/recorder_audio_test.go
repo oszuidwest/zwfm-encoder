@@ -1,11 +1,12 @@
 package recording
 
 import (
-	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"os"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
 func TestWriteAudioNeverBlocksAndCountsDrops(t *testing.T) {

@@ -399,14 +399,16 @@ func (r *GenericRecorder) WriteAudio(pcm []byte) {
 		return
 	}
 
-	var drops int64
 	select {
 	case ch <- pcm:
+		r.audioMu.RUnlock()
+		return
 	default:
-		drops = r.audioDrops.Add(1)
 	}
+	// Count under the lock so a drop never lands in the next recording's counter.
+	drops := r.audioDrops.Add(1)
 	r.audioMu.RUnlock()
-	if drops == 1 || drops > 0 && drops%100 == 0 {
+	if drops == 1 || drops%100 == 0 {
 		slog.Warn("recorder audio buffer full, dropping chunk; recording will have a gap",
 			"id", r.id, "total_drops", drops)
 	}
@@ -633,12 +635,7 @@ func (r *GenericRecorder) claimEncoderLocked() encoderRun {
 		file:       r.currentFile,
 	}
 	r.result = nil
-	// A rotation keeps feeding the old channel until its replacement is ready.
-	if !r.recording.Load() {
-		r.audioMu.Lock()
-		r.audioCh = nil
-		r.audioMu.Unlock()
-	}
+	// audioCh stays: a rotation keeps feeding it until the replacement is ready.
 	r.writerDone = nil
 	return run
 }
@@ -647,6 +644,9 @@ func (r *GenericRecorder) claimEncoderLocked() encoderRun {
 func (r *GenericRecorder) stopEncoderAndUpload() {
 	r.mu.Lock()
 	run := r.claimEncoderLocked()
+	r.audioMu.Lock()
+	r.audioCh = nil
+	r.audioMu.Unlock()
 	r.mu.Unlock()
 	r.finishEncoder(run)
 }
