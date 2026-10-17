@@ -15,6 +15,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
@@ -28,9 +29,11 @@ type uploadRequest struct {
 	deleteAfterUpload bool
 }
 
-// pendingUpload tracks a failed upload for retry.
+// pendingUpload carries one upload's identity and retry state.
 type pendingUpload struct {
 	request      uploadRequest
+	baseKey      string
+	uploadID     string
 	firstAttempt time.Time
 	retryCount   int
 	lastError    string
@@ -154,17 +157,10 @@ func (r *GenericRecorder) uploadWorker() {
 
 // uploadFile uploads to S3 and deletes temp files in S3-only mode.
 func (r *GenericRecorder) uploadFile(req uploadRequest) {
-	err := r.doUpload(&req)
-	if err != nil {
-		slog.Error("upload failed", "id", r.id, "s3_key", req.s3Key, "error", err)
-		r.logUploadEvent(eventlog.UploadFailed, filepath.Base(req.localPath), req.s3Key, err.Error(), 0)
-		r.addToRetryQueue(req, err.Error())
-		return
+	pending := pendingUpload{request: req}
+	if !r.uploadPending(&pending) {
+		r.enqueuePendingUpload(&pending)
 	}
-
-	slog.Info("upload completed", "id", r.id, "s3_key", req.s3Key)
-	r.logUploadEvent(eventlog.UploadCompleted, filepath.Base(req.localPath), req.s3Key, "", 0)
-	r.deleteAfterUpload(req)
 }
 
 // maxS3KeySuffix bounds the suffixed keys doUpload tries; each attempt sends
@@ -173,8 +169,10 @@ const maxS3KeySuffix = 10
 
 // doUpload uploads with If-None-Match: * so an existing object is never
 // replaced. When the key is taken it retries under -2, -3, ... within the same
-// timeout; req.s3Key is left at the last key tried.
-func (r *GenericRecorder) doUpload(req *uploadRequest) error {
+// timeout; p.request.s3Key is left at the last key tried. Identity is persisted
+// before writes so a committed upload can be recognized after a lost response.
+func (r *GenericRecorder) doUpload(p *pendingUpload) error {
+	req := &p.request
 	file, err := os.Open(req.localPath)
 	if err != nil {
 		return fmt.Errorf("open recording for upload: %w", err)
@@ -221,8 +219,20 @@ func (r *GenericRecorder) doUpload(req *uploadRequest) error {
 		"size_mb", req.fileSize/(1024*1024),
 		"timeout_min", timeoutMinutes)
 
-	baseKey := req.s3Key
-	for suffix := 2; ; suffix++ {
+	if p.baseKey == "" {
+		p.baseKey = req.s3Key
+	}
+	suffix := 2
+	for candidate := 2; candidate <= maxS3KeySuffix; candidate++ {
+		if req.s3Key == withNumericSuffix(p.baseKey, candidate) {
+			suffix = candidate + 1
+			break
+		}
+	}
+	for ; ; suffix++ {
+		if err := r.savePendingUpload(p); err != nil {
+			return fmt.Errorf("persist upload identity: %w", err)
+		}
 		if _, err := file.Seek(0, io.SeekStart); err != nil {
 			return fmt.Errorf("rewind recording for upload: %w", err)
 		}
@@ -234,16 +244,28 @@ func (r *GenericRecorder) doUpload(req *uploadRequest) error {
 			ContentLength: aws.Int64(req.fileSize),
 			ContentType:   aws.String(contentType),
 			IfNoneMatch:   aws.String("*"),
+			Metadata:      map[string]string{"zwfm-upload-id": p.uploadID},
 		})
+		if err == nil {
+			return nil
+		}
+		// CompleteMultipartUpload can be committed even if an SDK retry returns NoSuchUpload.
+		head, headErr := client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(req.s3Key)})
+		if headErr == nil && head.Metadata["zwfm-upload-id"] == p.uploadID {
+			return nil
+		}
 		if !isS3KeyConflict(err) {
 			return err
 		}
+		if headErr != nil {
+			return fmt.Errorf("verify conflicting S3 object: %w", headErr)
+		}
 		if suffix > maxS3KeySuffix {
-			return fmt.Errorf("no free S3 key for %s after %d attempts: %w", baseKey, maxS3KeySuffix, err)
+			return fmt.Errorf("no free S3 key for %s after %d attempts: %w", p.baseKey, maxS3KeySuffix, err)
 		}
 
 		previousKey := req.s3Key
-		req.s3Key = withNumericSuffix(baseKey, suffix)
+		req.s3Key = withNumericSuffix(p.baseKey, suffix)
 		slog.Warn("S3 key taken, using suffixed key",
 			"id", r.id,
 			"taken_key", previousKey,
@@ -302,45 +324,47 @@ func (l *uploadProgressListener) OnObjectBytesTransferred(
 }
 
 // deleteAfterUpload removes spool-only files after successful upload.
-func (r *GenericRecorder) deleteAfterUpload(req uploadRequest) {
+func (r *GenericRecorder) deleteAfterUpload(req uploadRequest) bool {
 	if !req.deleteAfterUpload {
-		return
+		return true
 	}
 
-	if err := os.Remove(req.localPath); err != nil {
+	if err := os.Remove(req.localPath); err != nil && !os.IsNotExist(err) {
 		slog.Warn("failed to delete spool file after upload", "id", r.id, "path", req.localPath, "error", err)
-	} else {
-		slog.Debug("deleted spool file after upload", "id", r.id, "path", req.localPath)
+		return false
 	}
+	slog.Debug("deleted spool file after upload", "id", r.id, "path", req.localPath)
+	return true
 }
 
 // addToRetryQueue adds a failed upload to the retry queue.
 func (r *GenericRecorder) addToRetryQueue(req uploadRequest, errMsg string) {
-	pending := pendingUpload{
-		request:      req,
-		firstAttempt: time.Now(),
-		retryCount:   0,
-		lastError:    errMsg,
-		metadataPath: r.pendingUploadMetadataPath(req),
-	}
+	r.enqueuePendingUpload(&pendingUpload{request: req, lastError: errMsg})
+}
 
-	r.mu.Lock()
+// enqueuePendingUpload preserves the identity/window of an already attempted upload.
+func (r *GenericRecorder) enqueuePendingUpload(pending *pendingUpload) {
+	r.retryEnqueueMu.Lock()
+	defer r.retryEnqueueMu.Unlock()
+	r.mu.RLock()
 
 	// Prevent duplicates
-	for _, p := range r.retryQueue {
-		if p.request.localPath == req.localPath {
-			r.mu.Unlock()
+	for i := range r.retryQueue {
+		if r.retryQueue[i].request.localPath == pending.request.localPath {
+			r.mu.RUnlock()
 			return
 		}
 	}
+	r.mu.RUnlock()
 
-	r.retryQueue = append(r.retryQueue, pending)
-	r.mu.Unlock()
-
-	slog.Info("upload queued for retry", "id", r.id, "file", filepath.Base(req.localPath))
-	if err := r.savePendingUpload(&pending); err != nil {
-		slog.Error("failed to persist pending upload", "id", r.id, "file", filepath.Base(req.localPath), "error", err)
+	// Publish the persisted identity, never a copy with an uninitialized token.
+	if err := r.savePendingUpload(pending); err != nil {
+		slog.Error("failed to persist pending upload", "id", r.id, "file", filepath.Base(pending.request.localPath), "error", err)
 	}
+	r.mu.Lock()
+	r.retryQueue = append(r.retryQueue, *pending)
+	r.mu.Unlock()
+	slog.Info("upload queued for retry", "id", r.id, "file", filepath.Base(pending.request.localPath))
 }
 
 // processRetryQueue attempts to upload all pending files.
@@ -390,6 +414,11 @@ func (r *GenericRecorder) processRetryQueue() {
 			}
 			continue
 		}
+		if _, err := os.Stat(p.request.localPath); os.IsNotExist(err) {
+			slog.Warn("retry file no longer exists", "id", r.id, "path", p.request.localPath)
+			r.removePendingMetadata(p)
+			continue
+		}
 
 		// Attempt retry
 		p.retryCount++
@@ -399,7 +428,7 @@ func (r *GenericRecorder) processRetryQueue() {
 			"attempt", p.retryCount)
 		r.logUploadEvent(eventlog.UploadRetry, filepath.Base(p.request.localPath), p.request.s3Key, "", p.retryCount)
 
-		if !r.retryUpload(p) {
+		if !r.uploadPending(p) {
 			// Failed - re-add to queue
 			if err := r.savePendingUpload(p); err != nil {
 				slog.Error("failed to persist pending upload", "id", r.id, "file", filepath.Base(p.request.localPath), "error", err)
@@ -411,28 +440,23 @@ func (r *GenericRecorder) processRetryQueue() {
 	}
 }
 
-// retryUpload performs the upload and returns true on success.
-func (r *GenericRecorder) retryUpload(p *pendingUpload) bool {
-	// Check if file still exists before attempting upload
-	if _, err := os.Stat(p.request.localPath); os.IsNotExist(err) {
-		slog.Warn("retry file no longer exists", "id", r.id, "path", p.request.localPath)
-		r.removePendingMetadata(p)
-		return true // Nothing to upload
-	}
-
-	err := r.doUpload(&p.request)
+// uploadPending performs the upload and returns true when no retry is needed.
+func (r *GenericRecorder) uploadPending(p *pendingUpload) bool {
+	err := r.doUpload(p)
 	if err != nil {
 		p.lastError = err.Error()
-		slog.Error("retry upload failed", "id", r.id, "s3_key", p.request.s3Key, "error", err)
+		slog.Error("upload failed", "id", r.id, "s3_key", p.request.s3Key, "error", err)
 		r.logUploadEvent(eventlog.UploadFailed,
 			filepath.Base(p.request.localPath), p.request.s3Key,
 			err.Error(), p.retryCount)
 		return false
 	}
 
-	slog.Info("retry upload completed", "id", r.id, "s3_key", p.request.s3Key)
+	slog.Info("upload completed", "id", r.id, "s3_key", p.request.s3Key)
 	r.logUploadEvent(eventlog.UploadCompleted, filepath.Base(p.request.localPath), p.request.s3Key, "", p.retryCount)
-	r.removePendingMetadata(p)
-	r.deleteAfterUpload(p.request)
+	// Keep the identity while a spool copy remains, so a restart recognizes the upload.
+	if r.deleteAfterUpload(p.request) {
+		r.removePendingMetadata(p)
+	}
 	return true
 }

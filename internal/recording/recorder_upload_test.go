@@ -35,6 +35,11 @@ func conditionalPutServer(
 		seen []string
 	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodHead {
+			w.Header().Set(testUploadIDHeader, "another-recording")
+			w.Header().Set("Content-Length", "0")
+			return
+		}
 		if req.Method != http.MethodPut {
 			http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
 			return
@@ -126,9 +131,11 @@ func TestS3UploadUsesSuffixedKeyWhenKeyIsTaken(t *testing.T) {
 			}
 			req := uploadRequest{localPath: localPath, s3Key: uploadTestKey, fileSize: 5}
 
-			if err := recorder.doUpload(&req); (err != nil) != tt.wantErr {
+			pending := pendingUpload{request: req}
+			if err := recorder.doUpload(&pending); (err != nil) != tt.wantErr {
 				t.Fatalf("doUpload() error = %v, want error %t", err, tt.wantErr)
 			}
+			req = pending.request
 			if req.s3Key != tt.wantKey {
 				t.Errorf("S3 key = %q, want %q", req.s3Key, tt.wantKey)
 			}
@@ -151,42 +158,9 @@ func TestS3UploadUsesSuffixedKeyWhenKeyIsTaken(t *testing.T) {
 func TestS3MultipartUploadUsesSuffixedKeyWhenKeyIsTaken(t *testing.T) {
 	t.Parallel()
 
-	var (
-		mu        sync.Mutex
-		completed []string
-	)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		key := strings.TrimPrefix(req.URL.Path, "/bucket/")
-		query := req.URL.Query()
-		_, _ = io.Copy(io.Discard, req.Body)
-		switch {
-		case req.Method == http.MethodPost && query.Has("uploads"):
-			_, _ = io.WriteString(w, "<InitiateMultipartUploadResult><UploadId>u</UploadId></InitiateMultipartUploadResult>")
-		case req.Method == http.MethodPut && query.Has("partNumber"):
-			w.Header().Set("ETag", `"part"`)
-		case req.Method == http.MethodPost && query.Has("uploadId"):
-			if req.Header.Get("If-None-Match") != "*" {
-				writeS3Error(w, http.StatusBadRequest, "MissingIfNoneMatch")
-				return
-			}
-			mu.Lock()
-			completed = append(completed, key)
-			mu.Unlock()
-			if key == uploadTestKey {
-				_, _ = io.WriteString(w, "<Error><Code>PreconditionFailed</Code><Message>taken</Message></Error>")
-				return
-			}
-			_, _ = io.WriteString(w, `<CompleteMultipartUploadResult><ETag>"done"</ETag></CompleteMultipartUploadResult>`)
-		case req.Method == http.MethodDelete:
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			http.Error(w, "unexpected request", http.StatusBadRequest)
-		}
-	}))
-	t.Cleanup(server.Close)
-
-	cfg := testS3Recorder()
-	cfg.S3Endpoint = server.URL
+	store, cfg := newIdentityStore(t)
+	store.inBodyConflict = true
+	store.objects[uploadTestKey] = storedTestUpload{id: "foreign", body: []byte("earlier")}
 	recorder := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
 	const size = 17 << 20
 	localPath := filepath.Join(t.TempDir(), filepath.Base(uploadTestKey))
@@ -195,17 +169,19 @@ func TestS3MultipartUploadUsesSuffixedKeyWhenKeyIsTaken(t *testing.T) {
 	}
 	req := uploadRequest{localPath: localPath, s3Key: uploadTestKey, fileSize: size}
 
-	if err := recorder.doUpload(&req); err != nil {
+	pending := pendingUpload{request: req}
+	if err := recorder.doUpload(&pending); err != nil {
 		t.Fatalf("doUpload() error = %v", err)
 	}
+	req = pending.request
 	if req.s3Key != uploadTestKey2 {
 		t.Errorf("S3 key = %q, want %q", req.s3Key, uploadTestKey2)
 	}
-	mu.Lock()
-	defer mu.Unlock()
+	store.mu.Lock()
+	defer store.mu.Unlock()
 	// The SDK retries the in-body error as a 500 before giving up on the key.
-	if want := []string{uploadTestKey, uploadTestKey2}; !slices.Equal(slices.Compact(completed), want) {
-		t.Errorf("completed keys = %v, want %v", completed, want)
+	if want := []string{uploadTestKey, uploadTestKey2}; !slices.Equal(slices.Compact(store.keys), want) {
+		t.Errorf("completed keys = %v, want %v", store.keys, want)
 	}
 }
 

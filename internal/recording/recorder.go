@@ -89,7 +89,8 @@ type GenericRecorder struct {
 	uploadClosed        bool      // Routes late uploads to retry after Stop.
 
 	// Retry queue for failed uploads (protected by mu)
-	retryQueue []pendingUpload
+	retryQueue     []pendingUpload
+	retryEnqueueMu sync.Mutex // Serializes persistence/publication without holding the state lock over disk I/O.
 
 	// Rotation timer (hourly mode)
 	rotationTimer      *time.Timer
