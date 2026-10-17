@@ -130,6 +130,16 @@ func (p *captureProcess) Wait() error {
 func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 	graphCfg := cfg.GraphConfig()
 	snap := cfg.Snapshot()
+	eventLogPath := eventlog.DefaultLogPath(snap.WebPort)
+	logger, err := eventlog.NewLogger(eventLogPath)
+	if err != nil {
+		return nil, fmt.Errorf("create event logger at %s: %w", eventLogPath, err)
+	}
+	lostAt, err := logger.InputLostAt()
+	if err != nil {
+		_ = logger.Close()
+		return nil, fmt.Errorf("restore input outage from %s: %w", eventLogPath, err)
+	}
 
 	webhookCh := &notify.WebhookChannel{}
 	emailCh := &notify.EmailChannel{}
@@ -144,12 +154,6 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 		snap.SilenceDumpRetentionDays,
 		orchestrator.OnDumpReady,
 	)
-
-	eventLogPath := eventlog.DefaultLogPath(snap.WebPort)
-	logger, err := eventlog.NewLogger(eventLogPath)
-	if err != nil {
-		return nil, fmt.Errorf("create event logger at %s: %w", eventLogPath, err)
-	}
 
 	orchestrator.SetEventLogger(logger)
 
@@ -178,6 +182,7 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 		streamManager:       streamMgr,
 		silenceDumpManager:  dumpManager,
 		eventLogger:         logger,
+		inputLostAt:         lostAt,
 		state:               types.StateStopped,
 		backoff:             util.NewBackoff(types.InitialRetryDelay, types.SourceMaxRetryDelay),
 		silenceDetect:       audio.NewSilenceDetector(),
@@ -438,7 +443,7 @@ func (e *Encoder) Start() error {
 	// inputLostAt deliberately survives Stop/Start, including the Restart after
 	// an audio input change: the outage stays open until an input is confirmed,
 	// so it raises no second input_lost and the next input_restored closes it.
-	// It is kept in memory only, so a process restart forgets an open outage.
+	// New also restores an open outage from the event log after a process restart.
 	e.silenceDetect.Reset()
 	e.imbalanceDetect.Reset()
 	e.alertOrchestrator.Reset()

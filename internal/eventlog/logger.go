@@ -365,6 +365,8 @@ const (
 	FilterStream TypeFilter = "stream"
 	// FilterAudio selects silence, audio dump, channel imbalance, and input events.
 	FilterAudio TypeFilter = "audio"
+	// FilterInput selects input loss and restoration events.
+	FilterInput TypeFilter = "input"
 	// FilterRecorder selects recorder events.
 	FilterRecorder TypeFilter = "recorder"
 )
@@ -497,6 +499,8 @@ func parseEventLine(line []byte) (Event, bool) {
 // only needs a classification entry to be filterable.
 func matchesFilter(t EventType, filter TypeFilter) bool {
 	switch filter {
+	case FilterInput:
+		return t == InputLost || t == InputRestored
 	case FilterStream:
 		return t.Category() == CategoryStream
 	case FilterAudio:
@@ -506,4 +510,16 @@ func matchesFilter(t EventType, filter TypeFilter) bool {
 	default: // FilterAll and unknown filters match everything
 		return true
 	}
+}
+
+// InputLostAt returns the start of an open input outage in the retained logs.
+func (l *Logger) InputLostAt() (time.Time, error) {
+	events, _, err := ReadLast(l.filePath, 1, 0, FilterInput)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if len(events) > 0 && events[0].Type == InputLost {
+		return events[0].Timestamp, nil
+	}
+	return time.Time{}, nil
 }
