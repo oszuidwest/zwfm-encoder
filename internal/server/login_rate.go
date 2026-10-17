@@ -24,8 +24,8 @@ type loginAttempt struct {
 func (sm *SessionManager) AllowLogin(r *http.Request, username string, trustedProxies []string) bool {
 	ip := loginClientAddress(r, trustedProxies).Unmap()
 	if !ip.IsValid() || ip.IsUnspecified() || ip.IsMulticast() {
-		slog.Warn("login rejected: unusable client address",
-			"remote", r.RemoteAddr, "forwarded_for", r.Header.Values("X-Forwarded-For"))
+		// The forwarding header itself is client input and is not logged.
+		slog.Warn("login rejected: unusable client or forwarded address", "remote", r.RemoteAddr)
 		return false
 	}
 	host := ip.String()
