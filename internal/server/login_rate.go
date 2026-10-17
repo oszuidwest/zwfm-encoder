@@ -115,7 +115,7 @@ func loginClientAddress(r *http.Request, trustedProxies []string) netip.Addr {
 func isTrustedProxy(ip netip.Addr, trustedProxies []string) bool {
 	for _, value := range trustedProxies {
 		prefix, err := netip.ParsePrefix(value)
-		if err == nil && prefix.Bits() > 0 && (prefix.Contains(ip) || prefix.Contains(ip.Unmap())) {
+		if err == nil && prefix.Bits() > 0 && !prefix.Addr().Is4In6() && (prefix.Contains(ip) || prefix.Contains(ip.Unmap())) {
 			return true
 		}
 	}

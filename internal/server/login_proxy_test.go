@@ -34,6 +34,7 @@ func TestLoginClientAddressTrustBoundary(t *testing.T) {
 		{name: "oversized header", peer: "127.0.0.1:1234", header: strings.Repeat("1", 4097), trusted: []string{"127.0.0.1/32"}, want: "invalid IP"},
 		{name: "too many hops", peer: "127.0.0.1:1234", header: strings.Repeat("10.0.0.2,", 32) + "198.51.100.1", trusted: []string{"127.0.0.1/32", "10.0.0.2/32"}, want: "invalid IP"},
 		{name: "invalid trust fails closed", peer: "127.0.0.1:1234", header: "198.51.100.1", trusted: []string{"invalid", "0.0.0.0/0"}, want: "127.0.0.1"},
+		{name: "mapped trust fails closed", peer: "[::ffff:127.0.0.1]:1234", header: "203.0.113.99, ::ffff:198.51.100.1", trusted: []string{"::ffff:0:0/96"}, want: "::ffff:127.0.0.1"},
 		{name: "invalid peer", peer: "invalid", header: "198.51.100.1", trusted: []string{"127.0.0.1/32"}, want: "invalid IP"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

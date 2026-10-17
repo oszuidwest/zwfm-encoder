@@ -105,6 +105,9 @@ func TestTrustedProxyConfig(t *testing.T) {
 		{name: "missing prefix", proxies: []string{"127.0.0.1"}},
 		{name: "all IPv4", proxies: []string{"0.0.0.0/0"}},
 		{name: "all IPv6", proxies: []string{"::/0"}},
+		{name: "mapped proxy", proxies: []string{"::ffff:10.0.0.2/128"}},
+		{name: "mapped all IPv4", proxies: []string{"::ffff:0:0/96"}},
+		{name: "mapped broad prefix", proxies: []string{"::ffff:0:0/80"}},
 		{name: "empty entry", proxies: []string{""}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
