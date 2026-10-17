@@ -56,7 +56,7 @@ func TestBlockedFilenameCheckDoesNotStopCaptureFanout(t *testing.T) {
 			defer release()
 			rotated := make(chan struct{})
 			if tc.rotation {
-				go func() { slow.rotateFile(); close(rotated) }()
+				go func() { rotateTestRecorder(slow); close(rotated) }()
 			} else if err := slow.Start(); err != nil {
 				t.Fatal(err)
 			}

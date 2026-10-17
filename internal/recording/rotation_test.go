@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,11 +15,79 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
+func TestRotationDiscardsReplacedTimer(t *testing.T) {
+	for _, mode := range []string{"reschedule", "restart"} {
+		t.Run(mode, func(t *testing.T) {
+			var callbacks []func()
+			var timers []*time.Timer
+			afterFunc = func(_ time.Duration, callback func()) *time.Timer {
+				callbacks = append(callbacks, callback)
+				timer := time.NewTimer(math.MaxInt64)
+				timers = append(timers, timer)
+				return timer
+			}
+			t.Cleanup(func() { afterFunc = time.AfterFunc })
+			r := startHourlyTestRecorder(t, "stale-timer")
+			if mode == "restart" {
+				if err := r.Stop(); err != nil {
+					t.Fatal(err)
+				}
+				if err := r.Start(); err != nil {
+					t.Fatal(err)
+				}
+				waitForRecorderState(t, r, types.ProcessRunning)
+			} else {
+				r.mu.Lock()
+				r.scheduleRotationLocked(time.Now())
+				r.mu.Unlock()
+			}
+			if timers[0].Stop() {
+				t.Error("replaced rotation timer was still armed")
+			}
+			r.mu.RLock()
+			current, timer := r.currentFile, r.rotationTimer
+			r.mu.RUnlock()
+			callbacks[0]() // Models a callback already queued before Timer.Stop.
+			r.mu.RLock()
+			defer r.mu.RUnlock()
+			if r.currentFile != current || r.rotationTimer != timer || len(callbacks) != 2 {
+				t.Fatal("stale callback rotated the current recording or armed another timer")
+			}
+		})
+	}
+}
+
+func TestRecorderRejectsStartDuringStop(t *testing.T) {
+	neverRotate(t)
+	t.Setenv(fakeFFmpegFinalizeEnv, "500ms")
+	r := startHourlyTestRecorder(t, "stop-start")
+	done := make(chan error, 1)
+	go func() { done <- r.Stop() }()
+	waitForRecorderState(t, r, types.ProcessStopping)
+	err := r.Start()
+	if err == nil || !strings.Contains(err.Error(), "stopping") {
+		t.Errorf("Start during Stop = %v, want stopping error", err)
+	}
+	if err != nil && r.Status().State != types.ProcessStopping {
+		t.Error("rejected Start changed the stopping state")
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 // neverRotate replaces the hourly timer so a test rotates by hand and a real
 // hour boundary cannot add a rotation. Tests using it must not be parallel.
 func neverRotate(t *testing.T) {
 	afterFunc = func(time.Duration, func()) *time.Timer { return time.NewTimer(math.MaxInt64) }
 	t.Cleanup(func() { afterFunc = time.AfterFunc })
+}
+
+func rotateTestRecorder(r *GenericRecorder) {
+	r.mu.RLock()
+	generation := r.rotationGeneration
+	r.mu.RUnlock()
+	r.rotateFile(generation)
 }
 
 func startHourlyTestRecorder(t *testing.T, id string) *GenericRecorder {
@@ -63,7 +132,7 @@ func TestHourlyRotationLosesNoAudio(t *testing.T) {
 		case chunks / 4:
 			rotatedAt = time.Now()
 			go func() {
-				r.rotateFile()
+				rotateTestRecorder(r)
 				close(rotated)
 			}()
 		case chunks - 1:
@@ -129,13 +198,14 @@ func TestStopWaitsForRotatedFile(t *testing.T) {
 	neverRotate(t)
 	t.Setenv(fakeFFmpegFinalizeEnv, "500ms")
 	r := startHourlyTestRecorder(t, "retiring")
+	r.WriteAudio([]byte{1, 2, 3, 4})
 	r.mu.RLock()
 	firstFile := r.currentFile
 	r.mu.RUnlock()
 
 	// The next file finalizes at once, so only the rotation keeps Stop busy.
 	t.Setenv(fakeFFmpegFinalizeEnv, "0s")
-	go r.rotateFile()
+	go rotateTestRecorder(r)
 	waitForHandOver(t, r, firstFile)
 	if !r.IsCurrentFile(firstFile) {
 		t.Fatal("the file being finalized is not protected from retention cleanup")
@@ -164,7 +234,7 @@ func TestFailedRotationKeepsRecording(t *testing.T) {
 
 	chunk := make([]byte, audio.BytesPerSecond/10)
 	r.WriteAudio(chunk)
-	r.rotateFile()
+	rotateTestRecorder(r)
 	if status := r.Status(); status.State != types.ProcessRunning || status.Error == "" || !r.IsCurrentFile(firstFile) {
 		t.Fatalf("after failed rotation: status %+v, current file kept %t; want running with an error in %s",
 			status, r.IsCurrentFile(firstFile), filepath.Base(firstFile))
@@ -174,7 +244,7 @@ func TestFailedRotationKeepsRecording(t *testing.T) {
 	r.mu.Lock()
 	r.ffmpegPath = os.Args[0]
 	r.mu.Unlock()
-	r.rotateFile()
+	rotateTestRecorder(r)
 	if status := r.Status(); status.Error != "" || r.IsCurrentFile(firstFile) {
 		t.Fatalf("after a successful rotation: status %+v, still in the first file %t; want the error cleared",
 			status, r.IsCurrentFile(firstFile))
@@ -198,10 +268,10 @@ func TestOverlappingRotationsProtectEveryRetiringFile(t *testing.T) {
 	firstFile := r.currentFile
 	r.mu.RUnlock()
 
-	go r.rotateFile()
+	go rotateTestRecorder(r)
 	secondFile := waitForHandOver(t, r, firstFile)
 	t.Setenv(fakeFFmpegFinalizeEnv, "0s")
-	go r.rotateFile()
+	go rotateTestRecorder(r)
 	waitForHandOver(t, r, secondFile)
 	if !r.IsCurrentFile(firstFile) || !r.IsCurrentFile(secondFile) {
 		t.Fatalf("finalizing files protected: first %t, second %t; want both",
