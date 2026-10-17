@@ -673,11 +673,12 @@ func (r *GenericRecorder) finishEncoder(run encoderRun) {
 	}
 	if run.result.BytesWritten() == 0 {
 		// Only successful finalization proves this is our empty output to remove.
-		if finalizeErr == nil {
-			if err := os.Remove(run.file); err != nil && !errors.Is(err, os.ErrNotExist) {
-				r.reportError(run.file, fmt.Errorf("remove empty recording: %w", err))
-				return
-			}
+		if finalizeErr != nil {
+			return
+		}
+		if err := os.Remove(run.file); err != nil && !errors.Is(err, os.ErrNotExist) {
+			r.reportError(run.file, fmt.Errorf("remove empty recording: %w", err))
+		} else {
 			slog.Info("discarded recording without audio", "id", r.id, "file", filepath.Base(run.file))
 		}
 		return

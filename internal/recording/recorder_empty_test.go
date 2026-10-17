@@ -2,15 +2,11 @@ package recording
 
 import (
 	"bytes"
-	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
 
-	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
@@ -21,24 +17,11 @@ func TestEmptyRecordingsAreDiscardedButSilentAudioIsKept(t *testing.T) {
 	for _, mode := range []types.StorageMode{types.StorageLocal, types.StorageBoth, types.StorageS3} {
 		t.Run(string(mode), func(t *testing.T) {
 			pcm := make([]byte, 4096) // Digital silence is real audio, not an empty run.
-			var uploads atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-				body, err := io.ReadAll(req.Body)
-				if err != nil {
-					t.Error(err)
-				}
-				if req.Method == http.MethodPut {
-					uploads.Add(1)
-					if !bytes.Equal(body, pcm) {
-						t.Errorf("uploaded %q, want silent PCM", body)
-					}
-				}
-				w.Header().Set("ETag", `"test"`)
-			}))
-			defer server.Close()
+			// Only the silent PCM file may arrive; any other body is rejected and stays pending.
+			endpoint, uploads := conditionalPutServer(t, string(pcm), func(http.ResponseWriter, string) bool { return false })
 			cfg := testS3Recorder()
-			cfg.StorageMode, cfg.LocalPath, cfg.S3Endpoint = mode, t.TempDir(), server.URL
-			r, eventPath := errorTestRecorder(t, cfg)
+			cfg.StorageMode, cfg.LocalPath, cfg.S3Endpoint = mode, t.TempDir(), endpoint
+			r, _ := errorTestRecorder(t, cfg)
 			if err := r.Start(); err != nil {
 				t.Fatal(err)
 			}
@@ -60,30 +43,17 @@ func TestEmptyRecordingsAreDiscardedButSilentAudioIsKept(t *testing.T) {
 				t.Fatal(err)
 			}
 			assertNoRecording(t, emptyStop)
-			wantUploads := int32(1)
+			wantUploads := 1
 			if mode == types.StorageLocal {
 				wantUploads = 0
 			}
-			if got := uploads.Load(); got != wantUploads || r.PendingUploadCount() != 0 {
+			if got := len(uploads()); got != wantUploads || r.PendingUploadCount() != 0 {
 				t.Errorf("uploads = %d, pending = %d; want %d, 0", got, r.PendingUploadCount(), wantUploads)
 			}
 			if mode != types.StorageS3 {
 				data, err := os.ReadFile(withAudio) //nolint:gosec // Test temp recording.
 				if err != nil || !bytes.Equal(data, pcm) {
 					t.Fatalf("partial hour = %q, %v; want silent PCM preserved", data, err)
-				}
-			}
-			events, _, err := eventlog.ReadLast(eventPath, 100, 0, eventlog.FilterRecorder)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, event := range events {
-				if event.Type != eventlog.UploadQueued {
-					continue
-				}
-				details, ok := event.Details.(map[string]any)
-				if !ok || details["filename"] != filepath.Base(withAudio) {
-					t.Errorf("empty recording queued: %+v", event)
 				}
 			}
 		})

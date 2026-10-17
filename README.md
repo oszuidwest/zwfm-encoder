@@ -176,7 +176,7 @@ The template creates triggers for SILENCE (Disaster), RECOVERY (Info), INPUT_LOS
 
 Hourly recorders start a new file on every whole hour (whole UTC hours, which are the local hours in time zones with a whole-hour offset), named after the local time of the hand-over rounded to the minute, such as `<recorder>-YYYY-MM-DD-HH-00.<ext>`; the first file after a start is named after its start minute. At the boundary the next file is started before the current one is finalized, so the hand-over itself drops no audio; the previous file is then closed and queued for upload when S3 is configured. When the local clock repeats an hour, as at the end of daylight saving time, the second file of that hour gets a `-2` suffix instead of overwriting the first.
 
-A run that received no PCM (for example during an input outage) is never uploaded; after successful finalization its empty or header-only file is removed. Partial hours and digital silence are kept. Failed finalizations retain the file for inspection and report a recorder error.
+A successfully finalized run that received no PCM (for example during an input outage) is removed without uploading. Partial hours and digital silence are kept. Failed finalizations retain the file for inspection and report a recorder error; in S3-only mode such a retained file is still uploaded when the recorder is recreated at the next start.
 
 ## Recording API
 
