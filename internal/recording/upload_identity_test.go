@@ -245,13 +245,7 @@ func TestCommittedUploadIdentitySurvivesRestart(t *testing.T) {
 			store.headStatus = 0
 			store.mu.Unlock()
 			cfg.Name = "Renamed after restart"
-			restarted, err := NewManager("", r.spoolDir, 0, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := restarted.AddRecorder(cfg); err != nil {
-				t.Fatal(err)
-			}
+			restarted := restartManager(t, r.spoolDir, cfg)
 			restored := restarted.recorders[cfg.ID]
 			if restored.PendingUploadCount() != 1 || restored.retryQueue[0].uploadID != original.uploadID ||
 				!restored.retryQueue[0].firstAttempt.Equal(original.firstAttempt) {
@@ -288,13 +282,7 @@ func TestUploadRetrySuffixesOriginalKey(t *testing.T) {
 			store.objects[uploadTestKey2] = storedTestUpload{id: "another", body: data}
 			store.rejectKey = ""
 			store.mu.Unlock()
-			restarted, err := NewManager("", r.spoolDir, 0, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := restarted.AddRecorder(cfg); err != nil {
-				t.Fatal(err)
-			}
+			restarted := restartManager(t, r.spoolDir, cfg)
 			r = restarted.recorders[cfg.ID]
 			r.processRetryQueue()
 			store.mu.Lock()
@@ -468,5 +456,43 @@ func TestMissingInitialUploadStillReportsFailure(t *testing.T) {
 	entries, err := os.ReadDir(r.pendingUploadDir())
 	if err != nil || len(entries) != 0 || r.PendingUploadCount() != 0 {
 		t.Fatalf("missing file retry left metadata: %v, %v, pending %d", entries, err, r.PendingUploadCount())
+	}
+}
+
+// restartManager models an encoder restart that recovers the recorder's spool.
+func restartManager(t *testing.T, spoolDir string, cfg *types.Recorder) *Manager {
+	t.Helper()
+	m, err := NewManager("", spoolDir, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.AddRecorder(cfg); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func TestCompletedUploadKeepsIdentityWhileSpoolFileRemains(t *testing.T) {
+	t.Parallel()
+	endpoint, _ := conditionalPutServer(t, "audio", func(http.ResponseWriter, string) bool { return false })
+	cfg := testS3Recorder()
+	cfg.S3Endpoint = endpoint
+	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
+	file := writeSpoolFile(t, r.spoolDir, r.id, "kept.mp3", "audio")
+	if os.Geteuid() == 0 {
+		t.Skip("root can delete from a read-only directory")
+	}
+	// A read-only spool directory makes deleting the uploaded copy fail.
+	dir := filepath.Dir(file)
+	if err := os.Chmod(dir, 0o500); err != nil { //nolint:gosec // A test dir must stay traversable.
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) }) //nolint:gosec // Restore the test dir for cleanup.
+	p := pendingUpload{request: uploadRequest{localPath: file, s3Key: "recordings/Test/kept.mp3", fileSize: 5, deleteAfterUpload: true}}
+	if !r.uploadPending(&p) {
+		t.Fatal("upload failed")
+	}
+	if _, err := os.Stat(p.metadataPath); err != nil {
+		t.Fatalf("upload identity removed while its spool file remains: %v", err)
 	}
 }

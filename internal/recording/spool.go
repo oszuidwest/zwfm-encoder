@@ -253,10 +253,6 @@ func (r *GenericRecorder) pendingUploadDir() string {
 }
 
 func (r *GenericRecorder) pendingUploadMetadataPath(p *pendingUpload) string {
-	baseKey := p.baseKey
-	if baseKey == "" {
-		baseKey = p.request.s3Key
-	}
-	sum := sha256.Sum256([]byte(p.request.localPath + "\x00" + baseKey))
+	sum := sha256.Sum256([]byte(p.request.localPath + "\x00" + p.baseKey))
 	return filepath.Join(r.pendingUploadDir(), hex.EncodeToString(sum[:8])+pendingUploadMetadataSuffix)
 }
