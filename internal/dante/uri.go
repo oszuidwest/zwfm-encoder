@@ -4,10 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
 const inputFormat = "dante://<transmitter>/<left channel>/<right channel>[?interface=<name>]"
+
+var deviceNamePattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,29}[A-Za-z0-9])?$`)
 
 type inputConfig struct {
 	transmitter string
@@ -43,6 +46,8 @@ func parseInputURL(input string) (inputConfig, error) {
 		return inputConfig{}, errors.New("user information is not supported")
 	case u.Fragment != "":
 		return inputConfig{}, errors.New("fragments are not supported")
+	case !deviceNamePattern.MatchString(u.Host):
+		return inputConfig{}, errors.New("transmitter name must be 1-31 ASCII letters, digits or hyphens, without a leading or trailing hyphen")
 	}
 
 	// Split before decoding to preserve escaped slashes in channel names.
@@ -54,6 +59,12 @@ func parseInputURL(input string) (inputConfig, error) {
 	right, rightErr := url.PathUnescape(channels[1])
 	if err := errors.Join(leftErr, rightErr); err != nil {
 		return inputConfig{}, err
+	}
+	if err := validateChannelName(left); err != nil {
+		return inputConfig{}, fmt.Errorf("left channel: %w", err)
+	}
+	if err := validateChannelName(right); err != nil {
+		return inputConfig{}, fmt.Errorf("right channel: %w", err)
 	}
 
 	query, err := url.ParseQuery(u.RawQuery)
@@ -71,4 +82,13 @@ func parseInputURL(input string) (inputConfig, error) {
 	}
 
 	return inputConfig{transmitter: u.Host, left: left, right: right, interfaceID: interfaceID}, nil
+}
+
+func validateChannelName(name string) error {
+	if name == "" || len(name) > 31 || strings.ContainsFunc(name, func(r rune) bool {
+		return r < 0x20 || r > 0x7e || strings.ContainsRune("=.@", r)
+	}) {
+		return errors.New("name must be 1-31 printable ASCII characters except '=', '.' and '@'")
+	}
+	return nil
 }
