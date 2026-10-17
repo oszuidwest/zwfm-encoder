@@ -1,6 +1,7 @@
 package ffmpeg
 
 import (
+	"errors"
 	"io"
 	"os/exec"
 	"testing"
@@ -33,5 +34,26 @@ func TestStartProcessWithStdoutCapturesOutput(t *testing.T) {
 	}
 	if string(got) != "encoded bytes" {
 		t.Fatalf("stdout = %q, want encoded bytes", got)
+	}
+	if got := result.BytesWritten(); got != int64(len("encoded bytes")) {
+		t.Fatalf("BytesWritten() = %d", got)
+	}
+}
+
+type partialStdin struct{}
+
+func (partialStdin) Write([]byte) (int, error) { return 2, io.ErrClosedPipe }
+func (partialStdin) Close() error              { return nil }
+
+func TestBytesWrittenIncludesPartialWrites(t *testing.T) {
+	t.Parallel()
+	result := &StartResult{stdin: partialStdin{}}
+	n, err := result.WriteStdin([]byte("audio"))
+	if n != 2 || !errors.Is(err, io.ErrClosedPipe) || result.BytesWritten() != 2 {
+		t.Fatalf("partial write = %d, %v; count = %d", n, err, result.BytesWritten())
+	}
+	result.CloseStdin()
+	if _, err := result.WriteStdin([]byte("audio")); !errors.Is(err, ErrStdinClosed) || result.BytesWritten() != 2 {
+		t.Fatalf("closed write = %v; count = %d", err, result.BytesWritten())
 	}
 }

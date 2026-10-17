@@ -84,9 +84,10 @@ type GenericRecorder struct {
 	retryQueue []pendingUpload
 
 	// Rotation timer (hourly mode)
-	rotationTimer *time.Timer
-	// retiring tracks files that a rotation is still finalizing; Stop waits
-	// for them so they are queued for upload before intake closes.
+	rotationTimer      *time.Timer
+	rotationGeneration uint64
+	// retiring tracks files being finalized; Stop waits until their uploads
+	// are queued or durably registered for recovery before intake closes.
 	retiring      sync.WaitGroup
 	retiringFiles map[string]struct{} // Files rotations are finalizing; protected from cleanup until queued.
 
@@ -182,6 +183,9 @@ func (r *GenericRecorder) Start() error {
 
 	if r.state == types.ProcessRunning || r.state == types.ProcessStarting {
 		return ErrAlreadyRecording
+	}
+	if r.state == types.ProcessStopping {
+		return errors.New("recorder is stopping")
 	}
 
 	// Clear any previous error and set starting state
@@ -279,9 +283,21 @@ func (r *GenericRecorder) setError(msg string) {
 	r.lastError = msg
 	slog.Error("recorder error", "id", r.id, "error", msg)
 
-	// Log to event log (capture params while holding lock)
 	p := r.captureLogParamsLocked()
 	p.Error = msg
+	r.logEvent(eventlog.RecorderError, p)
+}
+
+func (r *GenericRecorder) reportError(file string, err error) {
+	r.mu.Lock()
+	r.lastError = err.Error()
+	p := r.captureLogParamsLocked()
+	p.Error = err.Error()
+	if file != "" {
+		p.Filename = filepath.Base(file)
+	}
+	r.mu.Unlock()
+	slog.Error("recorder error", "id", r.id, "file", p.Filename, "error", err)
 	r.logEvent(eventlog.RecorderError, p)
 }
 
@@ -320,6 +336,7 @@ func (r *GenericRecorder) Stop() error {
 		r.rotationTimer.Stop()
 		r.rotationTimer = nil
 	}
+	r.rotationGeneration++
 	if r.durationTimer != nil {
 		r.durationTimer.Stop()
 		r.durationTimer = nil
@@ -423,57 +440,60 @@ func (r *GenericRecorder) handleWriteError(result *ffmpeg.StartResult, writeErr 
 	r.audioCh = nil
 	// audioWriter closes writerDone on return.
 	r.writerDone = nil
+	r.retiring.Add(1)
+	r.retiringFiles[capturedFile] = struct{}{}
 	r.mu.Unlock()
 
-	slog.Warn("recorder write failed, finalizing recording", "id", r.id, "error", writeErr)
-
 	// Let audioWriter return before cleanup waits on FFmpeg.
-	go r.cleanupAfterWriteError(result, capturedFile)
+	go r.cleanupAfterWriteError(result, capturedFile, writeErr)
 }
 
-// cleanupAfterWriteError closes a broken FFmpeg process and uploads its partial file.
+// cleanupAfterWriteError closes a broken FFmpeg process and preserves its partial file for upload.
 // The failing write has released stdinMu, so CloseStdin cannot deadlock.
-func (r *GenericRecorder) cleanupAfterWriteError(result *ffmpeg.StartResult, currentFile string) {
-	if result == nil {
-		return
-	}
-
-	slog.Warn("recorder write error, cleaning up", "id", r.id)
-
+func (r *GenericRecorder) cleanupAfterWriteError(result *ffmpeg.StartResult, currentFile string, writeErr error) {
+	defer r.retiring.Done()
+	defer func() {
+		r.mu.Lock()
+		delete(r.retiringFiles, currentFile)
+		r.mu.Unlock()
+	}()
 	result.CloseStdin()
-	r.drainProcess(result)
+	if err := r.drainProcess(result); err != nil {
+		writeErr = err
+	}
+	r.reportError(currentFile, writeErr)
 
-	// Bypass the worker queue; Stop may be draining or closed.
-	if currentFile != "" {
-		r.uploadDirectly(currentFile)
+	// Persist recovery before releasing Stop; network retries run independently.
+	if currentFile != "" && result.BytesWritten() > 0 && !outputRefused(result.Stderr()) {
+		if req, ok := r.prepareUploadRequest(currentFile); ok {
+			r.addToRetryQueue(req, writeErr.Error())
+			go r.processRetryQueue()
+		}
 	}
 }
 
 // drainProcess waits for FFmpeg, escalating through SIGTERM and SIGKILL.
-func (r *GenericRecorder) drainProcess(result *ffmpeg.StartResult) {
-	escalated := false // written and read in this goroutine only
+func (r *GenericRecorder) drainProcess(result *ffmpeg.StartResult) error {
 	err := result.WaitEscalating(processStopTimeout, processKillTimeout,
 		func() {
-			escalated = true
 			slog.Warn("recorder ffmpeg did not stop in time, sending signal", "id", r.id)
 		},
 		func() { slog.Error("recorder ffmpeg force killed", "id", r.id) })
 
-	// After escalation, stderr is both safe to read and most useful.
-	if err != nil || escalated {
-		r.recordStderr(result)
+	// FFmpeg's -n refusal can exit successfully, even after accepting stdin.
+	if outputRefused(result.Stderr()) {
+		return errors.New(strings.TrimSpace(result.Stderr()))
 	}
+	if err != nil {
+		if message := util.ExtractLastError(result.Stderr()); message != "" {
+			return fmt.Errorf("%s: %w", message, err)
+		}
+	}
+	return err
 }
 
-// recordStderr stores FFmpeg's last error line as the recorder's last error.
-func (r *GenericRecorder) recordStderr(result *ffmpeg.StartResult) {
-	errMsg := util.ExtractLastError(result.Stderr())
-	if errMsg == "" {
-		return
-	}
-	r.mu.Lock()
-	r.lastError = errMsg
-	r.mu.Unlock()
+func outputRefused(stderr string) bool {
+	return strings.Contains(stderr, "already exists. Exiting.")
 }
 
 // Status returns the recorder process status.
@@ -624,17 +644,21 @@ func (r *GenericRecorder) finishEncoder(run encoderRun) {
 	// buffered chunks.
 	close(run.audioCh)
 
+	var finalizeErr error
 	select {
 	case <-run.writerDone:
 		// Writer exited; stdin is idle, so EOF can finalize the file.
 		run.result.CloseStdin()
-		r.drainProcess(run.result)
+		finalizeErr = r.drainProcess(run.result)
 	case <-time.After(writerDrainTimeout):
 		// WriteStdin holds stdinMu; cancel FFmpeg to unblock it.
 		slog.Warn("recorder writer stuck, cancelling ffmpeg to break the pipe", "id", r.id, "file", filepath.Base(run.file))
 		run.result.Cancel(errRecorderStopped)
-		r.drainProcess(run.result)
+		finalizeErr = r.drainProcess(run.result)
 		<-run.writerDone
+	}
+	if finalizeErr != nil && !errors.Is(context.Cause(run.result.Context()), errRecorderStopped) {
+		r.reportError(run.file, finalizeErr)
 	}
 
 	// writerDone has fired; remaining buffered chunks are teardown loss.
@@ -645,7 +669,7 @@ func (r *GenericRecorder) finishEncoder(run encoderRun) {
 	}
 
 	// queueForUpload handles local-only and missing S3 config.
-	if run.file != "" {
+	if run.file != "" && !outputRefused(run.result.Stderr()) {
 		r.queueForUpload(run.file)
 	}
 }
@@ -653,16 +677,21 @@ func (r *GenericRecorder) finishEncoder(run encoderRun) {
 // scheduleRotationLocked arms the rotation for the first hour boundary after
 // from. Must be called with r.mu held.
 func (r *GenericRecorder) scheduleRotationLocked(from time.Time) {
+	if r.rotationTimer != nil {
+		r.rotationTimer.Stop()
+	}
+	r.rotationGeneration++
+	generation := r.rotationGeneration
 	next := from.Truncate(time.Hour).Add(time.Hour)
-	r.rotationTimer = afterFunc(time.Until(next), r.rotateFile)
+	r.rotationTimer = afterFunc(time.Until(next), func() { r.rotateFile(generation) })
 }
 
 // rotateFile hands the recording over to a new file at the hour boundary.
 // The next FFmpeg process starts and takes over the audio before the current
 // one is closed, so no audio is lost between the two files.
-func (r *GenericRecorder) rotateFile() {
+func (r *GenericRecorder) rotateFile(generation uint64) {
 	r.mu.Lock()
-	if r.state != types.ProcessRunning {
+	if r.state != types.ProcessRunning || generation != r.rotationGeneration {
 		r.mu.Unlock()
 		return
 	}
@@ -677,13 +706,12 @@ func (r *GenericRecorder) rotateFile() {
 	previous := r.claimEncoderLocked()
 	r.retiring.Add(1)
 	defer r.retiring.Done()
-	if err := r.startEncoderLocked(at); err != nil {
+	startErr := r.startEncoderLocked(at)
+	failedFile := r.currentFile
+	if startErr != nil {
 		// The current encoder still runs: keep recording into its file instead
 		// of stopping until the hourly retry.
-		slog.Error("failed to start the next hourly file, continuing in the current one",
-			"id", r.id, "file", filepath.Base(previous.file), "error", err)
 		r.result, r.audioCh, r.writerDone, r.currentFile = previous.result, previous.audioCh, previous.writerDone, previous.file
-		r.lastError = err.Error()
 		previous = encoderRun{}
 	} else {
 		r.retiringFiles[previous.file] = struct{}{}
@@ -692,6 +720,9 @@ func (r *GenericRecorder) rotateFile() {
 	}
 	r.scheduleRotationLocked(at)
 	r.mu.Unlock()
+	if startErr != nil {
+		r.reportError(failedFile, startErr)
+	}
 
 	r.finishEncoder(previous)
 	r.mu.Lock()

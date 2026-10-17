@@ -1,6 +1,7 @@
 package recording
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"slices"
@@ -13,7 +14,10 @@ const (
 	// as the FFmpeg path.
 	fakeFFmpegEnv = "ZWFM_RECORDING_FAKE_FFMPEG"
 	// fakeFFmpegFinalizeEnv overrides how long the fake takes to finalize.
-	fakeFFmpegFinalizeEnv = "ZWFM_RECORDING_FAKE_FFMPEG_FINALIZE"
+	fakeFFmpegFinalizeEnv     = "ZWFM_RECORDING_FAKE_FFMPEG_FINALIZE"
+	fakeFFmpegRefuseEnv       = "ZWFM_RECORDING_FAKE_FFMPEG_REFUSE"
+	fakeFFmpegFailFinalizeEnv = "ZWFM_RECORDING_FAKE_FFMPEG_FAIL_FINALIZE"
+	fakeFFmpegFailWriteEnv    = "ZWFM_RECORDING_FAKE_FFMPEG_FAIL_WRITE"
 	// fakeFFmpegFinalize is how long the fake takes to exit after stdin closes,
 	// like a real encoder flushing and finalizing its file.
 	fakeFFmpegFinalize = 100 * time.Millisecond
@@ -43,7 +47,24 @@ func runFakeFFmpeg(args []string) int {
 	if !slices.Contains(args, "-n") {
 		return 2
 	}
-	data, err := io.ReadAll(os.Stdin)
+	output := args[len(args)-1]
+	if os.Getenv(fakeFFmpegRefuseEnv) == "1" {
+		// FFmpeg may consume PCM before discovering that -n refuses the output.
+		if _, err := io.ReadFull(os.Stdin, make([]byte, 4096)); err != nil {
+			return 1
+		}
+		if err := os.WriteFile(output, []byte("another recording"), 0o600); err != nil { //nolint:gosec // Test temp output.
+			return 1
+		}
+		_, _ = fmt.Fprintf(os.Stderr, "File '%s' already exists. Exiting.\n", output)
+		return 0
+	}
+	reader := io.Reader(os.Stdin)
+	failWrite := os.Getenv(fakeFFmpegFailWriteEnv) == "1"
+	if failWrite {
+		reader = io.LimitReader(reader, 4096)
+	}
+	data, err := io.ReadAll(reader)
 	if err != nil {
 		return 1
 	}
@@ -53,7 +74,6 @@ func runFakeFFmpeg(args []string) int {
 	}
 	time.Sleep(finalize)
 
-	output := args[len(args)-1]
 	file, err := os.OpenFile(output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // G304: path comes from the recorder under test.
 	if err != nil {
 		return 1
@@ -63,6 +83,14 @@ func runFakeFFmpeg(args []string) int {
 		return 1
 	}
 	if err := file.Close(); err != nil {
+		return 1
+	}
+	if failWrite {
+		_, _ = fmt.Fprintln(os.Stderr, "simulated write failure")
+		return 1
+	}
+	if os.Getenv(fakeFFmpegFailFinalizeEnv) == "1" {
+		_, _ = fmt.Fprintln(os.Stderr, "Error writing trailer: No space left on device")
 		return 1
 	}
 	return 0
