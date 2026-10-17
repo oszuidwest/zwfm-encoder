@@ -35,6 +35,10 @@ func TestRefusedRecordingIsNotUploaded(t *testing.T) {
 			file := r.currentFile
 			result := r.result
 			r.mu.RUnlock()
+			// Another recording already holds the name when FFmpeg opens it.
+			if err := os.WriteFile(file, []byte("pre-existing recording"), 0o600); err != nil { //nolint:gosec // Test temp output.
+				t.Fatal(err)
+			}
 			if termination == "stop" {
 				r.WriteAudio(make([]byte, 4096))
 				if err := result.Wait(); err != nil {
@@ -61,7 +65,7 @@ func TestRefusedRecordingIsNotUploaded(t *testing.T) {
 			if got := len(uploads()); got != 0 {
 				t.Errorf("uploaded refused file %d times", got)
 			}
-			if data, err := os.ReadFile(file); err != nil || string(data) != "another recording" { //nolint:gosec // Test temp output.
+			if data, err := os.ReadFile(file); err != nil || string(data) != "pre-existing recording" { //nolint:gosec // Test temp output.
 				t.Fatalf("pre-existing recording = %q, %v; want untouched", data, err)
 			}
 			assertRecorderErrorEvent(t, path, filepath.Base(file), "already exists")
@@ -259,4 +263,41 @@ func captureRecorderErrors(t *testing.T) chan slog.Record {
 	slog.SetDefault(slog.New(recorderErrorCapture{Handler: slog.NewTextHandler(io.Discard, nil), logs: logs}))
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	return logs
+}
+
+func TestWriteErrorWithEmptyOutputIsNotRecovered(t *testing.T) {
+	t.Setenv(fakeFFmpegFailWriteEnv, "empty")
+	endpoint, uploads := conditionalPutServer(t, "", func(http.ResponseWriter, string) bool { return false })
+	cfg := testS3Recorder()
+	cfg.RecordingMode, cfg.S3Endpoint = types.RecordingOnDemand, endpoint
+	r, _ := errorTestRecorder(t, cfg)
+	if err := r.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitForRecorderState(t, r, types.ProcessRunning)
+	r.mu.RLock()
+	file, result := r.currentFile, r.result
+	r.mu.RUnlock()
+	deadline := time.Now().Add(3 * time.Second)
+	for r.Status().State == types.ProcessRunning && time.Now().Before(deadline) {
+		r.WriteAudio(make([]byte, 16384))
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := r.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if result.BytesWritten() == 0 {
+		t.Fatal("FFmpeg accepted no PCM; the size check was not reached")
+	}
+	// A queued recovery persists metadata before uploading and an upload removes
+	// the spool file, so both checks hold only if nothing was queued.
+	if metadata, err := os.ReadDir(r.pendingUploadDir()); err == nil && len(metadata) != 0 {
+		t.Fatalf("empty output registered for recovery: %v", metadata)
+	}
+	if info, err := os.Stat(file); err != nil || info.Size() != 0 {
+		t.Fatalf("output = %v, %v; want the fake's empty file left in place", info, err)
+	}
+	if put := len(uploads()); put != 0 {
+		t.Fatalf("empty output uploaded %d times", put)
+	}
 }
