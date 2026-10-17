@@ -454,3 +454,19 @@ func TestConcurrentRetryEnqueueKeepsOnePersistedIdentity(t *testing.T) {
 		t.Fatalf("concurrent enqueue changed/duplicated identity: persisted %+v, queued %+v, %v", persisted, r.retryQueue, err)
 	}
 }
+
+func TestMissingInitialUploadStillReportsFailure(t *testing.T) {
+	t.Parallel()
+	r := NewGenericRecorder(GenericRecorderConfig{Recorder: testS3Recorder(), SpoolDir: t.TempDir()})
+	file := filepath.Join(t.TempDir(), "missing.mp3")
+	r.uploadFile(uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: 5})
+	if r.PendingUploadCount() != 1 || !strings.Contains(r.retryQueue[0].lastError, "open recording for upload") {
+		t.Fatalf("initial upload failure was swallowed: %+v", r.retryQueue)
+	}
+	// A later retry may clean up metadata for a file that really no longer exists.
+	r.processRetryQueue()
+	entries, err := os.ReadDir(r.pendingUploadDir())
+	if err != nil || len(entries) != 0 || r.PendingUploadCount() != 0 {
+		t.Fatalf("missing file retry left metadata: %v, %v, pending %d", entries, err, r.PendingUploadCount())
+	}
+}

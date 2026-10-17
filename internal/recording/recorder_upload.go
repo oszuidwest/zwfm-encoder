@@ -29,7 +29,7 @@ type uploadRequest struct {
 	deleteAfterUpload bool
 }
 
-// pendingUpload tracks a failed upload for retry.
+// pendingUpload carries one upload's identity and retry state.
 type pendingUpload struct {
 	request      uploadRequest
 	baseKey      string
@@ -419,6 +419,11 @@ func (r *GenericRecorder) processRetryQueue() {
 			}
 			continue
 		}
+		if _, err := os.Stat(p.request.localPath); os.IsNotExist(err) {
+			slog.Warn("retry file no longer exists", "id", r.id, "path", p.request.localPath)
+			r.removePendingMetadata(p)
+			continue
+		}
 
 		// Attempt retry
 		p.retryCount++
@@ -442,13 +447,6 @@ func (r *GenericRecorder) processRetryQueue() {
 
 // uploadPending performs the upload and returns true when no retry is needed.
 func (r *GenericRecorder) uploadPending(p *pendingUpload) bool {
-	// Check if file still exists before attempting upload
-	if _, err := os.Stat(p.request.localPath); os.IsNotExist(err) {
-		slog.Warn("retry file no longer exists", "id", r.id, "path", p.request.localPath)
-		r.removePendingMetadata(p)
-		return true // Nothing to upload
-	}
-
 	err := r.doUpload(p)
 	if err != nil {
 		p.lastError = err.Error()
