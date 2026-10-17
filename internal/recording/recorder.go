@@ -23,6 +23,13 @@ import (
 // afterFunc schedules hourly rotations; tests replace it to rotate by hand.
 var afterFunc = time.AfterFunc
 
+// clockSynced and clockSyncPoll gate the first file on a synchronized clock;
+// tests replace them.
+var (
+	clockSynced   = clockSynchronized
+	clockSyncPoll = time.Second
+)
+
 // errRecorderStopped marks intentional stop/rotation cancellation.
 var errRecorderStopped = errors.New("recorder stopped")
 
@@ -55,6 +62,7 @@ type GenericRecorder struct {
 	spoolDir  string
 	state     types.ProcessState
 	lastError string
+	startGen  uint64 // Identifies the latest Start; an older start must not launch.
 
 	// FFmpeg process (encapsulates cmd, stdin, stderr with thread-safe access)
 	result *ffmpeg.StartResult
@@ -85,7 +93,8 @@ type GenericRecorder struct {
 	retryEnqueueMu sync.Mutex // Serializes persistence/publication without holding the state lock over disk I/O.
 
 	// Rotation timer (hourly mode)
-	rotationTimer *time.Timer
+	rotationTimer      *time.Timer
+	rotationGeneration uint64
 	// retiring tracks files that a rotation is still finalizing; Stop waits
 	// for them so they are queued for upload before intake closes.
 	retiring      sync.WaitGroup
@@ -184,6 +193,9 @@ func (r *GenericRecorder) Start() error {
 	if r.state == types.ProcessRunning || r.state == types.ProcessStarting {
 		return ErrAlreadyRecording
 	}
+	if r.state == types.ProcessStopping {
+		return ErrRecorderStopping
+	}
 
 	// Clear any previous error and set starting state
 	r.lastError = ""
@@ -191,12 +203,47 @@ func (r *GenericRecorder) Start() error {
 	r.state = types.ProcessStarting
 
 	// Start async validation and startup
-	go r.startAsync()
+	r.startGen++
+	go r.startAsync(r.startGen)
 
 	return nil
 }
 
-func (r *GenericRecorder) startAsync() {
+// waitForClockSync holds the first file until the system clock is synchronized:
+// file names and retention dates come from it, and a Raspberry Pi has no
+// real-time clock. It reports false when Stop or a newer Start took over.
+func (r *GenericRecorder) waitForClockSync(gen uint64) bool {
+	if clockSynced() {
+		return true
+	}
+	slog.Warn("system clock is not synchronized, recording starts once it is", "id", r.id)
+	for !clockSynced() {
+		r.mu.Lock()
+		current := r.state == types.ProcessStarting && r.startGen == gen
+		if current {
+			r.lastError = "waiting for system clock synchronization"
+		}
+		r.mu.Unlock()
+		if !current {
+			return false
+		}
+		time.Sleep(clockSyncPoll)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current := r.state == types.ProcessStarting && r.startGen == gen
+	if current {
+		r.lastError = ""
+	}
+	return current
+}
+
+func (r *GenericRecorder) startAsync(gen uint64) {
+	// Wait before validating, so a configuration changed meanwhile is the one checked.
+	if !r.waitForClockSync(gen) {
+		return
+	}
+
 	// Read config values we need for validation
 	r.mu.RLock()
 	storageMode := r.config.StorageMode
@@ -231,8 +278,8 @@ func (r *GenericRecorder) startAsync() {
 	// Now lock and start the encoder
 	r.mu.Lock()
 
-	// Re-check state in case Stop() was called during validation
-	if r.state != types.ProcessStarting {
+	// Re-check state in case Stop() or a newer Start() took over during validation
+	if r.state != types.ProcessStarting || r.startGen != gen {
 		r.mu.Unlock()
 		return
 	}
@@ -321,6 +368,7 @@ func (r *GenericRecorder) Stop() error {
 		r.rotationTimer.Stop()
 		r.rotationTimer = nil
 	}
+	r.rotationGeneration++
 	if r.durationTimer != nil {
 		r.durationTimer.Stop()
 		r.durationTimer = nil
@@ -416,7 +464,10 @@ func (r *GenericRecorder) handleWriteError(result *ffmpeg.StartResult, writeErr 
 		r.mu.Unlock()
 		return
 	}
-	r.state = types.ProcessError
+	// A running Stop owns the state; Error would let Start overlap its teardown.
+	if r.state != types.ProcessStopping {
+		r.state = types.ProcessError
+	}
 	r.lastError = writeErr.Error()
 	capturedFile := r.currentFile
 	r.result = nil
@@ -654,16 +705,21 @@ func (r *GenericRecorder) finishEncoder(run encoderRun) {
 // scheduleRotationLocked arms the rotation for the first hour boundary after
 // from. Must be called with r.mu held.
 func (r *GenericRecorder) scheduleRotationLocked(from time.Time) {
+	if r.rotationTimer != nil {
+		r.rotationTimer.Stop()
+	}
+	r.rotationGeneration++
+	generation := r.rotationGeneration
 	next := from.Truncate(time.Hour).Add(time.Hour)
-	r.rotationTimer = afterFunc(time.Until(next), r.rotateFile)
+	r.rotationTimer = afterFunc(time.Until(next), func() { r.rotateFile(generation) })
 }
 
 // rotateFile hands the recording over to a new file at the hour boundary.
 // The next FFmpeg process starts and takes over the audio before the current
 // one is closed, so no audio is lost between the two files.
-func (r *GenericRecorder) rotateFile() {
+func (r *GenericRecorder) rotateFile(generation uint64) {
 	r.mu.Lock()
-	if r.state != types.ProcessRunning {
+	if r.state != types.ProcessRunning || generation != r.rotationGeneration {
 		r.mu.Unlock()
 		return
 	}
@@ -719,7 +775,7 @@ func (r *GenericRecorder) scheduleDurationLimitLocked() {
 }
 
 func (r *GenericRecorder) generateFilename(t time.Time) string {
-	safeName := sanitizeFilename(r.config.Name)
+	safeName := util.SanitizeFilename(r.config.Name)
 	return fmt.Sprintf("%s-%s.%s", safeName, t.Format(recordingTimestampLayout), r.config.Codec.FileExtension())
 }
 
@@ -751,7 +807,7 @@ func (r *GenericRecorder) rememberFilenameLocked(filename string) {
 
 func s3ObjectKey(recorderName, filename string) string {
 	// Prefix: recordings/{sanitized-recorder-name}/filename
-	safeName := sanitizeFilename(recorderName)
+	safeName := util.SanitizeFilename(recorderName)
 	return fmt.Sprintf("recordings/%s/%s", safeName, filename)
 }
 
@@ -762,23 +818,6 @@ func (r *GenericRecorder) isS3Configured() bool {
 
 func (r *GenericRecorder) createS3Client() *s3.Client {
 	return createS3Client(RecorderToS3Config(&r.config))
-}
-
-func sanitizeFilename(name string) string {
-	result := strings.Map(func(c rune) rune {
-		switch {
-		case (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_':
-			return c
-		case c == ' ':
-			return '-'
-		default:
-			return -1
-		}
-	}, name)
-	if result == "" {
-		return "recording"
-	}
-	return result
 }
 
 // TestRecorderS3Connection tests S3 connectivity for a recorder configuration.

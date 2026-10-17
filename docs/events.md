@@ -422,7 +422,7 @@ and recovery settings.
 
 - **Severity:** `success`
 - **UI Label:** Input Restored
-- **Triggered:** When the input has delivered steady audio (no pause over 2 seconds) for 10 seconds again after an `input_lost`. An outage stays open across stopping and starting the encoder within one process, so the first confirmed input after the encoder is started again, also from a newly selected device, closes it. A restart of the process forgets an open outage, so no `input_restored` follows it and the incident stays ongoing. Sent to every channel configured for audio alerts at that moment, each in the order the events happened. When a channel is backed up, its oldest queued input alerts are dropped, so the latest state is never the one dropped.
+- **Triggered:** When the input has delivered steady audio (no pause over 2 seconds) for 10 seconds again after an `input_lost`. An outage stays open across stopping and starting the encoder, so the first confirmed input after the encoder is started again, also from a newly selected device, closes it. After a process restart, the latest input event in the retained active and rotated logs restores an open outage; its duration includes the restart. If that event is already `input_restored`, no extra recovery is sent. Sent to every channel configured for audio alerts at that moment, each in the order the events happened. When a channel is backed up, its oldest queued input alerts are dropped, so the latest state is never the one dropped.
 
 ```json
 {
