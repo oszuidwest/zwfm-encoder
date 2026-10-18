@@ -206,10 +206,38 @@ func newLogger(filePath string, maxSizeBytes int64) (*Logger, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open event log: %w", err)
 	}
+	if err := terminateLogTail(filePath, writer); err != nil {
+		_ = writer.Close()
+		return nil, fmt.Errorf("terminate event log tail: %w", err)
+	}
 	return &Logger{
 		filePath: filePath,
 		writer:   writer,
 	}, nil
+}
+
+func terminateLogTail(filePath string, writer *util.RollingWriter) error {
+	f, err := os.Open(filePath) //nolint:gosec // Same trusted log path already opened by the rolling writer.
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil || info.Size() == 0 {
+		return err
+	}
+	var tail [1]byte
+	if _, err := f.ReadAt(tail[:], info.Size()-1); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	// Isolate a crash fragment without discarding a valid unterminated event.
+	if tail[0] != '\n' {
+		_, err = writer.Write([]byte{'\n'})
+	}
+	return err
 }
 
 // Log writes an event, using the current time if Timestamp is zero.

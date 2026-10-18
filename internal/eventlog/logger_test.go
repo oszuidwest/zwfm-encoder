@@ -23,6 +23,42 @@ func TestDefaultLogPathIsInsideDefaultLogDir(t *testing.T) {
 	}
 }
 
+func TestLoggerSeparatesExistingTailOnReopen(t *testing.T) {
+	t.Parallel()
+	for _, tail := range []string{"", "\n", `{"type":"stream_started","msg":"old"}`, `{"type":`} {
+		t.Run(tail, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "encoder.jsonl")
+			if err := os.WriteFile(path, []byte(tail), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			logger, err := NewLogger(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = logger.Close() }()
+			if err := logger.Log(&Event{Type: InputRestored, Message: "new"}); err != nil {
+				t.Fatal(err)
+			}
+			events, _, err := ReadLast(path, 10, 0, FilterAll)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []string{"new"}
+			if json.Valid([]byte(tail)) {
+				want = append(want, "old")
+			}
+			assertMessages(t, events, want)
+			data, err := os.ReadFile(path) //nolint:gosec // Test-controlled temporary log path.
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(string(data), tail) {
+				t.Fatalf("existing tail changed: %q", data)
+			}
+		})
+	}
+}
+
 func TestReadLastReturnsNewestWithLimitOffsetAndHasMore(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "encoder.jsonl")

@@ -127,6 +127,46 @@ func TestUnreadableInputHistoryDoesNotBlockStartup(t *testing.T) {
 	}
 }
 
+func TestTruncatedLogDoesNotRepeatInputRecoveryAfterReopen(t *testing.T) {
+	path, _ := prepareInputLog(t, "open")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // Test-controlled temporary log path.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`{"type":"input_`); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
+	if err := cfg.Load(); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := range 2 {
+		e, err := newEncoder(cfg, "ffmpeg", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if open := !e.inputLostAt.IsZero(); open != (attempt == 0) {
+			_ = e.Close()
+			t.Fatalf("reopen %d: open outage = %v", attempt, open)
+		}
+		e.state, e.sourceRunID = types.StateRunning, 1
+		e.confirmInput(1, time.Now())
+		e.alertOrchestrator.DrainLogs()
+		e.state = types.StateStopped
+		if err := e.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	events, _, err := eventlog.ReadLast(path, 10, 0, eventlog.FilterInput)
+	if err != nil || len(events) != 2 || events[0].Type != eventlog.InputRestored || events[1].Type != eventlog.InputLost {
+		t.Fatalf("events after two reopens = %+v, %v; want one recovery and one loss", events, err)
+	}
+}
+
 func TestRestoredOutageFromAheadClockHasNoNegativeDuration(t *testing.T) {
 	e := newSourceLifecycleTestEncoder(t, "exit")
 	logPath := attachEventLog(t, e)
