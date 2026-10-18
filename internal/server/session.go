@@ -6,6 +6,7 @@ import (
 	cryptorand "crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"log/slog"
 	"maps"
 	"math/rand/v2"
@@ -21,6 +22,8 @@ const (
 	sessionCookieName = "encoder_session"
 	sessionDuration   = 24 * time.Hour
 	csrfTokenDuration = 10 * time.Minute
+	// maxCSRFTokens bounds the anonymous login-form token pool.
+	maxCSRFTokens = 4096
 )
 
 // A session represents an authenticated user session.
@@ -129,10 +132,8 @@ func (sm *SessionManager) AuthMiddleware() func(http.HandlerFunc) http.HandlerFu
 			if csrf := sm.CSRFToken(r); csrf != "" {
 				if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
 					if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(csrf)) != 1 {
-						// JSON so the page's request helper can show why: usually a tab from an older session.
-						w.Header().Set("Content-Type", "application/json")
-						w.WriteHeader(http.StatusForbidden)
-						_, _ = w.Write([]byte(`{"error":"Invalid CSRF token; reload this page"}`))
+						// Usually a tab from an older session.
+						writeJSONError(w, http.StatusForbidden, "Invalid CSRF token; reload this page")
 						return
 					}
 				}
@@ -143,14 +144,19 @@ func (sm *SessionManager) AuthMiddleware() func(http.HandlerFunc) http.HandlerFu
 
 			if r.Method != http.MethodGet && r.Method != http.MethodHead {
 				// fetch would follow a redirect to the login page and report success.
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusUnauthorized)
-				_, _ = w.Write([]byte(`{"error":"Session expired; reload this page"}`))
+				writeJSONError(w, http.StatusUnauthorized, "Session expired; reload this page")
 				return
 			}
 			http.Redirect(w, r, "/login", http.StatusFound)
 		}
 	}
+}
+
+// writeJSONError uses the {"error": ...} shape that the page's request helper shows.
+func writeJSONError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
 // CSRFToken returns the request's session-bound token, or empty without a live session.
@@ -215,9 +221,11 @@ func (sm *SessionManager) Login(
 	username, password, configUser, configPass, configHash string,
 ) bool {
 	userMatch := subtle.ConstantTimeCompare([]byte(username), []byte(configUser)) == 1
-	passMatch := subtle.ConstantTimeCompare([]byte(password), []byte(configPass)) == 1
+	var passMatch bool
 	if configHash != "" {
-		passMatch = configPass == "" && verifyPasswordHash(r.Context(), password, configHash)
+		passMatch = verifyPasswordHash(r.Context(), password, configHash)
+	} else {
+		passMatch = subtle.ConstantTimeCompare([]byte(password), []byte(configPass)) == 1
 	}
 	if !userMatch || !passMatch {
 		return false
@@ -252,25 +260,22 @@ func (sm *SessionManager) CreateCSRFToken() string {
 
 	now := time.Now()
 
-	// Periodically clean up expired tokens.
-	if rand.IntN(10) == 0 { //nolint:gosec // Non-security random for cleanup timing
+	// Clean up expired tokens periodically, and always when the pool is full.
+	if len(sm.csrfTokens) >= maxCSRFTokens || rand.IntN(10) == 0 { //nolint:gosec // Non-security random for cleanup timing
 		maps.DeleteFunc(sm.csrfTokens, func(_ string, v *csrfToken) bool {
-			return now.After(v.expiresAt)
+			return !now.Before(v.expiresAt)
 		})
 	}
-	if len(sm.csrfTokens) >= 4096 {
-		maps.DeleteFunc(sm.csrfTokens, func(_ string, v *csrfToken) bool { return !now.Before(v.expiresAt) })
-		if len(sm.csrfTokens) >= 4096 {
-			// Anonymous GETs must not prevent every new user from obtaining a login form.
-			var oldestToken string
-			var oldestExpiry time.Time
-			for key, value := range sm.csrfTokens {
-				if oldestToken == "" || value.expiresAt.Before(oldestExpiry) {
-					oldestToken, oldestExpiry = key, value.expiresAt
-				}
+	if len(sm.csrfTokens) >= maxCSRFTokens {
+		// Anonymous GETs must not prevent every new user from obtaining a login form.
+		var oldestToken string
+		var oldestExpiry time.Time
+		for key, value := range sm.csrfTokens {
+			if oldestToken == "" || value.expiresAt.Before(oldestExpiry) {
+				oldestToken, oldestExpiry = key, value.expiresAt
 			}
-			delete(sm.csrfTokens, oldestToken)
 		}
+		delete(sm.csrfTokens, oldestToken)
 	}
 
 	sm.csrfTokens[token] = &csrfToken{

@@ -423,7 +423,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	s.sessions.Logout(w, r)
-	w.WriteHeader(http.StatusNoContent)
+	s.writeNoContent(w)
 }
 
 // staticFile holds an embedded static file with its content type and data.

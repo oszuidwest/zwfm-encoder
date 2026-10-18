@@ -533,12 +533,8 @@ func (c *Config) validateSystem() error {
 		return fmt.Errorf("invalid system.password: is required")
 	}
 	for _, value := range c.System.TrustedProxies {
-		prefix, err := netip.ParsePrefix(value)
-		if err != nil || prefix.Bits() == 0 {
-			return fmt.Errorf("invalid system.trusted_proxies: must contain explicit proxy CIDRs, never /0")
-		}
-		if prefix.Addr().Is4In6() {
-			return fmt.Errorf("invalid system.trusted_proxies: use plain IPv4 CIDRs instead of IPv4-mapped IPv6 %q", value)
+		if _, err := validation.TrustedProxyPrefix(value); err != nil {
+			return fmt.Errorf("invalid system.trusted_proxies: %w", err)
 		}
 	}
 	return nil
