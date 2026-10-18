@@ -81,6 +81,7 @@ func recordOnce(t *testing.T, recorder *GenericRecorder, dir string) []string {
 		t.Fatalf("Start() error = %v", err)
 	}
 	waitForRecorderState(t, recorder, types.ProcessRunning)
+	recorder.WriteAudio([]byte{1, 2, 3, 4})
 	if err := recorder.Stop(); err != nil {
 		t.Fatalf("Stop() error = %v", err)
 	}
