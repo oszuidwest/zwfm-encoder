@@ -48,7 +48,7 @@ type incidentGroupKey struct {
 	incidentID int64
 }
 
-// groupingState tracks incidents while events are processed oldest-first.
+// groupingState tracks incidents while events are processed in append order.
 type groupingState struct {
 	openByKey map[incidentGroupKey]*historicalIncident
 	closed    []*historicalIncident
@@ -134,24 +134,15 @@ func GroupEvents(events []EventView, streamExists func(streamID string) bool) Ev
 		}
 	}
 
-	asc := slices.Clone(grouped)
-	slices.SortStableFunc(asc, compareGroupedEvents)
-
 	state := &groupingState{
 		openByKey: map[incidentGroupKey]*historicalIncident{},
 		closed:    []*historicalIncident{},
 		failed:    []*historicalIncident{},
 	}
-	// Input outages survive restarts, when an unsynchronized clock can go back.
+	// Pair in append order: timestamps can go back after a restart with an
+	// unsynchronized clock or an NTP step, the order of writes cannot.
 	for _, event := range slices.Backward(grouped) {
-		if matchesFilter(event.view.Type, FilterInput) {
-			state.process(event)
-		}
-	}
-	for i := range asc {
-		if !matchesFilter(asc[i].view.Type, FilterInput) {
-			state.process(asc[i])
-		}
+		state.process(event)
 	}
 
 	ongoing := make([]*historicalIncident, 0, len(state.openByKey))
@@ -345,7 +336,7 @@ func audioIncidentForDump(incidents []*historicalIncident, trigger string, incid
 }
 
 func incidentItem(incident *historicalIncident, status string) EventGroupItem {
-	events := incidentEventViews(incident.events)
+	events := groupedEventViews(incident.events)
 	display := incidentDisplayEvent(incident, status)
 	duration := incident.durationMs
 	if duration == 0 {
@@ -770,17 +761,6 @@ func groupedEventViews(events []groupedEvent) []EventView {
 		views[i] = *events[i].view
 	}
 	return views
-}
-
-func incidentEventViews(events []groupedEvent) []EventView {
-	ordered := slices.Clone(events)
-	slices.SortStableFunc(ordered, compareGroupedEvents)
-	return groupedEventViews(ordered)
-}
-
-// compareGroupedEvents orders events chronologically with stable ties.
-func compareGroupedEvents(a, b groupedEvent) int {
-	return cmp.Or(a.view.Timestamp.Compare(b.view.Timestamp), a.id-b.id)
 }
 
 func sortItemsDesc(items []EventGroupItem) {

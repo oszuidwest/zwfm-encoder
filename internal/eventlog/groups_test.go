@@ -858,3 +858,30 @@ func TestGroupEventsPairsInputByAppendOrderAfterClockRollback(t *testing.T) {
 		})
 	}
 }
+
+func TestGroupEventsPairsStreamAndSilenceByAppendOrderAfterClockRollback(t *testing.T) {
+	t.Parallel()
+	base := time.Date(2026, 10, 16, 3, 0, 0, 0, time.UTC)
+	// Each recovery is appended after its problem but stamped an hour earlier.
+	events := decorateNewestFirst(
+		testEvent(base, -3600, StreamStarted, map[string]any{"stream_name": "Listener", "mode": "listener"}),
+		testEvent(base, -3600, SilenceEnd, map[string]any{"incident_id": 7}),
+		testEvent(base, 0, SilenceStart, map[string]any{"incident_id": 7}),
+		testEvent(base, 0, StreamError, map[string]any{"stream_name": "Listener", "mode": "listener", "error": "encoder exited"}),
+	)
+	for i := range events {
+		if matchesFilter(events[i].Type, FilterStream) {
+			events[i].StreamID = "listener"
+		}
+	}
+	groups := GroupEvents(events, nil)
+	if len(groups.Attention) != 0 || len(groups.Resolved) != 2 {
+		t.Fatalf("groups = %+v, want both incidents resolved", groups)
+	}
+	for _, item := range groups.Resolved {
+		if last := item.Events[len(item.Events)-1].Type; last != StreamStarted && last != SilenceEnd {
+			t.Fatalf("%s lists %q last, want its recovery", item.Title, last)
+		}
+	}
+	assertPartition(t, events, &groups)
+}
