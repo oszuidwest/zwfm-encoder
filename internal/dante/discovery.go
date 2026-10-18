@@ -246,7 +246,7 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 	buffer := make([]byte, 65535)
 	nextQuery := time.Time{}
 	var info channelInfo
-	var lastParseErr error
+	var lastResponseErr error
 
 	for {
 		now := time.Now()
@@ -267,13 +267,14 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 		if err != nil {
 			if lookupErr := lookupCtx.Err(); lookupErr != nil {
 				if contextErr := ctx.Err(); contextErr != nil {
-					return channelInfo{}, fmt.Errorf("discover channel %q: %w", channel, contextErr)
+					lookupErr = contextErr
 				}
-				if lastParseErr != nil {
+				if lastResponseErr != nil {
 					return channelInfo{}, fmt.Errorf(
-						"discover channel %q timed out after malformed response: %w",
+						"discover channel %q: %w; last rejected reply: %w",
 						channel,
-						lastParseErr,
+						lookupErr,
+						lastResponseErr,
 					)
 				}
 				return channelInfo{}, fmt.Errorf("discover channel %q: %w", channel, lookupErr)
@@ -284,12 +285,13 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 			return channelInfo{}, fmt.Errorf("receive discovery response for %q: %w", channel, err)
 		}
 
-		if !validDiscoverySource(source, ifIndex, networks) {
+		if err := validateDiscoverySource(source, ifIndex, networks); err != nil {
+			lastResponseErr = fmt.Errorf("from %v: %w", source, err)
 			continue
 		}
 		complete, parseErr := mergeDiscoveryResponse(&info, buffer[:n], source.IP, instance, requiredSource)
 		if parseErr != nil {
-			lastParseErr = parseErr
+			lastResponseErr = fmt.Errorf("malformed response from %v: %w", source, parseErr)
 			continue
 		}
 		if complete {
@@ -314,15 +316,27 @@ func discoveryNetworks(interfaces []net.Interface) (map[int][]*net.IPNet, error)
 	return networks, nil
 }
 
-func validDiscoverySource(source *net.UDPAddr, ifIndex int, networks map[int][]*net.IPNet) bool {
+func validateDiscoverySource(source *net.UDPAddr, ifIndex int, networks map[int][]*net.IPNet) error {
 	// A packet without receive-interface metadata (index 0) is never trusted.
-	if source == nil || source.Port != 5353 || ifIndex <= 0 {
-		return false
+	if source == nil {
+		return errors.New("missing UDP source")
+	}
+	if source.Port != 5353 {
+		return fmt.Errorf("source port %d is not mDNS port 5353", source.Port)
+	}
+	if ifIndex <= 0 {
+		return errors.New("missing receiving interface")
+	}
+	if _, ok := networks[ifIndex]; !ok {
+		return fmt.Errorf("receiving interface %d was not selected", ifIndex)
 	}
 	// RFC 6762 section 11 checks legacy unicast replies against local subnets.
-	return slices.ContainsFunc(networks[ifIndex], func(network *net.IPNet) bool {
+	if !slices.ContainsFunc(networks[ifIndex], func(network *net.IPNet) bool {
 		return network.Contains(source.IP)
-	})
+	}) {
+		return fmt.Errorf("source is outside receiving interface %d IPv4 subnets", ifIndex)
+	}
+	return nil
 }
 
 // sendDiscoveryQuery succeeds when any interface accepts the query.

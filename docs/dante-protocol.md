@@ -81,7 +81,7 @@ Validation after resolving both channels:
 
 Local address selection:
 
-- With `interface`: the first non-loopback IPv4 address of that interface; the interface must be up and multicast-capable.
+- With `interface`: a non-loopback IPv4 address of that interface whose subnet contains the transmitter; the interface must be up and multicast-capable. Fail with an explicit subnet error if no address matches.
 - Without: the source address the operating system would use to reach the transmitter (for example via the local address of a connected UDP socket).
 
 ## 4. Flow control protocol (UDP)
