@@ -151,7 +151,11 @@ func TestStopCancelsSourceBeforeStoppingConsumers(t *testing.T) {
 		log.SetFlags(previousFlags)
 	})
 	go func() { stopped <- e.Stop() }()
-	<-entered
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Stop did not reach the recording manager stop")
+	}
 	select {
 	case <-canceled:
 	case <-time.After(time.Second):
