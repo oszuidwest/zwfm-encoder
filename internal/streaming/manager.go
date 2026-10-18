@@ -211,7 +211,8 @@ func (m *Manager) Start(stream *types.Stream) (bool, error) {
 }
 
 // StartIfActive checks source ownership under the same map lock used by Stop.
-// The predicate must not call this manager.
+// The predicate runs under that lock, so it must not take a lock that is held
+// while calling into this manager.
 func (m *Manager) StartIfActive(stream *types.Stream, active func() bool) (bool, error) {
 	started, err := m.start(stream, nil, active)
 	return started != nil, err
@@ -220,16 +221,12 @@ func (m *Manager) StartIfActive(stream *types.Stream, active func() bool) (bool,
 // start launches stream and returns the running entry, or nil when it did not
 // create one. A non-nil expected restricts the launch to replacing that exact
 // entry, so a retry monitor cannot revive a stream that Stop already removed.
-func (m *Manager) start(stream *types.Stream, expected *Stream, active func() bool) (started *Stream, err error) {
+func (m *Manager) start(stream *types.Stream, expected *Stream, active func() bool) (*Stream, error) {
 	placeholder, ctx, err := m.claimStream(stream, stream.ModeOrDefault(), expected, active)
 	if placeholder == nil {
 		return nil, err
 	}
-	defer func() {
-		if started == nil {
-			placeholder.cancel(err)
-		}
-	}()
+	// Stop may have cancelled the claim while old resources were released.
 	if err := ctx.Err(); err != nil {
 		m.removePlaceholder(stream.ID, placeholder)
 		return nil, err
@@ -654,9 +651,10 @@ func (m *Manager) Stop(streamID string) error {
 	//    Writer's for-range will exit after draining remaining items.
 	stream.closeAudioCh()
 
-	// 2. Cancel context - marks stop as intentional. For stream processes
-	//    (no cmd.Cancel set), exec.CommandContext sends SIGKILL, breaking
-	//    the pipe and unblocking any writer stuck in stdin.Write().
+	// 2. Cancel the process. The stream's own cancel above already did, as
+	//    the parent of the process context; this keeps the cause explicit.
+	//    For stream processes (no cmd.Cancel set), exec.CommandContext sends
+	//    SIGKILL, breaking the pipe and unblocking a writer in stdin.Write().
 	result.Cancel(errStoppedByUser)
 
 	// 3. Wait for process exit with timeout escalation.

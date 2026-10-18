@@ -54,26 +54,23 @@ func (m *Manager) Start() {
 	m.StartIfActive(nil)
 }
 
-// StartIfActive checks source ownership while serialized with Stop.
-// The predicate must not call this manager.
+// StartIfActive checks source ownership while serialized with Stop. The
+// predicate runs under the manager lock, so it must not take a lock that is
+// held while calling into this manager.
 func (m *Manager) StartIfActive(active func() bool) {
 	m.mu.Lock()
-	if active != nil && !active() {
-		m.mu.Unlock()
-		return
+	start := !m.running && (active == nil || active())
+	if start {
+		m.running = true
+		m.cleanupStopCh = make(chan struct{})
+		m.startCleanupScheduler(m.cleanupStopCh)
 	}
-
-	if m.running {
-		m.mu.Unlock()
-		return
-	}
-
-	m.running = true
-	m.cleanupStopCh = make(chan struct{})
-	m.startCleanupScheduler(m.cleanupStopCh)
 	m.mu.Unlock()
 
-	slog.Info("audio incident dump manager started", "enabled", m.Enabled())
+	// Logged outside the lock, so a slow log handler cannot delay Stop.
+	if start {
+		slog.Info("audio incident dump manager started", "enabled", m.Enabled())
+	}
 }
 
 // Enabled reports whether dump capture is active.

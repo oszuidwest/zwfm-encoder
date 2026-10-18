@@ -60,11 +60,6 @@ func StartProcessContext(ctx context.Context, ffmpegPath string, args []string) 
 	return startProcess(ctx, ffmpegPath, args, false)
 }
 
-// StartProcessWithStdout launches an FFmpeg subprocess with stdout available through [StartResult.Stdout].
-func StartProcessWithStdout(ffmpegPath string, args []string) (*StartResult, error) {
-	return StartProcessWithStdoutContext(context.Background(), ffmpegPath, args)
-}
-
 // StartProcessWithStdoutContext is StartProcessContext with a readable stdout pipe.
 func StartProcessWithStdoutContext(ctx context.Context, ffmpegPath string, args []string) (*StartResult, error) {
 	return startProcess(ctx, ffmpegPath, args, true)

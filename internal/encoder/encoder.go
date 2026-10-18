@@ -86,6 +86,8 @@ type Encoder struct {
 	sourceLoopDone      chan struct{}
 	state               types.EncoderState
 	stopChan            chan struct{}
+	// Never call a running stream, recording or dump manager while holding mu:
+	// they evaluate consumerStartAllowed under their own locks.
 	mu                  sync.RWMutex
 	closeOnce           sync.Once
 	closeErr            error
@@ -587,10 +589,7 @@ func (e *Encoder) RestartStream(streamID string) {
 		case <-stopChan:
 			return
 		}
-		if !e.sourceRunActive(runID) {
-			return
-		}
-		if err := e.startStream(streamID, runID); err != nil {
+		if err := e.startStream(streamID, runID); err != nil && !errors.Is(err, ErrNotRunning) {
 			slog.Warn("failed to restart stream", "stream_id", streamID, "error", err)
 		}
 	}()
@@ -962,12 +961,6 @@ func (e *Encoder) audioTimes(runID uint64) (steadySince, last time.Time) {
 	return e.steadyAudioSince, e.lastAudioAt
 }
 
-func (e *Encoder) sourceRunActive(runID uint64) bool {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.sourceRunID == runID && e.state == types.StateRunning && e.sourceStdout != nil
-}
-
 func (e *Encoder) consumerStartAllowed(runID uint64, stopChan <-chan struct{}) bool {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -988,13 +981,10 @@ func (e *Encoder) startEnabledStreams(runID uint64) {
 		e.silenceDumpManager.StartIfActive(active)
 	}
 
-	if !e.sourceRunActive(runID) {
-		return
-	}
-
 	streams := e.config.ConfiguredStreams()
 	for i := range streams {
-		if !e.sourceRunActive(runID) {
+		// Also stops the loop from logging start failures for an ended run.
+		if !active() {
 			return
 		}
 		stream := &streams[i]
@@ -1005,10 +995,6 @@ func (e *Encoder) startEnabledStreams(runID uint64) {
 		if err := e.startStream(stream.ID, runID); err != nil {
 			slog.Error("failed to start stream", "stream_id", stream.ID, "error", err)
 		}
-	}
-
-	if !e.sourceRunActive(runID) {
-		return
 	}
 
 	if e.recordingManager != nil {
