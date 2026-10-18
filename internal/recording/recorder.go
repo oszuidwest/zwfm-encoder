@@ -825,9 +825,8 @@ func (r *GenericRecorder) rotateFile(generation uint64) {
 
 	// Process the retry queue off the rotation path: a slow or unreachable S3
 	// endpoint may block for many minutes per pending file, and Stop waits for
-	// this rotation through retiring. Safe concurrently:
-	// the queue is snapshotted and cleared under r.mu, so an overlapping run
-	// sees it empty.
+	// this rotation through retiring. Safe concurrently: an overlapping run
+	// returns at once while a batch owns its paths.
 	go r.processRetryQueue()
 }
 

@@ -371,8 +371,11 @@ func (r *GenericRecorder) enqueuePendingUpload(pending *pendingUpload) {
 	slog.Info("upload queued for retry", "id", r.id, "file", filepath.Base(pending.request.localPath))
 }
 
-// processRetryQueue attempts to upload all pending files.
-// Called from rotateFile() at hour boundaries.
+// processRetryQueue attempts to upload all pending files. It runs at hour
+// boundaries, at manager startup and after write-error recovery. A call while
+// another batch runs returns at once, because a second batch could upload a
+// path the first one still owns; files queued meanwhile stay persisted in the
+// spool for a later batch.
 func (r *GenericRecorder) processRetryQueue() {
 	if !r.retryProcessMu.TryLock() {
 		return // Another batch is already processing this recorder's uploads.

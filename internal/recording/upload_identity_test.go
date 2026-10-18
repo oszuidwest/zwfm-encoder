@@ -16,7 +16,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
@@ -465,31 +464,25 @@ func TestRetryEnqueueWhileUploadIsInFlightKeepsIdentity(t *testing.T) {
 			req := uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: 5, deleteAfterUpload: true}
 			r.addToRetryQueue(req, "down")
 			originalID := r.retryQueue[0].uploadID
-			entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			type snapshot struct {
+				persisted []pendingUpload
+				err       error
+			}
+			seen := make(chan snapshot, 1)
 			var once sync.Once
-			unblock := func() { once.Do(func() { close(release) }) }
-			store.beforeWrite = func(string) { close(entered); <-release }
-			go func() { defer close(done); r.processRetryQueue() }()
-			t.Cleanup(func() {
-				unblock()
-				select {
-				case <-done:
-				case <-time.After(10 * time.Second):
-					t.Error("retry did not finish after releasing the test store")
-				}
-			})
-			select {
-			case <-entered:
-			case <-time.After(10 * time.Second):
-				t.Fatal("retry did not reach the test store")
+			// While the upload request is open, enqueue the same file again.
+			store.beforeWrite = func(string) {
+				once.Do(func() {
+					r.addToRetryQueue(req, "duplicate while retrying")
+					persisted, err := r.loadPendingUploads()
+					seen <- snapshot{persisted, err}
+				})
 			}
-			r.addToRetryQueue(req, "duplicate while retrying")
-			persisted, err := r.loadPendingUploads()
-			if err != nil || len(persisted) != 1 || persisted[0].uploadID != originalID {
-				t.Fatalf("in-flight enqueue replaced identity: %+v, %v; want %s", persisted, err, originalID)
+			r.processRetryQueue()
+			got := <-seen
+			if got.err != nil || len(got.persisted) != 1 || got.persisted[0].uploadID != originalID {
+				t.Fatalf("in-flight enqueue replaced identity: %+v, %v; want %s", got.persisted, got.err, originalID)
 			}
-			unblock()
-			<-done
 			want := 0
 			if fail {
 				want = 1
@@ -504,6 +497,29 @@ func TestRetryEnqueueWhileUploadIsInFlightKeepsIdentity(t *testing.T) {
 				t.Fatal("completed batch retained in-flight ownership")
 			}
 		})
+	}
+}
+
+func TestOverlappingRetryBatchLeavesQueuedUploadsAlone(t *testing.T) {
+	t.Parallel()
+	store, cfg := newIdentityStore(t)
+	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
+	file := writeSpoolFile(t, r.spoolDir, r.id, filepath.Base(uploadTestKey), "audio")
+	r.addToRetryQueue(uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: 5, deleteAfterUpload: true}, "down")
+	queued := filepath.Join(r.spoolDir, "queued-meanwhile.mp3")
+	var once sync.Once
+	// While the first batch uploads, queue another file and start a second batch.
+	store.beforeWrite = func(string) {
+		once.Do(func() {
+			r.addToRetryQueue(uploadRequest{localPath: queued, s3Key: "queued-meanwhile.mp3", fileSize: 5}, "queued meanwhile")
+			r.processRetryQueue()
+		})
+	}
+	r.processRetryQueue()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.retryQueue) != 1 || r.retryQueue[0].request.localPath != queued {
+		t.Fatalf("queue = %+v, want only the file queued during the first batch, untouched by the overlap", r.retryQueue)
 	}
 }
 
