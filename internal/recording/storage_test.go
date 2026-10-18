@@ -448,8 +448,8 @@ func TestRestartClosesStorageIncidentLeftOpen(t *testing.T) {
 				t.Fatal(err)
 			}
 			old.checkStorage(old.cleanupStopCh) // The process stops with the incident open.
-			if mode == "buried" { // More than ReadLast's limit of unrelated events.
-				for range 600 {
+			if mode == "buried" {
+				for range 600 { // More than ReadLast's limit of unrelated events.
 					_ = logger.Log(&eventlog.Event{Type: eventlog.RecorderStarted, Message: "unrelated"})
 				}
 			}
