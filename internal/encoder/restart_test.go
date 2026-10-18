@@ -3,6 +3,9 @@ package encoder
 import (
 	"context"
 	"errors"
+	"io"
+	"log"
+	"log/slog"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -126,6 +129,11 @@ func TestExplicitStopSupersedesRestartsWaitingForTeardown(t *testing.T) {
 		synctest.Wait()
 		go func() { stopped <- e.Stop() }()
 		synctest.Wait()
+		select {
+		case <-stopped:
+			t.Fatal("Stop during a stop returned before the source finished its teardown")
+		default:
+		}
 		close(release)
 		<-stopped
 		<-first
@@ -182,6 +190,141 @@ func TestStopAfterBackgroundRestartRequestWins(t *testing.T) {
 		synctest.Wait()
 		if e.State() != types.StateStopped || opens.Load() != 1 {
 			t.Fatalf("state=%s, opens=%d; a Stop after the restart request must win", e.State(), opens.Load())
+		}
+	})
+}
+
+// countingLog counts records with one message.
+type countingLog struct {
+	slog.Handler
+	message string
+	count   atomic.Int32
+}
+
+//nolint:gocritic // slog.Handler requires the record to be passed by value.
+func (h *countingLog) Handle(ctx context.Context, record slog.Record) error {
+	if record.Message == h.message {
+		h.count.Add(1)
+	}
+	return h.Handler.Handle(ctx, record)
+}
+
+func TestBackgroundRestartRequestsCollapseIntoOne(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		e, _ := startDanteEncoder(t, heldTeardown(release))
+		stops := &countingLog{Handler: slog.NewTextHandler(io.Discard, nil), message: "source capture stopped gracefully"}
+		previous, previousOutput, previousFlags := slog.Default(), log.Writer(), log.Flags()
+		slog.SetDefault(slog.New(stops))
+		defer func() {
+			slog.SetDefault(previous)
+			log.SetOutput(previousOutput)
+			log.SetFlags(previousFlags)
+		}()
+		// Hold the gate, so all requests arrive before the first restart stops it.
+		e.mu.Lock()
+		if e.restartGate == nil {
+			e.restartGate = make(chan struct{}, 1)
+		}
+		gate := e.restartGate
+		e.mu.Unlock()
+		gate <- struct{}{}
+		for range 5 {
+			e.RestartInBackground()
+		}
+		<-gate
+		close(release)
+		time.Sleep(time.Minute) // Fake time: lets every background restart finish.
+		synctest.Wait()
+		// The first restart and one more for the requests queued behind it.
+		if e.State() != types.StateRunning || stops.count.Load() != 2 {
+			t.Fatalf("state=%s, stop cycles=%d; want queued requests to collapse into one restart", e.State(), stops.count.Load())
+		}
+	})
+}
+
+func TestSlowRestartIsReportedWhileItWaits(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		e, _ := startDanteEncoder(t, heldTeardown(release))
+		done := make(chan error, 1)
+		go func() { done <- e.Restart() }()
+		time.Sleep(restartTimeout + time.Millisecond)
+		synctest.Wait()
+		if got := e.Status().LastError; !strings.Contains(got, "still waiting") {
+			t.Fatalf("last error while the restart waits = %q, want it to say so", got)
+		}
+		close(release)
+		<-done
+	})
+}
+
+func TestInputChangeStartsEncoderLeftStoppedByAFailure(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e, _ := startDanteEncoder(t, slowTeardown(0))
+		e.config.Audio.Input = ""
+		if err := e.Restart(); !errors.Is(err, ErrNoAudioInput) {
+			t.Fatalf("Restart without input = %v, want ErrNoAudioInput", err)
+		}
+		e.config.Audio.Input = "dante://tx/Left/Right"
+		e.RestartInBackground()
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		if e.State() != types.StateRunning {
+			t.Fatalf("state=%s; a working input must start an encoder a failure stopped", e.State())
+		}
+		if err := e.Stop(); err != nil {
+			t.Fatal(err)
+		}
+		e.RestartInBackground()
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		if e.State() != types.StateStopped {
+			t.Fatal("an input change started an encoder the operator stopped")
+		}
+	})
+}
+
+func TestStaleRestartLeavesOperatorRunAlone(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e, opens := startDanteEncoder(t, slowTeardown(0))
+		e.mu.RLock()
+		stale := e.lifecycleGeneration
+		e.mu.RUnlock()
+		if err := e.Stop(); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.Start(); err != nil {
+			t.Fatal(err)
+		}
+		synctest.Wait()
+		if err := e.restart(stale); err != nil {
+			t.Fatal(err)
+		}
+		synctest.Wait()
+		if e.State() != types.StateRunning || opens.Load() != 2 {
+			t.Fatalf("state=%s, opens=%d; a stale restart must not stop the operator's run", e.State(), opens.Load())
+		}
+	})
+}
+
+func TestStallNoticeEndsWithTheRestart(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		e, _ := startDanteEncoder(t, heldTeardown(release))
+		done := make(chan error, 1)
+		go func() { done <- e.Restart() }()
+		time.Sleep(restartTimeout + time.Millisecond)
+		synctest.Wait()
+		// An explicit Stop supersedes the restart; its notice must not stay behind.
+		stopped := make(chan error, 1)
+		go func() { stopped <- e.Stop() }()
+		close(release)
+		<-done
+		<-stopped
+		synctest.Wait()
+		if got := e.Status().LastError; got != "" {
+			t.Fatalf("last error after a superseded restart = %q, want none", got)
 		}
 	})
 }

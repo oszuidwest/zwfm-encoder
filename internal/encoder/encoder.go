@@ -89,8 +89,13 @@ type Encoder struct {
 	sourceRunID         uint64
 	sourceLoopDone      chan struct{}
 	stopDone            chan struct{}
+	consumersStopped    chan struct{} // Closed once the current Stop has stopped streams and recorders.
 	restartGate         chan struct{} // Serializes restarts; initialized under mu.
 	lifecycleGeneration uint64        // Explicit Stop invalidates already pending restarts; protected by mu.
+	operatorStopped     bool          // The last stop was an explicit Stop; protected by mu.
+	restarting          bool          // A background restart runs; protected by mu.
+	restartAgain        bool          // Another background restart was requested meanwhile; protected by mu.
+	restartAgainGen     uint64        // lifecycleGeneration of that request; protected by mu.
 	state               types.EncoderState
 	stopChan            chan struct{}
 	mu                  sync.RWMutex
@@ -445,6 +450,9 @@ func (e *Encoder) start(expectedGeneration *uint64) error {
 	if expectedGeneration != nil && e.lifecycleGeneration != *expectedGeneration {
 		return nil // Superseded by an explicit Stop.
 	}
+	if expectedGeneration == nil {
+		e.operatorStopped = false
+	}
 	if !e.FFmpegAvailable() {
 		return ErrFFmpegNotAvailable
 	}
@@ -484,6 +492,7 @@ func (e *Encoder) stop(expectedGeneration *uint64) error {
 	e.mu.Lock()
 	if expectedGeneration == nil {
 		e.lifecycleGeneration++
+		e.operatorStopped = true
 	} else if e.lifecycleGeneration != *expectedGeneration {
 		e.mu.Unlock()
 		return nil
@@ -494,14 +503,18 @@ func (e *Encoder) stop(expectedGeneration *uint64) error {
 		return nil
 	}
 	if e.state == types.StateStopping {
-		done := e.stopDone
+		// Like the first Stop, wait for streams and recorders before timing the
+		// source, so a shutdown cannot exit during a final upload.
+		consumers, done := e.consumersStopped, e.stopDone
 		e.mu.Unlock()
+		<-consumers
 		return waitForSourceStop(done)
 	}
 
 	e.state = types.StateStopping
 	e.stopDone = make(chan struct{})
-	stopped := e.stopDone
+	e.consumersStopped = make(chan struct{})
+	stopped, consumersStopped := e.stopDone, e.consumersStopped
 
 	if e.stopChan != nil {
 		close(e.stopChan)
@@ -512,6 +525,7 @@ func (e *Encoder) stop(expectedGeneration *uint64) error {
 	e.mu.Unlock()
 
 	errs := e.stopConsumers()
+	close(consumersStopped)
 
 	// Cancellation closes native inputs and gracefully stops capture processes.
 	if sourceCancel != nil {
@@ -584,21 +598,40 @@ func (e *Encoder) Restart() error {
 	return e.restart(generation)
 }
 
-// RestartInBackground restarts a running or starting encoder without waiting.
-// An explicit Stop after this call supersedes the restart.
+// RestartInBackground restarts the encoder without waiting, unless an explicit
+// Stop left it stopped; one stopped by a failed start or restart starts again.
+// An explicit Stop after this call supersedes the restart. Requests made while
+// a restart runs collapse into one more restart, which picks up the newest
+// settings.
 func (e *Encoder) RestartInBackground() {
-	e.mu.RLock()
-	active := e.state == types.StateRunning || e.state == types.StateStarting
-	generation := e.lifecycleGeneration
-	e.mu.RUnlock()
-	if !active {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	failedStop := e.state == types.StateStopped && !e.operatorStopped
+	if e.state != types.StateRunning && e.state != types.StateStarting && !failedStop {
 		return
 	}
-	go func() {
+	if e.restarting {
+		e.restartAgain, e.restartAgainGen = true, e.lifecycleGeneration
+		return
+	}
+	e.restarting = true
+	go e.restartUntilSettled(e.lifecycleGeneration)
+}
+
+func (e *Encoder) restartUntilSettled(generation uint64) {
+	for {
 		if err := e.restart(generation); err != nil {
 			slog.Error("failed to restart encoder", "error", err)
 		}
-	}()
+		e.mu.Lock()
+		if !e.restartAgain {
+			e.restarting = false
+			e.mu.Unlock()
+			return
+		}
+		generation, e.restartAgain = e.restartAgainGen, false
+		e.mu.Unlock()
+	}
 }
 
 func (e *Encoder) restart(generation uint64) (err error) {
@@ -624,7 +657,27 @@ func (e *Encoder) restart(generation uint64) (err error) {
 	}()
 
 	// Not bounded either: consumers can take long to stop (a final upload),
-	// and giving up would leave the encoder stopped for good.
+	// and giving up would leave the encoder stopped for good. Say so if it
+	// takes that long.
+	const stallMessage = "audio input restart is still waiting for streams and recordings to stop"
+	finished := false // protected by e.mu
+	stalled := time.AfterFunc(restartTimeout, func() {
+		e.mu.Lock()
+		if !finished && e.lifecycleGeneration == generation {
+			e.lastError = stallMessage
+		}
+		e.mu.Unlock()
+	})
+	// Runs before the failure defer above, so a failure still replaces it.
+	defer func() {
+		stalled.Stop()
+		e.mu.Lock()
+		finished = true
+		if e.lastError == stallMessage {
+			e.lastError = ""
+		}
+		e.mu.Unlock()
+	}()
 	if stopErr := e.stop(&generation); stopErr != nil {
 		slog.Warn("stop reported an error before restart", "error", stopErr)
 	}
@@ -638,7 +691,7 @@ func (e *Encoder) restart(generation uint64) (err error) {
 			return fmt.Errorf("source teardown did not finish within %s", restartTimeout)
 		}
 	}
-	// A Start from the UI or tray may already have brought the encoder up.
+	// A Start from the tray may already have brought the encoder up.
 	if err := e.start(&generation); !errors.Is(err, ErrAlreadyRunning) {
 		return err
 	}
