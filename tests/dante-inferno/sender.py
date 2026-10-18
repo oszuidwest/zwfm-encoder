@@ -27,7 +27,6 @@ start(['aplay', '-D', 'inferno', '-t', 'raw', '-c', '2', '-r', '48000',
 tone.stdout.close()
 time.sleep(3)
 start(['python3', '-u', '/test/relay.py'], 'relay')
-print('READY: Inferno 9767558, stereo 440/880 Hz, 48kHz', flush=True)
 while True:
     time.sleep(1)
     assert all(p.poll() is None for p in children), 'sender process exited'

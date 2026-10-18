@@ -40,7 +40,8 @@ docker run -d --init --name "$name-sender" --network "$network_id" \
     "$runtime_image" python3 -u /test/sender.py >/dev/null
 ready=false
 for _ in {1..30}; do
-    if grep -q '^READY:' <(docker logs "$name-sender"); then
+    # The relay prints this banner only after it has bound its socket.
+    if grep -q '^Legacy reply destination adapter:' "$audit_dir/relay.log" 2>/dev/null; then
         ready=true
         break
     fi
