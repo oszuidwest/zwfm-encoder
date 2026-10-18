@@ -90,11 +90,8 @@ func installerAdminFragment(t *testing.T) string {
 		t.Fatal("installer config block end not found")
 	}
 	// Exercise the actual block, without running root/service/network operations.
-	preamble, _, found := strings.Cut(string(script), "# Configuration\n")
-	if !found {
-		t.Fatal("installer preamble missing")
-	}
-	return preamble + "\n# Generate configuration file using jq" + fragment
+	// The binary's capabilities are captured once, right after its download.
+	return installerPreamble(t) + "ENCODER_HELP=$(\"${INSTALL_DIR}/encoder\" -help 2>&1)\n# Generate configuration file using jq" + fragment
 }
 
 func TestInstallerBindChoice(t *testing.T) {

@@ -254,7 +254,7 @@ In `config.json`, replace `system.password` with `system.password_hash` containi
 
 Existing plaintext credentials and omitted `bind_address` remain supported so an update does not lock out a LAN appliance; loading an existing config does not rewrite it. Migrate credentials explicitly using the steps above. New configs and fresh installer runs store hashed credentials and allow direct LAN/VPN access by default; the installer also offers local-only binding (`127.0.0.1`). An omitted or empty bind retains the legacy all-interface listener. If the installer downloads an older binary without `-hash-password`, it warns and retains the legacy plaintext field until you upgrade and migrate; older binaries also ignore `bind_address`, so keep those behind a firewall. Config files and old backups may contain other secrets, so keep them owner-only (`0600`) and protect/delete recovery copies according to your retention policy. Older releases cannot read `password_hash`; restore a plaintext `system.password` before downgrading.
 
-The installer prompts for a non-empty password without echo. Non-interactive `WEB_PASSWORD` remains supported, but its export attribute is removed before any child process is started, and hashing receives it only on stdin. Failed steps report an error and warn when the encoder may still be stopped; inspect the installer output and service logs before restarting it. Installation is not an automatic rollback of a failed binary/configuration replacement. The completion URL uses the already captured binary capabilities, not a second help probe.
+The installer prompts for a non-empty password without echo. Non-interactive `WEB_PASSWORD` remains supported, but its export attribute is removed before any child process is started, and hashing receives it only on stdin. Failed steps report an error and warn when the encoder may still be stopped; inspect the installer output and service logs before restarting it. Installation is not an automatic rollback of a failed binary/configuration replacement.
 
 ### Optional HTTPS reverse proxy
 
@@ -283,7 +283,7 @@ The username budget is intentionally shared across clients to resist distributed
 
 Malformed client addresses from a trusted proxy return HTTP 400 with a forwarding-configuration hint, not a misleading 429 or a retry delay. Neither the shared proxy nor account budget is consumed. Untrusted forwarding headers are still ignored.
 
-WebSocket handshakes also enforce [same origin: scheme, host and effective port](https://www.rfc-editor.org/rfc/rfc6454#section-5). Private and loopback addresses have no cross-origin exemption. Preserve the original Host including its external port at a proxy; `X-Forwarded-Proto` is accepted for WebSocket origin checks only from an explicitly configured `trusted_proxies` peer. Non-browser clients may omit Origin but still need a valid session.
+WebSocket handshakes get the same cross-origin check as every other browser request, so a page on another port of the same host or on another private address cannot open the live socket. Preserve the original Host including its external port at a proxy. Non-browser clients may omit Origin but still need a valid session.
 
 Login forms use one-use tokens that expire after ten minutes; the oldest form tokens may be evicted earlier when the bounded anonymous token pool is busy. Reload an expired form to obtain a fresh token. A full pool does not block new login forms.
 

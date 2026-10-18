@@ -71,7 +71,7 @@ func NewServer(cfg *config.Config, enc *encoder.Encoder) *Server {
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	conn, err := server.UpgradeConnection(w, r, s.config.Snapshot().TrustedProxies)
+	conn, err := server.UpgradeConnection(w, r)
 	if err != nil {
 		slog.Error("WebSocket upgrade failed", "error", err)
 		return

@@ -138,8 +138,8 @@ func TestLoginRateLimitsByIPAndUsername(t *testing.T) {
 		}
 		req := httptest.NewRequest(http.MethodPost, "/login", http.NoBody)
 		req.RemoteAddr = "[::ffff:192.0.2.1]:9999"
-		if sm.AllowLogin(req, "another", nil) == nil {
-			t.Fatal("port, forwarded header or IPv4-mapped address bypassed IP limit")
+		if err := sm.AllowLogin(req, "another", nil); !errors.Is(err, ErrLoginRateLimited) {
+			t.Fatalf("port, forwarded header or IPv4-mapped address bypassed IP limit: %v", err)
 		}
 		time.Sleep(time.Minute)
 		if sm.AllowLogin(req, "another", nil) != nil {
@@ -153,8 +153,8 @@ func TestLoginRateLimitsByIPAndUsername(t *testing.T) {
 			}
 		}
 		req.RemoteAddr = "198.51.100.1:1234"
-		if sm.AllowLogin(req, "admin", nil) == nil {
-			t.Fatal("changing IP bypassed username limit")
+		if err := sm.AllowLogin(req, "admin", nil); !errors.Is(err, ErrLoginRateLimited) {
+			t.Fatalf("changing IP bypassed username limit: %v", err)
 		}
 		if sm.AllowLogin(req, "other", nil) != nil {
 			t.Fatal("one username blocked every account")

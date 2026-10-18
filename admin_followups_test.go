@@ -18,37 +18,32 @@ func TestMalformedTrustedForwardingReportsBadRequestNotThrottle(t *testing.T) {
 	s := newRouteTestServer(t)
 	s.config.System.TrustedProxies = []string{"127.0.0.1/32"}
 	handler := s.SetupRoutes()
-	for _, address := range []string{"unknown", "198.51.100.1:1234", "[2001:db8::1]", "bad"} {
-		for range 4 {
-			page := httptest.NewRecorder()
-			handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/login", http.NoBody))
-			token := adminToken(t, page.Body.String(), `name="csrf_token" value="([a-f0-9]+)"`)
-			form := url.Values{"username": {config.DefaultWebUsername}, "password": {"wrong"}, "csrf_token": {token}}
-			r := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
-			r.RemoteAddr = "127.0.0.1:1234"
-			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			r.Header.Set("X-Forwarded-For", address)
-			rec := httptest.NewRecorder()
-			handler.ServeHTTP(rec, r)
-			if rec.Code != http.StatusBadRequest || rec.Header().Get("Retry-After") != "" || !strings.Contains(rec.Body.String(), "trusted proxy") {
-				t.Fatalf("bad forwarded address %q: status=%d body=%s", address, rec.Code, rec.Body.String())
-			}
+	// Budget accounting is covered by TestMalformedForwardingCannotExhaustProxyBudget.
+	for _, address := range []string{"unknown", "198.51.100.1:1234", "[2001:db8::1]", "bad", "198.51.100.1"} {
+		rec := postAdminLogin(t, handler, "wrong", "127.0.0.1:1234", address)
+		bad := address != "198.51.100.1"
+		if bad != (rec.Code == http.StatusBadRequest && strings.Contains(rec.Body.String(), "trusted proxy")) || rec.Header().Get("Retry-After") != "" {
+			t.Fatalf("forwarded %q: status=%d body=%s", address, rec.Code, rec.Body.String())
 		}
 	}
-	// Sixteen malformed attempts must not exhaust either real-client budget.
+}
+
+// postAdminLogin submits a default-user login with a fresh form token.
+func postAdminLogin(t *testing.T, handler http.Handler, password, remote, forwarded string) *httptest.ResponseRecorder {
+	t.Helper()
 	page := httptest.NewRecorder()
 	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/login", http.NoBody))
 	token := adminToken(t, page.Body.String(), `name="csrf_token" value="([a-f0-9]+)"`)
-	form := url.Values{"username": {config.DefaultWebUsername}, "password": {config.DefaultWebPassword}, "csrf_token": {token}}
+	form := url.Values{"username": {config.DefaultWebUsername}, "password": {password}, "csrf_token": {token}}
 	r := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
-	r.RemoteAddr = "127.0.0.1:1234"
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	r.Header.Set("X-Forwarded-For", "198.51.100.1")
+	r.RemoteAddr = remote
+	if forwarded != "" {
+		r.Header.Set("X-Forwarded-For", forwarded)
+	}
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, r)
-	if rec.Code != http.StatusFound {
-		t.Fatalf("valid login after bad forwarding: %d %s", rec.Code, rec.Body.String())
-	}
+	return rec
 }
 
 func TestAuthenticatedWebSocketRejectsDifferentPortAndAllowsSameOrigin(t *testing.T) {
@@ -57,7 +52,7 @@ func TestAuthenticatedWebSocketRejectsDifferentPortAndAllowsSameOrigin(t *testin
 	// Exercise the actual authenticated upgrader without starting the
 	// application-lifetime status broadcaster or a real audio encoder.
 	endpoint := httptest.NewServer(s.sessions.AuthMiddleware()(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := serverpkg.UpgradeConnection(w, r, nil)
+		conn, err := serverpkg.UpgradeConnection(w, r)
 		if err != nil {
 			return
 		}

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -64,8 +65,8 @@ func TestUsernameLimitExpiresDuringRejectedTraffic(t *testing.T) {
 		r.RemoteAddr = "198.51.100.1:1234"
 		for range 5 {
 			time.Sleep(10 * time.Second)
-			if sm.AllowLogin(r, "admin", nil) == nil {
-				t.Fatal("username budget bypassed")
+			if err := sm.AllowLogin(r, "admin", nil); !errors.Is(err, ErrLoginRateLimited) {
+				t.Fatalf("username budget bypassed: %v", err)
 			}
 		}
 		time.Sleep(10 * time.Second)
@@ -94,8 +95,8 @@ func TestMalformedForwardingCannotExhaustProxyBudget(t *testing.T) {
 	trusted := []string{"127.0.0.1/32"}
 	for range 20 {
 		r.Header.Set("X-Forwarded-For", "unparseable")
-		if sm.AllowLogin(r, "admin", trusted) == nil {
-			t.Fatal("malformed forwarding was accepted")
+		if err := sm.AllowLogin(r, "admin", trusted); !errors.Is(err, ErrInvalidLoginAddress) {
+			t.Fatalf("malformed forwarding = %v, want ErrInvalidLoginAddress", err)
 		}
 	}
 	if len(sm.loginAttempts) != 0 {
@@ -120,8 +121,8 @@ func TestFullLoginCacheKeepsCurrentLimits(t *testing.T) {
 	if sm.AllowLogin(r, "admin", nil) != nil || len(sm.loginAttempts) != maxLoginBuckets {
 		t.Fatal("new username was globally denied by a full cache")
 	}
-	if sm.AllowLogin(r, "different", nil) == nil {
-		t.Fatal("cache pressure reset the current IP limit")
+	if err := sm.AllowLogin(r, "different", nil); !errors.Is(err, ErrLoginRateLimited) {
+		t.Fatalf("cache pressure reset the current IP limit: %v", err)
 	}
 	if sm.loginAttempts["ip:192.0.2.1"].count != 5 {
 		t.Fatal("eviction lost the active counter")

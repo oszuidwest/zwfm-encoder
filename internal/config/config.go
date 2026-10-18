@@ -78,7 +78,7 @@ type SystemConfig struct {
 	Port int `json:"port"`
 	// BindAddress is a numeric IP to listen on; empty, 0.0.0.0 and :: listen on all interfaces.
 	BindAddress string `json:"bind_address,omitempty"`
-	// TrustedProxies lists peers allowed to supply login client-IP and external WebSocket scheme headers.
+	// TrustedProxies lists proxy CIDRs allowed to supply X-Forwarded-For for login limits.
 	TrustedProxies []string `json:"trusted_proxies,omitempty"`
 	// Username is the web interface login username.
 	Username string `json:"username"`
