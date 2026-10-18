@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -110,9 +111,15 @@ func TestRotationDirectoryFailureKeepsCurrentEncoder(t *testing.T) {
 	if err := r.UpdateConfig(&updated); err != nil {
 		t.Fatal(err)
 	}
+	var rearmed atomic.Int32
+	never := afterFunc
+	afterFunc = func(d time.Duration, f func()) *time.Timer { rearmed.Add(1); return never(d, f) }
 	rotateTestRecorder(r)
 	if status := r.Status(); status.State != types.ProcessRunning || !strings.Contains(status.Error, "writable") {
 		t.Fatalf("directory failure stopped current recording or lost its error: %+v", status)
+	}
+	if rearmed.Load() != 1 {
+		t.Fatalf("failed rotation armed %d next rotations, want 1: one mount blip must not end hourly rotation", rearmed.Load())
 	}
 	r.mu.RLock()
 	unchanged := r.result == previous && r.currentFile == path
