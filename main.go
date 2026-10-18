@@ -84,12 +84,13 @@ func main() {
 }
 
 func printPasswordHash(input io.Reader, output io.Writer) error {
-	data, err := io.ReadAll(io.LimitReader(input, 4097))
+	// Room for a 4096-byte password, its line ending and one byte to detect more.
+	data, err := io.ReadAll(io.LimitReader(input, 4099))
 	if err != nil {
 		return err
 	}
 	password := strings.TrimSuffix(strings.TrimSuffix(string(data), "\n"), "\r")
-	if password == "" || len(data) > 4096 || strings.ContainsAny(password, "\r\n") {
+	if password == "" || len(password) > 4096 || strings.ContainsAny(password, "\r\n") {
 		return fmt.Errorf("provide one non-empty password line of at most 4096 bytes")
 	}
 	hash, err := util.HashPassword(password)
