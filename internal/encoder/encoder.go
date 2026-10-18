@@ -1090,13 +1090,15 @@ func (e *Encoder) AddRecorder(cfg *types.Recorder) error {
 	if e.recordingManager == nil {
 		return ErrRecordingNotAvailable
 	}
-	if err := e.config.AddRecorder(cfg); err != nil {
+	// A change in the file but not confirmed by storage is still a change.
+	err := e.config.AddRecorder(cfg)
+	if err != nil && !errors.Is(err, config.ErrSaveCommitted) {
 		return err
 	}
-	if err := e.recordingManager.AddRecorder(cfg); err != nil {
-		return fmt.Errorf("%w: create recorder %s: %w", config.ErrSaveCommitted, cfg.ID, err)
+	if addErr := e.recordingManager.AddRecorder(cfg); addErr != nil {
+		return errors.Join(err, fmt.Errorf("%w: create recorder %s: %w", config.ErrSaveCommitted, cfg.ID, addErr))
 	}
-	return nil
+	return err
 }
 
 // RemoveRecorder deletes a recorder.
@@ -1122,13 +1124,14 @@ func (e *Encoder) UpdateRecorder(cfg *types.Recorder) error {
 	if e.recordingManager == nil {
 		return ErrRecordingNotAvailable
 	}
-	if err := e.config.UpdateRecorder(cfg); err != nil {
+	err := e.config.UpdateRecorder(cfg)
+	if err != nil && !errors.Is(err, config.ErrSaveCommitted) {
 		return err
 	}
-	if err := e.recordingManager.UpdateRecorder(cfg); err != nil {
-		return fmt.Errorf("%w: update recorder %s: %w", config.ErrSaveCommitted, cfg.ID, err)
+	if updateErr := e.recordingManager.UpdateRecorder(cfg); updateErr != nil {
+		return errors.Join(err, fmt.Errorf("%w: update recorder %s: %w", config.ErrSaveCommitted, cfg.ID, updateErr))
 	}
-	return nil
+	return err
 }
 
 // StartRecorder initiates a recorder.
