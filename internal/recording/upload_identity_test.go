@@ -41,6 +41,7 @@ type identityStore struct {
 	nextID          int
 	loseResponse    bool
 	headStatus      int
+	headRequests    int
 	rejectKey       string
 	stripIdentity   bool
 	foreignIdentity bool
@@ -71,6 +72,7 @@ func (s *identityStore) serveHTTP(w http.ResponseWriter, req *http.Request) {
 	defer s.mu.Unlock()
 	switch {
 	case req.Method == http.MethodHead:
+		s.headRequests++
 		if s.headStatus != 0 {
 			w.WriteHeader(s.headStatus)
 			return
@@ -527,6 +529,9 @@ func TestS3ConnectionLostPutResponseCleansOnlyOwnedProbe(t *testing.T) {
 			}
 			if len(store.keys) < 2 {
 				t.Fatal("test did not exercise the conditional PUT retry")
+			}
+			if store.headRequests != 1 {
+				t.Fatalf("HEAD requests = %d, want reuse of the fresh verification result", store.headRequests)
 			}
 		})
 	}

@@ -71,11 +71,13 @@ func TestS3Connection(cfg *S3Config) error {
 	if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NotImplemented" {
 		return fmt.Errorf("storage does not support conditional writes (If-None-Match), which recordings need to never overwrite each other: %w", err)
 	}
+	var head *s3.HeadObjectOutput
 	if err != nil {
 		// A committed PUT can lose its response and retry as 412. Only our
 		// unique identity proves this object is ours to accept and delete.
 		verifyCtx, cancelVerify := context.WithTimeout(context.Background(), 10*time.Second)
-		head, headErr := client.HeadObject(verifyCtx, &s3.HeadObjectInput{
+		var headErr error
+		head, headErr = client.HeadObject(verifyCtx, &s3.HeadObjectInput{
 			Bucket: aws.String(cfg.Bucket), Key: aws.String(testKey),
 		})
 		cancelVerify()
@@ -94,11 +96,14 @@ func TestS3Connection(cfg *S3Config) error {
 			slog.Warn("failed to delete test file", "key", testKey, "error", err)
 		}
 	}()
-	head, headErr := client.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(cfg.Bucket), Key: aws.String(testKey),
-	})
-	if headErr != nil {
-		return fmt.Errorf("read test object metadata (HeadObject permission is required for idempotent uploads): %w", headErr)
+	if head == nil {
+		var headErr error
+		head, headErr = client.HeadObject(ctx, &s3.HeadObjectInput{
+			Bucket: aws.String(cfg.Bucket), Key: aws.String(testKey),
+		})
+		if headErr != nil {
+			return fmt.Errorf("read test object metadata (HeadObject permission is required for idempotent uploads): %w", headErr)
+		}
 	}
 	if head.Metadata["zwfm-upload-id"] != uploadID {
 		return errors.New("storage does not preserve upload identity metadata, which recordings need to avoid duplicate uploads")
