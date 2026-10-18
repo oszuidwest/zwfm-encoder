@@ -70,8 +70,9 @@ const EVENT_GROUP_FILTER_KEYS = EVENT_GROUP_FILTERS.map(filter => filter.key);
 /**
  * Performs an API request with an optional JSON body. Returns the parsed
  * response body, or null when there is none (e.g. 204 No Content). Throws
- * an Error with the server-supplied message on HTTP errors; validation
- * error lists are exposed on err.errors.
+ * an Error with the server-supplied message on HTTP errors; the status is
+ * exposed on err.status and validation error lists on err.errors. Mutations
+ * must be same-origin and need the page's CSRF token.
  */
 const requestJSON = async (url, { method = 'GET', body } = {}) => {
     method = method.toUpperCase();
@@ -92,6 +93,7 @@ const requestJSON = async (url, { method = 'GET', body } = {}) => {
     const result = await response.json().catch(() => null);
     if (!response.ok) {
         const error = new Error(result?.error || `HTTP ${response.status}`);
+        error.status = response.status;
         error.errors = result?.errors;
         throw error;
     }
@@ -2099,6 +2101,11 @@ document.addEventListener('alpine:init', () => {
                 await requestJSON('/logout', { method: 'POST' });
                 window.location.assign('/login');
             } catch (error) {
+                // An expired session is already signed out.
+                if (error.status === 401) {
+                    window.location.assign('/login');
+                    return;
+                }
                 this.showToast(error.message, 'error');
             }
         },

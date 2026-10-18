@@ -76,7 +76,7 @@ type SystemConfig struct {
 	FFmpegPath string `json:"ffmpeg_path"`
 	// Port is the HTTP server port to listen on.
 	Port int `json:"port"`
-	// BindAddress is a numeric IP; empty preserves the legacy all-interface listener.
+	// BindAddress is a numeric IP to listen on; empty, 0.0.0.0 and :: listen on all interfaces.
 	BindAddress string `json:"bind_address,omitempty"`
 	// TrustedProxies lists peers allowed to supply login client-IP and external WebSocket scheme headers.
 	TrustedProxies []string `json:"trusted_proxies,omitempty"`
@@ -533,12 +533,8 @@ func (c *Config) validateSystem() error {
 		return fmt.Errorf("invalid system.password: is required")
 	}
 	for _, value := range c.System.TrustedProxies {
-		prefix, err := netip.ParsePrefix(value)
-		if err != nil || prefix.Bits() == 0 {
-			return fmt.Errorf("invalid system.trusted_proxies: must contain explicit proxy CIDRs, never /0")
-		}
-		if prefix.Addr().Is4In6() {
-			return fmt.Errorf("invalid system.trusted_proxies: use plain IPv4 CIDRs instead of IPv4-mapped IPv6 %q", value)
+		if _, err := validation.TrustedProxyPrefix(value); err != nil {
+			return fmt.Errorf("invalid system.trusted_proxies: %w", err)
 		}
 	}
 	return nil

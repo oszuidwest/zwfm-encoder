@@ -18,11 +18,16 @@ func HashPassword(password string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
-	key, err := pbkdf2.Key(sha256.New, password, salt, 600_000, 32)
+	key, err := derivePasswordKey(password, salt)
 	if err != nil {
 		return "", err
 	}
 	return passwordHashPrefix + base64.RawStdEncoding.EncodeToString(salt) + "$" + base64.RawStdEncoding.EncodeToString(key), nil
+}
+
+// derivePasswordKey applies the work factor that passwordHashPrefix names.
+func derivePasswordKey(password string, salt []byte) ([]byte, error) {
+	return pbkdf2.Key(sha256.New, password, salt, 600_000, 32)
 }
 
 func parsePasswordHash(encoded string) (salt, key []byte, err error) {
@@ -51,6 +56,6 @@ func VerifyPasswordHash(password, encoded string) bool {
 	if err != nil {
 		return false
 	}
-	key, err := pbkdf2.Key(sha256.New, password, salt, 600_000, 32)
+	key, err := derivePasswordKey(password, salt)
 	return err == nil && subtle.ConstantTimeCompare(key, expected) == 1
 }

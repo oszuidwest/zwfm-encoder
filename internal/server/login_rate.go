@@ -7,8 +7,11 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 )
 
 var (
@@ -42,7 +45,6 @@ func (sm *SessionManager) AllowLogin(r *http.Request, username string, trustedPr
 		host = netip.PrefixFrom(ip, 64).Masked().String()
 	}
 	keys := [2]string{"ip:" + host, "user:" + username}
-	// The account window is fixed: rejected attempts must never prolong it.
 	now := time.Now()
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -67,6 +69,7 @@ func (sm *SessionManager) AllowLogin(r *http.Request, username string, trustedPr
 	}
 	for _, key := range keys {
 		attempt := sm.loginAttempts[key]
+		// Fixed window: only the first counted attempt sets the expiry.
 		if attempt.count == 0 {
 			attempt.expiresAt = now.Add(loginWindow)
 		}
@@ -141,11 +144,9 @@ func loginClientAddress(r *http.Request, trustedProxies []string) netip.Addr {
 }
 
 func isTrustedProxy(ip netip.Addr, trustedProxies []string) bool {
-	for _, value := range trustedProxies {
-		prefix, err := netip.ParsePrefix(value)
-		if err == nil && prefix.Bits() > 0 && !prefix.Addr().Is4In6() && (prefix.Contains(ip) || prefix.Contains(ip.Unmap())) {
-			return true
-		}
-	}
-	return false
+	ip = ip.Unmap()
+	return slices.ContainsFunc(trustedProxies, func(value string) bool {
+		prefix, err := validation.TrustedProxyPrefix(value)
+		return err == nil && prefix.Contains(ip)
+	})
 }

@@ -55,9 +55,9 @@ func TestSetupRoutesRejectsUnauthenticatedRequests(t *testing.T) {
 				t.Fatalf("request %s %s reached pattern %q, want %q", method, path, req.Pattern, pattern)
 			}
 
-			// Pages redirect to the login form; a mutation answers 401 so the page's
-			// fetch does not follow the redirect and report success.
-			if method != http.MethodGet {
+			// Pages redirect to the login form; API requests and mutations answer
+			// 401 so the page's fetch does not follow the redirect and report success.
+			if method != http.MethodGet || strings.HasPrefix(path, "/api/") {
 				assertStatus(t, rec, http.StatusUnauthorized)
 				return
 			}

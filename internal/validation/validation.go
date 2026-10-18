@@ -6,6 +6,12 @@
 // API field name, runtime sentinel-wrapped error, etc.).
 package validation
 
+import (
+	"errors"
+	"fmt"
+	"net/netip"
+)
+
 // Issue describes one validation failure.
 //
 // Codes are owned by the calling domain. Domains define stable string
@@ -40,4 +46,18 @@ type Issues []Issue
 // ValidPort reports whether p is a usable TCP/UDP port number (1..65535).
 func ValidPort(p int) bool {
 	return p >= 1 && p <= 65535
+}
+
+// TrustedProxyPrefix parses a trusted proxy CIDR. It rejects /0, which would
+// trust every peer, and IPv4-mapped prefixes, because peers are matched in
+// their unmapped form.
+func TrustedProxyPrefix(value string) (netip.Prefix, error) {
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil || prefix.Bits() == 0 {
+		return netip.Prefix{}, errors.New("must contain explicit proxy CIDRs, never /0")
+	}
+	if prefix.Addr().Is4In6() {
+		return netip.Prefix{}, fmt.Errorf("use plain IPv4 CIDRs instead of IPv4-mapped IPv6 %q", value)
+	}
+	return prefix, nil
 }

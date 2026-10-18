@@ -245,9 +245,11 @@ func (s *Server) SetupRoutes() http.Handler {
 
 	// Public routes (no auth required)
 	mux.HandleFunc("/login", s.handleLogin)
-	mux.HandleFunc("POST /logout", auth(s.handleLogout))
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /ready", s.handleReady)
+
+	// Logout needs the session and its CSRF token like any other mutation.
+	mux.HandleFunc("POST /logout", auth(s.handleLogout))
 
 	// Public static assets (needed for login page styling)
 	mux.HandleFunc("/style.css", s.handlePublicStatic)
@@ -406,7 +408,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 		password := r.PostForm.Get("password")
 
-		if s.sessions.Login(w, r, username, password, cfg.WebUser, cfg.WebPassword, cfg.WebPasswordHash) {
+		ok, err := s.sessions.Login(w, r, username, password, cfg.WebUser, cfg.WebPassword, cfg.WebPasswordHash)
+		if err != nil {
+			rejectUnverifiedLogin(w, r, err)
+			return
+		}
+		if ok {
 			http.Redirect(w, r, "/", http.StatusFound)
 			return
 		}
@@ -426,9 +433,20 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// rejectUnverifiedLogin answers a login whose password hash was not checked.
+func rejectUnverifiedLogin(w http.ResponseWriter, r *http.Request, err error) {
+	if !errors.Is(err, server.ErrLoginBusy) {
+		slog.Info("login abandoned while waiting for password verification", "remote", r.RemoteAddr)
+		return
+	}
+	slog.Warn("login rejected: password verification is busy", "remote", r.RemoteAddr)
+	w.Header().Set("Retry-After", "1")
+	http.Error(w, "Sign-in is busy. Open the sign-in page again in a moment.", http.StatusServiceUnavailable)
+}
+
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	s.sessions.Logout(w, r)
-	w.WriteHeader(http.StatusNoContent)
+	s.writeNoContent(w)
 }
 
 // staticFile holds an embedded static file with its content type and data.
@@ -521,8 +539,8 @@ func (s *Server) handleExternalRecordingAction(w http.ResponseWriter, r *http.Re
 	})
 }
 
-// Start launches the HTTP server on the configured port in a background
-// goroutine. Call Stop for graceful shutdown.
+// Start launches the HTTP server on the configured address and port in a
+// background goroutine. Call Stop for graceful shutdown.
 func (s *Server) Start() {
 	cfg := s.config.Snapshot()
 	addr := net.JoinHostPort(cfg.WebBindAddress, strconv.Itoa(cfg.WebPort))

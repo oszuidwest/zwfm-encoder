@@ -4,7 +4,7 @@ import { runInNewContext } from 'node:vm';
 
 const source = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
 
-function requestHarness(token = 'session-bound-token') {
+function requestHarness(token = 'session-bound-token', response = { ok: true, json: async () => ({ saved: true }) }) {
     const calls = [];
     const context = {
         URL,
@@ -20,7 +20,7 @@ function requestHarness(token = 'session-bound-token') {
         getComputedStyle: () => ({ getPropertyValue: () => '' }),
         fetch: async (url, options) => {
             calls.push({ url, options });
-            return { ok: true, json: async () => ({ saved: true }) };
+            return response;
         },
     };
     return { calls, request: runInNewContext(`${source}\nrequestJSON;`, context) };
@@ -44,8 +44,8 @@ test('every mutating request sends the session CSRF header, even without JSON', 
 
 test('safe reads do not need a CSRF token', async () => {
     const { calls, request } = requestHarness(null);
-    for (const method of ['GET', 'HEAD', 'OPTIONS']) await request('/api/config', { method });
-    expect(calls).toHaveLength(3);
+    for (const method of ['GET', 'HEAD', 'OPTIONS', 'get']) await request('/api/config', { method });
+    expect(calls).toHaveLength(4);
     for (const { options } of calls) expect(options.headers).toBeUndefined();
 });
 
@@ -58,4 +58,11 @@ test('missing token and foreign targets fail before fetching or disclosing a tok
         await expect(foreign.request(url, { method: 'POST' })).rejects.toThrow('same-origin');
     }
     expect(foreign.calls).toHaveLength(0);
+});
+
+test('HTTP errors expose their status so sign-out can treat an expired session as signed out', async () => {
+    const { request } = requestHarness('token', { ok: false, status: 401, json: async () => ({ error: 'Session expired; reload this page' }) });
+    const error = await request('/logout', { method: 'POST' }).catch(caught => caught);
+    expect(error.message).toBe('Session expired; reload this page');
+    expect(error.status).toBe(401);
 });

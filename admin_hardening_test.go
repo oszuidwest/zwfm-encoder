@@ -186,11 +186,10 @@ func checkAdminLogout(t *testing.T, s *Server, request func(string, string, stri
 func TestLoginThrottleAndCrossOriginRejection(t *testing.T) {
 	t.Parallel()
 	s := newRouteTestServer(t)
+	usePlaintextLogin(s)
 	handler := s.SetupRoutes()
 	for attempt := range 6 {
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/login", http.NoBody))
-		token := adminToken(t, rec.Body.String(), `name="csrf_token" value="([a-f0-9]+)"`)
+		token := loginFormToken(t, handler)
 		password := "wrong"
 		if attempt == 5 {
 			password = config.DefaultWebPassword
@@ -198,7 +197,7 @@ func TestLoginThrottleAndCrossOriginRejection(t *testing.T) {
 		form := url.Values{"username": {config.DefaultWebUsername}, "password": {password}, "csrf_token": {token}}
 		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		rec = httptest.NewRecorder()
+		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 		if attempt < 5 {
 			if rec.Code != http.StatusOK {
@@ -226,6 +225,7 @@ func TestLoginThrottleAndCrossOriginRejection(t *testing.T) {
 func TestInvalidLoginCSRFCannotConsumeLoginBudget(t *testing.T) {
 	t.Parallel()
 	s := newRouteTestServer(t)
+	usePlaintextLogin(s)
 	handler := s.SetupRoutes()
 	for range 20 {
 		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=admin&password=wrong&csrf_token=invalid"))
@@ -236,9 +236,7 @@ func TestInvalidLoginCSRFCannotConsumeLoginBudget(t *testing.T) {
 			t.Fatalf("invalid CSRF consumed login budget: %d", rec.Code)
 		}
 	}
-	page := httptest.NewRecorder()
-	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/login", http.NoBody))
-	token := adminToken(t, page.Body.String(), `name="csrf_token" value="([a-f0-9]+)"`)
+	token := loginFormToken(t, handler)
 	form := url.Values{"username": {config.DefaultWebUsername}, "password": {config.DefaultWebPassword}, "csrf_token": {token}}
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -252,12 +250,11 @@ func TestInvalidLoginCSRFCannotConsumeLoginBudget(t *testing.T) {
 func TestTrustedProxyDoesNotShareClientIPBudget(t *testing.T) {
 	t.Parallel()
 	s := newRouteTestServer(t)
+	usePlaintextLogin(s)
 	s.config.System.TrustedProxies = []string{"127.0.0.1/32"}
 	handler := s.SetupRoutes()
 	for i := range 6 {
-		page := httptest.NewRecorder()
-		handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/login", http.NoBody))
-		token := adminToken(t, page.Body.String(), `name="csrf_token" value="([a-f0-9]+)"`)
+		token := loginFormToken(t, handler)
 		password, ip := "wrong", "198.51.100.1" //nolint:gosec // G101: intentionally wrong login fixture, not an application credential.
 		want := http.StatusOK
 		if i == 5 {
@@ -282,6 +279,7 @@ func TestTrustedProxyDoesNotShareClientIPBudget(t *testing.T) {
 func TestLoginRejectsMalformedOrQueryCredentials(t *testing.T) {
 	t.Parallel()
 	s := newRouteTestServer(t)
+	usePlaintextLogin(s)
 	handler := s.SetupRoutes()
 	for _, tc := range []struct {
 		name, query, body, password string
@@ -296,9 +294,7 @@ func TestLoginRejectsMalformedOrQueryCredentials(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			body := tc.body
 			if tc.query != "" || tc.password != "" {
-				page := httptest.NewRecorder()
-				handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/login", http.NoBody))
-				token := adminToken(t, page.Body.String(), `name="csrf_token" value="([a-f0-9]+)"`)
+				token := loginFormToken(t, handler)
 				values := url.Values{"csrf_token": {token}}
 				if tc.password != "" {
 					values.Set("username", "admin")
@@ -322,7 +318,7 @@ func TestLoginRejectsMalformedOrQueryCredentials(t *testing.T) {
 
 func TestServerStartUsesConfiguredBind(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ bind, want string }{{"127.0.0.1", "127.0.0.1:0"}, {"::1", "[::1]:0"}} {
+	for _, tc := range []struct{ bind, want string }{{"", ":0"}, {"127.0.0.1", "127.0.0.1:0"}, {"::1", "[::1]:0"}} {
 		t.Run(tc.bind, func(t *testing.T) {
 			s := newRouteTestServer(t)
 			// Port zero is test-only, so the OS chooses an unused loopback port.
@@ -342,6 +338,20 @@ func TestServerStartUsesConfiguredBind(t *testing.T) {
 			}
 		})
 	}
+}
+
+// usePlaintextLogin keeps tests of limits and form handling off the shared
+// password-hash slot, which would run their logins one after another.
+func usePlaintextLogin(s *Server) {
+	s.config.System.Password, s.config.System.PasswordHash = config.DefaultWebPassword, ""
+}
+
+// loginFormToken fetches the login page and returns its one-use form token.
+func loginFormToken(t *testing.T, handler http.Handler) string {
+	t.Helper()
+	page := httptest.NewRecorder()
+	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/login", http.NoBody))
+	return adminToken(t, page.Body.String(), `name="csrf_token" value="([a-f0-9]+)"`)
 }
 
 func adminToken(t *testing.T, page, pattern string) string {
