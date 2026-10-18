@@ -45,6 +45,11 @@ func (s *Server) writeNoContent(w http.ResponseWriter) {
 }
 
 func (s *Server) writeConfigError(w http.ResponseWriter, err error) {
+	if errors.Is(err, config.ErrSaveCommitted) {
+		s.broadcastConfigChanged()
+		s.writeError(w, http.StatusInternalServerError, err.Error()+"; reload the saved configuration and restart the encoder application to reconcile runtime state")
+		return
+	}
 	if errors.Is(err, config.ErrStreamNotFound) || errors.Is(err, config.ErrRecorderNotFound) {
 		s.writeError(w, http.StatusNotFound, err.Error())
 		return

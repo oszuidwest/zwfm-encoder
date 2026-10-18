@@ -29,6 +29,23 @@ func TestWriteConfigErrorRecorderNameConflict(t *testing.T) {
 	assertErrorEqual(t, rec, err.Error())
 }
 
+func TestWriteConfigErrorCommittedSaveReportsSavedState(t *testing.T) {
+	t.Parallel()
+	updates := make(chan any, 1)
+	s := &Server{wsClients: map[chan any]struct{}{updates: {}}}
+	rec := httptest.NewRecorder()
+	s.writeConfigError(rec, fmt.Errorf("%w: directory sync failed", config.ErrSaveCommitted))
+	assertStatus(t, rec, http.StatusInternalServerError)
+	if !strings.Contains(rec.Body.String(), "was saved") || !strings.Contains(rec.Body.String(), "restart") {
+		t.Fatalf("committed save response = %s, want saved state and recovery guidance", rec.Body.String())
+	}
+	select {
+	case <-updates:
+	default:
+		t.Fatal("committed configuration did not notify dashboard clients to reload")
+	}
+}
+
 func TestValidateRecorderLocalPathCreatesWritableDirectory(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "archive")
