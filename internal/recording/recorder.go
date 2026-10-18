@@ -529,7 +529,12 @@ func (r *GenericRecorder) failOutput(run encoderRun, cause error) {
 	size, ownErr := run.output.release()
 	err := errors.Join(cause, ownErr)
 	if ownErr == nil && size == 0 {
-		err = errors.Join(err, r.discardEmpty(run))
+		if discardErr := r.discardEmpty(run); discardErr != nil {
+			err = errors.Join(err, discardErr)
+			run.output.recordFailure(err)
+		}
+	} else {
+		run.output.recordFailure(err)
 	}
 	r.reportError(run.file, err)
 }
@@ -692,15 +697,37 @@ func removeUnfinalizedMarker(recording string) error {
 	return nil
 }
 
+// recordFailure writes why the output failed into its marker. A marker without
+// a reason only means the run was interrupted (a crash or power loss), and
+// spool recovery uploads such a file as before quarantine existed.
+func (o *recordingOutput) recordFailure(cause error) {
+	if !o.unfinalized {
+		return
+	}
+	if err := os.WriteFile(o.file.Name()+unfinalizedRecordingSuffix, []byte(cause.Error()+"\n"), 0o600); err != nil { //nolint:gosec // G703: our own marker next to the validated reservation.
+		slog.Warn("cannot record why a recording failed; it will be treated as interrupted", "file", o.file.Name(), "error", err)
+	}
+}
+
+// recordingFailed reports whether path has a marker holding a failure reason;
+// a marker that is not a plain file also counts as failed.
+func recordingFailed(path string) (bool, error) {
+	info, err := os.Lstat(path + unfinalizedRecordingSuffix)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check unfinalized recording marker: %w", err)
+	}
+	return !info.Mode().IsRegular() || info.Size() > 0, nil
+}
+
 // finalizedRecording stats a recording for upload without following links. ok
 // is false for a marked, empty or non-regular file, which is never uploaded
 // automatically.
 func finalizedRecording(path string) (info os.FileInfo, ok bool, err error) {
-	if _, err := os.Lstat(path + unfinalizedRecordingSuffix); !errors.Is(err, os.ErrNotExist) {
-		if err != nil {
-			return nil, false, fmt.Errorf("check unfinalized recording marker: %w", err)
-		}
-		return nil, false, nil
+	if failed, err := recordingFailed(path); err != nil || failed {
+		return nil, false, err
 	}
 	info, err = os.Lstat(path)
 	if err != nil {
@@ -921,11 +948,13 @@ func (r *GenericRecorder) finishEncoder(run encoderRun) {
 		return
 	}
 	if _, err := run.output.release(); err != nil {
+		run.output.recordFailure(err)
 		r.reportError(run.file, err)
 		return
 	}
 	if run.result.BytesWritten() == 0 {
 		if err := r.discardEmpty(run); err != nil {
+			run.output.recordFailure(err)
 			r.reportError(run.file, err)
 		}
 		return

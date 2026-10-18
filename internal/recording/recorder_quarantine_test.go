@@ -206,7 +206,7 @@ func TestQuarantineAlsoBlocksPreviouslyPersistedUploadMetadata(t *testing.T) {
 	cfg := testS3Recorder()
 	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
 	file := writeSpoolFile(t, r.spoolDir, cfg.ID, "failed.mp3", "partial audio")
-	writeSpoolFile(t, r.spoolDir, cfg.ID, "failed.mp3"+unfinalizedRecordingSuffix, "")
+	writeSpoolFile(t, r.spoolDir, cfg.ID, "failed.mp3"+unfinalizedRecordingSuffix, "Error writing trailer\n")
 	pending := pendingUpload{request: uploadRequest{localPath: file, s3Key: "recordings/Test/failed.mp3", fileSize: 13}}
 	if err := r.savePendingUpload(&pending); err != nil {
 		t.Fatal(err)
@@ -268,7 +268,7 @@ func TestQueuedUploadSkipsFileMarkedAfterQueueing(t *testing.T) {
 	cfg.S3Endpoint = endpoint
 	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
 	file := writeSpoolFile(t, r.spoolDir, cfg.ID, "late.mp3", "audio")
-	writeSpoolFile(t, r.spoolDir, cfg.ID, "late.mp3"+unfinalizedRecordingSuffix, "")
+	writeSpoolFile(t, r.spoolDir, cfg.ID, "late.mp3"+unfinalizedRecordingSuffix, "Error writing trailer\n")
 	pending := pendingUpload{request: uploadRequest{localPath: file, s3Key: "recordings/Test/late.mp3", fileSize: 5, deleteAfterUpload: true}}
 	if err := r.doUpload(&pending); !errors.Is(err, errRecordingNotUploadable) {
 		t.Fatalf("upload of a marked file = %v, want errRecordingNotUploadable", err)
@@ -277,4 +277,38 @@ func TestQueuedUploadSkipsFileMarkedAfterQueueing(t *testing.T) {
 		t.Fatalf("marked file uploaded %d times", got)
 	}
 	assertRecordedCapture(t, file, []byte("audio"))
+}
+
+func TestInterruptedRecordingIsRecoveredAfterRestart(t *testing.T) {
+	t.Parallel()
+	cfg := testS3Recorder()
+	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
+	// A crash or power loss leaves the marker without a failure reason.
+	file := writeSpoolFile(t, r.spoolDir, cfg.ID, "Test-2026-10-18-14-00.mp3", "partial hour")
+	writeSpoolFile(t, r.spoolDir, cfg.ID, "Test-2026-10-18-14-00.mp3"+unfinalizedRecordingSuffix, "")
+	untouched := writeSpoolFile(t, r.spoolDir, cfg.ID, "Test-2026-10-18-15-00.mp3", "")
+	writeSpoolFile(t, r.spoolDir, cfg.ID, "Test-2026-10-18-15-00.mp3"+unfinalizedRecordingSuffix, "")
+	if err := r.reconcilePendingUploads(); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.retryQueue) != 1 || r.retryQueue[0].request.localPath != file {
+		t.Fatalf("interrupted recording not queued for upload: %+v", r.retryQueue)
+	}
+	assertNoRecording(t, file+unfinalizedRecordingSuffix)
+	assertNoRecording(t, untouched) // An interrupted run without audio leaves nothing behind.
+	assertNoRecording(t, untouched+unfinalizedRecordingSuffix)
+}
+
+func TestFailedOutputMarkerHoldsTheReason(t *testing.T) {
+	t.Setenv(fakeFFmpegFailFinalizeEnv, "1")
+	r, _ := errorTestRecorder(t, localOnDemandRecorder(t, "reason"))
+	file := startCaptureTestRecorder(t, r)
+	r.WriteAudio([]byte{1, 2, 3, 4})
+	if err := r.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	reason, err := os.ReadFile(file + unfinalizedRecordingSuffix) //nolint:gosec // Test temp marker.
+	if err != nil || !strings.Contains(string(reason), "No space left on device") {
+		t.Fatalf("failed output marker = %q, %v; want the failure reason", reason, err)
+	}
 }
