@@ -70,7 +70,6 @@ func (m *Manager) cleanupLocalFiles(recorder *GenericRecorder) {
 	}
 
 	cutoff := util.OldestToKeep(cfg.RetentionDays, time.Now())
-	safeName := util.SanitizeFilename(cfg.Name)
 
 	entries, err := os.ReadDir(cfg.LocalPath)
 	if err != nil {
@@ -87,7 +86,7 @@ func (m *Manager) cleanupLocalFiles(recorder *GenericRecorder) {
 		name := entry.Name()
 
 		// Only process files matching this recorder's pattern.
-		fileDate, ok := recordingFileTime(safeName, name)
+		fileDate, ok := recorderFileTime(&cfg, name)
 		if !ok {
 			continue
 		}
@@ -141,8 +140,6 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 	}
 
 	cutoff := util.OldestToKeep(cfg.RetentionDays, time.Now())
-	safeName := util.SanitizeFilename(cfg.Name)
-	prefix := "recordings/" + safeName + "/"
 
 	ctx, cancel := context.WithTimeoutCause(
 		context.Background(),
@@ -152,51 +149,68 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 	defer cancel()
 
 	var deleted int
-	paginator := s3.NewListObjectsV2Paginator(client, &s3.ListObjectsV2Input{
-		Bucket: aws.String(cfg.S3Bucket),
-		Prefix: aws.String(prefix),
-	})
-
-	for paginator.HasMorePages() {
-		output, err := paginator.NextPage(ctx)
-		if err != nil {
-			slog.Warn("cleanup: failed to list S3 objects", "id", cfg.ID, "bucket", cfg.S3Bucket, "error", err)
-			return
+	for _, filePrefix := range []string{cfg.RecordingFilePrefix(), cfg.LegacyFilePrefix} {
+		if filePrefix == "" {
+			continue
 		}
+		prefix := "recordings/" + filePrefix + "/"
+		paginator := s3.NewListObjectsV2Paginator(client, &s3.ListObjectsV2Input{
+			Bucket: aws.String(cfg.S3Bucket),
+			Prefix: aws.String(prefix),
+		})
 
-		for _, obj := range output.Contents {
-			key := aws.ToString(obj.Key)
-			filename := filepath.Base(key)
-
-			// The recordings/<safeName>/ prefix already scopes the listing; after
-			// spool recovery a key can carry an old recorder name, so match only
-			// the timestamp.
-			fileDate, ok := util.FilenameTime(filename)
-			if !ok {
-				continue
+		for paginator.HasMorePages() {
+			output, err := paginator.NextPage(ctx)
+			if err != nil {
+				slog.Warn("cleanup: failed to list S3 objects", "id", cfg.ID, "bucket", cfg.S3Bucket, "error", err)
+				return
 			}
 
-			// Delete if older than retention, by name and by upload time (a
-			// missing LastModified falls back to the name alone).
-			if fileDate.Before(cutoff) && aws.ToTime(obj.LastModified).Before(cutoff) {
-				_, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
-					Bucket: aws.String(cfg.S3Bucket),
-					Key:    obj.Key,
-				})
-				if err != nil {
-					slog.Warn("cleanup: failed to delete S3 object", "id", cfg.ID, "key", key, "error", err)
-				} else {
-					deleted++
-					slog.Debug("cleanup: deleted S3 object", "id", cfg.ID, "key", key)
+			for _, obj := range output.Contents {
+				key := aws.ToString(obj.Key)
+				if !strings.HasPrefix(key, prefix) || strings.Contains(strings.TrimPrefix(key, prefix), "/") {
+					continue // Never delete outside the recorder's exact namespace.
+				}
+				filename := filepath.Base(key)
+
+				// Legacy filenames can differ from the ID namespace after spool recovery.
+				fileDate, ok := util.FilenameTime(filename)
+				if !ok {
+					continue
+				}
+
+				// Delete if older than retention, by name and by upload time (a
+				// missing LastModified falls back to the name alone).
+				if fileDate.Before(cutoff) && aws.ToTime(obj.LastModified).Before(cutoff) {
+					_, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
+						Bucket: aws.String(cfg.S3Bucket),
+						Key:    obj.Key,
+					})
+					if err != nil {
+						slog.Warn("cleanup: failed to delete S3 object", "id", cfg.ID, "key", key, "error", err)
+					} else {
+						deleted++
+						slog.Debug("cleanup: deleted S3 object", "id", cfg.ID, "key", key)
+					}
 				}
 			}
 		}
 	}
-
 	if deleted > 0 {
 		slog.Info("cleanup: deleted S3 objects", "id", cfg.ID, "count", deleted)
 		m.logCleanupEvent(cfg.Name, deleted, "s3")
 	}
+}
+
+func recorderFileTime(cfg *types.Recorder, filename string) (time.Time, bool) {
+	for _, prefix := range []string{cfg.RecordingFilePrefix(), cfg.LegacyFilePrefix} {
+		if prefix != "" {
+			if at, ok := recordingFileTime(prefix, filename); ok {
+				return at, true
+			}
+		}
+	}
+	return time.Time{}, false
 }
 
 // recordingFileTime reports the start time encoded in a recording filename

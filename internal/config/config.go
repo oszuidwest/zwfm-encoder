@@ -543,6 +543,7 @@ func normalizeStreamDefaults(stream *types.Stream) {
 func (c *Config) validateRecorders() error {
 	seen := make(map[string]int, len(c.Recording.Recorders))
 	prefixes := make(map[string]int, len(c.Recording.Recorders))
+	legacyPrefixes := make(map[string]int, len(c.Recording.Recorders))
 	for i := range c.Recording.Recorders {
 		recorder := &c.Recording.Recorders[i]
 		if strings.TrimSpace(recorder.ID) == "" {
@@ -555,13 +556,20 @@ func (c *Config) validateRecorders() error {
 		if err := recorder.Validate(); err != nil {
 			return fmt.Errorf("invalid recording.recorders[%d]: %w", i, err)
 		}
-		// Recorders sharing a filename prefix would share and clean up each other's files.
+		recorder.InitializeFileIdentity()
+		// Keep the existing display-name collision policy for compatibility.
 		prefix := strings.ToLower(util.SanitizeFilename(recorder.Name))
 		if first, ok := prefixes[prefix]; ok {
 			return fmt.Errorf("invalid recording.recorders[%d].name: %q has the same filename prefix as recorder %q",
 				i, recorder.Name, c.Recording.Recorders[first].Name)
 		}
 		prefixes[prefix] = i
+		if prefix := strings.ToLower(recorder.LegacyFilePrefix); prefix != "" {
+			if first, ok := legacyPrefixes[prefix]; ok {
+				return fmt.Errorf("invalid recording.recorders[%d].legacy_file_prefix: shared with recorder %q", i, c.Recording.Recorders[first].ID)
+			}
+			legacyPrefixes[prefix] = i
+		}
 	}
 	return nil
 }
@@ -846,6 +854,8 @@ func (c *Config) AddRecorder(recorder *types.Recorder) error {
 		return fmt.Errorf("failed to generate ID: %w", err)
 	}
 	recorder.ID = fmt.Sprintf("recorder-%s", shortID)
+	// A new ID must never adopt recordings left by a deleted recorder's name.
+	recorder.IDBasedFiles, recorder.LegacyFilePrefix = true, ""
 
 	// Apply retention days default if not specified
 	recorder.RetentionDays = cmp.Or(recorder.RetentionDays, types.DefaultRetentionDays)
@@ -889,6 +899,9 @@ func (c *Config) UpdateRecorder(recorder *types.Recorder) error {
 		return fmt.Errorf("%w: %s", ErrRecorderNotFound, recorder.ID)
 	}
 	old := c.Recording.Recorders[i]
+	identity := old
+	identity.InitializeFileIdentity()
+	recorder.IDBasedFiles, recorder.LegacyFilePrefix = true, identity.LegacyFilePrefix
 	c.Recording.Recorders[i] = *recorder
 	if err := c.validateRecorders(); err != nil {
 		c.Recording.Recorders[i] = old

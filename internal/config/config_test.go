@@ -128,6 +128,9 @@ func TestLoadPreservesConfigDataAndSnapshotEntities(t *testing.T) {
 	if err := cfg.Load(); err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
+	for i := range want.Recording.Recorders {
+		want.Recording.Recorders[i].InitializeFileIdentity()
+	}
 	if !reflect.DeepEqual(cfg.ConfigData, want) {
 		t.Fatalf("ConfigData after Load() mismatch:\n got  %+v\n want %+v", cfg.ConfigData, want)
 	}

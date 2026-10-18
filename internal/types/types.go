@@ -2,6 +2,8 @@
 package types
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 	"github.com/oszuidwest/zwfm-encoder/internal/validation"
 )
 
@@ -450,6 +453,27 @@ type Recorder struct {
 
 	RetentionDays int   `json:"retention_days"` // 0 = forever
 	CreatedAt     int64 `json:"created_at"`     // Unix ms
+	// Internal ownership metadata, preserved across API replacements.
+	IDBasedFiles     bool   `json:"id_based_files"`
+	LegacyFilePrefix string `json:"legacy_file_prefix,omitempty"`
+}
+
+// InitializeFileIdentity captures the pre-upgrade prefix once, before any rename.
+func (r *Recorder) InitializeFileIdentity() {
+	if !r.IDBasedFiles {
+		r.LegacyFilePrefix = util.SanitizeFilename(r.Name)
+		r.IDBasedFiles = true
+	}
+}
+
+// RecordingFilePrefix keeps ID ownership stable on case-insensitive filesystems.
+// Separate @/@h namespaces avoid legacy names and bound very long IDs.
+func (r *Recorder) RecordingFilePrefix() string {
+	if len(r.ID) > 80 {
+		sum := sha256.Sum256([]byte(r.ID))
+		return "@h" + hex.EncodeToString(sum[:])
+	}
+	return "@" + hex.EncodeToString([]byte(r.ID))
 }
 
 // HasS3Credentials reports whether the bucket and both credential fields are set.
@@ -459,6 +483,9 @@ func (r *Recorder) HasS3Credentials() bool {
 
 // Validate reports an error if the recorder configuration is invalid.
 func (r *Recorder) Validate() error {
+	if r.LegacyFilePrefix != "" && r.LegacyFilePrefix != util.SanitizeFilename(r.LegacyFilePrefix) {
+		return fmt.Errorf("legacy_file_prefix: must be a sanitized filename prefix")
+	}
 	if strings.TrimSpace(r.Name) == "" {
 		return fmt.Errorf("name: is required")
 	}

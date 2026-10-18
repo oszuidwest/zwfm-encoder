@@ -180,6 +180,9 @@ func (r *GenericRecorder) recoverOrphanSpoolFiles(existing []pendingUpload) ([]p
 		if _, ok := known[filePath]; ok {
 			continue
 		}
+		if _, owned := recorderFileTime(&cfg, entry.Name()); !owned {
+			continue // A shared/case-aliased spool directory does not prove ownership.
+		}
 
 		info, err := entry.Info()
 		if err != nil {
@@ -191,7 +194,7 @@ func (r *GenericRecorder) recoverOrphanSpoolFiles(existing []pendingUpload) ([]p
 		pending := pendingUpload{
 			request: uploadRequest{
 				localPath:         filePath,
-				s3Key:             s3ObjectKey(cfg.Name, entry.Name()),
+				s3Key:             s3ObjectKey(&cfg, entry.Name()),
 				fileSize:          info.Size(),
 				deleteAfterUpload: true,
 			},
