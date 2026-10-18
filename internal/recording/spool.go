@@ -142,6 +142,24 @@ func (r *GenericRecorder) loadPendingUpload(metadataPath string) (pendingUpload,
 	}, true, nil
 }
 
+// recoverableSpoolFile reports whether an orphan spool file may be uploaded and
+// whether it was left by an interrupted run (marked without a failure reason).
+// An interrupted run that never got audio is removed with its marker.
+func recoverableSpoolFile(file string) (info os.FileInfo, interrupted, ok bool, err error) {
+	info, ok, err = finalizedRecording(file)
+	if err != nil {
+		return nil, false, false, fmt.Errorf("stat recorder spool file: %w", err)
+	}
+	if _, err := os.Lstat(file + unfinalizedRecordingSuffix); err == nil {
+		interrupted = true
+	}
+	if !ok && interrupted && info != nil && info.Size() == 0 {
+		_ = os.Remove(file)
+		_ = removeUnfinalizedMarker(file)
+	}
+	return info, interrupted, ok, nil
+}
+
 func (r *GenericRecorder) recoverOrphanSpoolFiles(existing []pendingUpload) ([]pendingUpload, error) {
 	cfg := r.Config()
 	if cfg.StorageMode != types.StorageS3 {
@@ -168,8 +186,11 @@ func (r *GenericRecorder) recoverOrphanSpoolFiles(existing []pendingUpload) ([]p
 			continue
 		}
 		if recording, ok := strings.CutSuffix(entry.Name(), unfinalizedRecordingSuffix); ok {
-			slog.Warn("recording kept in quarantine for inspection; it is not uploaded automatically",
-				"id", r.id, "file", filepath.Join(dir, recording))
+			// An interrupted run's empty marker is removed with its recovery below.
+			if failed, err := recordingFailed(filepath.Join(dir, recording)); err == nil && failed {
+				slog.Warn("recording kept in quarantine for inspection; it is not uploaded automatically",
+					"id", r.id, "file", filepath.Join(dir, recording))
+			}
 			continue
 		}
 
@@ -183,9 +204,9 @@ func (r *GenericRecorder) recoverOrphanSpoolFiles(existing []pendingUpload) ([]p
 			continue
 		}
 
-		info, ok, err := finalizedRecording(filePath)
+		info, interrupted, ok, err := recoverableSpoolFile(filePath)
 		if err != nil {
-			return nil, fmt.Errorf("stat recorder spool file: %w", err)
+			return nil, err
 		}
 		if !ok {
 			continue
@@ -202,6 +223,12 @@ func (r *GenericRecorder) recoverOrphanSpoolFiles(existing []pendingUpload) ([]p
 		}
 		if err := r.savePendingUpload(&pending); err != nil {
 			return nil, err
+		}
+		if interrupted {
+			slog.Warn("recovering a recording interrupted by a crash or power loss", "id", r.id, "file", filePath)
+			if err := removeUnfinalizedMarker(filePath); err != nil {
+				slog.Warn("failed to remove interrupted recording marker", "id", r.id, "file", filePath, "error", err)
+			}
 		}
 		recovered = append(recovered, pending)
 	}

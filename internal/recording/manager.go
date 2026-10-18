@@ -34,6 +34,7 @@ type Manager struct {
 	lifecycleMu sync.Mutex // Serializes Start/Stop without blocking status throughout teardown.
 
 	recorders          map[string]*GenericRecorder
+	removing           map[string]struct{}                // IDs whose removed recorder is still stopping.
 	audioRecorders     atomic.Pointer[[]*GenericRecorder] // Immutable capture view; no I/O/management locks.
 	spoolDir           string
 	ffmpegPath         string
@@ -59,6 +60,7 @@ func NewManager(ffmpegPath, spoolDir string, maxDurationMinutes int, eventLogger
 
 	return &Manager{
 		recorders:          make(map[string]*GenericRecorder),
+		removing:           make(map[string]struct{}),
 		spoolDir:           spoolDir,
 		ffmpegPath:         ffmpegPath,
 		maxDurationMinutes: maxDurationMinutes,
@@ -98,6 +100,11 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 	if _, exists := m.recorders[cfg.ID]; exists {
 		return fmt.Errorf("recorder already exists: %s", cfg.ID)
 	}
+	// Its spool still holds the removed run's open output, which recovery
+	// would take for a crash leftover.
+	if _, removing := m.removing[cfg.ID]; removing {
+		return fmt.Errorf("recorder %s is still being removed", cfg.ID)
+	}
 
 	recorder := NewGenericRecorder(GenericRecorderConfig{
 		Recorder:           cfg,
@@ -131,6 +138,7 @@ func (m *Manager) RemoveRecorder(id string) error {
 	recorder, exists := m.recorders[id]
 	if exists {
 		delete(m.recorders, id)
+		m.removing[id] = struct{}{}
 		m.publishAudioRecordersLocked()
 	}
 	m.mu.Unlock()
@@ -143,6 +151,9 @@ func (m *Manager) RemoveRecorder(id string) error {
 	if err := recorder.Stop(); err != nil {
 		slog.Warn("error stopping recorder during removal", "id", id, "error", err)
 	}
+	m.mu.Lock()
+	delete(m.removing, id)
+	m.mu.Unlock()
 
 	slog.Info("recorder removed", "id", id)
 	return nil
