@@ -179,6 +179,7 @@ func receiveMedia(
 	lastValid := time.Now()
 	var keepaliveTarget *net.UDPAddr
 	var nextKeepalive time.Time
+	var keepaliveErr error
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -186,17 +187,18 @@ func receiveMedia(
 		}
 		now := time.Now()
 		if now.Sub(lastValid) >= mediaTimeout {
+			if keepaliveErr != nil {
+				return fmt.Errorf("media reception timed out after 5 seconds; last keepalive error: %w", keepaliveErr)
+			}
 			return errors.New("media reception timed out after 5 seconds")
 		}
 		if err := processor.advance(now); err != nil {
 			return err
 		}
 		if keepaliveTarget != nil && !now.Before(nextKeepalive) {
-			if err := conn.SetWriteDeadline(now.Add(keepaliveInterval)); err != nil {
-				return fmt.Errorf("set keepalive deadline: %w", err)
-			}
-			if _, err := conn.WriteTo([]byte{0x13, 0x37}, keepaliveTarget); err != nil {
-				return fmt.Errorf("send media keepalive: %w", err)
+			var err error
+			if keepaliveErr, err = sendKeepalive(conn, keepaliveTarget, now); err != nil {
+				return err
 			}
 			nextKeepalive = now.Add(keepaliveInterval)
 		}
@@ -237,6 +239,20 @@ func receiveMedia(
 			}
 		}
 	}
+}
+
+// sendKeepalive fails only for a blocked write, which would stall reception.
+// Other send errors come back as transient: the transmitter tolerates missed
+// keepalives, and the media timeout covers lasting failures.
+func sendKeepalive(conn net.PacketConn, target *net.UDPAddr, now time.Time) (transient, err error) {
+	if err := conn.SetWriteDeadline(now.Add(keepaliveInterval)); err != nil {
+		return nil, fmt.Errorf("set keepalive deadline: %w", err)
+	}
+	_, err = conn.WriteTo([]byte{0x13, 0x37}, target)
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return nil, fmt.Errorf("send media keepalive: %w", err)
+	}
+	return err, nil
 }
 
 func earlierTime(left, right time.Time) time.Time {
