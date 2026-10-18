@@ -89,6 +89,7 @@ type Encoder struct {
 	sourceLoopDone      chan struct{}
 	stopDone            chan struct{}
 	restartGate         chan struct{} // Serializes restarts; initialized under mu.
+	lifecycleGeneration uint64        // Explicit Stop invalidates already pending restarts; protected by mu.
 	state               types.EncoderState
 	stopChan            chan struct{}
 	mu                  sync.RWMutex
@@ -433,15 +434,22 @@ func (e *Encoder) StreamStatuses(streams []types.Stream) map[string]types.Proces
 
 // Start starts audio capture and stream processes.
 func (e *Encoder) Start() error {
+	return e.start(nil)
+}
+
+func (e *Encoder) start(expectedGeneration *uint64) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if expectedGeneration != nil && e.lifecycleGeneration != *expectedGeneration {
+		return nil // Superseded by an explicit Stop.
+	}
 	if !e.FFmpegAvailable() {
 		return ErrFFmpegNotAvailable
 	}
 	if e.config.AudioInput() == "" {
 		return ErrNoAudioInput
 	}
-
-	e.mu.Lock()
-	defer e.mu.Unlock()
 
 	if e.state == types.StateRunning || e.state == types.StateStarting || e.state == types.StateStopping {
 		return ErrAlreadyRunning
@@ -468,7 +476,17 @@ func (e *Encoder) Start() error {
 
 // Stop shuts down all processes.
 func (e *Encoder) Stop() error {
+	return e.stop(nil)
+}
+
+func (e *Encoder) stop(expectedGeneration *uint64) error {
 	e.mu.Lock()
+	if expectedGeneration == nil {
+		e.lifecycleGeneration++
+	} else if e.lifecycleGeneration != *expectedGeneration {
+		e.mu.Unlock()
+		return nil
+	}
 
 	if e.state == types.StateStopped {
 		e.mu.Unlock()
@@ -568,12 +586,15 @@ func (e *Encoder) restart(ctx context.Context) (err error) {
 		e.restartGate = make(chan struct{}, 1)
 	}
 	gate := e.restartGate
+	generation := e.lifecycleGeneration
 	e.mu.Unlock()
 	acquired := false
 	defer func() {
 		if err != nil {
 			e.mu.Lock()
-			e.lastError = fmt.Sprintf("audio input restart failed: %v", err)
+			if e.lifecycleGeneration == generation {
+				e.lastError = fmt.Sprintf("audio input restart failed: %v", err)
+			}
 			e.mu.Unlock()
 		}
 		if acquired {
@@ -590,7 +611,7 @@ func (e *Encoder) restart(ctx context.Context) (err error) {
 		return err
 	}
 	stopResult := make(chan error, 1)
-	go func() { stopResult <- e.Stop() }()
+	go func() { stopResult <- e.stop(&generation) }()
 	select {
 	case stopErr := <-stopResult:
 		if stopErr != nil {
@@ -609,7 +630,7 @@ func (e *Encoder) restart(ctx context.Context) (err error) {
 			return fmt.Errorf("wait for source teardown: %w", ctx.Err())
 		}
 	}
-	return e.Start()
+	return e.start(&generation)
 }
 
 // Close releases process-lifetime resources. Callers should stop the encoder first.

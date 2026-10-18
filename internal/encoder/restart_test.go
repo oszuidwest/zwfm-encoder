@@ -121,6 +121,39 @@ func TestRestartFailureIsPublishedToStatus(t *testing.T) {
 	})
 }
 
+func TestExplicitStopSupersedesRestartsWaitingForTeardown(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e := newSourceLifecycleTestEncoder(t, "exit")
+		t.Cleanup(e.alertOrchestrator.Close)
+		e.config.Audio.Input = "dante://tx/Left/Right"
+		var opens atomic.Int32
+		release := make(chan struct{})
+		e.openDanteSource = func(ctx context.Context, _ string) (source, error) {
+			opens.Add(1)
+			return pipeDanteSource(ctx, release), nil
+		}
+		if err := e.Start(); err != nil {
+			t.Fatal(err)
+		}
+		synctest.Wait()
+		first, queued, stopped := make(chan error, 1), make(chan error, 1), make(chan error, 1)
+		go func() { first <- e.Restart() }()
+		synctest.Wait()
+		go func() { queued <- e.Restart() }()
+		synctest.Wait()
+		go func() { stopped <- e.Stop() }()
+		synctest.Wait()
+		close(release)
+		<-stopped
+		<-first
+		<-queued
+		synctest.Wait()
+		if e.State() != types.StateStopped || opens.Load() != 1 {
+			t.Fatalf("state=%s, opens=%d; explicit Stop must supersede both pending restarts", e.State(), opens.Load())
+		}
+	})
+}
+
 func TestRestartDeadlineDoesNotStartOverAnUnfinishedSource(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newSourceLifecycleTestEncoder(t, "exit")

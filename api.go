@@ -229,7 +229,7 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 
 	// Restart encoder if audio input changed
 	state := s.encoder.State()
-	if audioInputChanged && (state == types.StateRunning || state == types.StateStarting || state == types.StateStopping) {
+	if audioInputChanged && (state == types.StateRunning || state == types.StateStarting) {
 		go func() {
 			if err := s.encoder.Restart(); err != nil {
 				slog.Error("failed to restart encoder after audio input change", "error", err)
