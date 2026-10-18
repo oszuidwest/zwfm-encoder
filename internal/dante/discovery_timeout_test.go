@@ -29,11 +29,10 @@ func (c *lateDeadlineConn) SetReadDeadline(time.Time) error {
 }
 
 func TestLookupTimeoutKeepsMalformedResponseAndTransportErrors(t *testing.T) {
-	listen, query, read := listenDanteUDP, queryDante, readDanteDiscovery
-	t.Cleanup(func() { listenDanteUDP, queryDante, readDanteDiscovery = listen, query, read })
 	synctest.Test(t, func(t *testing.T) {
 		h := newFakeTransmitter()
-		defer h.close(t)
+		defer h.close(t) // Also restores the discovery hooks.
+		listen := listenDanteUDP
 		listenDanteUDP = func(a *net.UDPAddr) (net.PacketConn, error) {
 			c, err := listen(a)
 			return &lateDeadlineConn{PacketConn: c}, err
