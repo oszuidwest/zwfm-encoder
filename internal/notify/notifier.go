@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
 // logQueueDepth buffers ordered event-log writes from audio cycle handlers.
@@ -323,6 +325,30 @@ func (o *AlertOrchestrator) HandleUploadAbandoned(params UploadAbandonedData) {
 	ctx := o.notifyCtx
 	o.mu.Unlock()
 	o.dispatcher.DispatchUploadAbandoned(ctx, cfg, params)
+}
+
+// HandleRecordingStorage sends storage changes through the ordered channel workers,
+// so a delayed low-space notification cannot arrive after its recovery.
+func (o *AlertOrchestrator) HandleRecordingStorage(paths []types.RecordingStorageStatus) {
+	cfg := o.cfg.Snapshot()
+	o.mu.Lock()
+	ctx := o.notifyCtx
+	o.mu.Unlock()
+	paths = slices.Clone(paths)
+	o.logMu.RLock()
+	defer o.logMu.RUnlock()
+	if o.closed {
+		return
+	}
+	for i, ch := range o.dispatcher.Channels() {
+		if !ch.IsConfiguredForUpload(&cfg) {
+			continue
+		}
+		chCfg := cfg
+		enqueueInputAlert(o.inputQueues[i], func() {
+			logNotifyResult(func() error { return ch.SendRecordingStorage(ctx, &chCfg, paths) }, ch.Name(), "recording_storage")
+		}, ch.Name(), "recording_storage")
+	}
 }
 
 // HandleInputLost alerts every channel configured for audio alerts and logs an

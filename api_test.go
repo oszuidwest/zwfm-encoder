@@ -61,6 +61,26 @@ func TestBuildReadyResponseFailures(t *testing.T) {
 		mutate    func(*readyInputs)
 	}{
 		{
+			name: "abandoned uploads", component: "uploads",
+			mutate: func(in *readyInputs) { in.abandonedUploads = 1 },
+		},
+		{
+			name: "low recording disk", component: "recording_storage",
+			mutate: func(in *readyInputs) { in.recordingStorage[0].Low = true },
+		},
+		{
+			name: "unavailable recording disk", component: "recording_storage",
+			mutate: func(in *readyInputs) { in.recordingStorage[0].Error = "offline" },
+		},
+		{
+			name: "stale recording disk check", component: "recording_storage",
+			mutate: func(in *readyInputs) { in.recordingStorage[0].CheckedAt = time.Now().Add(-4 * time.Minute) },
+		},
+		{
+			name: "recording disk check has not completed", component: "recording_storage",
+			mutate: func(in *readyInputs) { in.recordingStorage = nil },
+		},
+		{
 			name:      "ffmpeg missing",
 			component: "process",
 			mutate: func(in *readyInputs) {
@@ -371,8 +391,9 @@ func readyFixture() readyInputs {
 				State: types.ProcessRunning,
 			},
 		},
-		audioLevels:    audio.AudioLevels{},
-		pendingUploads: 0,
+		audioLevels:      audio.AudioLevels{},
+		pendingUploads:   0,
+		recordingStorage: []types.RecordingStorageStatus{{Path: "/recordings", CheckedAt: time.Now()}},
 	}
 }
 

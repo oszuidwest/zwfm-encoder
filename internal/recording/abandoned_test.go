@@ -51,7 +51,7 @@ func TestAbandonedSpoolUploadsAfterConfigFixAndRestart(t *testing.T) {
 	if r.PendingUploadCount() != 0 || attempts.Load() != 1 || len(alerts) != 1 {
 		t.Fatalf("after abandonment: pending %d, attempts %d, alerts %+v", r.PendingUploadCount(), attempts.Load(), alerts)
 	}
-	assertAbandonmentAlert(t, eventPath, alerts[0], req)
+	assertAbandonmentAlert(t, eventPath, &alerts[0], req)
 	if data, err := os.ReadFile(file); err != nil || string(data) != "audio" { //nolint:gosec // Test temp recording.
 		t.Fatalf("abandoned recording = %q, %v; want preserved audio", data, err)
 	}
@@ -114,7 +114,7 @@ func abandonedUploadHandler(t *testing.T, fixed *atomic.Bool, attempts, uploads 
 	})
 }
 
-func assertAbandonmentAlert(t *testing.T, eventPath string, alert UploadAbandonedEvent, req uploadRequest) {
+func assertAbandonmentAlert(t *testing.T, eventPath string, alert *UploadAbandonedEvent, req uploadRequest) {
 	t.Helper()
 	if alert.Filename != filepath.Base(req.localPath) || alert.S3Key != req.s3Key || alert.RetryCount != 3 || alert.LastError == "" {
 		t.Fatalf("abandonment alert = %+v", alert)

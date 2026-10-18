@@ -46,11 +46,12 @@ type WebhookPayload struct {
 
 	Input string `json:"input,omitempty"`
 
-	RecorderName string `json:"recorder_name,omitempty"`
-	Filename     string `json:"filename,omitempty"`
-	S3Key        string `json:"s3_key,omitempty"`
-	RetryCount   int    `json:"retry_count,omitempty"`
-	LastError    string `json:"last_error,omitempty"`
+	RecorderName string                         `json:"recorder_name,omitempty"`
+	Filename     string                         `json:"filename,omitempty"`
+	S3Key        string                         `json:"s3_key,omitempty"`
+	RetryCount   int                            `json:"retry_count,omitempty"`
+	LastError    string                         `json:"last_error,omitempty"`
+	StoragePaths []types.RecordingStorageStatus `json:"storage_paths,omitempty"`
 }
 
 // sendWebhookSilence notifies the configured webhook of critical silence detection.

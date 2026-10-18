@@ -77,6 +77,10 @@ const (
 	UploadAbandoned EventType = "upload_abandoned"
 	// CleanupCompleted indicates a cleanup completed event.
 	CleanupCompleted EventType = "cleanup_completed"
+	// RecordingStorageLow indicates low free space or an unavailable recording path.
+	RecordingStorageLow EventType = "recording_storage_low"
+	// RecordingStorageRestored indicates a recording path has recovered.
+	RecordingStorageRestored EventType = "recording_storage_restored"
 )
 
 // Event is a single log entry with type-specific details.

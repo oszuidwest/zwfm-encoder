@@ -19,6 +19,7 @@ func TestUnconfiguredChannelsSendNothing(t *testing.T) {
 			"channel imbalance start": channel.SendChannelImbalanceStart(ctx, cfg, ChannelImbalanceData{}),
 			"channel imbalance end":   channel.SendChannelImbalanceEnd(ctx, cfg, ChannelImbalanceData{}),
 			"upload abandoned":        channel.SendUploadAbandoned(ctx, cfg, UploadAbandonedData{}),
+			"recording storage":       channel.SendRecordingStorage(ctx, cfg, nil),
 		} {
 			if err != nil {
 				t.Errorf("unconfigured %s %s returned error: %v", channel.Name(), name, err)
