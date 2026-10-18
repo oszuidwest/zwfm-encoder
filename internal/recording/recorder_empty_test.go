@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
@@ -97,4 +98,39 @@ func TestFailedFinalizeRemovesUntouchedPlaceholder(t *testing.T) {
 	assertNoRecording(t, file)
 	assertNoRecording(t, file+unfinalizedRecordingSuffix)
 	assertRecorderErrorEvent(t, eventPath, filepath.Base(file), "No space left on device")
+}
+
+func TestFailedPlaceholderRemovalIsReportedWithTheFinalizeError(t *testing.T) {
+	t.Setenv(fakeFFmpegFailFinalizeEnv, "1")
+	originalRemove := removeEmptyRecording
+	removeEmptyRecording = func(path string) error { return &os.PathError{Op: "remove", Path: path, Err: os.ErrPermission} }
+	t.Cleanup(func() { removeEmptyRecording = originalRemove })
+	r, eventPath := errorTestRecorder(t, localOnDemandRecorder(t, "failed-removal"))
+	file := startCaptureTestRecorder(t, r)
+	if err := r.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	assertRecordingQuarantined(t, file)
+	details := assertRecorderErrorEvent(t, eventPath, filepath.Base(file), "No space left on device")
+	if msg, _ := details["error"].(string); !strings.Contains(msg, "remove empty recording") {
+		t.Fatalf("one report must also name the failed removal: %q", msg)
+	}
+	assertSingleRecorderError(t, eventPath, file, "remove empty recording")
+}
+
+func TestRotationFinalizeFailureQuarantinesThePreviousFile(t *testing.T) {
+	neverRotate(t)
+	t.Setenv(fakeFFmpegFailFinalizeEnv, "1")
+	cfg := localOnDemandRecorder(t, "rotation-failure")
+	cfg.RecordingMode = types.RecordingHourly
+	r, eventPath := errorTestRecorder(t, cfg)
+	previous := startCaptureTestRecorder(t, r)
+	r.WriteAudio([]byte{1, 2, 3, 4})
+	t.Setenv(fakeFFmpegFailFinalizeEnv, "") // Only the rotated-out encoder fails.
+	rotateTestRecorder(r)
+	assertRecordingQuarantined(t, previous)
+	assertSingleRecorderError(t, eventPath, previous, "No space left on device")
+	if err := r.Stop(); err != nil {
+		t.Fatal(err)
+	}
 }

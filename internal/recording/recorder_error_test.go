@@ -214,7 +214,7 @@ func TestWriteErrorQuarantinesAudioDespiteZeroAcceptedBytes(t *testing.T) {
 	t.Setenv(fakeFFmpegFailWriteEnv, "empty")
 	t.Setenv(fakeFFmpegEmptyHeaderEnv, "1")
 	cfg := testS3Recorder()
-	cfg.RecordingMode = types.RecordingOnDemand
+	cfg.RecordingMode, cfg.S3Endpoint = types.RecordingOnDemand, "http://127.0.0.1:1" // Never reach real S3.
 	r, _ := errorTestRecorder(t, cfg)
 	file := startCaptureTestRecorder(t, r)
 	r.mu.RLock()

@@ -160,6 +160,7 @@ func TestReconcilePendingUploadsRecoversS3OnlySpoolFilesWithoutMetadata(t *testi
 		t.Fatalf("stat recovered metadata: %v", err)
 	}
 }
+
 func TestReconcileDoesNotFollowSpoolSymlinks(t *testing.T) {
 	t.Parallel()
 	spoolDir := t.TempDir()

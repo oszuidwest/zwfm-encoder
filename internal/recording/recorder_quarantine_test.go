@@ -95,7 +95,7 @@ func assertSingleRecorderError(t *testing.T, eventsPath, file, cause string) {
 func TestFailedEmptyRemovalStaysQuarantinedAfterRestart(t *testing.T) {
 	t.Setenv(fakeFFmpegEmptyHeaderEnv, "1")
 	cfg := testS3Recorder()
-	cfg.RecordingMode = types.RecordingOnDemand
+	cfg.RecordingMode, cfg.S3Endpoint = types.RecordingOnDemand, "http://127.0.0.1:1"
 	r, events := errorTestRecorder(t, cfg)
 	file := startCaptureTestRecorder(t, r)
 	originalRemove := removeEmptyRecording
@@ -146,7 +146,7 @@ func TestWriterTimeoutReportsOneErrorAndQuarantinesPartialAudio(t *testing.T) {
 
 func TestFailedMarkerRemovalDoesNotQueueCompletedAudio(t *testing.T) {
 	cfg := testS3Recorder()
-	cfg.RecordingMode = types.RecordingOnDemand
+	cfg.RecordingMode, cfg.S3Endpoint = types.RecordingOnDemand, "http://127.0.0.1:1"
 	r, events := errorTestRecorder(t, cfg)
 	file := startCaptureTestRecorder(t, r)
 	r.WriteAudio([]byte{1, 2, 3, 4})
