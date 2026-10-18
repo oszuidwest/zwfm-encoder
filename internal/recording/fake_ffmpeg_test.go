@@ -18,6 +18,7 @@ const (
 	fakeFFmpegFailFinalizeEnv = "ZWFM_RECORDING_FAKE_FFMPEG_FAIL_FINALIZE"
 	fakeFFmpegEmptyHeaderEnv  = "ZWFM_RECORDING_FAKE_FFMPEG_EMPTY_HEADER"
 	fakeFFmpegFailWriteEnv    = "ZWFM_RECORDING_FAKE_FFMPEG_FAIL_WRITE"
+	fakeFFmpegBlockWriterEnv  = "ZWFM_RECORDING_FAKE_FFMPEG_BLOCK_WRITER"
 	// fakeFFmpegFinalize is how long the fake takes to exit after stdin closes,
 	// like a real encoder flushing and finalizing its file.
 	fakeFFmpegFinalize = 100 * time.Millisecond
@@ -80,6 +81,11 @@ func runFakeFFmpeg(args []string) int {
 	}
 	if err := file.Close(); err != nil {
 		return 1
+	}
+	if os.Getenv(fakeFFmpegBlockWriterEnv) == "1" {
+		// With FAIL_WRITE set, the first 4096 bytes are encoded but the next
+		// large stdin write remains blocked until the parent kills this process.
+		time.Sleep(time.Hour)
 	}
 	if failWrite != "" {
 		_, _ = fmt.Fprintln(os.Stderr, "simulated write failure")

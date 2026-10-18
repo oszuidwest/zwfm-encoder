@@ -153,7 +153,7 @@ func TestFailedRotationStartEmitsRecorderError(t *testing.T) {
 	}
 }
 
-func TestWriteErrorRecoveryUploadDoesNotDelayStop(t *testing.T) {
+func TestWriteErrorQuarantinesPartialAudioWithoutUpload(t *testing.T) {
 	t.Setenv(fakeFFmpegFailWriteEnv, "1")
 	entered := make(chan struct{}, 1)
 	unblock := make(chan struct{})
@@ -181,11 +181,7 @@ func TestWriteErrorRecoveryUploadDoesNotDelayStop(t *testing.T) {
 		r.WriteAudio(make([]byte, 16384))
 		time.Sleep(5 * time.Millisecond)
 	}
-	select {
-	case <-entered:
-	case <-time.After(3 * time.Second):
-		t.Fatal("partial recording was not retried")
-	}
+	waitForRecorderState(t, r, types.ProcessError)
 	stopped := make(chan error, 1)
 	go func() { stopped <- r.Stop() }()
 	select {
@@ -201,19 +197,16 @@ func TestWriteErrorRecoveryUploadDoesNotDelayStop(t *testing.T) {
 		t.Fatalf("preserved partial recording = %d bytes, %v", len(data), err)
 	}
 	metadata, err := os.ReadDir(r.pendingUploadDir())
-	if err != nil || len(metadata) != 1 {
-		t.Fatalf("durable retry metadata = %v, %v", metadata, err)
+	if err != nil && !os.IsNotExist(err) || len(metadata) != 0 {
+		t.Fatalf("failed output registered for automatic upload: %v, %v", metadata, err)
 	}
 	assertRecorderErrorEvent(t, eventPath, filepath.Base(file), "simulated write failure")
-	release()
-	deadline = time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(file); os.IsNotExist(err) {
-			return // Successful S3-only upload removes the spool, even after Stop.
-		}
-		time.Sleep(5 * time.Millisecond)
+	assertRecordingQuarantined(t, file)
+	select {
+	case <-entered:
+		t.Fatal("failed output attempted an automatic upload")
+	default:
 	}
-	t.Fatal("recovery upload did not finish after Stop")
 }
 
 func errorTestRecorder(t *testing.T, cfg *types.Recorder) (recorder *GenericRecorder, eventPath string) {

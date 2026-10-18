@@ -101,6 +101,9 @@ func (r *GenericRecorder) loadPendingUpload(metadataPath string) (pendingUpload,
 		slog.Warn("removing incomplete pending upload metadata", "id", r.id, "path", metadataPath)
 		return pendingUpload{}, false, os.Remove(metadataPath)
 	}
+	if unfinalized, err := recordingUnfinalized(meta.LocalPath); err != nil || unfinalized {
+		return pendingUpload{}, false, err
+	}
 
 	info, err := os.Stat(meta.LocalPath)
 	if err != nil {
@@ -112,6 +115,9 @@ func (r *GenericRecorder) loadPendingUpload(metadataPath string) (pendingUpload,
 	}
 	if meta.FileSize == 0 {
 		meta.FileSize = info.Size()
+	}
+	if info.Size() == 0 {
+		return pendingUpload{}, false, nil
 	}
 	// Restart also re-queues uploads whose retry window expired while offline.
 	if meta.FirstAttempt.IsZero() || meta.Abandoned || time.Since(meta.FirstAttempt) > MaxUploadRetryAge {
@@ -166,6 +172,11 @@ func (r *GenericRecorder) recoverOrphanSpoolFiles(existing []pendingUpload) ([]p
 		}
 
 		filePath := filepath.Join(dir, entry.Name())
+		if unfinalized, err := recordingUnfinalized(filePath); err != nil {
+			return nil, err
+		} else if unfinalized {
+			continue
+		}
 		if _, ok := known[filePath]; ok {
 			continue
 		}
@@ -173,6 +184,9 @@ func (r *GenericRecorder) recoverOrphanSpoolFiles(existing []pendingUpload) ([]p
 		info, err := entry.Info()
 		if err != nil {
 			return nil, fmt.Errorf("stat recorder spool file: %w", err)
+		}
+		if !info.Mode().IsRegular() || info.Size() == 0 {
+			continue
 		}
 		pending := pendingUpload{
 			request: uploadRequest{

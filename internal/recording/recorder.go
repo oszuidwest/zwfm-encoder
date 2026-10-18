@@ -34,6 +34,12 @@ var reserveRecordingFile = func(path string) (*os.File, error) {
 // checkRecordingPath lets lifecycle tests hold directory validation on a slow mount.
 var checkRecordingPath = util.CheckPathWritable
 
+// removeEmptyRecording lets tests reproduce a failed unlink without relying on mount permissions.
+var removeEmptyRecording = os.Remove
+
+// writerDrainTimeout bounds graceful writer drain; tests shorten it.
+var writerDrainTimeout = 5 * time.Second
+
 // clockSynced and clockSyncPoll gate the first file on a synchronized clock;
 // tests replace them.
 var (
@@ -51,8 +57,6 @@ const (
 	// minute-based name only recurs within its minute or in the repeated hour
 	// of a DST fall-back.
 	usedFilenameWindow = 2 * time.Hour
-	// writerDrainTimeout bounds graceful writer drain before cancelling FFmpeg.
-	writerDrainTimeout = 5 * time.Second
 	// processStopTimeout bounds waiting before escalating to SIGTERM.
 	processStopTimeout = 10 * time.Second
 	// processKillTimeout bounds waiting after SIGTERM before SIGKILL.
@@ -490,7 +494,7 @@ func (r *GenericRecorder) handleWriteError(result *ffmpeg.StartResult, writeErr 
 	go r.cleanupAfterWriteError(result, capturedFile, output, writeErr)
 }
 
-// cleanupAfterWriteError closes a broken FFmpeg process and preserves its partial file for upload.
+// cleanupAfterWriteError preserves failed outputs in quarantine for inspection.
 // The failing write has released stdinMu, so CloseStdin cannot deadlock.
 func (r *GenericRecorder) cleanupAfterWriteError(result *ffmpeg.StartResult, currentFile string, output *recordingOutput, writeErr error) {
 	defer r.retiring.Done()
@@ -504,22 +508,7 @@ func (r *GenericRecorder) cleanupAfterWriteError(result *ffmpeg.StartResult, cur
 	if err := r.drainProcess(result); err != nil {
 		writeErr = err
 	}
-	r.reportError(currentFile, writeErr)
-
-	// Persist recovery before releasing Stop; network retries run independently.
-	if currentFile != "" {
-		if err := output.checkOwnership(); err != nil {
-			r.reportError(currentFile, err)
-			return
-		}
-		output.close() // Windows cannot remove a spool file while our handle is open.
-		// A failed Windows pipe write can report zero accepted bytes even after
-		// FFmpeg consumed PCM. Ownership and actual output size decide recovery.
-		if req, ok := r.prepareUploadRequest(currentFile); ok && req.fileSize > 0 {
-			r.addToRetryQueue(req, writeErr.Error())
-			go r.processRetryQueue()
-		}
-	}
+	r.reportError(currentFile, errors.Join(writeErr, output.checkOwnership()))
 }
 
 // drainProcess waits for FFmpeg, escalating through SIGTERM and SIGKILL.
@@ -603,11 +592,15 @@ func (r *GenericRecorder) prepareFilenameLocked(fileTime time.Time) (output *rec
 					return true
 				}
 				file, err = reserveRecordingFile(filepath.Join(outputDir, name))
+				if err == nil {
+					output = &recordingOutput{file: file}
+					if err = output.markUnfinalized(); err != nil {
+						output.discard()
+						output = nil
+					}
+				}
 				return errors.Is(err, os.ErrExist)
 			})
-			if err == nil {
-				output = &recordingOutput{file: file}
-			}
 		}
 		r.mu.Lock()
 		if r.startGen != gen || r.state != state {
@@ -634,7 +627,54 @@ func (r *GenericRecorder) prepareFilenameLocked(fileTime time.Time) (output *rec
 // Recording directories must be writable only by trusted operators: FFmpeg
 // reopens the reserved path, so arbitrary hostile directory mutation is unsupported.
 type recordingOutput struct {
-	file *os.File
+	file        *os.File
+	unfinalized bool
+}
+
+const unfinalizedRecordingSuffix = ".unfinalized"
+
+func (o *recordingOutput) markUnfinalized() error {
+	path := o.file.Name() + unfinalizedRecordingSuffix
+	if err := util.ValidatePath("recording marker", path); err != nil {
+		return err
+	}
+	marker, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec // Marker path is validated above.
+	if err != nil {
+		return fmt.Errorf("create unfinalized recording marker: %w", err)
+	}
+	o.unfinalized = true
+	if err := errors.Join(marker.Sync(), marker.Close()); err != nil {
+		return fmt.Errorf("persist unfinalized recording marker: %w", err)
+	}
+	return nil
+}
+
+func (o *recordingOutput) clearUnfinalized() error {
+	if !o.unfinalized {
+		return nil
+	}
+	if err := os.Remove(o.file.Name() + unfinalizedRecordingSuffix); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("clear unfinalized recording marker: %w", err)
+	}
+	o.unfinalized = false
+	return nil
+}
+
+func recordingUnfinalized(path string) (bool, error) {
+	if err := util.ValidatePath("recording file", path); err != nil {
+		return false, err
+	}
+	if strings.HasSuffix(path, unfinalizedRecordingSuffix) {
+		return true, nil
+	}
+	_, err := os.Lstat(path + unfinalizedRecordingSuffix)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check unfinalized recording marker: %w", err)
+	}
+	return true, nil
 }
 
 func (o *recordingOutput) checkOwnership() error {
@@ -678,6 +718,10 @@ func (o *recordingOutput) discard() {
 	o.close() // Release Windows' delete lock before removing our placeholder.
 	if err := os.Remove(o.file.Name()); err != nil && !errors.Is(err, os.ErrNotExist) {
 		slog.Warn("failed to discard recording reservation", "file", o.file.Name(), "error", err)
+		return
+	}
+	if err := o.clearUnfinalized(); err != nil {
+		slog.Warn("failed to discard recording reservation marker", "file", o.file.Name(), "error", err)
 	}
 }
 
@@ -803,11 +847,8 @@ func (r *GenericRecorder) finishEncoder(run encoderRun) {
 		// WriteStdin holds stdinMu; cancel FFmpeg to unblock it.
 		slog.Warn("recorder writer stuck, cancelling ffmpeg to break the pipe", "id", r.id, "file", filepath.Base(run.file))
 		run.result.Cancel(errRecorderStopped)
-		finalizeErr = r.drainProcess(run.result)
+		finalizeErr = errors.Join(fmt.Errorf("recording writer timed out after %s", writerDrainTimeout), r.drainProcess(run.result))
 		<-run.writerDone
-	}
-	if finalizeErr != nil && !errors.Is(context.Cause(run.result.Context()), errRecorderStopped) {
-		r.reportError(run.file, finalizeErr)
 	}
 
 	// writerDone has fired; remaining buffered chunks are teardown loss.
@@ -820,21 +861,24 @@ func (r *GenericRecorder) finishEncoder(run encoderRun) {
 	if run.file == "" {
 		return
 	}
-	if err := run.output.checkOwnership(); err != nil {
+	if err := errors.Join(finalizeErr, run.output.checkOwnership()); err != nil {
 		r.reportError(run.file, err)
 		return
 	}
 	run.output.close() // Release the handle before removal or asynchronous S3 cleanup.
-	if run.result.BytesWritten() == 0 {
-		// Failed empty outputs are retained for inspection.
-		if finalizeErr != nil {
+	empty := run.result.BytesWritten() == 0
+	if empty {
+		if err := removeEmptyRecording(run.file); err != nil && !errors.Is(err, os.ErrNotExist) {
+			r.reportError(run.file, fmt.Errorf("remove empty recording: %w", err))
 			return
 		}
-		if err := os.Remove(run.file); err != nil && !errors.Is(err, os.ErrNotExist) {
-			r.reportError(run.file, fmt.Errorf("remove empty recording: %w", err))
-		} else {
-			slog.Info("discarded recording without audio", "id", r.id, "file", filepath.Base(run.file))
-		}
+	}
+	if err := run.output.clearUnfinalized(); err != nil {
+		r.reportError(run.file, err)
+		return
+	}
+	if empty {
+		slog.Info("discarded recording without audio", "id", r.id, "file", filepath.Base(run.file))
 		return
 	}
 	// queueForUpload handles local-only and missing S3 config.
