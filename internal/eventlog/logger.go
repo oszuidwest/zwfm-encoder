@@ -202,13 +202,12 @@ func NewLogger(filePath string) (*Logger, error) {
 }
 
 func newLogger(filePath string, maxSizeBytes int64) (*Logger, error) {
+	if err := terminateLogTail(filePath); err != nil {
+		return nil, fmt.Errorf("terminate event log tail: %w", err)
+	}
 	writer, err := util.NewRollingWriter(filePath, maxSizeBytes)
 	if err != nil {
 		return nil, fmt.Errorf("open event log: %w", err)
-	}
-	if err := terminateLogTail(filePath, writer); err != nil {
-		_ = writer.Close()
-		return nil, fmt.Errorf("terminate event log tail: %w", err)
 	}
 	return &Logger{
 		filePath: filePath,
@@ -216,8 +215,11 @@ func newLogger(filePath string, maxSizeBytes int64) (*Logger, error) {
 	}, nil
 }
 
-func terminateLogTail(filePath string, writer *util.RollingWriter) error {
-	f, err := os.Open(filePath) //nolint:gosec // Same trusted log path already opened by the rolling writer.
+func terminateLogTail(filePath string) error {
+	f, err := os.OpenFile(filePath, os.O_RDWR|os.O_APPEND, 0) //nolint:gosec // Trusted application event-log path.
+	if os.IsNotExist(err) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -230,12 +232,9 @@ func terminateLogTail(filePath string, writer *util.RollingWriter) error {
 	if _, err := f.ReadAt(tail[:], info.Size()-1); err != nil {
 		return err
 	}
-	if err := f.Close(); err != nil {
-		return err
-	}
 	// Isolate a crash fragment without discarding a valid unterminated event.
 	if tail[0] != '\n' {
-		_, err = writer.Write([]byte{'\n'})
+		_, err = f.Write([]byte{'\n'})
 	}
 	return err
 }

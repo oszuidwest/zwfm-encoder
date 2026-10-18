@@ -59,6 +59,27 @@ func TestLoggerSeparatesExistingTailOnReopen(t *testing.T) {
 	}
 }
 
+func TestLoggerTailBoundaryDoesNotRotateAwayPreviousEvent(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "encoder.jsonl")
+	if err := os.WriteFile(path, []byte(`{"type":"input_lost","msg":"old"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logger, err := newLogger(path, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = logger.Close() }()
+	if err := logger.Log(&Event{Type: InputRestored, Message: "new"}); err != nil {
+		t.Fatal(err)
+	}
+	events, _, err := ReadLast(path, 10, 0, FilterAll)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMessages(t, events, []string{"new", "old"})
+}
+
 func TestReadLastReturnsNewestWithLimitOffsetAndHasMore(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "encoder.jsonl")
