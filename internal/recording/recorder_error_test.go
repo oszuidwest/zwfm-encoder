@@ -6,12 +6,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -148,64 +146,105 @@ func TestFailedRotationStartEmitsRecorderError(t *testing.T) {
 		t.Fatalf("rotation failure filename = %q, want attempted new output, not %q", filename, filepath.Base(previous))
 	}
 	assertRecorderErrorLog(t, logs, filename)
-	if _, err := os.Stat(filepath.Join(cfg.LocalPath, filename)); !os.IsNotExist(err) {
-		t.Fatalf("failed rotation left an unstarted reservation: %v", err)
-	}
+	assertNoRecording(t, filepath.Join(cfg.LocalPath, filename)) // The unstarted reservation.
 }
 
 func TestWriteErrorQuarantinesPartialAudioWithoutUpload(t *testing.T) {
 	t.Setenv(fakeFFmpegFailWriteEnv, "1")
-	entered := make(chan struct{}, 1)
-	unblock := make(chan struct{})
-	release := sync.OnceFunc(func() { close(unblock) })
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		_, _ = io.Copy(io.Discard, req.Body)
-		entered <- struct{}{}
-		<-unblock
-		w.Header().Set("ETag", `"test"`)
-	}))
-	defer server.Close()
-	defer release()
+	endpoint, uploads := conditionalPutServer(t, "", func(http.ResponseWriter, string) bool { return false })
 	cfg := testS3Recorder()
-	cfg.RecordingMode, cfg.S3Endpoint = types.RecordingOnDemand, server.URL
+	cfg.RecordingMode, cfg.S3Endpoint = types.RecordingOnDemand, endpoint
 	r, eventPath := errorTestRecorder(t, cfg)
-	if err := r.Start(); err != nil {
+	file := startCaptureTestRecorder(t, r)
+	writeUntilRecorderLeavesRunning(t, r)
+	if err := r.Stop(); err != nil {
 		t.Fatal(err)
 	}
-	waitForRecorderState(t, r, types.ProcessRunning)
+	assertRecordedCapture(t, file, make([]byte, 4096))
+	assertRecordingQuarantined(t, file)
+	assertSingleRecorderError(t, eventPath, file, "simulated write failure")
+	if r.PendingUploadCount() != 0 || len(uploads()) != 0 {
+		t.Fatalf("failed output queued (%d) or uploaded (%d)", r.PendingUploadCount(), len(uploads()))
+	}
+}
+
+func TestWriteErrorKeepsReplacedRecording(t *testing.T) {
+	t.Setenv(fakeFFmpegFailWriteEnv, "1")
+	endpoint, uploads := conditionalPutServer(t, "", func(http.ResponseWriter, string) bool { return false })
+	cfg := testS3Recorder()
+	cfg.RecordingMode, cfg.StorageMode = types.RecordingOnDemand, types.StorageBoth
+	cfg.LocalPath, cfg.S3Endpoint = t.TempDir(), endpoint
+	r, path := errorTestRecorder(t, cfg)
+	file := startCaptureTestRecorder(t, r)
 	r.mu.RLock()
-	file := r.currentFile
+	result := r.result
 	r.mu.RUnlock()
+	r.WriteAudio(make([]byte, 4096))
+	_ = result.Wait() // The fake exits after the first 4096 bytes.
+	other := filepath.Join(t.TempDir(), "foreign")
+	if err := os.WriteFile(other, []byte("pre-existing recording"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(file); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("Windows protects the open reservation from replacement: %v", err)
+		}
+		t.Fatal(err)
+	}
+	if err := os.Rename(other, file); err != nil {
+		t.Fatal(err)
+	}
+	writeUntilRecorderLeavesRunning(t, r)
+	if err := r.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if metadata, err := os.ReadDir(r.pendingUploadDir()); err == nil && len(metadata) != 0 {
+		t.Fatalf("replacement registered for recovery: %v", metadata)
+	}
+	if got := len(uploads()); got != 0 {
+		t.Errorf("uploaded unrelated replacement %d times", got)
+	}
+	assertRecordedCapture(t, file, []byte("pre-existing recording"))
+	assertRecorderErrorEvent(t, path, filepath.Base(file), "replaced")
+}
+
+func TestWriteErrorQuarantinesAudioDespiteZeroAcceptedBytes(t *testing.T) {
+	// A failed Windows pipe write can report zero accepted bytes after FFmpeg
+	// consumed PCM; the fake models it by exiting before reading stdin.
+	t.Setenv(fakeFFmpegFailWriteEnv, "empty")
+	t.Setenv(fakeFFmpegEmptyHeaderEnv, "1")
+	cfg := testS3Recorder()
+	cfg.RecordingMode, cfg.S3Endpoint = types.RecordingOnDemand, "http://127.0.0.1:1" // Never reach real S3.
+	r, _ := errorTestRecorder(t, cfg)
+	file := startCaptureTestRecorder(t, r)
+	r.mu.RLock()
+	result := r.result
+	r.mu.RUnlock()
+	_ = result.Wait()
+	writeUntilRecorderLeavesRunning(t, r)
+	if err := r.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if result.BytesWritten() != 0 {
+		t.Fatalf("pipe accepted %d bytes, want 0", result.BytesWritten())
+	}
+	assertRecordedCapture(t, file, []byte("header without audio"))
+	assertRecordingQuarantined(t, file)
+	if r.PendingUploadCount() != 0 {
+		t.Fatal("quarantined output registered for upload")
+	}
+}
+
+// writeUntilRecorderLeavesRunning feeds audio until a write error stops r.
+func writeUntilRecorderLeavesRunning(t *testing.T, r *GenericRecorder) {
+	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
-	for r.Status().State == types.ProcessRunning && time.Now().Before(deadline) {
+	for r.Status().State == types.ProcessRunning {
+		if time.Now().After(deadline) {
+			t.Fatal("write error did not stop the recorder")
+		}
 		r.WriteAudio(make([]byte, 16384))
 		time.Sleep(5 * time.Millisecond)
-	}
-	waitForRecorderState(t, r, types.ProcessError)
-	stopped := make(chan error, 1)
-	go func() { stopped <- r.Stop() }()
-	select {
-	case err := <-stopped:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(time.Second):
-		release()
-		t.Fatalf("Stop waited for the recovery upload, then returned %v", <-stopped)
-	}
-	if data, err := os.ReadFile(file); err != nil || len(data) != 4096 { //nolint:gosec // Test temp recording.
-		t.Fatalf("preserved partial recording = %d bytes, %v", len(data), err)
-	}
-	metadata, err := os.ReadDir(r.pendingUploadDir())
-	if err != nil && !os.IsNotExist(err) || len(metadata) != 0 {
-		t.Fatalf("failed output registered for automatic upload: %v, %v", metadata, err)
-	}
-	assertRecorderErrorEvent(t, eventPath, filepath.Base(file), "simulated write failure")
-	assertRecordingQuarantined(t, file)
-	select {
-	case <-entered:
-		t.Fatal("failed output attempted an automatic upload")
-	default:
 	}
 }
 
@@ -290,14 +329,12 @@ func TestWriteErrorWithEmptyOutputIsNotRecovered(t *testing.T) {
 	if err := r.Stop(); err != nil {
 		t.Fatal(err)
 	}
-	// A queued recovery persists metadata before uploading and an upload removes
-	// the spool file, so both checks hold only if nothing was queued.
+	// A queued recovery persists metadata before uploading.
 	if metadata, err := os.ReadDir(r.pendingUploadDir()); err == nil && len(metadata) != 0 {
 		t.Fatalf("empty output registered for recovery: %v", metadata)
 	}
-	if info, err := os.Stat(file); err != nil || info.Size() != 0 {
-		t.Fatalf("output = %v, %v; want the fake's empty file left in place", info, err)
-	}
+	assertNoRecording(t, file)                            // An empty placeholder is not left behind,
+	assertNoRecording(t, file+unfinalizedRecordingSuffix) // nor its marker.
 	if put := len(uploads()); put != 0 {
 		t.Fatalf("empty output uploaded %d times", put)
 	}

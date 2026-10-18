@@ -376,7 +376,7 @@ func (s *Server) handleUpdateStream(w http.ResponseWriter, r *http.Request) {
 	}
 	mode, codec, host := streamRequestDefaults(&req)
 
-	// Full replacement; ID, CreatedAt and internal file ownership are preserved.
+	// Full replacement - preserve only ID and CreatedAt.
 	// For password: empty string means keep existing unless clear_password is true.
 	updated := &types.Stream{
 		ID:         id,
@@ -561,7 +561,7 @@ func (s *Server) handleUpdateRecorder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Full replacement - preserve only ID and CreatedAt.
+	// Full replacement; ID, CreatedAt and (in config) internal file ownership are preserved.
 	// For S3 secret: empty string means keep existing unless clear_s3_secret is true.
 	updated := &types.Recorder{
 		ID:                id,

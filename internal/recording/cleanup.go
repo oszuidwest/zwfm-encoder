@@ -111,7 +111,7 @@ func (m *Manager) cleanupLocalFiles(recorder *GenericRecorder) {
 				slog.Warn("cleanup: failed to delete local file", "id", cfg.ID, "path", filePath, "error", err)
 			} else {
 				deleted++
-				if err := os.Remove(filePath + unfinalizedRecordingSuffix); err != nil && !os.IsNotExist(err) {
+				if err := removeUnfinalizedMarker(filePath); err != nil {
 					slog.Warn("cleanup: failed to delete recording marker", "id", cfg.ID, "path", filePath, "error", err)
 				}
 				slog.Debug("cleanup: deleted local file", "id", cfg.ID, "file", name)
@@ -149,51 +149,12 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 	defer cancel()
 
 	var deleted int
-	for _, filePrefix := range []string{cfg.RecordingFilePrefix(), cfg.LegacyFilePrefix} {
-		if filePrefix == "" {
-			continue
-		}
-		prefix := "recordings/" + filePrefix + "/"
-		paginator := s3.NewListObjectsV2Paginator(client, &s3.ListObjectsV2Input{
-			Bucket: aws.String(cfg.S3Bucket),
-			Prefix: aws.String(prefix),
-		})
-
-		for paginator.HasMorePages() {
-			output, err := paginator.NextPage(ctx)
-			if err != nil {
-				slog.Warn("cleanup: failed to list S3 objects", "id", cfg.ID, "bucket", cfg.S3Bucket, "error", err)
-				return
-			}
-
-			for _, obj := range output.Contents {
-				key := aws.ToString(obj.Key)
-				if !strings.HasPrefix(key, prefix) || strings.Contains(strings.TrimPrefix(key, prefix), "/") {
-					continue // Never delete outside the recorder's exact namespace.
-				}
-				filename := filepath.Base(key)
-
-				// Legacy filenames can differ from the ID namespace after spool recovery.
-				fileDate, ok := util.FilenameTime(filename)
-				if !ok {
-					continue
-				}
-
-				// Delete if older than retention, by name and by upload time (a
-				// missing LastModified falls back to the name alone).
-				if fileDate.Before(cutoff) && aws.ToTime(obj.LastModified).Before(cutoff) {
-					_, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
-						Bucket: aws.String(cfg.S3Bucket),
-						Key:    obj.Key,
-					})
-					if err != nil {
-						slog.Warn("cleanup: failed to delete S3 object", "id", cfg.ID, "key", key, "error", err)
-					} else {
-						deleted++
-						slog.Debug("cleanup: deleted S3 object", "id", cfg.ID, "key", key)
-					}
-				}
-			}
+	for _, filePrefix := range ownedFilePrefixes(&cfg) {
+		n, err := cleanupS3Namespace(ctx, client, &cfg, s3Namespace(filePrefix), cutoff)
+		deleted += n
+		if err != nil {
+			slog.Warn("cleanup: failed to list S3 objects", "id", cfg.ID, "bucket", cfg.S3Bucket, "error", err)
+			break
 		}
 	}
 	if deleted > 0 {
@@ -202,12 +163,54 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 	}
 }
 
-func recorderFileTime(cfg *types.Recorder, filename string) (time.Time, bool) {
-	for _, prefix := range []string{cfg.RecordingFilePrefix(), cfg.LegacyFilePrefix} {
-		if prefix != "" {
-			if at, ok := recordingFileTime(prefix, filename); ok {
-				return at, true
+// cleanupS3Namespace deletes expired objects directly under prefix and returns how many it deleted.
+func cleanupS3Namespace(ctx context.Context, client *s3.Client, cfg *types.Recorder, prefix string, cutoff time.Time) (int, error) {
+	var deleted int
+	paginator := s3.NewListObjectsV2Paginator(client, &s3.ListObjectsV2Input{
+		Bucket: aws.String(cfg.S3Bucket),
+		Prefix: aws.String(prefix),
+	})
+	for paginator.HasMorePages() {
+		output, err := paginator.NextPage(ctx)
+		if err != nil {
+			return deleted, err
+		}
+		for _, obj := range output.Contents {
+			key := aws.ToString(obj.Key)
+			filename, ok := strings.CutPrefix(key, prefix)
+			if !ok || strings.Contains(filename, "/") {
+				continue // Never delete outside the recorder's exact namespace.
 			}
+			// Spool recovery can upload legacy-named files into the ID namespace, so match only the timestamp.
+			fileDate, ok := util.FilenameTime(filename)
+			// Delete if older than retention, by name and by upload time (a
+			// missing LastModified falls back to the name alone).
+			if !ok || !fileDate.Before(cutoff) || !aws.ToTime(obj.LastModified).Before(cutoff) {
+				continue
+			}
+			if _, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(cfg.S3Bucket), Key: obj.Key}); err != nil {
+				slog.Warn("cleanup: failed to delete S3 object", "id", cfg.ID, "key", key, "error", err)
+				continue
+			}
+			deleted++
+			slog.Debug("cleanup: deleted S3 object", "id", cfg.ID, "key", key)
+		}
+	}
+	return deleted, nil
+}
+
+// ownedFilePrefixes lists the ID namespace and, for pre-upgrade recorders, the captured legacy prefix.
+func ownedFilePrefixes(cfg *types.Recorder) []string {
+	if cfg.LegacyFilePrefix == "" {
+		return []string{cfg.RecordingFilePrefix()}
+	}
+	return []string{cfg.RecordingFilePrefix(), cfg.LegacyFilePrefix}
+}
+
+func recorderFileTime(cfg *types.Recorder, filename string) (time.Time, bool) {
+	for _, prefix := range ownedFilePrefixes(cfg) {
+		if at, ok := recordingFileTime(prefix, filename); ok {
+			return at, true
 		}
 	}
 	return time.Time{}, false
