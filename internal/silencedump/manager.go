@@ -51,16 +51,27 @@ func NewManager(ffmpegPath string, port int, enabled bool, retentionDays int, on
 
 // Start begins automatic cleanup of old dump files.
 func (m *Manager) Start() {
+	m.StartIfActive(nil)
+}
+
+// StartIfActive checks source ownership while serialized with Stop.
+// The predicate must not call this manager.
+func (m *Manager) StartIfActive(active func() bool) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	if active != nil && !active() {
+		m.mu.Unlock()
+		return
+	}
 
 	if m.running {
+		m.mu.Unlock()
 		return
 	}
 
 	m.running = true
 	m.cleanupStopCh = make(chan struct{})
 	m.startCleanupScheduler(m.cleanupStopCh)
+	m.mu.Unlock()
 
 	slog.Info("audio incident dump manager started", "enabled", m.Enabled())
 }

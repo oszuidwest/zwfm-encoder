@@ -52,16 +52,26 @@ func BaseInputArgs() []string {
 
 // StartProcess launches an FFmpeg subprocess.
 func StartProcess(ffmpegPath string, args []string) (*StartResult, error) {
-	return startProcess(ffmpegPath, args, false)
+	return StartProcessContext(context.Background(), ffmpegPath, args)
+}
+
+// StartProcessContext ties process startup and lifetime to ctx.
+func StartProcessContext(ctx context.Context, ffmpegPath string, args []string) (*StartResult, error) {
+	return startProcess(ctx, ffmpegPath, args, false)
 }
 
 // StartProcessWithStdout launches an FFmpeg subprocess with stdout available through [StartResult.Stdout].
 func StartProcessWithStdout(ffmpegPath string, args []string) (*StartResult, error) {
-	return startProcess(ffmpegPath, args, true)
+	return StartProcessWithStdoutContext(context.Background(), ffmpegPath, args)
 }
 
-func startProcess(ffmpegPath string, args []string, captureStdout bool) (*StartResult, error) {
-	ctx, cancel := context.WithCancelCause(context.Background())
+// StartProcessWithStdoutContext is StartProcessContext with a readable stdout pipe.
+func StartProcessWithStdoutContext(ctx context.Context, ffmpegPath string, args []string) (*StartResult, error) {
+	return startProcess(ctx, ffmpegPath, args, true)
+}
+
+func startProcess(ctx context.Context, ffmpegPath string, args []string, captureStdout bool) (*StartResult, error) {
+	ctx, cancel := context.WithCancelCause(ctx)
 	cmd := util.CommandContext(ctx, ffmpegPath, args...)
 
 	stdinPipe, err := cmd.StdinPipe()
