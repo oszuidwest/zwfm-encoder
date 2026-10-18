@@ -52,7 +52,7 @@ The web interface is available at `http://<raspberry-pi-ip>:8080` on your truste
 
 **Default credentials:** `admin` / `encoder`
 
-Choose a unique password before exposing the service beyond the device.
+New installations are reachable from the LAN right away, so replace the default password before connecting the device to a shared network.
 
 ## Updating
 
@@ -233,7 +233,7 @@ The encoder is intended to run as an internal appliance, managed directly by IP 
 
 ### LAN and VPN access
 
-The default `system.bind_address` is `0.0.0.0`, allowing access at `http://<device-ip>:8080` on all IPv4 interfaces. You can bind to a specific LAN or VPN interface by setting its numeric IP address instead. IPv6 addresses are also supported; `::` listens on all IPv6 interfaces, with IPv4 availability depending on the OS. A bind address must not include a port. Restart the encoder after changing the bind address or port.
+The default `system.bind_address` is `0.0.0.0`, allowing access at `http://<device-ip>:8080` on all interfaces. Like `::` and an empty value, it uses Go's wildcard listener, which also accepts IPv6 where the OS allows dual-stack sockets. You can bind to a specific LAN or VPN interface by setting its numeric IPv4 or IPv6 address instead. A bind address must not include a port. Restart the encoder after changing the bind address or port.
 
 Direct HTTP access relies on that trusted network for transport protection: passwords and session cookies are not encrypted by HTTP. A VPN encrypts traffic only as far as its endpoint; if it terminates at a router, the router-to-encoder hop still uses HTTP. Use the optional HTTPS setup below when that network path is not trusted or your policy requires browser-to-proxy encryption.
 
@@ -275,13 +275,13 @@ For local-only access, choose no at the installer's LAN/VPN prompt or set `syste
 
 ### Login limits and API clients
 
-The server allows five login attempts per client IPv4 address or IPv6 `/64` and ten per submitted username per minute, including successful attempts. Only requests with a valid one-use login CSRF token consume this budget; both limits are reserved atomically before password verification. Throttled attempts receive HTTP 429 with `Retry-After: 60`; wait and reload the login form before retrying, because its submitted token has been consumed. Rejected attempts do not extend the fixed window. The bounded in-memory cache reclaims old unrelated entries that have not reached their limit when full, instead of refusing every new client, and resets on restart. Password-hash verification runs one login at a time so login traffic cannot starve the audio pipeline. Rejected logins are logged with the peer address and the reason; submitted usernames are not logged. Forwarded IPs are used only from `system.trusted_proxies`; without it, proxy clients share the peer-IP limit. A proxy can additionally apply its own per-client rate limit. Do not repeatedly restart the encoder to evade throttling.
+The server allows five login attempts per client IPv4 address or IPv6 `/64` and ten per submitted username per minute, including successful attempts. Only requests with a valid one-use login CSRF token consume this budget; both limits are reserved atomically before password verification. Throttled attempts receive HTTP 429 with `Retry-After: 60`; wait and reload the login form before retrying, because its submitted token has been consumed. Rejected attempts do not extend the fixed window. The bounded in-memory cache reclaims old unrelated entries that have not reached their limit when full, instead of refusing every new client, and resets on restart. Password-hash verification runs one login at a time, so it uses at most one CPU core. Rejected logins are logged with the peer address and the reason; submitted usernames are not logged. Forwarded IPs are used only from `system.trusted_proxies`; without it, proxy clients share the peer-IP limit. A proxy can additionally apply its own per-client rate limit. Do not repeatedly restart the encoder to evade throttling.
 
 The username budget is intentionally shared across clients to resist distributed guessing. An active attack can temporarily deny new logins for that account, without revoking existing sessions. This is not a substitute for the documented firewall/VPN/access-control boundary; do not expose password-only admin login directly to the public internet.
 
 Login forms use one-use tokens that expire after ten minutes; the oldest form tokens may be evicted earlier when the bounded anonymous token pool is busy. Reload an expired form to obtain a fresh token. A full pool does not block new login forms.
 
-Every session-authenticated mutation (POST/PUT/PATCH/DELETE) requires `X-CSRF-Token` matching that session's random token, and a mutation without a valid session gets `401` with a JSON error instead of a redirect to the login page; the authenticated page supplies it in `<meta name="csrf-token">`, and the UI sends it automatically. Tokens expire/revoke with the session, and responses containing them are not cached. Logout is now `POST /logout` with this header; GET does not log out. Browser cross-origin unsafe requests are also rejected using Go's cross-origin protection, including login. This follows the [OWASP synchronizer-token pattern](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html).
+Every session-authenticated mutation (POST/PUT/PATCH/DELETE) requires `X-CSRF-Token` matching that session's random token, and a mutation without a valid session gets `401` with a JSON error instead of a redirect to the login page; the authenticated page supplies it in `<meta name="csrf-token">`, and the UI sends it automatically. Tokens expire/revoke with the session, and responses containing them are not cached. Logout is `POST /logout` with this header; GET does not log out. Browser cross-origin unsafe requests are also rejected using Go's cross-origin protection, including login. This follows the [OWASP synchronizer-token pattern](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html).
 
 Custom session-based clients must fetch the authenticated page and send its token with mutations. The separate recording automation endpoints (`/api/recordings/start` and `/api/recordings/stop`) still use `X-API-Key`, not session cookies, so they do not require a CSRF token. Existing sessions are in memory and end on restart.
 
