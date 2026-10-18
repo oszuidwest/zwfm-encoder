@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -152,5 +153,41 @@ func TestFilenamePreparationRevalidatesConfigAndRun(t *testing.T) {
 				t.Fatal("old preparation replaced the newer run's process")
 			}
 		})
+	}
+}
+
+func TestHungFilenameCheckDoesNotMultiplyAcrossRestarts(t *testing.T) {
+	cfg := localOnDemandRecorder(t, "hung")
+	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0], SpoolDir: t.TempDir()})
+	var active, peak atomic.Int32
+	blocked := make(chan struct{})
+	release := sync.OnceFunc(func() { close(blocked) })
+	originalStat := recordingStat
+	recordingStat = func(path string) (os.FileInfo, error) {
+		if strings.HasPrefix(path, cfg.LocalPath+string(os.PathSeparator)) {
+			now := active.Add(1)
+			for old := peak.Load(); now > old && !peak.CompareAndSwap(old, now); old = peak.Load() {
+			}
+			<-blocked
+			active.Add(-1)
+		}
+		return originalStat(path)
+	}
+	// Five starts, each superseded by a Stop while the first check hangs.
+	var starts sync.WaitGroup
+	t.Cleanup(func() { release(); starts.Wait(); recordingStat = originalStat })
+	for range 5 {
+		starts.Go(func() {
+			r.mu.Lock()
+			_, _, _ = r.prepareFilenameLocked(time.Now())
+			r.mu.Unlock()
+		})
+	}
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) && peak.Load() < 2 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if peak.Load() != 1 {
+		t.Fatalf("%d filename checks blocked at once, want exactly 1", peak.Load())
 	}
 }
