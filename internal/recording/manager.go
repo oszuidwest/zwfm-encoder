@@ -49,6 +49,7 @@ type Manager struct {
 	storageProbeMu  sync.Mutex // Bounds non-cancellable filesystem probes across Stop/Start.
 	storagePaths    []types.RecordingStorageStatus
 	abandoned       map[string]struct{}
+	restoreGen      uint64 // Advanced when restored uploads leave abandoned; stale scans skip merging.
 	onStorageChange func([]types.RecordingStorageStatus)
 	diskSpace       func(string) (uint64, uint64, error)
 }
@@ -123,6 +124,7 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 	for i := range recorder.retryQueue {
 		delete(m.abandoned, recorder.retryQueue[i].request.localPath)
 	}
+	m.restoreGen++
 
 	m.recorders[cfg.ID] = recorder
 	m.publishAudioRecordersLocked()

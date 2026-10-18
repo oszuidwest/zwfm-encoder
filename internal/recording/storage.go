@@ -70,7 +70,7 @@ func (m *Manager) checkStorage(stop <-chan struct{}) {
 		return
 	}
 	defer m.storageProbeMu.Unlock()
-	ordered, activeUploads, known := m.storageTargets()
+	ordered, activeUploads, known, gen := m.storageTargets()
 	observations := m.probeStorage(ordered)
 	// Scan retained metadata too: removing a recorder must not hide its abandoned
 	// audio after a process restart. This scan never modifies metadata or audio.
@@ -105,7 +105,9 @@ func (m *Manager) checkStorage(stop <-chan struct{}) {
 	m.storagePaths = observations
 	// Add, never replace: an abandonment the callback reported after the scan
 	// started is not on disk yet. Restored uploads are saved as not abandoned.
-	maps.Copy(m.abandoned, abandoned)
+	if m.restoreGen == gen { // A restore during the scan makes its result stale.
+		maps.Copy(m.abandoned, abandoned)
+	}
 	for _, path := range missing {
 		delete(m.abandoned, path)
 	}
@@ -117,7 +119,7 @@ func (m *Manager) checkStorage(stop <-chan struct{}) {
 	}
 }
 
-func (m *Manager) storageTargets() (ordered []string, activeUploads map[string]struct{}, abandoned []string) {
+func (m *Manager) storageTargets() (ordered []string, activeUploads map[string]struct{}, abandoned []string, restoreGen uint64) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	paths := make(map[string]struct{})
@@ -137,7 +139,7 @@ func (m *Manager) storageTargets() (ordered []string, activeUploads map[string]s
 		}
 		r.mu.RUnlock()
 	}
-	return slices.Sorted(maps.Keys(paths)), activeUploads, slices.Collect(maps.Keys(m.abandoned))
+	return slices.Sorted(maps.Keys(paths)), activeUploads, slices.Collect(maps.Keys(m.abandoned)), m.restoreGen
 }
 
 func (m *Manager) probeStorage(ordered []string) []types.RecordingStorageStatus {

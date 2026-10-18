@@ -393,3 +393,40 @@ func TestDeletedAbandonedFileLeavesTheCount(t *testing.T) {
 		t.Fatal("a deleted abandoned file is still counted as retained audio")
 	}
 }
+
+func TestScanDuringRestoreDoesNotResurrectAbandonment(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX permissions as a regular user")
+	}
+	spool := t.TempDir()
+	m := storageTestManager(t, spool)
+	if err := m.AddRecorder(localOnDemandRecorder(t, "other")); err != nil { // Keeps the spool monitored.
+		t.Fatal(err)
+	}
+	cfg := testS3Recorder()
+	prior := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: spool})
+	file := writeSpoolFile(t, spool, cfg.ID, "abandoned.mp3", "audio")
+	p := pendingUpload{request: uploadRequest{localPath: file, s3Key: "recordings/x.mp3", fileSize: 5}, firstAttempt: time.Now(), abandoned: true}
+	if err := prior.savePendingUpload(&p); err != nil {
+		t.Fatal(err)
+	}
+	// The restore cannot persist "no longer abandoned", so the scan still reads it.
+	dir := filepath.Dir(p.metadataPath)
+	if err := os.Chmod(dir, 0o500); err != nil { //nolint:gosec // A read-only test directory is the point.
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) }) //nolint:gosec // Restore for cleanup.
+	var restore sync.Once
+	m.diskSpace = func(string) (uint64, uint64, error) {
+		restore.Do(func() {
+			if err := m.AddRecorder(cfg); err != nil {
+				t.Error(err)
+			}
+		})
+		return 10 << 30, 20 << 30, nil
+	}
+	m.checkStorage(m.cleanupStopCh)
+	if m.AbandonedUploadCount() != 0 || m.PendingUploadCount() != 1 {
+		t.Fatalf("restored upload: abandoned=%d pending=%d, want 0 and 1", m.AbandonedUploadCount(), m.PendingUploadCount())
+	}
+}
