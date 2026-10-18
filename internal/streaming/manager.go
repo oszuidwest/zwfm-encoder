@@ -1185,6 +1185,7 @@ func (m *Manager) monitorListenerEncoder(
 			}
 			retryCtx, cancel := m.reserveListenerEncoderStart(streamID, stream, ctx.IsRunning)
 			if retryCtx == nil {
+				m.removeIfOwned(streamID, stream)
 				return
 			}
 			if err := m.startListenerEncoderRun(retryCtx, streamID, stream, cfg); err != nil {
