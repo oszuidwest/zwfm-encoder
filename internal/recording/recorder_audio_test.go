@@ -1,15 +1,18 @@
 package recording
 
 import (
-	"github.com/oszuidwest/zwfm-encoder/internal/types"
+	"os"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
 func TestWriteAudioNeverBlocksAndCountsDrops(t *testing.T) {
 	t.Parallel()
 	r := &GenericRecorder{id: "r1", state: types.ProcessRunning, audioCh: make(chan []byte, 2)}
+	r.recording.Store(true)
 	done := make(chan struct{})
 	go func() {
 		for i := range 5 {
@@ -39,6 +42,7 @@ func TestWriteAudioNeverBlocksAndCountsDrops(t *testing.T) {
 func TestWriteAudioConcurrentWithTeardownNoPanic(t *testing.T) {
 	for range 50 {
 		r := &GenericRecorder{id: "r1", state: types.ProcessRunning, audioCh: make(chan []byte, 4)}
+		r.recording.Store(true)
 		ch := r.audioCh
 		drained := make(chan struct{})
 		go func() {
@@ -55,10 +59,10 @@ func TestWriteAudioConcurrentWithTeardownNoPanic(t *testing.T) {
 			})
 		}
 		wg.Go(func() {
-			r.mu.Lock()
+			r.audioMu.Lock()
 			audioCh := r.audioCh
 			r.audioCh = nil
-			r.mu.Unlock()
+			r.audioMu.Unlock()
 			if audioCh != nil {
 				close(audioCh)
 			}
@@ -71,6 +75,7 @@ func TestWriteAudioConcurrentWithTeardownNoPanic(t *testing.T) {
 func TestWriteAudioNoopWhenNotRecording(t *testing.T) {
 	t.Parallel()
 	noCh := &GenericRecorder{id: "r1", state: types.ProcessRunning}
+	noCh.recording.Store(true)
 	noCh.WriteAudio([]byte{1})
 	if got := noCh.audioDrops.Load(); got != 0 {
 		t.Fatalf("audioDrops with nil channel = %d, want 0", got)
@@ -88,6 +93,31 @@ func TestStatusReportsAudioDrops(t *testing.T) {
 	r.audioDrops.Store(7)
 	if got := r.Status().AudioDrops; got != 7 {
 		t.Fatalf("Status().AudioDrops = %d, want 7", got)
+	}
+}
+
+func TestCaptureRecordingFlagFollowsLifecycle(t *testing.T) {
+	r := NewGenericRecorder(GenericRecorderConfig{
+		Recorder: localOnDemandRecorder(t, "capture-state"), FFmpegPath: os.Args[0], SpoolDir: t.TempDir(),
+	})
+	t.Cleanup(func() { _ = r.Stop() })
+	for range 2 {
+		startCaptureTestRecorder(t, r)
+		if !r.IsRecording() {
+			t.Fatal("running recorder is not accepting audio")
+		}
+		r.setError("test failure")
+		waitForRecorderState(t, r, types.ProcessError)
+		r.WriteAudio([]byte{1, 2, 3, 4})
+		if r.IsRecording() || len(r.audioCh) != 0 {
+			t.Fatal("failed recorder is still accepting audio")
+		}
+		if err := r.Stop(); err != nil {
+			t.Fatal(err)
+		}
+		if r.IsRecording() {
+			t.Fatal("stopped recorder is still accepting audio")
+		}
 	}
 }
 
@@ -111,6 +141,7 @@ func TestManagerWriteAudioSharesOneCopyAcrossRecorders(t *testing.T) {
 		}
 		rec := m.recorders[id]
 		rec.state = state
+		rec.recording.Store(state == types.ProcessRunning)
 		rec.audioCh = make(chan []byte, 4)
 		return rec
 	}
