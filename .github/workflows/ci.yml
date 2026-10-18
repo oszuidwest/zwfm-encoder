@@ -22,8 +22,8 @@ name: CI
       - 'bun.lock'
       - 'biome.json'
       - '.htmlhintrc'
+  # Include stacked PRs so their tests run under -race too.
   pull_request:
-    branches: ['main']
 
 permissions:
   contents: read
@@ -57,6 +57,27 @@ jobs:
         run: |
           go build ./...
           go vet ./...
+
+  dante-windows:
+    name: Dante (windows native)
+    runs-on: windows-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Test native UDP interface metadata and receiver behavior
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race -shuffle=on -count=1 -v ./internal/dante
 
   frontend:
     name: Frontend

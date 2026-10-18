@@ -30,6 +30,9 @@ var (
 	// ErrInvalidStreamConfig is returned when a stream change would make config invalid.
 	ErrInvalidStreamConfig = errors.New("invalid stream config")
 
+	// ErrInvalidRecorderConfig is returned when a recorder change would make config invalid.
+	ErrInvalidRecorderConfig = errors.New("invalid recorder config")
+
 	// ErrRecorderNotFound is returned when a recorder ID does not exist in config.
 	ErrRecorderNotFound = errors.New("recorder not found")
 )
@@ -582,6 +585,7 @@ func normalizeStreamDefaults(stream *types.Stream) {
 
 func (c *Config) validateRecorders() error {
 	seen := make(map[string]int, len(c.Recording.Recorders))
+	prefixes := make(map[string]int, len(c.Recording.Recorders))
 	for i := range c.Recording.Recorders {
 		recorder := &c.Recording.Recorders[i]
 		if strings.TrimSpace(recorder.ID) == "" {
@@ -594,6 +598,13 @@ func (c *Config) validateRecorders() error {
 		if err := recorder.Validate(); err != nil {
 			return fmt.Errorf("invalid recording.recorders[%d]: %w", i, err)
 		}
+		// Recorders sharing a filename prefix would share and clean up each other's files.
+		prefix := strings.ToLower(util.SanitizeFilename(recorder.Name))
+		if first, ok := prefixes[prefix]; ok {
+			return fmt.Errorf("invalid recording.recorders[%d].name: %q has the same filename prefix as recorder %q",
+				i, recorder.Name, c.Recording.Recorders[first].Name)
+		}
+		prefixes[prefix] = i
 	}
 	return nil
 }
@@ -886,6 +897,10 @@ func (c *Config) AddRecorder(recorder *types.Recorder) error {
 	recorder.CreatedAt = time.Now().UnixMilli()
 
 	c.Recording.Recorders = append(c.Recording.Recorders, *recorder)
+	if err := c.validateRecorders(); err != nil {
+		c.Recording.Recorders = c.Recording.Recorders[:len(c.Recording.Recorders)-1]
+		return fmt.Errorf("%w: %w", ErrInvalidRecorderConfig, err)
+	}
 	return c.saveLocked()
 }
 
@@ -916,8 +931,12 @@ func (c *Config) UpdateRecorder(recorder *types.Recorder) error {
 	if i == -1 {
 		return fmt.Errorf("%w: %s", ErrRecorderNotFound, recorder.ID)
 	}
-
+	old := c.Recording.Recorders[i]
 	c.Recording.Recorders[i] = *recorder
+	if err := c.validateRecorders(); err != nil {
+		c.Recording.Recorders[i] = old
+		return fmt.Errorf("%w: %w", ErrInvalidRecorderConfig, err)
+	}
 	return c.saveLocked()
 }
 

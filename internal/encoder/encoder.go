@@ -83,6 +83,7 @@ type Encoder struct {
 	sourceCancel        context.CancelFunc
 	sourceStdout        io.Reader
 	sourceRunID         uint64
+	sourceLoopDone      chan struct{}
 	state               types.EncoderState
 	stopChan            chan struct{}
 	mu                  sync.RWMutex
@@ -128,8 +129,21 @@ func (p *captureProcess) Wait() error {
 
 // New creates a new Encoder with the given configuration and FFmpeg binary path.
 func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
+	return newEncoder(cfg, ffmpegPath, eventlog.DefaultLogPath(cfg.Snapshot().WebPort))
+}
+
+func newEncoder(cfg *config.Config, ffmpegPath, eventLogPath string) (*Encoder, error) {
 	graphCfg := cfg.GraphConfig()
 	snap := cfg.Snapshot()
+	logger, err := eventlog.NewLogger(eventLogPath)
+	if err != nil {
+		return nil, fmt.Errorf("create event logger at %s: %w", eventLogPath, err)
+	}
+	// A missed input_restored is better than refusing to start the encoder.
+	lostAt, err := logger.InputLostAt()
+	if err != nil {
+		slog.Warn("could not restore an open input outage from the event log", "path", eventLogPath, "error", err)
+	}
 
 	webhookCh := &notify.WebhookChannel{}
 	emailCh := &notify.EmailChannel{}
@@ -144,12 +158,6 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 		snap.SilenceDumpRetentionDays,
 		orchestrator.OnDumpReady,
 	)
-
-	eventLogPath := eventlog.DefaultLogPath(snap.WebPort)
-	logger, err := eventlog.NewLogger(eventLogPath)
-	if err != nil {
-		return nil, fmt.Errorf("create event logger at %s: %w", eventLogPath, err)
-	}
 
 	orchestrator.SetEventLogger(logger)
 
@@ -178,6 +186,7 @@ func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
 		streamManager:       streamMgr,
 		silenceDumpManager:  dumpManager,
 		eventLogger:         logger,
+		inputLostAt:         lostAt,
 		state:               types.StateStopped,
 		backoff:             util.NewBackoff(types.InitialRetryDelay, types.SourceMaxRetryDelay),
 		silenceDetect:       audio.NewSilenceDetector(),
@@ -362,6 +371,7 @@ func (e *Encoder) AudioLevels() audio.AudioLevels {
 func (e *Encoder) Status() types.EncoderStatus {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
+	_, lastAudio := e.audioTimes(e.sourceRunID)
 
 	var uptime string
 	var uptimeSeconds int64
@@ -377,6 +387,7 @@ func (e *Encoder) Status() types.EncoderStatus {
 		UptimeSeconds:    uptimeSeconds,
 		LastError:        e.lastError,
 		SourceRetryCount: e.retryCount,
+		InputReady:       e.state == types.StateRunning && e.inputLostAt.IsZero() && !lastAudio.IsZero() && time.Since(lastAudio) <= inputAudioGap,
 	}
 }
 
@@ -433,18 +444,19 @@ func (e *Encoder) Start() error {
 
 	e.state = types.StateStarting
 	e.stopChan = make(chan struct{})
+	e.sourceLoopDone = make(chan struct{})
 	e.retryCount = 0
 	e.backoff.Reset()
 	// inputLostAt deliberately survives Stop/Start, including the Restart after
 	// an audio input change: the outage stays open until an input is confirmed,
 	// so it raises no second input_lost and the next input_restored closes it.
-	// It is kept in memory only, so a process restart forgets an open outage.
+	// New also restores an open outage from the event log after a process restart.
 	e.silenceDetect.Reset()
 	e.imbalanceDetect.Reset()
 	e.alertOrchestrator.Reset()
 	e.peakHolder.Reset()
 
-	go e.runSourceLoop()
+	go e.runSourceLoop(e.stopChan, e.sourceLoopDone)
 
 	return nil
 }
@@ -465,6 +477,7 @@ func (e *Encoder) Stop() error {
 	}
 
 	sourceCancel := e.sourceCancel
+	loopDone := e.sourceLoopDone
 	e.mu.Unlock()
 
 	errs := e.stopConsumers()
@@ -474,30 +487,26 @@ func (e *Encoder) Stop() error {
 		sourceCancel()
 	}
 
-	pollCtx, pollCancel := context.WithCancel(context.Background())
-	defer pollCancel()
-
-	stopped := e.pollUntil(pollCtx, func() bool {
-		e.mu.RLock()
-		defer e.mu.RUnlock()
-		return e.sourceCancel == nil
-	})
+	stopped := make(chan struct{})
+	// A timed-out Stop must keep Start out until the old loop and cleanup finish.
+	go func() {
+		if loopDone != nil {
+			<-loopDone
+		}
+		e.resetDetection()
+		e.mu.Lock()
+		e.state = types.StateStopped
+		e.mu.Unlock()
+		close(stopped)
+	}()
 
 	select {
 	case <-stopped:
 		slog.Info("source capture stopped gracefully")
 	case <-time.After(types.ShutdownTimeout):
-		pollCancel()
 		slog.Warn("source capture did not stop in time")
 		errs = append(errs, fmt.Errorf("source shutdown timeout"))
 	}
-
-	e.resetDetection()
-
-	e.finishSource()
-	e.mu.Lock()
-	e.state = types.StateStopped
-	e.mu.Unlock()
 
 	return errors.Join(errs...)
 }
@@ -699,7 +708,8 @@ func (e *Encoder) isStopping() bool {
 // It never gives up: a missing input is reopened with capped backoff, so the
 // encoder resumes by itself when the input returns. Streams and recorders keep
 // running meanwhile and resume when audio flows again.
-func (e *Encoder) runSourceLoop() {
+func (e *Encoder) runSourceLoop(stopChan <-chan struct{}, done chan<- struct{}) {
+	defer close(done)
 	for {
 		e.mu.Lock()
 		if e.isStopping() {
@@ -729,7 +739,6 @@ func (e *Encoder) runSourceLoop() {
 		e.state = types.StateStarting
 		attempt := e.retryCount
 		retryDelay := e.backoff.Next()
-		stopChan := e.stopChan
 		e.mu.Unlock()
 
 		slog.Warn("audio input failed, reopening", "error", errMsg, "delay", retryDelay, "attempt", attempt)
@@ -769,10 +778,17 @@ func (e *Encoder) runSource() error {
 	}
 
 	e.resetAudioLevels()
-	go e.runDistributor(runID)
+	distributorDone := make(chan struct{})
+	go func() {
+		defer close(distributorDone)
+		e.runDistributor(runID)
+	}()
 	go e.startEnabledStreamsAfterDelay(runID, stopChan, e.streamRestartDelay)
 
-	return e.superviseSource(runID, src, cancel)
+	err = e.superviseSource(runID, src, cancel)
+	cancel()
+	<-distributorDone
+	return err
 }
 
 // superviseSource waits for src to exit. Meanwhile it confirms the input once
@@ -918,7 +934,8 @@ func (e *Encoder) confirmInput(runID uint64, audioSince time.Time) {
 	if lostAt.IsZero() {
 		return
 	}
-	unavailable := audioSince.Sub(lostAt)
+	// A restored lostAt is wall-clock time, which can jump before NTP syncs.
+	unavailable := max(audioSince.Sub(lostAt), 0)
 	slog.Info("audio input restored", "unavailable", unavailable.Round(time.Second))
 	e.alertOrchestrator.HandleInputRestored(notify.InputData{
 		Input:      e.config.AudioInput(),
@@ -1066,24 +1083,6 @@ func (e *Encoder) updateAudioLevels(levels *audio.AudioLevels) {
 func (e *Encoder) resetAudioLevels() {
 	levels := silentAudioLevels
 	e.audioLevels.Store(&levels)
-}
-
-// pollUntil closes its result when condition succeeds or ctx is cancelled.
-func (e *Encoder) pollUntil(ctx context.Context, condition func() bool) <-chan struct{} {
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		ticker := time.NewTicker(types.PollInterval)
-		defer ticker.Stop()
-		for !condition() {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-			}
-		}
-	}()
-	return done
 }
 
 // AddRecorder creates a new recorder.

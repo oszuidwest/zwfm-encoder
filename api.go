@@ -49,7 +49,7 @@ func (s *Server) writeConfigError(w http.ResponseWriter, err error) {
 		s.writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	if errors.Is(err, config.ErrInvalidStreamConfig) {
+	if errors.Is(err, config.ErrInvalidStreamConfig) || errors.Is(err, config.ErrInvalidRecorderConfig) {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -1008,6 +1008,7 @@ type readyInputs struct {
 func buildReadyResponse(in *readyInputs) (resp ReadyResponse, httpStatus int) {
 	components := map[string]ReadyComponent{
 		"process":           readyProcess(in.ffmpegAvailable, &in.encoderStatus),
+		"input":             readyInput(&in.encoderStatus),
 		"streams":           readyStreams(in.streams, in.streamStatuses),
 		"silence":           readySilence(&in.audioLevels),
 		"channel_imbalance": readyChannelImbalance(&in.audioLevels),
@@ -1043,6 +1044,13 @@ func readyProcess(ffmpegAvailable bool, status *types.EncoderStatus) ReadyCompon
 		return ReadyComponent{OK: false, Message: "encoder is not running", Details: details}
 	}
 	return ReadyComponent{OK: true, Details: details}
+}
+
+func readyInput(status *types.EncoderStatus) ReadyComponent {
+	if !status.InputReady {
+		return ReadyComponent{OK: false, Message: "audio input is unavailable, awaiting confirmation or has not delivered recent audio"}
+	}
+	return ReadyComponent{OK: true}
 }
 
 func readyStreams(streams []types.Stream, statuses map[string]types.ProcessStatus) ReadyComponent {

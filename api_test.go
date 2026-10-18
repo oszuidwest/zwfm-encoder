@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,6 +19,15 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
+
+func TestWriteConfigErrorRecorderNameConflict(t *testing.T) {
+	t.Parallel()
+	rec := httptest.NewRecorder()
+	err := fmt.Errorf("%w: name: conflicts with recorder Studio", config.ErrInvalidRecorderConfig)
+	(&Server{}).writeConfigError(rec, err)
+	assertStatus(t, rec, http.StatusBadRequest)
+	assertErrorEqual(t, rec, err.Error())
+}
 
 func TestValidateRecorderLocalPathCreatesWritableDirectory(t *testing.T) {
 	t.Parallel()
@@ -62,6 +72,13 @@ func TestBuildReadyResponseFailures(t *testing.T) {
 			component: "process",
 			mutate: func(in *readyInputs) {
 				in.encoderStatus.State = types.StateStopped
+			},
+		},
+		{
+			name:      "input without recent confirmed audio",
+			component: "input",
+			mutate: func(in *readyInputs) {
+				in.encoderStatus.InputReady = false
 			},
 		},
 		{
@@ -327,7 +344,8 @@ func readyFixture() readyInputs {
 		ffmpegAvailable:    true,
 		recordingAvailable: true,
 		encoderStatus: types.EncoderStatus{
-			State: types.StateRunning,
+			State:      types.StateRunning,
+			InputReady: true,
 		},
 		streams: []types.Stream{
 			{

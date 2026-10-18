@@ -1,6 +1,7 @@
 package recording
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"slices"
@@ -13,7 +14,11 @@ const (
 	// as the FFmpeg path.
 	fakeFFmpegEnv = "ZWFM_RECORDING_FAKE_FFMPEG"
 	// fakeFFmpegFinalizeEnv overrides how long the fake takes to finalize.
-	fakeFFmpegFinalizeEnv = "ZWFM_RECORDING_FAKE_FFMPEG_FINALIZE"
+	fakeFFmpegFinalizeEnv     = "ZWFM_RECORDING_FAKE_FFMPEG_FINALIZE"
+	fakeFFmpegRefuseEnv       = "ZWFM_RECORDING_FAKE_FFMPEG_REFUSE"
+	fakeFFmpegFailFinalizeEnv = "ZWFM_RECORDING_FAKE_FFMPEG_FAIL_FINALIZE"
+	fakeFFmpegEmptyHeaderEnv  = "ZWFM_RECORDING_FAKE_FFMPEG_EMPTY_HEADER"
+	fakeFFmpegFailWriteEnv    = "ZWFM_RECORDING_FAKE_FFMPEG_FAIL_WRITE"
 	// fakeFFmpegFinalize is how long the fake takes to exit after stdin closes,
 	// like a real encoder flushing and finalizing its file.
 	fakeFFmpegFinalize = 100 * time.Millisecond
@@ -31,6 +36,8 @@ func TestMain(m *testing.M) {
 	if err := os.Setenv("GORACE", "atexit_sleep_ms=0 "+os.Getenv("GORACE")); err != nil {
 		panic(err)
 	}
+	// Recorder tests must not depend on the host's NTP state.
+	clockSynced = func() bool { return true }
 	os.Exit(m.Run())
 }
 
@@ -43,9 +50,35 @@ func runFakeFFmpeg(args []string) int {
 	if !slices.Contains(args, "-n") {
 		return 2
 	}
-	data, err := io.ReadAll(os.Stdin)
+	output := args[len(args)-1]
+	if os.Getenv(fakeFFmpegRefuseEnv) == "1" {
+		// FFmpeg may consume PCM before discovering that -n refuses the output.
+		if _, err := io.ReadFull(os.Stdin, make([]byte, 4096)); err != nil {
+			return 1
+		}
+		// Only an existing output is refused.
+		if _, err := os.Stat(output); err != nil { //nolint:gosec // G703: path comes from the recorder under test.
+			return 1
+		}
+		// Real FFmpeg can print warnings before the refusal and an error after it.
+		_, _ = fmt.Fprintf(os.Stderr, "Guessed Channel Layout: stereo\nFile '%s' already exists. Exiting.\nError opening output file %s.\n", output, output)
+		return 0
+	}
+	reader := io.Reader(os.Stdin)
+	failWrite := os.Getenv(fakeFFmpegFailWriteEnv)
+	if failWrite != "" {
+		limit := int64(4096)
+		if failWrite == "empty" { // Fails before encoding any audio.
+			limit = 0
+		}
+		reader = io.LimitReader(reader, limit)
+	}
+	data, err := io.ReadAll(reader)
 	if err != nil {
 		return 1
+	}
+	if len(data) == 0 && os.Getenv(fakeFFmpegEmptyHeaderEnv) == "1" {
+		data = []byte("header without audio")
 	}
 	finalize := fakeFFmpegFinalize
 	if d, err := time.ParseDuration(os.Getenv(fakeFFmpegFinalizeEnv)); err == nil {
@@ -53,7 +86,6 @@ func runFakeFFmpeg(args []string) int {
 	}
 	time.Sleep(finalize)
 
-	output := args[len(args)-1]
 	file, err := os.OpenFile(output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // G304: path comes from the recorder under test.
 	if err != nil {
 		return 1
@@ -63,6 +95,14 @@ func runFakeFFmpeg(args []string) int {
 		return 1
 	}
 	if err := file.Close(); err != nil {
+		return 1
+	}
+	if failWrite != "" {
+		_, _ = fmt.Fprintln(os.Stderr, "simulated write failure")
+		return 1
+	}
+	if os.Getenv(fakeFFmpegFailFinalizeEnv) == "1" {
+		_, _ = fmt.Fprintln(os.Stderr, "Error writing trailer: No space left on device")
 		return 1
 	}
 	return 0

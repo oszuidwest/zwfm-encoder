@@ -1330,13 +1330,13 @@
                             <div class="form" data-spaced>
                                 <div class="group">
                                     <label>Recording Control</label>
-                                    <template x-if="recorderStatuses[recorderForm.id]?.state === 'running'">
+                                    <template x-if="['running', 'starting'].includes(recorderStatuses[recorderForm.id]?.state)">
                                         <button class="btn" data-variant="danger" type="button" tabindex="0"
                                                 @click="recorderAction(recorderForm.id, 'stop')">
                                             Stop Recording
                                         </button>
                                     </template>
-                                    <template x-if="recorderStatuses[recorderForm.id]?.state !== 'running'">
+                                    <template x-if="!['running', 'starting'].includes(recorderStatuses[recorderForm.id]?.state)">
                                         <button class="btn" data-variant="primary" type="button" tabindex="0"
                                                 @click="recorderAction(recorderForm.id, 'start')"
                                                 :disabled="!recorderForm.enabled || !recordingAvailable">

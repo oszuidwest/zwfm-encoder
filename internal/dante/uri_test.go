@@ -1,6 +1,7 @@
 package dante
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -22,6 +23,50 @@ func TestIsInput(t *testing.T) {
 			t.Parallel()
 			if got := IsInput(test.input); got != test.want {
 				t.Fatalf("IsInput(%q) = %v, want %v", test.input, got, test.want)
+			}
+		})
+	}
+}
+
+func TestInputNameValidation(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, transmitter, left, right, wantError string
+	}{
+		{name: "31 character names", transmitter: strings.Repeat("a", 31), left: strings.Repeat("L", 31), right: strings.Repeat("R", 31)},
+		{name: "single character device", transmitter: "1", left: "L", right: "R"},
+		{name: "two character device", transmitter: "A1", left: "L", right: "R"},
+		{name: "encoded punctuation", transmitter: "Studio-1", left: "A/B ?#~", right: "C/D ?#~"},
+		{name: "long device", transmitter: strings.Repeat("a", 32), left: "L", right: "R", wantError: "transmitter name must"},
+		{name: "leading hyphen", transmitter: "-tx", left: "L", right: "R", wantError: "transmitter name must"},
+		{name: "trailing hyphen", transmitter: "tx-", left: "L", right: "R", wantError: "transmitter name must"},
+		{name: "unicode device", transmitter: "日本", left: "L", right: "R", wantError: "transmitter name must"},
+		{name: "port", transmitter: "tx:4455", left: "L", right: "R", wantError: "transmitter name must"},
+		{name: "domain", transmitter: "tx.local", left: "L", right: "R", wantError: "transmitter name must"},
+		{name: "underscore", transmitter: "studio_tx", left: "L", right: "R", wantError: "transmitter name must"},
+		{name: "long left", transmitter: "tx", left: strings.Repeat("L", 32), right: "R", wantError: "left channel:"},
+		{name: "long right", transmitter: "tx", left: "L", right: strings.Repeat("R", 32), wantError: "right channel:"},
+		{name: "unicode channel", transmitter: "tx", left: "L", right: "日本", wantError: "right channel:"},
+		{name: "equals", transmitter: "tx", left: "L=1", right: "R", wantError: "left channel:"},
+		{name: "dot", transmitter: "tx", left: "L", right: "R.1", wantError: "right channel:"},
+		{name: "at", transmitter: "tx", left: "L@1", right: "R", wantError: "left channel:"},
+		{name: "control character", transmitter: "tx", left: "L\n", right: "R", wantError: "left channel:"},
+		{name: "nul", transmitter: "tx", left: "L", right: "R\x00", wantError: "right channel:"},
+		{name: "delete", transmitter: "tx", left: "L\x7f", right: "R", wantError: "left channel:"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			input := "dante://" + tt.transmitter + "/" + url.PathEscape(tt.left) + "/" + url.PathEscape(tt.right)
+			got, err := parseInput(input)
+			if tt.wantError == "" {
+				if err != nil || got.transmitter != tt.transmitter || got.left != tt.left || got.right != tt.right {
+					t.Fatalf("parseInput(%q) = %+v, %v", input, got, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("parseInput(%q) error = %v, want %s", input, err, tt.wantError)
 			}
 		})
 	}

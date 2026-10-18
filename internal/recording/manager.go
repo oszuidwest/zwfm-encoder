@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"sync/atomic"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
@@ -32,6 +33,7 @@ type Manager struct {
 	mu sync.RWMutex
 
 	recorders          map[string]*GenericRecorder
+	audioRecorders     atomic.Pointer[[]*GenericRecorder] // Immutable capture view; no I/O/management locks.
 	spoolDir           string
 	ffmpegPath         string
 	maxDurationMinutes int  // Global max duration for on-demand recorders
@@ -109,6 +111,7 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 	}
 
 	m.recorders[cfg.ID] = recorder
+	m.publishAudioRecordersLocked()
 
 	// Auto-start hourly recorders if encoder is running (ondemand never auto-starts)
 	if m.running && cfg.RecordingMode == types.RecordingHourly && cfg.Enabled {
@@ -127,6 +130,7 @@ func (m *Manager) RemoveRecorder(id string) error {
 	recorder, exists := m.recorders[id]
 	if exists {
 		delete(m.recorders, id)
+		m.publishAudioRecordersLocked()
 	}
 	m.mu.Unlock()
 
@@ -194,8 +198,8 @@ func (m *Manager) StopRecorder(id string) error {
 		return ErrHourlyRecorderNotControllable
 	}
 
-	// Check if not recording
-	if !recorder.IsRecording() {
+	// A start that waits for clock synchronization can be cancelled too.
+	if state := recorder.Status().State; state != types.ProcessRunning && state != types.ProcessStarting {
 		return ErrNotRecording
 	}
 
@@ -296,15 +300,22 @@ func (m *Manager) WriteAudio(pcm []byte) {
 // share the same copyChunk with the stream fan-out so one clone serves all
 // consumers; recorders must treat queued chunks as read-only.
 func (m *Manager) WriteAudioShared(copyChunk func() []byte) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	for _, recorder := range m.recorders {
+	recorders := m.audioRecorders.Load()
+	if recorders == nil {
+		return
+	}
+	for _, recorder := range *recorders {
 		if !recorder.IsRecording() {
 			continue
 		}
 		recorder.WriteAudio(copyChunk())
 	}
+}
+
+// publishAudioRecordersLocked keeps capture independent of slow management operations.
+func (m *Manager) publishAudioRecordersLocked() {
+	recorders := slices.Collect(maps.Values(m.recorders))
+	m.audioRecorders.Store(&recorders)
 }
 
 // Statuses returns the current status of all recorders.
