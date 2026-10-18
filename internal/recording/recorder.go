@@ -27,7 +27,7 @@ var afterFunc = time.AfterFunc
 // reservation like an unresponsive network share.
 var reserveRecordingFile = func(path string) (*os.File, error) {
 	if err := util.ValidatePath("recording file", path); err != nil {
-		return nil, fmt.Errorf("invalid recording file: %w", err)
+		return nil, err
 	}
 	return os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o666) //nolint:gosec // Preserve FFmpeg's output permissions (restricted by umask/ACLs); path uses a validated directory and sanitized filename.
 }
@@ -622,6 +622,9 @@ func (r *GenericRecorder) prepareFilenameLocked(fileTime time.Time) (*recordingO
 					return true
 				}
 				file, err = reserveRecordingFile(filepath.Join(outputDir, name))
+				if err != nil {
+					err = fmt.Errorf("reserve recording file: %w", err)
+				}
 				return errors.Is(err, os.ErrExist)
 			})
 			if err == nil {
@@ -633,10 +636,15 @@ func (r *GenericRecorder) prepareFilenameLocked(fileTime time.Time) (*recordingO
 		if r.startGen == gen && r.state == state && r.config == cfg {
 			return output, true, err
 		}
-		// Stale run or concurrent edit: never launch into the old path/name.
-		r.mu.Unlock()
-		output.discard()
-		r.mu.Lock()
+		// Stale run or concurrent edit: never launch into the old path/name. The
+		// cleanup keeps the directory lock, so a hung share holds one call at most.
+		if output != nil {
+			r.mu.Unlock()
+			lock.Lock()
+			output.discard()
+			lock.Unlock()
+			r.mu.Lock()
+		}
 	}
 	return nil, false, nil
 }
@@ -660,9 +668,12 @@ func (o *recordingOutput) release() (int64, error) {
 	}()
 	owned, err := o.file.Stat()
 	if err != nil {
-		return 0, fmt.Errorf("stat recording reservation: %w", err)
+		return 0, fmt.Errorf("stat recording output: %w", err)
 	}
 	info, err := os.Lstat(o.file.Name())
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, fmt.Errorf("recording output disappeared before finalization: %w", err)
+	}
 	if err != nil {
 		return 0, fmt.Errorf("check recording output ownership: %w", err)
 	}
