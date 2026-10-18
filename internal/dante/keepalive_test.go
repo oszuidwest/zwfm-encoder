@@ -126,3 +126,88 @@ func TestFailedKeepaliveWriteKeepsReceiving(t *testing.T) {
 		}
 	})
 }
+
+// scriptedMediaConn delivers one media frame (two when gap is set, the second
+// after a pause) and then lets reads time out; its first keepalive can fail.
+type scriptedMediaConn struct {
+	net.PacketConn
+	readDeadline time.Time
+	reads        int
+	writes       int
+	start        time.Time
+	pipe         net.Conn
+	failFirst    bool
+	gap          bool
+}
+
+func (c *scriptedMediaConn) SetReadDeadline(deadline time.Time) error {
+	c.readDeadline = deadline
+	return nil
+}
+
+func (c *scriptedMediaConn) ReadFrom(b []byte) (int, net.Addr, error) {
+	c.reads++
+	source := &net.UDPAddr{IP: net.IPv4(192, 0, 2, 20), Port: 4445}
+	switch {
+	case c.reads == 1:
+		return copy(b, mediaDatagram(0, []byte{1, 2, 3, 4})), source, nil
+	case c.gap && c.reads == 2:
+		time.Sleep(time.Until(c.start.Add(196 * time.Millisecond)))
+		return copy(b, mediaDatagram(2, []byte{1, 2, 3, 4})), source, nil
+	}
+	time.Sleep(time.Until(c.readDeadline))
+	return 0, nil, os.ErrDeadlineExceeded
+}
+
+func (c *scriptedMediaConn) SetWriteDeadline(deadline time.Time) error {
+	if c.pipe != nil {
+		return c.pipe.SetWriteDeadline(deadline)
+	}
+	return nil
+}
+
+func (c *scriptedMediaConn) WriteTo(p []byte, _ net.Addr) (int, error) {
+	c.writes++
+	if c.failFirst && c.writes == 1 {
+		return 0, syscall.ENOBUFS
+	}
+	if c.pipe != nil {
+		return c.pipe.Write(p)
+	}
+	return len(p), nil
+}
+
+func TestMediaTimeoutReportsEarlierKeepaliveFailure(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		conn := &scriptedMediaConn{start: time.Now(), failFirst: true}
+		// Later keepalives succeed, but the media never resumes.
+		err := receiveMedia(t.Context(), conn, net.IPv4(192, 0, 2, 20), 16, io.Discard)
+		if !errors.Is(err, syscall.ENOBUFS) || conn.writes < 2 {
+			t.Fatalf("media timeout after %d keepalives = %v, want it to keep the ENOBUFS", conn.writes, err)
+		}
+	})
+}
+
+// slowSecondWrite stalls the second PCM flush like a reader that pauses.
+type slowSecondWrite struct{ writes int }
+
+func (w *slowSecondWrite) Write(p []byte) (int, error) {
+	w.writes++
+	if w.writes == 2 {
+		time.Sleep(250 * time.Millisecond)
+	}
+	return len(p), nil
+}
+
+func TestKeepaliveDeadlineStartsAfterOutputBackpressure(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		pipe, peer := net.Pipe()
+		defer func() { _ = pipe.Close(); _ = peer.Close() }()
+		go func() { _, _ = io.Copy(io.Discard, peer) }()
+		conn := &scriptedMediaConn{start: time.Now(), pipe: pipe, gap: true}
+		err := receiveMedia(t.Context(), conn, net.IPv4(192, 0, 2, 20), 16, &slowSecondWrite{})
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Fatalf("a healthy keepalive failed after output backpressure: %v", err)
+		}
+	})
+}

@@ -1,6 +1,7 @@
 package dante
 
 import (
+	"cmp"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -196,10 +197,12 @@ func receiveMedia(
 			return err
 		}
 		if keepaliveTarget != nil && !now.Before(nextKeepalive) {
-			var err error
-			if keepaliveErr, err = sendKeepalive(conn, keepaliveTarget, now); err != nil {
+			transient, err := sendKeepalive(conn, keepaliveTarget)
+			if err != nil {
 				return err
 			}
+			// A later successful send does not prove the transmitter still listens.
+			keepaliveErr = cmp.Or(transient, keepaliveErr)
 			nextKeepalive = now.Add(keepaliveInterval)
 		}
 
@@ -233,6 +236,7 @@ func receiveMedia(
 		}
 		if valid {
 			lastValid = time.Now()
+			keepaliveErr = nil // The transmitter is evidently still sending.
 			keepaliveTarget = source
 			if nextKeepalive.IsZero() {
 				nextKeepalive = time.Now().Add(keepaliveInterval)
@@ -244,8 +248,10 @@ func receiveMedia(
 // sendKeepalive fails only for a blocked write, which would stall reception.
 // Other send errors come back as transient: the transmitter tolerates missed
 // keepalives, and the media timeout covers lasting failures.
-func sendKeepalive(conn net.PacketConn, target *net.UDPAddr, now time.Time) (transient, err error) {
-	if err := conn.SetWriteDeadline(now.Add(keepaliveInterval)); err != nil {
+func sendKeepalive(conn net.PacketConn, target *net.UDPAddr) (transient, err error) {
+	// Not the loop's earlier now: flushing PCM to a slow reader can take longer
+	// than the interval, which would leave an already expired deadline.
+	if err := conn.SetWriteDeadline(time.Now().Add(keepaliveInterval)); err != nil {
 		return nil, fmt.Errorf("set keepalive deadline: %w", err)
 	}
 	_, err = conn.WriteTo([]byte{0x13, 0x37}, target)
