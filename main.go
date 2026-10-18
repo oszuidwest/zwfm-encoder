@@ -104,7 +104,7 @@ func passwordInput(stdin *os.File, prompt io.Writer) (io.Reader, error) {
 		return nil, fmt.Errorf("read terminal state: %w", err)
 	}
 	interrupted, done := make(chan os.Signal, 1), make(chan struct{})
-	signal.Notify(interrupted, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(interrupted, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
 	go func() {
 		select {
 		case <-interrupted:
