@@ -306,9 +306,13 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 
 // contextOr reports ctx's error instead of err once ctx is done: the
 // cancellation interrupt closes the socket, which surfaces as a socket error.
+// The socket deadline can also expire just before ctx records its own.
 func contextOr(ctx context.Context, err error) error {
 	if contextErr := ctx.Err(); contextErr != nil {
 		return contextErr
+	}
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return context.DeadlineExceeded
 	}
 	return err
 }

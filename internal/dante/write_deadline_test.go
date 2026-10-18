@@ -254,31 +254,3 @@ func TestControlExchangeWaitsForStartedInterrupt(t *testing.T) {
 		}
 	})
 }
-
-type firstDeadlineConn struct {
-	net.Conn
-	first time.Time
-}
-
-func (c *firstDeadlineConn) SetDeadline(deadline time.Time) error {
-	if c.first.IsZero() {
-		c.first = deadline
-	}
-	return c.Conn.SetDeadline(deadline)
-}
-
-func TestControlDeadlineHonoursEarlierContextDeadline(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		client, peer := net.Pipe()
-		defer func() { _ = client.Close(); _ = peer.Close() }()
-		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
-		defer cancel()
-		conn := &firstDeadlineConn{Conn: client}
-		if _, err := exchangeControl(ctx, conn, buildStopRequest([6]byte{}), time.Second); err == nil {
-			t.Fatal("exchange succeeded without a peer")
-		}
-		if want, _ := ctx.Deadline(); !conn.first.Equal(want) {
-			t.Fatalf("socket deadline = %s, want the context deadline %s", conn.first, want)
-		}
-	})
-}

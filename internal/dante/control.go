@@ -111,11 +111,9 @@ func exchangeControl(ctx context.Context, conn net.Conn, request []byte, timeout
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	deadline := time.Now().Add(timeout)
-	if contextDeadline, ok := ctx.Deadline(); ok {
-		deadline = earlierTime(deadline, contextDeadline)
-	}
-	if err := conn.SetDeadline(deadline); err != nil {
+	// An earlier context deadline is left to the interrupt, so the exchange
+	// reports context.DeadlineExceeded rather than a socket timeout.
+	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
 		return nil, fmt.Errorf("set control deadline: %w", err)
 	}
 	interrupted := make(chan struct{})
