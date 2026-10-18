@@ -98,7 +98,7 @@ Control messages are exchanged between a UDP socket bound to the local IPv4 addr
 | 6      | 2    | Opcode; echoed in the response                                  |
 | 8      | 2    | Status: `0x0000` in requests. In responses `0x0001` = success, anything else is an error code |
 
-A response belongs to a request when sequence and opcode match. Ignore other datagrams and datagrams shorter than the header or whose length field is smaller than 10 or larger than the datagram. Wait at most 3 seconds (and never past the context deadline) for the response. Observed error code: `0x0314` when the transmitter itself has no usable network.
+A response belongs to a request when sequence and opcode match. Ignore other datagrams and datagrams shorter than the header or whose length field is smaller than 10 or larger than the datagram. Bound the whole exchange, including the first write, to 3 seconds (and never past the context deadline). Install read/write deadlines and the cancellation interrupt before sending. Discovery writes are likewise bounded by their 4-second lookup deadline. Observed error code: `0x0314` when the transmitter itself has no usable network.
 
 ### 4.2 Request flow (opcode `0x0100`)
 

@@ -237,8 +237,12 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 	}
 	lookupCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
+	lookupDeadline, _ := lookupCtx.Deadline()
+	if err := conn.SetDeadline(lookupDeadline); err != nil {
+		return channelInfo{}, fmt.Errorf("set discovery deadline: %w", err)
+	}
 	stopInterrupt := context.AfterFunc(lookupCtx, func() {
-		_ = conn.SetReadDeadline(time.Now())
+		_ = conn.Close()
 	})
 	defer stopInterrupt()
 
@@ -252,6 +256,9 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 		now := time.Now()
 		if !now.Before(nextQuery) {
 			if err := queryDante(conn, interfaces, query, destination); err != nil {
+				if contextErr := lookupCtx.Err(); contextErr != nil {
+					err = contextErr
+				}
 				return channelInfo{}, fmt.Errorf("send discovery query for %q: %w", channel, err)
 			}
 			nextQuery = now.Add(time.Second)

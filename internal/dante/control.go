@@ -111,16 +111,19 @@ func exchangeControl(ctx context.Context, conn net.Conn, request []byte, timeout
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if _, err := conn.Write(request); err != nil {
-		return nil, fmt.Errorf("send control request: %w", err)
-	}
-	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
 		return nil, fmt.Errorf("set control deadline: %w", err)
 	}
 	stopInterrupt := context.AfterFunc(ctx, func() {
-		_ = conn.SetReadDeadline(time.Now())
+		_ = conn.SetDeadline(time.Now())
 	})
 	defer stopInterrupt()
+	if _, err := conn.Write(request); err != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return nil, contextErr
+		}
+		return nil, fmt.Errorf("send control request: %w", err)
+	}
 
 	buffer := make([]byte, 65535)
 	for {
