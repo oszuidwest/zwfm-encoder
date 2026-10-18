@@ -286,7 +286,10 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 		}
 
 		if err := validateDiscoverySource(source, ifIndex, networks); err != nil {
-			lastResponseErr = fmt.Errorf("from %v: %w", source, err)
+			// Only a reply carrying the requested records may replace the diagnostic.
+			if port, txt, _ := parseDNSResponse(buffer[:n], instance); port != 0 || txt != nil {
+				lastResponseErr = fmt.Errorf("from %v: %w", source, err)
+			}
 			continue
 		}
 		complete, parseErr := mergeDiscoveryResponse(&info, buffer[:n], source.IP, instance, requiredSource)
