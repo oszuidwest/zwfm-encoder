@@ -71,7 +71,12 @@ func TestRecorderRenameKeepsLegacyAndIDS3Retention(t *testing.T) {
 	(&Manager{}).cleanupS3Files(r)
 	mu.Lock()
 	defer mu.Unlock()
-	if !slices.Equal(listed, []string{"recordings/" + prefix + "/", "recordings/Before/"}) || !slices.Equal(deleted, []string{idKey, oldKey}) {
+	slices.Sort(listed)
+	slices.Sort(deleted)
+	wantListed, wantDeleted := []string{"recordings/" + prefix + "/", "recordings/Before/"}, []string{idKey, oldKey}
+	slices.Sort(wantListed)
+	slices.Sort(wantDeleted)
+	if !slices.Equal(listed, wantListed) || !slices.Equal(deleted, wantDeleted) {
 		t.Fatalf("rename lost retention ownership: listed=%v, deleted=%v", listed, deleted)
 	}
 }
@@ -149,8 +154,17 @@ func TestNewRecorderDoesNotAdoptLegacyFilesWithReusedName(t *testing.T) {
 	if err := os.Chtimes(file, old, old); err != nil {
 		t.Fatal(err)
 	}
-	(&Manager{}).cleanupLocalFiles(NewGenericRecorder(GenericRecorderConfig{Recorder: cfg}))
+	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg})
+	own := filepath.Join(cfg.LocalPath, cfg.RecordingFilePrefix()+"-2000-01-01-00-00.ts")
+	if err := os.WriteFile(own, []byte("own audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(own, old, old); err != nil {
+		t.Fatal(err)
+	}
+	(&Manager{}).cleanupLocalFiles(r)
 	assertRecordedCapture(t, file, []byte("foreign audio"))
+	assertNoRecording(t, own) // Retention itself still ran.
 }
 
 func TestRecorderRenameKeepsLegacyLocalRetention(t *testing.T) {

@@ -3,6 +3,8 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -77,5 +79,32 @@ func TestLegacyRecorderClaimsCannotOverlapOrUseIDNamespace(t *testing.T) {
 				t.Fatalf("invalid ownership accepted: %v", err)
 			}
 		})
+	}
+}
+
+func TestLoadKeepsCapturedPrefixWhenConfigIsReadOnly(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX permissions as a regular user")
+	}
+	data, err := json.Marshal(fullyPopulatedConfigData(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := writeConfig(t, string(data))
+	dir := filepath.Dir(path)
+	if err := os.Chmod(path, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil { //nolint:gosec // A read-only test directory is the point.
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) }) //nolint:gosec // Restore the test directory for cleanup.
+	cfg := New(path)
+	if err := cfg.Load(); err != nil {
+		t.Fatalf("an unwritable config must still load: %v", err)
+	}
+	id := fullyPopulatedConfigData(t).Recording.Recorders[0].ID
+	if got := cfg.Recorder(id).LegacyFilePrefix; got != "Archive" {
+		t.Fatalf("legacy prefix = %q, want the in-memory capture", got)
 	}
 }
