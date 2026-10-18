@@ -290,7 +290,12 @@ func (r *GenericRecorder) startAsync(gen uint64) {
 	}
 
 	// Start FFmpeg encoder
-	if err := r.startEncoderLocked(time.Now()); err != nil {
+	path, current := r.prepareFilenameLocked(time.Now())
+	if !current {
+		r.mu.Unlock()
+		return
+	}
+	if err := r.startEncoderLocked(path); err != nil {
 		r.state = types.ProcessError
 		r.lastError = err.Error()
 		r.mu.Unlock()
@@ -612,28 +617,42 @@ func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 	return nil
 }
 
-// startEncoderLocked starts FFmpeg on a new file named after fileTime: the
-// start time, or for a rotation the wall clock rounded to the minute.
-// Must be called with r.mu held.
-func (r *GenericRecorder) startEncoderLocked(fileTime time.Time) error {
-	// Determine output directory based on storage mode
-	var outputDir string
-	if r.config.StorageMode == types.StorageS3 {
-		// S3-only: use durable spool directory
-		outputDir = filepath.Join(r.spoolDir, "recorders", r.id)
-	} else {
-		// Local or Both: use configured LocalPath
-		outputDir = r.config.LocalPath
-	}
-	// A restart within the same minute must not reuse an earlier file's name.
-	filename := nextRecordingFilename(r.generateFilename(fileTime), func(name string) bool {
-		if _, used := r.usedFilenames[name]; used {
-			return true
+// prepareFilenameLocked releases mu for filesystem checks, then revalidates
+// ownership and configuration. Stop need not join a blocked check, and a stale
+// result cannot start an encoder. Called and returned with mu held.
+func (r *GenericRecorder) prepareFilenameLocked(fileTime time.Time) (string, bool) {
+	gen, state := r.startGen, r.state
+	for {
+		cfg := r.config
+		outputDir := cfg.LocalPath
+		if cfg.StorageMode == types.StorageS3 {
+			outputDir = filepath.Join(r.spoolDir, "recorders", r.id)
 		}
-		_, err := recordingStat(filepath.Join(outputDir, name))
-		return err == nil
-	})
-	r.currentFile = filepath.Join(outputDir, filename)
+		base := r.generateFilename(fileTime)
+		used := maps.Clone(r.usedFilenames)
+		r.mu.Unlock()
+		filename := nextRecordingFilename(base, func(name string) bool {
+			if _, exists := used[name]; exists {
+				return true
+			}
+			_, err := recordingStat(filepath.Join(outputDir, name))
+			return err == nil
+		})
+		r.mu.Lock()
+		if r.startGen != gen || r.state != state {
+			return "", false
+		}
+		if r.config != cfg {
+			continue // A concurrent edit must not launch into the old path/name.
+		}
+		return filepath.Join(outputDir, filename), true
+	}
+}
+
+// startEncoderLocked starts FFmpeg on the prepared output path.
+// Must be called with r.mu held, after revalidating file preparation.
+func (r *GenericRecorder) startEncoderLocked(path string) error {
+	r.currentFile = path
 
 	// Get codec configuration
 	codecArgs := types.BuildCodecArgs(r.config.Codec, r.config.Bitrate)
@@ -657,7 +676,7 @@ func (r *GenericRecorder) startEncoderLocked(fileTime time.Time) error {
 		return err
 	}
 
-	r.rememberFilenameLocked(filename)
+	r.rememberFilenameLocked(filepath.Base(path))
 	r.result = result
 
 	// Scope writer state to this FFmpeg process; rotation creates fresh channels.
@@ -792,13 +811,20 @@ func (r *GenericRecorder) rotateFile(generation uint64) {
 	// gives HH-00, a late one its real start, and after a clock step the name
 	// and the next boundary follow the corrected time.
 	at := time.Now().Round(time.Minute)
+	r.rotationGeneration++ // Claim this callback before releasing mu for preparation.
+	claimedGeneration := r.rotationGeneration
+	path, current := r.prepareFilenameLocked(at)
+	if !current || r.rotationGeneration != claimedGeneration {
+		r.mu.Unlock()
+		return
+	}
 
-	// Capture keeps feeding the current channel while startup holds mu; only
+	// Capture keeps feeding the current channel during preparation; only
 	// the channel hand-over takes the separate audio lock.
 	previous := r.claimEncoderLocked()
 	r.retiring.Add(1)
 	defer r.retiring.Done()
-	startErr := r.startEncoderLocked(at)
+	startErr := r.startEncoderLocked(path)
 	failedFile := r.currentFile
 	if startErr != nil {
 		// The current encoder still runs: keep recording into its file instead
