@@ -85,7 +85,7 @@ func TestStreamAndRecorderMutationsRollBackAfterSaveFailure(t *testing.T) {
 
 func TestFailedSettingsSavesKeepMemoryUnchanged(t *testing.T) {
 	cfg, _ := newLoadedConfig(t)
-	key, detectors := cfg.RecordingAPIKey(), cfg.DetectorSettings()
+	key := cfg.RecordingAPIKey()
 	settings := cfg.Snapshot()
 	blocked := filepath.Join(t.TempDir(), "file")
 	if err := os.WriteFile(blocked, nil, 0o600); err != nil {
@@ -105,7 +105,7 @@ func TestFailedSettingsSavesKeepMemoryUnchanged(t *testing.T) {
 	if errs := update.Validate(); len(errs) > 0 {
 		t.Fatalf("invalid test settings: %v", errs)
 	}
-	if err := cfg.ApplySettings(update); err == nil || cfg.DetectorSettings() != detectors {
-		t.Fatalf("ApplySettings = %v, detectors %+v; want failure keeping %+v", err, cfg.DetectorSettings(), detectors)
+	if err := cfg.ApplySettings(update); err == nil || !reflect.DeepEqual(cfg.Snapshot(), settings) {
+		t.Fatalf("ApplySettings = %v; want failure keeping the previous configuration", err)
 	}
 }
