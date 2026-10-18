@@ -593,6 +593,15 @@ func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 		r.lastError = ""
 	}
 
+	// Leaving hourly mode cancels the pending rotation, including one already
+	// preparing its next file.
+	if r.config.RecordingMode == types.RecordingHourly && cfg.RecordingMode != types.RecordingHourly {
+		if r.rotationTimer != nil {
+			r.rotationTimer.Stop()
+			r.rotationTimer = nil
+		}
+		r.rotationGeneration++
+	}
 	r.config = *cfg
 	// Note: S3 client will be recreated on next use if config changed
 	// (same pattern as Graph client in notifications)
