@@ -153,8 +153,7 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 		n, err := cleanupS3Namespace(ctx, client, &cfg, s3Namespace(filePrefix), cutoff)
 		deleted += n
 		if err != nil {
-			slog.Warn("cleanup: failed to list S3 objects", "id", cfg.ID, "bucket", cfg.S3Bucket, "error", err)
-			break
+			slog.Warn("cleanup: failed to list S3 objects", "id", cfg.ID, "bucket", cfg.S3Bucket, "prefix", s3Namespace(filePrefix), "error", err)
 		}
 	}
 	if deleted > 0 {

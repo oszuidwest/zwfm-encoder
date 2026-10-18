@@ -35,49 +35,62 @@ func TestRecorderFileIdentitySurvivesRename(t *testing.T) {
 
 func TestRecorderRenameKeepsLegacyAndIDS3Retention(t *testing.T) {
 	t.Parallel()
-	cfg := testS3Recorder()
-	cfg.Name, cfg.RetentionDays = "Before", 1
-	prefix := cfg.RecordingFilePrefix()
-	oldKey := "recordings/Before/Before-2000-01-01-00-00.mp3"
-	idKey := "recordings/" + prefix + "/" + prefix + "-2000-01-01-00-00.mp3"
-	var mu sync.Mutex
-	var listed, deleted []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-		if req.Method == http.MethodDelete {
-			deleted = append(deleted, strings.TrimPrefix(req.URL.Path, "/bucket/"))
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		listed = append(listed, req.URL.Query().Get("prefix"))
-		w.Header().Set("Content-Type", "application/xml")
-		// Include unrelated and nested objects too: only our exact namespaces count.
-		_, _ = fmt.Fprintf(w, `<ListBucketResult><IsTruncated>false</IsTruncated>
+	// An IAM policy still scoped to the old prefix may deny listing the ID namespace.
+	for _, deniedID := range []bool{false, true} {
+		t.Run(fmt.Sprintf("denied ID listing=%t", deniedID), func(t *testing.T) {
+			t.Parallel()
+			cfg := testS3Recorder()
+			cfg.Name, cfg.RetentionDays = "Before", 1
+			prefix := cfg.RecordingFilePrefix()
+			oldKey := "recordings/Before/Before-2000-01-01-00-00.mp3"
+			idKey := "recordings/" + prefix + "/" + prefix + "-2000-01-01-00-00.mp3"
+			var mu sync.Mutex
+			var listed, deleted []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				if req.Method == http.MethodDelete {
+					deleted = append(deleted, strings.TrimPrefix(req.URL.Path, "/bucket/"))
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				listed = append(listed, req.URL.Query().Get("prefix"))
+				if deniedID && req.URL.Query().Get("prefix") == "recordings/"+prefix+"/" {
+					writeS3Error(w, http.StatusForbidden, "AccessDenied")
+					return
+				}
+				w.Header().Set("Content-Type", "application/xml")
+				// Include unrelated and nested objects too: only our exact namespaces count.
+				_, _ = fmt.Fprintf(w, `<ListBucketResult><IsTruncated>false</IsTruncated>
 <Contents><Key>%s</Key></Contents><Contents><Key>%s</Key></Contents>
 <Contents><Key>recordings/Before-B/Before-B-2000-01-01-00-00.mp3</Key></Contents>
 <Contents><Key>recordings/Before/nested/Before-2000-01-01-00-00.mp3</Key></Contents>
 <Contents><Key>recordings/@deadbeef/file-2000-01-01-00-00.mp3</Key></Contents>
 </ListBucketResult>`, oldKey, idKey)
-	}))
-	t.Cleanup(server.Close)
-	cfg.S3Endpoint = server.URL
-	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg})
-	updated := *cfg
-	updated.Name = "After"
-	if err := r.UpdateConfig(&updated); err != nil {
-		t.Fatal(err)
-	}
-	(&Manager{}).cleanupS3Files(r)
-	mu.Lock()
-	defer mu.Unlock()
-	slices.Sort(listed)
-	slices.Sort(deleted)
-	wantListed, wantDeleted := []string{"recordings/" + prefix + "/", "recordings/Before/"}, []string{idKey, oldKey}
-	slices.Sort(wantListed)
-	slices.Sort(wantDeleted)
-	if !slices.Equal(listed, wantListed) || !slices.Equal(deleted, wantDeleted) {
-		t.Fatalf("rename lost retention ownership: listed=%v, deleted=%v", listed, deleted)
+			}))
+			t.Cleanup(server.Close)
+			cfg.S3Endpoint = server.URL
+			r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg})
+			updated := *cfg
+			updated.Name = "After"
+			if err := r.UpdateConfig(&updated); err != nil {
+				t.Fatal(err)
+			}
+			(&Manager{}).cleanupS3Files(r)
+			mu.Lock()
+			defer mu.Unlock()
+			slices.Sort(listed)
+			slices.Sort(deleted)
+			wantListed, wantDeleted := []string{"recordings/" + prefix + "/", "recordings/Before/"}, []string{idKey, oldKey}
+			if deniedID {
+				wantDeleted = []string{oldKey} // The legacy namespace is still cleaned.
+			}
+			slices.Sort(wantListed)
+			slices.Sort(wantDeleted)
+			if !slices.Equal(listed, wantListed) || !slices.Equal(deleted, wantDeleted) {
+				t.Fatalf("rename lost retention ownership: listed=%v, deleted=%v", listed, deleted)
+			}
+		})
 	}
 }
 
