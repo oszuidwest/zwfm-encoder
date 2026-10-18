@@ -124,7 +124,8 @@
                             <name>Recording Storage Low or Unavailable</name>
                             <opdata>{ITEM.LASTVALUE}</opdata>
                             <priority>HIGH</priority>
-                            <description>A recording path is below the warning threshold or cannot be checked. No unuploaded recordings are evicted.</description>
+                            <description>A recording path is below the warning threshold or cannot be checked. No unuploaded recordings are evicted. After a process restart an open incident is restored from the retained event log, so recovery is still sent; if the low event is no longer in the log, close the problem manually.</description>
+                            <manual_close>YES</manual_close>
                         </trigger>
                     </triggers>
                 </item>
