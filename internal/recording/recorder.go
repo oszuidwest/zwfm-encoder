@@ -620,14 +620,14 @@ func (r *GenericRecorder) prepareFilenameLocked(fileTime time.Time) (path string
 }
 
 func prepareRecordingDir(storageMode types.StorageMode, dir string) error {
+	if err := util.ValidatePath("recording directory", dir); err != nil {
+		return fmt.Errorf("invalid recording directory: %w", err)
+	}
 	if storageMode == types.StorageS3 {
 		if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // Spool directory needs to be readable.
 			return fmt.Errorf("failed to create spool directory: %w", err)
 		}
 		return nil
-	}
-	if err := util.ValidatePath("local_path", dir); err != nil {
-		return fmt.Errorf("invalid local_path: %w", err)
 	}
 	if err := checkRecordingPath(dir); err != nil {
 		return fmt.Errorf("local path is not writable: %w", err)

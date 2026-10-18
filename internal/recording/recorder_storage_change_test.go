@@ -126,3 +126,24 @@ func TestRotationDirectoryFailureKeepsCurrentEncoder(t *testing.T) {
 	}
 	assertRecordedCapture(t, path, append(pcm, pcm...))
 }
+
+func TestRecordingDirectoryRejectsTraversalBeforeCreation(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []types.StorageMode{types.StorageLocal, types.StorageS3} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			allowed := filepath.Join(root, "allowed")
+			if err := os.Mkdir(allowed, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			path := allowed + string(os.PathSeparator) + ".." + string(os.PathSeparator) + "outside" //nolint:gocritic // filepath.Join would erase the traversal being tested.
+			if err := prepareRecordingDir(mode, path); err == nil {
+				t.Fatal("directory traversal was accepted")
+			}
+			if _, err := os.Stat(filepath.Join(root, "outside")); !os.IsNotExist(err) {
+				t.Fatalf("rejected directory was created: %v", err)
+			}
+		})
+	}
+}
