@@ -128,7 +128,7 @@ Monitors audio levels and sends alerts when silence is detected or recovered. Us
 
 If stopping an input exceeds the shutdown timeout, the encoder remains `stopping` and rejects a new start until the old source and its audio reader have exited. Once shutdown completes it becomes `stopped` and can be started again.
 
-Changing the audio input restarts the encoder once the old source has fully stopped: it waits for streams and recorders to stop (a final upload can take minutes) and then up to 30 seconds for the source teardown. A failed restart is shown on the dashboard; selecting a working input starts the encoder again, unless it was stopped explicitly.
+Changing the audio input restarts the encoder once the old source has fully stopped: it waits for streams and recorders to stop (a final upload can take minutes) and then up to 35 seconds for the source teardown. A failed restart is shown on the dashboard; selecting a working input starts the encoder again, unless it was stopped explicitly.
 
 If the audio input disappears (a capture error, an unplugged USB interface, a Dante transmitter that stops sending), the encoder keeps reopening it. After a failed attempt it waits 3 seconds, doubling up to 10 seconds, plus up to 50% random jitter, so never more than 15 seconds. It never gives up, so audio resumes on its own when the input returns. A capture that keeps running but delivers no audio is treated as failed and reopened too: when no audio arrives within 30 seconds of opening the input, or audio stops for 10 seconds. Streams and recorders keep running in the meantime. The dashboard shows the reconnect attempts and the error of the last failed attempt.
 
