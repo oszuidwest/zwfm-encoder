@@ -291,7 +291,7 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 		}
 		complete, parseErr := mergeDiscoveryResponse(&info, buffer[:n], source.IP, instance, requiredSource)
 		if parseErr != nil {
-			lastResponseErr = fmt.Errorf("malformed response from %v: %w", source, parseErr)
+			lastResponseErr = fmt.Errorf("from %v: %w", source, parseErr)
 			continue
 		}
 		if complete {
@@ -364,15 +364,15 @@ func mergeDiscoveryResponse(info *channelInfo, packet []byte, source net.IP, req
 		return false, nil
 	}
 	if requiredSource != nil && !source.Equal(requiredSource) {
-		return false, nil
+		return false, fmt.Errorf("transmitter address %s does not match required %s", source, requiredSource)
 	}
 	if info.address != nil && !source.Equal(info.address) {
-		return false, nil
+		return false, fmt.Errorf("transmitter address %s does not match earlier response from %s", source, info.address)
 	}
 
 	port, txt, err := parseDNSResponse(packet, requested)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("malformed response: %w", err)
 	}
 	if port == 0 && txt == nil {
 		return false, nil

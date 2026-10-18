@@ -3,6 +3,7 @@ package dante
 import (
 	"net"
 	"reflect"
+	"strings"
 	"testing"
 
 	"golang.org/x/net/dns/dnsmessage"
@@ -89,8 +90,8 @@ func TestMergeDiscoveryResponseAcceptsOnlyRequiredSource(t *testing.T) {
 	var info channelInfo
 
 	complete, err := mergeDiscoveryResponse(&info, packet, foreignSource, requested, requiredSource)
-	if err != nil {
-		t.Fatalf("foreign response: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "does not match required") {
+		t.Fatalf("foreign response = %v, want transmitter address rejection", err)
 	}
 	if complete || info.address != nil {
 		t.Fatalf("foreign response was accepted: %#v", info)

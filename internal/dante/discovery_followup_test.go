@@ -11,7 +11,7 @@ import (
 )
 
 func TestDiscoveryTimeoutIncludesRejectedSource(t *testing.T) {
-	for _, mode := range []string{"off subnet", "wrong port", "missing interface", "caller deadline"} {
+	for _, mode := range []string{"off subnet", "wrong port", "missing interface", "caller deadline", "different transmitter"} {
 		t.Run(mode, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				h := newFakeTransmitter()
@@ -20,12 +20,17 @@ func TestDiscoveryTimeoutIncludesRejectedSource(t *testing.T) {
 				read := readDanteDiscovery
 				readDanteDiscovery = func(conn net.PacketConn) (func([]byte) (int, *net.UDPAddr, int, error), error) {
 					next, err := read(conn)
+					right := h.readerCount == 2
 					return func(p []byte) (int, *net.UDPAddr, int, error) {
 						n, source, index, err := next(p)
 						if err == nil {
 							copySource := *source
 							source = &copySource
 							switch mode {
+							case "different transmitter":
+								if right {
+									source.IP = net.IPv4(192, 0, 2, 21)
+								}
 							case "wrong port":
 								source.Port = 12345
 							case "missing interface":
@@ -47,6 +52,8 @@ func TestDiscoveryTimeoutIncludesRejectedSource(t *testing.T) {
 				want := "169.254.1.2:5353"
 				reason := "subnet"
 				switch mode {
+				case "different transmitter":
+					want, reason = "192.0.2.21:5353", "does not match required 192.0.2.20"
 				case "wrong port":
 					want, reason = "192.0.2.20:12345", "port"
 				case "missing interface":
