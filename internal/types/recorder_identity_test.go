@@ -33,3 +33,18 @@ func TestRecorderIdentityIsLosslessAndCaseIndependent(t *testing.T) {
 		seen[prefix] = true
 	}
 }
+
+func TestGeneratedRecorderIDsKeepReadablePrefixes(t *testing.T) {
+	t.Parallel()
+	for id, want := range map[string]string{
+		"recorder-1a2b3c": "@recorder-1a2b3c",
+		// Case variants and other forms are hex-encoded, so they stay apart.
+		"recorder-1A2B3C": "@" + hex.EncodeToString([]byte("recorder-1A2B3C")),
+		"recorder-":       "@" + hex.EncodeToString([]byte("recorder-")),
+		"recorder-xyz":    "@" + hex.EncodeToString([]byte("recorder-xyz")),
+	} {
+		if got := (&Recorder{ID: id}).RecordingFilePrefix(); got != want {
+			t.Errorf("prefix of %q = %q, want %q", id, got, want)
+		}
+	}
+}

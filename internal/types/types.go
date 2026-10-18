@@ -459,6 +459,12 @@ type Recorder struct {
 }
 
 // InitializeFileIdentity captures the pre-upgrade prefix once, before any rename.
+// generatedRecorderID reports whether id has the generated recorder-<hex> form.
+func generatedRecorderID(id string) bool {
+	suffix, ok := strings.CutPrefix(id, "recorder-")
+	return ok && suffix != "" && len(id) <= 80 && strings.Trim(suffix, "0123456789abcdef") == ""
+}
+
 func (r *Recorder) InitializeFileIdentity() {
 	if !r.IDBasedFiles {
 		r.LegacyFilePrefix = util.SanitizeFilename(r.Name)
@@ -467,8 +473,13 @@ func (r *Recorder) InitializeFileIdentity() {
 }
 
 // RecordingFilePrefix keeps ID ownership stable on case-insensitive filesystems.
-// Separate @/@h namespaces avoid legacy names and bound very long IDs.
+// Separate @/@h namespaces avoid legacy names and bound very long IDs. Generated
+// IDs (recorder-<lowercase hex>) stay readable: "r" is no hex digit, so they
+// cannot meet a hex-encoded ID, and lowercase-only keeps case variants apart.
 func (r *Recorder) RecordingFilePrefix() string {
+	if generatedRecorderID(r.ID) {
+		return "@" + r.ID
+	}
 	if len(r.ID) > 80 {
 		sum := sha256.Sum256([]byte(r.ID))
 		return "@h" + hex.EncodeToString(sum[:])

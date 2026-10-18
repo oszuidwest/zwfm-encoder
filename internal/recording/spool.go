@@ -178,7 +178,9 @@ func (r *GenericRecorder) recoverOrphanSpoolFiles(existing []pendingUpload) ([]p
 			continue
 		}
 		if _, owned := recorderFileTime(&cfg, entry.Name()); !owned {
-			continue // A shared/case-aliased spool directory does not prove ownership.
+			// A shared/case-aliased spool directory does not prove ownership.
+			slog.Warn("spool file is not named for this recorder; not uploaded", "id", r.id, "file", filePath)
+			continue
 		}
 
 		info, ok, err := finalizedRecording(filePath)

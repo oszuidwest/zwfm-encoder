@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -16,6 +17,12 @@ func TestLegacyRecorderIdentityPersistsThroughReplacementAndReload(t *testing.T)
 	path := writeConfig(t, string(data))
 	cfg := New(path)
 	mustLoad(t, cfg)
+	// The capture is on disk before anything else saves, so a later hand edit
+	// of the name cannot move the legacy claim.
+	saved, err := os.ReadFile(path) //nolint:gosec // Test temp config.
+	if err != nil || !strings.Contains(string(saved), `"legacy_file_prefix": "Archive"`) {
+		t.Fatalf("captured legacy prefix not persisted on load: %v\n%s", err, saved)
+	}
 	id := legacy.Recording.Recorders[0].ID
 	prefix := cfg.Recorder(id).RecordingFilePrefix()
 	for _, name := range []string{"After", "Again"} {

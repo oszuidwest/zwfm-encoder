@@ -1040,8 +1040,7 @@ func (r *GenericRecorder) scheduleDurationLimitLocked() {
 }
 
 func (r *GenericRecorder) generateFilename(t time.Time) string {
-	safeName := r.config.RecordingFilePrefix()
-	return fmt.Sprintf("%s-%s.%s", safeName, t.Format(recordingTimestampLayout), r.config.Codec.FileExtension())
+	return fmt.Sprintf("%s-%s.%s", r.config.RecordingFilePrefix(), t.Format(recordingTimestampLayout), r.config.Codec.FileExtension())
 }
 
 // nextRecordingFilename returns name, or the first of name-2, name-3, ...
@@ -1070,8 +1069,13 @@ func (r *GenericRecorder) rememberFilenameLocked(filename string) {
 	r.usedFilenames[filename] = now
 }
 
+// s3Namespace is the object-key prefix for files under one filename prefix.
+func s3Namespace(filePrefix string) string {
+	return "recordings/" + filePrefix + "/"
+}
+
 func s3ObjectKey(recorder *types.Recorder, filename string) string {
-	return fmt.Sprintf("recordings/%s/%s", recorder.RecordingFilePrefix(), filename)
+	return s3Namespace(recorder.RecordingFilePrefix()) + filename
 }
 
 // isS3Configured reports whether S3 is configured for this recorder.

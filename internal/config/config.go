@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -268,11 +269,18 @@ func (c *Config) Load() error {
 		return util.WrapError("parse config", err)
 	}
 
+	captured := slices.ContainsFunc(cfg.Recording.Recorders, func(r types.Recorder) bool { return !r.IDBasedFiles })
 	if err := cfg.validate(); err != nil {
 		return err
 	}
 	c.copyFrom(cfg)
-
+	if captured {
+		// Persist the pre-upgrade prefixes now: a later hand edit of a name
+		// must not move the legacy claim before anything else saves.
+		if err := c.saveLocked(); err != nil {
+			slog.Warn("could not persist captured recorder file prefixes; they are kept in memory", "error", err)
+		}
+	}
 	return nil
 }
 
@@ -564,11 +572,11 @@ func (c *Config) validateRecorders() error {
 				i, recorder.Name, c.Recording.Recorders[first].Name)
 		}
 		prefixes[prefix] = i
-		if prefix := strings.ToLower(recorder.LegacyFilePrefix); prefix != "" {
-			if first, ok := legacyPrefixes[prefix]; ok {
+		if legacy := strings.ToLower(recorder.LegacyFilePrefix); legacy != "" {
+			if first, ok := legacyPrefixes[legacy]; ok {
 				return fmt.Errorf("invalid recording.recorders[%d].legacy_file_prefix: shared with recorder %q", i, c.Recording.Recorders[first].ID)
 			}
-			legacyPrefixes[prefix] = i
+			legacyPrefixes[legacy] = i
 		}
 	}
 	return nil
@@ -899,9 +907,7 @@ func (c *Config) UpdateRecorder(recorder *types.Recorder) error {
 		return fmt.Errorf("%w: %s", ErrRecorderNotFound, recorder.ID)
 	}
 	old := c.Recording.Recorders[i]
-	identity := old
-	identity.InitializeFileIdentity()
-	recorder.IDBasedFiles, recorder.LegacyFilePrefix = true, identity.LegacyFilePrefix
+	recorder.IDBasedFiles, recorder.LegacyFilePrefix = true, old.LegacyFilePrefix
 	c.Recording.Recorders[i] = *recorder
 	if err := c.validateRecorders(); err != nil {
 		c.Recording.Recorders[i] = old
