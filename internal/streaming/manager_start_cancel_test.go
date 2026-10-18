@@ -3,10 +3,13 @@ package streaming
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 func TestStopCancelsStartWaitingForOldStreamResources(t *testing.T) {
@@ -63,4 +66,49 @@ func TestStopCancelsReservedListenerEncoderRetry(t *testing.T) {
 	if next, _ := m.reserveListenerEncoderStart(cfg.ID, stream, func() bool { return true }); next != nil {
 		t.Fatal("stopped listener reserved another retry")
 	}
+}
+
+func TestListenerRetryLosingItsSourceDoesNotStrandFanout(t *testing.T) {
+	m := NewManager(fakeLongRunningExecutable(t))
+	cfg := validStream()
+	cfg.Mode, cfg.Host, cfg.Port = types.StreamModeListener, "127.0.0.1", freeUDPPort(t)
+	if started, err := m.Start(cfg); err != nil || !started {
+		t.Fatalf("listener start = %t, %v", started, err)
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	t.Cleanup(func() { close(stop); _ = m.Stop(cfg.ID); <-done })
+	entry := m.current(cfg.ID)
+	entry.backoff = util.NewBackoff(time.Millisecond, time.Millisecond)
+	ctx := &sourceEndingOnRetryConfig{cfg: cfg}
+	ctx.running.Store(true)
+	go func() { defer close(done); m.MonitorAndRetry(cfg.ID, ctx, stop) }()
+	run := waitListenerRun(t, m, cfg.ID, nil)
+	if err := run.result.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("listener monitor did not finish after losing its source")
+	}
+	if m.current(cfg.ID) != nil {
+		t.Fatal("source loss left a running listener entry with no encoder to retry")
+	}
+	assertUDPPortAvailable(t, cfg.Port)
+}
+
+type sourceEndingOnRetryConfig struct {
+	cfg     *types.Stream
+	reads   atomic.Int32
+	running atomic.Bool
+}
+
+func (c *sourceEndingOnRetryConfig) IsRunning() bool { return c.running.Load() }
+
+func (c *sourceEndingOnRetryConfig) Stream(string) *types.Stream {
+	if c.reads.Add(1) == 2 {
+		c.running.Store(false) // The source exits while the post-backoff config is being read.
+	}
+	return c.cfg
 }
