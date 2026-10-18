@@ -252,37 +252,6 @@ func (r *GenericRecorder) startAsync(gen uint64) {
 		return
 	}
 
-	// Read config values we need for validation
-	r.mu.RLock()
-	storageMode := r.config.StorageMode
-	localPath := r.config.LocalPath
-	id := r.id
-	spoolDir := r.spoolDir
-	r.mu.RUnlock()
-
-	// Validate and prepare output directory based on storage mode
-	if storageMode == types.StorageS3 {
-		// S3-only: create spool directory (should always be writable)
-		//nolint:gosec // Spool directory needs to be readable
-		if err := os.MkdirAll(filepath.Join(spoolDir, "recorders", id), 0o755); err != nil {
-			r.setStartError(gen, fmt.Sprintf("failed to create spool directory: %v", err))
-			return
-		}
-	}
-
-	if storageMode != types.StorageS3 {
-		// Local or Both: validate path and check writability
-		// CheckPathWritable also creates the directory if needed
-		if err := util.ValidatePath("local_path", localPath); err != nil {
-			r.setStartError(gen, fmt.Sprintf("invalid local_path: %v", err))
-			return
-		}
-		if err := checkRecordingPath(localPath); err != nil {
-			r.setStartError(gen, "local path is not writable")
-			return
-		}
-	}
-
 	// Now lock and start the encoder
 	r.mu.Lock()
 
@@ -293,16 +262,23 @@ func (r *GenericRecorder) startAsync(gen uint64) {
 	}
 
 	// Start FFmpeg encoder
-	path, current := r.prepareFilenameLocked(time.Now())
+	path, current, err := r.prepareFilenameLocked(time.Now())
 	if !current {
 		r.mu.Unlock()
 		return
 	}
-	if err := r.startEncoderLocked(path); err != nil {
+	if err == nil {
+		err = r.startEncoderLocked(path)
+	}
+	if err != nil {
 		r.state = types.ProcessError
+		r.recording.Store(false)
 		r.lastError = err.Error()
+		params := r.captureLogParamsLocked()
+		params.Error = err.Error()
 		r.mu.Unlock()
 		slog.Error("recorder failed to start encoder", "id", r.id, "error", err)
+		r.logEvent(eventlog.RecorderError, params)
 		return
 	}
 
@@ -332,22 +308,6 @@ func (r *GenericRecorder) startAsync(gen uint64) {
 
 	slog.Info("recorder started", "id", r.id, "name", name, "mode", mode)
 	r.logEvent(eventlog.RecorderStarted, logParams)
-}
-
-func (r *GenericRecorder) setStartError(gen uint64, msg string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.startGen != gen || r.state != types.ProcessStarting {
-		return
-	}
-	r.state = types.ProcessError
-	r.recording.Store(false)
-	r.lastError = msg
-	slog.Error("recorder error", "id", r.id, "error", msg)
-
-	p := r.captureLogParamsLocked()
-	p.Error = msg
-	r.logEvent(eventlog.RecorderError, p)
 }
 
 func (r *GenericRecorder) reportError(file string, err error) {
@@ -626,7 +586,7 @@ func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 // prepareFilenameLocked releases mu for filesystem checks, then revalidates
 // ownership and configuration. Stop need not join a blocked check, and a stale
 // result cannot start an encoder. Called and returned with mu held.
-func (r *GenericRecorder) prepareFilenameLocked(fileTime time.Time) (string, bool) {
+func (r *GenericRecorder) prepareFilenameLocked(fileTime time.Time) (path string, current bool, err error) {
 	gen, state := r.startGen, r.state
 	for {
 		cfg := r.config
@@ -637,22 +597,42 @@ func (r *GenericRecorder) prepareFilenameLocked(fileTime time.Time) (string, boo
 		base := r.generateFilename(fileTime)
 		used := maps.Clone(r.usedFilenames)
 		r.mu.Unlock()
-		filename := nextRecordingFilename(base, func(name string) bool {
-			if _, exists := used[name]; exists {
-				return true
-			}
-			_, err := recordingStat(filepath.Join(outputDir, name))
-			return err == nil
-		})
+		filename := base
+		err := prepareRecordingDir(cfg.StorageMode, outputDir)
+		if err == nil {
+			filename = nextRecordingFilename(base, func(name string) bool {
+				if _, exists := used[name]; exists {
+					return true
+				}
+				_, err := recordingStat(filepath.Join(outputDir, name))
+				return err == nil
+			})
+		}
 		r.mu.Lock()
 		if r.startGen != gen || r.state != state {
-			return "", false
+			return "", false, nil
 		}
 		if r.config != cfg {
 			continue // A concurrent edit must not launch into the old path/name.
 		}
-		return filepath.Join(outputDir, filename), true
+		return filepath.Join(outputDir, filename), true, err
 	}
+}
+
+func prepareRecordingDir(storageMode types.StorageMode, dir string) error {
+	if storageMode == types.StorageS3 {
+		if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // Spool directory needs to be readable.
+			return fmt.Errorf("failed to create spool directory: %w", err)
+		}
+		return nil
+	}
+	if err := util.ValidatePath("local_path", dir); err != nil {
+		return fmt.Errorf("invalid local_path: %w", err)
+	}
+	if err := checkRecordingPath(dir); err != nil {
+		return fmt.Errorf("local path is not writable: %w", err)
+	}
+	return nil
 }
 
 // startEncoderLocked starts FFmpeg on the prepared output path.
@@ -819,9 +799,15 @@ func (r *GenericRecorder) rotateFile(generation uint64) {
 	at := time.Now().Round(time.Minute)
 	r.rotationGeneration++ // Claim this callback before releasing mu for preparation.
 	claimedGeneration := r.rotationGeneration
-	path, current := r.prepareFilenameLocked(at)
+	path, current, prepareErr := r.prepareFilenameLocked(at)
 	if !current || r.rotationGeneration != claimedGeneration {
 		r.mu.Unlock()
+		return
+	}
+	if prepareErr != nil {
+		r.scheduleRotationLocked(at)
+		r.mu.Unlock()
+		r.reportError(path, prepareErr)
 		return
 	}
 
