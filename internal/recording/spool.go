@@ -139,12 +139,7 @@ func (r *GenericRecorder) loadPendingUpload(metadataPath string) (pendingUpload,
 		retryCount:   meta.RetryCount,
 		lastError:    meta.LastError,
 		metadataPath: metadataPath,
-	}
-	if meta.Abandoned {
-		// Retrying again: the abandonment scan must not count it meanwhile.
-		if err := r.savePendingUpload(&pending); err != nil {
-			slog.Warn("failed to persist restored upload", "id", r.id, "path", metadataPath, "error", err)
-		}
+		abandoned:    meta.Abandoned,
 	}
 	return pending, true, nil
 }

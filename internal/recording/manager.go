@@ -147,13 +147,20 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 	if err := recorder.reconcilePendingUploads(); err != nil {
 		return fmt.Errorf("reconcile pending uploads: %w", err)
 	}
+	m.recorders[cfg.ID] = recorder
 	// A process restart gives restored uploads a fresh retry window.
 	for i := range recorder.retryQueue {
-		delete(m.abandoned, recorder.retryQueue[i].request.localPath)
+		p := &recorder.retryQueue[i]
+		if p.abandoned {
+			p.abandoned = false
+			if err := recorder.savePendingUpload(p); err != nil {
+				slog.Warn("failed to persist restored upload", "id", recorder.id, "path", p.metadataPath, "error", err)
+			}
+		}
+		delete(m.abandoned, p.request.localPath)
 		m.restoreGen++
 	}
 
-	m.recorders[cfg.ID] = recorder
 	m.publishAudioRecordersLocked()
 
 	// Auto-start hourly recorders if encoder is running (ondemand never auto-starts)

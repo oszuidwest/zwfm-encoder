@@ -479,3 +479,28 @@ func TestRestartClosesStorageIncidentLeftOpen(t *testing.T) {
 		})
 	}
 }
+
+func TestFailedRegistrationKeepsUploadAbandoned(t *testing.T) {
+	t.Parallel()
+	spool := t.TempDir()
+	cfg := testS3Recorder()
+	prior := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: spool})
+	file := writeSpoolFile(t, spool, cfg.ID, "abandoned.mp3", "audio")
+	p := pendingUpload{request: uploadRequest{localPath: file, s3Key: "recordings/x.mp3", fileSize: 5}, firstAttempt: time.Now(), abandoned: true}
+	if err := prior.savePendingUpload(&p); err != nil {
+		t.Fatal(err)
+	}
+	// ReadDir sorts names, so this broken metadata fails reconciliation after
+	// the abandoned entry was loaded.
+	if err := os.Symlink(filepath.Join(spool, "missing"), filepath.Join(prior.pendingUploadDir(), "zzzz.upload.json")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	m := storageTestManager(t, spool)
+	if err := m.AddRecorder(cfg); err == nil {
+		t.Fatal("reconciliation unexpectedly succeeded")
+	}
+	m.checkStorage(m.cleanupStopCh)
+	if got := m.AbandonedUploadCount(); got != 1 {
+		t.Fatalf("abandoned count after a failed registration = %d, want 1", got)
+	}
+}
