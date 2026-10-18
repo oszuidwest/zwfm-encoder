@@ -112,7 +112,7 @@ func (m *Manager) cleanupLocalFiles(recorder *GenericRecorder) {
 				slog.Warn("cleanup: failed to delete local file", "id", cfg.ID, "path", filePath, "error", err)
 			} else {
 				deleted++
-				if err := os.Remove(filePath + unfinalizedRecordingSuffix); err != nil && !os.IsNotExist(err) {
+				if err := removeUnfinalizedMarker(filePath); err != nil {
 					slog.Warn("cleanup: failed to delete recording marker", "id", cfg.ID, "path", filePath, "error", err)
 				}
 				slog.Debug("cleanup: deleted local file", "id", cfg.ID, "file", name)

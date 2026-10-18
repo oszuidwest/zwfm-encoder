@@ -6,12 +6,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -153,57 +151,20 @@ func TestFailedRotationStartEmitsRecorderError(t *testing.T) {
 
 func TestWriteErrorQuarantinesPartialAudioWithoutUpload(t *testing.T) {
 	t.Setenv(fakeFFmpegFailWriteEnv, "1")
-	entered := make(chan struct{}, 1)
-	unblock := make(chan struct{})
-	release := sync.OnceFunc(func() { close(unblock) })
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		_, _ = io.Copy(io.Discard, req.Body)
-		entered <- struct{}{}
-		<-unblock
-		w.Header().Set("ETag", `"test"`)
-	}))
-	defer server.Close()
-	defer release()
+	endpoint, uploads := conditionalPutServer(t, "", func(http.ResponseWriter, string) bool { return false })
 	cfg := testS3Recorder()
-	cfg.RecordingMode, cfg.S3Endpoint = types.RecordingOnDemand, server.URL
+	cfg.RecordingMode, cfg.S3Endpoint = types.RecordingOnDemand, endpoint
 	r, eventPath := errorTestRecorder(t, cfg)
-	if err := r.Start(); err != nil {
+	file := startCaptureTestRecorder(t, r)
+	writeUntilRecorderLeavesRunning(t, r)
+	if err := r.Stop(); err != nil {
 		t.Fatal(err)
 	}
-	waitForRecorderState(t, r, types.ProcessRunning)
-	r.mu.RLock()
-	file := r.currentFile
-	r.mu.RUnlock()
-	deadline := time.Now().Add(3 * time.Second)
-	for r.Status().State == types.ProcessRunning && time.Now().Before(deadline) {
-		r.WriteAudio(make([]byte, 16384))
-		time.Sleep(5 * time.Millisecond)
-	}
-	waitForRecorderState(t, r, types.ProcessError)
-	stopped := make(chan error, 1)
-	go func() { stopped <- r.Stop() }()
-	select {
-	case err := <-stopped:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(time.Second):
-		release()
-		t.Fatalf("Stop waited for the recovery upload, then returned %v", <-stopped)
-	}
-	if data, err := os.ReadFile(file); err != nil || len(data) != 4096 { //nolint:gosec // Test temp recording.
-		t.Fatalf("preserved partial recording = %d bytes, %v", len(data), err)
-	}
-	metadata, err := os.ReadDir(r.pendingUploadDir())
-	if err != nil && !os.IsNotExist(err) || len(metadata) != 0 {
-		t.Fatalf("failed output registered for automatic upload: %v, %v", metadata, err)
-	}
-	assertRecorderErrorEvent(t, eventPath, filepath.Base(file), "simulated write failure")
+	assertRecordedCapture(t, file, make([]byte, 4096))
 	assertRecordingQuarantined(t, file)
-	select {
-	case <-entered:
-		t.Fatal("failed output attempted an automatic upload")
-	default:
+	assertSingleRecorderError(t, eventPath, file, "simulated write failure")
+	if r.PendingUploadCount() != 0 || len(uploads()) != 0 {
+		t.Fatalf("failed output queued (%d) or uploaded (%d)", r.PendingUploadCount(), len(uploads()))
 	}
 }
 
@@ -253,7 +214,7 @@ func TestWriteErrorQuarantinesAudioDespiteZeroAcceptedBytes(t *testing.T) {
 	t.Setenv(fakeFFmpegFailWriteEnv, "empty")
 	t.Setenv(fakeFFmpegEmptyHeaderEnv, "1")
 	cfg := testS3Recorder()
-	cfg.RecordingMode, cfg.S3Endpoint = types.RecordingOnDemand, "http://127.0.0.1:1"
+	cfg.RecordingMode = types.RecordingOnDemand
 	r, _ := errorTestRecorder(t, cfg)
 	file := startCaptureTestRecorder(t, r)
 	r.mu.RLock()
@@ -268,11 +229,9 @@ func TestWriteErrorQuarantinesAudioDespiteZeroAcceptedBytes(t *testing.T) {
 		t.Fatalf("pipe accepted %d bytes, want 0", result.BytesWritten())
 	}
 	assertRecordedCapture(t, file, []byte("header without audio"))
-	if _, err := os.Stat(file + unfinalizedRecordingSuffix); err != nil {
-		t.Fatalf("output with audio is not quarantined: %v", err)
-	}
-	if metadata, err := os.ReadDir(r.pendingUploadDir()); err == nil && len(metadata) != 0 {
-		t.Fatalf("quarantined output registered for upload: %v", metadata)
+	assertRecordingQuarantined(t, file)
+	if r.PendingUploadCount() != 0 {
+		t.Fatal("quarantined output registered for upload")
 	}
 }
 

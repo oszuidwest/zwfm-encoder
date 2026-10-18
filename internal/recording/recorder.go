@@ -520,10 +520,14 @@ func (r *GenericRecorder) cleanupAfterWriteError(run encoderRun, writeErr error)
 	if err := r.drainProcess(run.result); err != nil {
 		writeErr = err
 	}
-	// Failed outputs stay quarantined for inspection; an untouched placeholder
-	// holds nothing to inspect.
+	r.failOutput(run, writeErr)
+}
+
+// failOutput releases a failed output and reports it once. The output keeps its
+// marker for inspection; an untouched placeholder holds nothing to inspect.
+func (r *GenericRecorder) failOutput(run encoderRun, cause error) {
 	size, ownErr := run.output.release()
-	err := errors.Join(writeErr, ownErr)
+	err := errors.Join(cause, ownErr)
 	if ownErr == nil && size == 0 {
 		err = errors.Join(err, r.discardEmpty(run))
 	}
@@ -610,21 +614,11 @@ func (r *GenericRecorder) prepareFilenameLocked(fileTime time.Time) (*recordingO
 		var output *recordingOutput
 		err := prepareRecordingDir(cfg.StorageMode, outputDir)
 		if err == nil {
-			var file *os.File
 			nextRecordingFilename(base, func(name string) bool {
 				if _, exists := used[name]; exists {
 					return true
 				}
-				file, err = reserveRecordingFile(filepath.Join(outputDir, name))
-				if err != nil {
-					err = fmt.Errorf("reserve recording file: %w", err)
-				} else {
-					output = &recordingOutput{file: file}
-					if err = output.markUnfinalized(); err != nil {
-						output.discard()
-						output = nil
-					}
-				}
+				output, err = reserveRecordingOutput(filepath.Join(outputDir, name))
 				return errors.Is(err, os.ErrExist)
 			})
 		}
@@ -657,12 +651,23 @@ type recordingOutput struct {
 
 const unfinalizedRecordingSuffix = ".unfinalized"
 
+// reserveRecordingOutput exclusively creates path and its persisted marker.
+func reserveRecordingOutput(path string) (*recordingOutput, error) {
+	file, err := reserveRecordingFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reserve recording file: %w", err)
+	}
+	output := &recordingOutput{file: file}
+	if err := output.markUnfinalized(); err != nil {
+		output.discard()
+		return nil, err
+	}
+	return output, nil
+}
+
 func (o *recordingOutput) markUnfinalized() error {
 	path := o.file.Name() + unfinalizedRecordingSuffix
-	if err := util.ValidatePath("recording marker", path); err != nil {
-		return err
-	}
-	marker, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec // Marker path is validated above.
+	marker, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec // Marker path derives from the validated reservation.
 	if err != nil {
 		return fmt.Errorf("create unfinalized recording marker: %w", err)
 	}
@@ -677,28 +682,31 @@ func (o *recordingOutput) clearUnfinalized() error {
 	if !o.unfinalized {
 		return nil
 	}
-	if err := os.Remove(o.file.Name() + unfinalizedRecordingSuffix); err != nil && !errors.Is(err, os.ErrNotExist) {
+	return removeUnfinalizedMarker(o.file.Name())
+}
+
+func removeUnfinalizedMarker(recording string) error {
+	if err := os.Remove(recording + unfinalizedRecordingSuffix); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("clear unfinalized recording marker: %w", err)
 	}
-	o.unfinalized = false
 	return nil
 }
 
-func recordingUnfinalized(path string) (bool, error) {
-	if err := util.ValidatePath("recording file", path); err != nil {
-		return false, err
+// finalizedRecording stats a recording for upload without following links. ok
+// is false for a marked, empty or non-regular file, which is never uploaded
+// automatically.
+func finalizedRecording(path string) (info os.FileInfo, ok bool, err error) {
+	if _, err := os.Lstat(path + unfinalizedRecordingSuffix); !errors.Is(err, os.ErrNotExist) {
+		if err != nil {
+			return nil, false, fmt.Errorf("check unfinalized recording marker: %w", err)
+		}
+		return nil, false, nil
 	}
-	if strings.HasSuffix(path, unfinalizedRecordingSuffix) {
-		return true, nil
-	}
-	_, err := os.Lstat(path + unfinalizedRecordingSuffix)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
+	info, err = os.Lstat(path)
 	if err != nil {
-		return false, fmt.Errorf("check unfinalized recording marker: %w", err)
+		return nil, false, err
 	}
-	return true, nil
+	return info, info.Mode().IsRegular() && info.Size() > 0, nil
 }
 
 // release closes the reservation, once, before any upload or removal (Windows
@@ -727,21 +735,18 @@ func (o *recordingOutput) release() (int64, error) {
 	return info.Size(), nil
 }
 
-// remove deletes a released output; one that is already gone counts as removed.
+// remove deletes a released output, then its marker; one that is already gone
+// counts as removed. When the removal fails, the marker keeps the file out of uploads.
 func (o *recordingOutput) remove() error {
 	if err := removeEmptyRecording(o.file.Name()); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return nil
-}
-
-// discardEmpty removes a released output without audio, then its marker. When
-// the removal fails, the marker keeps the file out of uploads.
-func (r *GenericRecorder) discardEmpty(run encoderRun) error {
-	if err := run.output.remove(); err != nil {
 		return fmt.Errorf("remove empty recording: %w", err)
 	}
-	if err := run.output.clearUnfinalized(); err != nil {
+	return o.clearUnfinalized()
+}
+
+// discardEmpty removes a released output without audio.
+func (r *GenericRecorder) discardEmpty(run encoderRun) error {
+	if err := run.output.remove(); err != nil {
 		return err
 	}
 	slog.Info("discarded recording without audio", "id", r.id, "file", filepath.Base(run.file))
@@ -761,10 +766,6 @@ func (o *recordingOutput) discard() {
 	}
 	if err := o.remove(); err != nil {
 		slog.Warn("failed to discard recording reservation", "file", o.file.Name(), "error", err)
-		return
-	}
-	if err := o.clearUnfinalized(); err != nil {
-		slog.Warn("failed to discard recording reservation marker", "file", o.file.Name(), "error", err)
 	}
 }
 
@@ -915,13 +916,11 @@ func (r *GenericRecorder) finishEncoder(run encoderRun) {
 			"id", r.id, "file", filepath.Base(run.file), "chunks", abandoned, "total_drops", drops)
 	}
 
-	size, ownErr := run.output.release()
-	if err := errors.Join(finalizeErr, ownErr); err != nil {
-		// Failed outputs stay quarantined for inspection; an untouched
-		// placeholder holds nothing to inspect.
-		if ownErr == nil && size == 0 {
-			err = errors.Join(err, r.discardEmpty(run))
-		}
+	if finalizeErr != nil {
+		r.failOutput(run, finalizeErr)
+		return
+	}
+	if _, err := run.output.release(); err != nil {
 		r.reportError(run.file, err)
 		return
 	}
