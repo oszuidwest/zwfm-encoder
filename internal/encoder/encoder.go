@@ -87,6 +87,7 @@ type Encoder struct {
 	state               types.EncoderState
 	stopChan            chan struct{}
 	mu                  sync.RWMutex
+	consumerStarts      sync.WaitGroup // Starts register under mu before Stop can change state.
 	closeOnce           sync.Once
 	closeErr            error
 	lastError           string
@@ -480,6 +481,7 @@ func (e *Encoder) Stop() error {
 	loopDone := e.sourceLoopDone
 	e.mu.Unlock()
 
+	e.consumerStarts.Wait()
 	errs := e.stopConsumers()
 
 	// Cancellation closes native inputs and gracefully stops capture processes.
@@ -608,14 +610,13 @@ func (e *Encoder) ApplySettingsEffects() {
 
 // startStream uses runID zero for manual starts and otherwise requires that run.
 func (e *Encoder) startStream(streamID string, runID uint64) error {
+	if !e.beginConsumerStart(runID) {
+		return ErrNotRunning
+	}
+	defer e.consumerStarts.Done()
 	var stopChan chan struct{}
 
 	e.mu.RLock()
-	activeRun := runID == 0 || e.sourceRunID == runID
-	if e.state != types.StateRunning || !activeRun {
-		e.mu.RUnlock()
-		return ErrNotRunning
-	}
 	stopChan = e.stopChan
 	e.mu.RUnlock()
 
@@ -972,10 +973,21 @@ func (e *Encoder) sourceRunActive(runID uint64) bool {
 	return e.sourceRunID == runID && e.state == types.StateRunning && e.sourceStdout != nil
 }
 
+func (e *Encoder) beginConsumerStart(runID uint64) bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if e.state != types.StateRunning || (runID != 0 && (e.sourceRunID != runID || e.sourceStdout == nil)) {
+		return false
+	}
+	e.consumerStarts.Add(1)
+	return true
+}
+
 func (e *Encoder) startEnabledStreams(runID uint64) {
-	if !e.sourceRunActive(runID) {
+	if !e.beginConsumerStart(runID) {
 		return
 	}
+	defer e.consumerStarts.Done()
 
 	if e.silenceDumpManager != nil {
 		e.silenceDumpManager.Start()
