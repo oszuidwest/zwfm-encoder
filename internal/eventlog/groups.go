@@ -118,6 +118,7 @@ func EmptyEventGroups() EventGroups {
 
 // GroupEvents groups decorated events for the events UI.
 // Only supplied events are grouped, so pagination can split incidents.
+// Events must be in reverse append order, as returned by ReadLast.
 //
 // streamExists reports whether a stream ID is still configured. Ongoing stream
 // incidents for streams that no longer exist are closed as stopped, which also
@@ -141,8 +142,16 @@ func GroupEvents(events []EventView, streamExists func(streamID string) bool) Ev
 		closed:    []*historicalIncident{},
 		failed:    []*historicalIncident{},
 	}
+	// Input outages survive restarts, when an unsynchronized clock can go back.
+	for _, event := range slices.Backward(grouped) {
+		if matchesFilter(event.view.Type, FilterInput) {
+			state.process(event)
+		}
+	}
 	for i := range asc {
-		state.process(asc[i])
+		if !matchesFilter(asc[i].view.Type, FilterInput) {
+			state.process(asc[i])
+		}
 	}
 
 	ongoing := make([]*historicalIncident, 0, len(state.openByKey))

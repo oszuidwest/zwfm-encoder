@@ -824,3 +824,37 @@ func TestGroupEventsInputLossOngoingThenResolved(t *testing.T) {
 	}
 	assertPartition(t, resolved, &groups)
 }
+
+func TestGroupEventsPairsInputByAppendOrderAfterClockRollback(t *testing.T) {
+	t.Parallel()
+	base := time.Date(2026, 10, 16, 3, 0, 0, 0, time.UTC)
+	for _, restoredSecond := range []int{-3600, 0, 10} {
+		t.Run(fmt.Sprint(restoredSecond), func(t *testing.T) {
+			// ReadLast supplies reverse append order, independent of the clock.
+			events := DecorateEvents([]Event{
+				testEvent(base, -7200, InputLost, map[string]any{"error": "latest outage"}),
+				testEvent(base, restoredSecond, InputRestored, nil),
+				testEvent(base, 20, SilenceStart, map[string]any{"incident_id": 7}),
+				testEvent(base, 0, InputLost, map[string]any{"error": "first outage"}),
+			})
+			groups := GroupEvents(events, nil)
+			if len(groups.Resolved) != 1 || len(groups.Attention) != 2 {
+				t.Fatalf("groups = %+v, want one resolved input outage and two open incidents", groups)
+			}
+			resolved := groups.Resolved[0]
+			if resolved.Title != "Audio input lost" || resolved.StatusText != "Resolved" || len(resolved.Events) != 2 || resolved.Detail != "first outage" {
+				t.Fatalf("resolved = %+v, want first input outage resolved", resolved)
+			}
+			var latestOpen bool
+			for _, item := range groups.Attention {
+				if item.Title == "Audio input lost" {
+					latestOpen = item.Detail == "latest outage" && len(item.Events) == 1
+				}
+			}
+			if !latestOpen {
+				t.Fatalf("attention = %+v, want latest input outage open", groups.Attention)
+			}
+			assertPartition(t, events, &groups)
+		})
+	}
+}
