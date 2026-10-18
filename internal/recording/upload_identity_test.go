@@ -525,15 +525,19 @@ func TestRetryRequestedDuringBatchRunsAfterIt(t *testing.T) {
 		}
 	}
 	r.processRetryQueue()
-	deadline := time.Now().Add(5 * time.Second)
-	for r.PendingUploadCount() != 0 && time.Now().Before(deadline) {
+	// PendingUploadCount reads zero while a batch has the queue drained, so
+	// wait for the upload itself.
+	uploaded := func() bool {
+		store.mu.Lock()
+		defer store.mu.Unlock()
+		_, ok := store.objects["queued-meanwhile.mp3"]
+		return ok
+	}
+	for deadline := time.Now().Add(5 * time.Second); !uploaded() && time.Now().Before(deadline); {
 		time.Sleep(5 * time.Millisecond)
 	}
-	store.mu.Lock()
-	_, uploaded := store.objects["queued-meanwhile.mp3"]
-	store.mu.Unlock()
-	if !uploaded || r.PendingUploadCount() != 0 {
-		t.Fatalf("file queued during a batch waited for the hourly retry: uploaded=%t, pending=%d", uploaded, r.PendingUploadCount())
+	if !uploaded() {
+		t.Fatal("file queued during a batch waited for the hourly retry")
 	}
 	if overlapped.Load() {
 		t.Fatal("the follow-up pass ran while the first batch still owned its paths")
