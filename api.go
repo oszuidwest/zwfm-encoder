@@ -923,6 +923,9 @@ type ReadyComponent struct {
 
 const readinessMaxPendingUploads = 0
 
+// readinessMaxStorageAge rejects storage observations older than three check intervals.
+const readinessMaxStorageAge = 3 * time.Minute
+
 // handleHealth returns the health status of the encoder.
 // It returns 200 OK if healthy, 503 Service Unavailable if unhealthy.
 // Health is defined as: encoder running AND FFmpeg available.
@@ -989,6 +992,8 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		recorderStatuses:   s.encoder.RecorderStatuses(),
 		audioLevels:        s.encoder.AudioLevels(),
 		pendingUploads:     s.encoder.PendingUploadCount(),
+		abandonedUploads:   s.encoder.AbandonedUploadCount(),
+		recordingStorage:   s.encoder.RecordingStorageStatuses(),
 	})
 	s.writeJSON(w, httpStatus, resp)
 }
@@ -1003,6 +1008,8 @@ type readyInputs struct {
 	recorderStatuses   map[string]types.ProcessStatus
 	audioLevels        audio.AudioLevels
 	pendingUploads     int
+	abandonedUploads   int
+	recordingStorage   []types.RecordingStorageStatus
 }
 
 func buildReadyResponse(in *readyInputs) (resp ReadyResponse, httpStatus int) {
@@ -1013,7 +1020,8 @@ func buildReadyResponse(in *readyInputs) (resp ReadyResponse, httpStatus int) {
 		"silence":           readySilence(&in.audioLevels),
 		"channel_imbalance": readyChannelImbalance(&in.audioLevels),
 		"recorders":         readyRecorders(in.recordingAvailable, in.recorders, in.recorderStatuses),
-		"uploads":           readyUploads(in.pendingUploads),
+		"uploads":           readyUploads(in.pendingUploads, in.abandonedUploads),
+		"recording_storage": readyRecordingStorage(in.recordingStorage, in.recorders),
 	}
 
 	status := "ready"
@@ -1146,13 +1154,34 @@ func readyRecorders(
 	return ReadyComponent{OK: true, Details: details}
 }
 
-func readyUploads(pending int) ReadyComponent {
+func readyUploads(pending, abandoned int) ReadyComponent {
 	details := map[string]any{
-		"pending": pending,
-		"max":     readinessMaxPendingUploads,
+		"pending":   pending,
+		"abandoned": abandoned,
+		"max":       readinessMaxPendingUploads,
+	}
+	if abandoned > 0 {
+		return ReadyComponent{OK: false, Message: "abandoned recording uploads remain on disk", Details: details}
 	}
 	if pending > readinessMaxPendingUploads {
 		return ReadyComponent{OK: false, Message: "recording uploads are pending retry", Details: details}
+	}
+	return ReadyComponent{OK: true, Details: details}
+}
+
+func readyRecordingStorage(paths []types.RecordingStorageStatus, recorders []types.Recorder) ReadyComponent {
+	details := map[string]any{"paths": paths}
+	if len(paths) == 0 {
+		for i := range recorders {
+			if recorders[i].Enabled {
+				return ReadyComponent{OK: false, Message: "recording storage has not been checked", Details: details}
+			}
+		}
+	}
+	for _, p := range paths {
+		if p.Unhealthy() || time.Since(p.CheckedAt) > readinessMaxStorageAge {
+			return ReadyComponent{OK: false, Message: "recording storage is low, unavailable or stale", Details: details}
+		}
 	}
 	return ReadyComponent{OK: true, Details: details}
 }

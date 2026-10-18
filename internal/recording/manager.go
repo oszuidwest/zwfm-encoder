@@ -19,6 +19,7 @@ import (
 // UploadAbandonedEvent contains details about an upload that was abandoned after exhausting retries.
 type UploadAbandonedEvent struct {
 	RecorderName string
+	LocalPath    string
 	Filename     string
 	S3Key        string
 	LastError    string
@@ -45,6 +46,13 @@ type Manager struct {
 
 	cleanupStopCh     chan struct{} // Stop signal for cleanup scheduler; created per run in Start, closed in Stop
 	hourlyRetryStopCh chan struct{} // Stop signal for hourly retry scheduler; created per run in Start, closed in Stop
+
+	storageProbeMu  sync.Mutex // Bounds non-cancellable filesystem probes across Stop/Start.
+	storagePaths    []types.RecordingStorageStatus
+	abandoned       map[string]struct{}
+	restoreGen      uint64 // Advanced when restored uploads leave abandoned; stale scans skip merging.
+	onStorageChange func([]types.RecordingStorageStatus)
+	diskSpace       func(string) (uint64, uint64, error)
 }
 
 // NewManager creates a new recording manager.
@@ -65,6 +73,8 @@ func NewManager(ffmpegPath, spoolDir string, maxDurationMinutes int, eventLogger
 		ffmpegPath:         ffmpegPath,
 		maxDurationMinutes: maxDurationMinutes,
 		eventLogger:        eventLogger,
+		abandoned:          make(map[string]struct{}),
+		diskSpace:          diskSpace,
 	}, nil
 }
 
@@ -112,11 +122,16 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 		SpoolDir:           m.spoolDir,
 		MaxDurationMinutes: m.maxDurationMinutes,
 		EventLogger:        m.eventLogger,
-		OnUploadAbandoned:  m.onUploadAbandoned,
+		OnUploadAbandoned:  func(event UploadAbandonedEvent) { m.handleUploadAbandoned(&event) },
 	})
 	if err := recorder.reconcilePendingUploads(); err != nil {
 		return fmt.Errorf("reconcile pending uploads: %w", err)
 	}
+	// A process restart gives restored uploads a fresh retry window.
+	for i := range recorder.retryQueue {
+		delete(m.abandoned, recorder.retryQueue[i].request.localPath)
+	}
+	m.restoreGen++
 
 	m.recorders[cfg.ID] = recorder
 	m.publishAudioRecordersLocked()
@@ -261,6 +276,7 @@ func (m *Manager) StartIfActive(active func() bool) error {
 	// Start hourly retry scheduler for failed recorders
 	m.startHourlyRetryScheduler(m.hourlyRetryStopCh)
 	go m.processUploadRetryQueues()
+	go m.monitorStorage(m.cleanupStopCh)
 
 	count := len(m.recorders)
 	m.mu.Unlock()

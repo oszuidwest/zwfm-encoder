@@ -8,6 +8,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"log/slog"
 	"path/filepath"
 	"sync"
@@ -64,6 +65,10 @@ func (noopAlertChannel) SendInputRestored(_ context.Context, _ *config.Snapshot,
 }
 
 func (noopAlertChannel) SendUploadAbandoned(_ context.Context, _ *config.Snapshot, _ UploadAbandonedData) error {
+	return nil
+}
+
+func (noopAlertChannel) SendRecordingStorage(_ context.Context, _ *config.Snapshot, _ []types.RecordingStorageStatus) error {
 	return nil
 }
 

@@ -6,6 +6,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
 // AlertChannel defines the delivery contract shared by webhook, email, and
@@ -54,6 +55,8 @@ type AlertChannel interface {
 	SendAudioDump(ctx context.Context, cfg *config.Snapshot, data *AudioDumpData) error
 	// SendUploadAbandoned delivers an alert for a recording that exhausted upload retries.
 	SendUploadAbandoned(ctx context.Context, cfg *config.Snapshot, params UploadAbandonedData) error
+	// SendRecordingStorage delivers the current aggregate recording-storage state.
+	SendRecordingStorage(ctx context.Context, cfg *config.Snapshot, paths []types.RecordingStorageStatus) error
 	// SendInputLost delivers an alert when audio capture from the input stops.
 	SendInputLost(ctx context.Context, cfg *config.Snapshot, data InputData) error
 	// SendInputRestored delivers an alert when audio capture runs stably again.

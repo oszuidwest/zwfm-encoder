@@ -110,6 +110,24 @@
                         </trigger>
                     </triggers>
                 </item>
+                <item>
+                    <uuid>d915b8b018754af0b9030270377252d1</uuid>
+                    <name>Recording Storage Alert</name>
+                    <type>TRAP</type>
+                    <key>upload.alert.storage</key>
+                    <value_type>TEXT</value_type>
+                    <description>Aggregate recording disk state. Uses the configured upload key plus .storage. Recovery is sent only when all monitored paths are healthy.</description>
+                    <triggers>
+                        <trigger>
+                            <uuid>affb3df5736a4c058ffce143b0e8ea5d</uuid>
+                            <expression>find(/ZWFM Encoder Monitor/upload.alert.storage,,&quot;like&quot;,&quot;event=RECORDING_STORAGE_LOW&quot;) = 1</expression>
+                            <name>Recording Storage Low or Unavailable</name>
+                            <opdata>{ITEM.LASTVALUE}</opdata>
+                            <priority>HIGH</priority>
+                            <description>A recording path is below the warning threshold or cannot be checked. No unuploaded recordings are evicted.</description>
+                        </trigger>
+                    </triggers>
+                </item>
             </items>
         </template>
     </templates>

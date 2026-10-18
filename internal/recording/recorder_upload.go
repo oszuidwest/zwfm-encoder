@@ -413,6 +413,7 @@ func (r *GenericRecorder) processRetryQueue() {
 				r.mu.RUnlock()
 				r.onUploadAbandoned(UploadAbandonedEvent{
 					RecorderName: recorderName,
+					LocalPath:    p.request.localPath,
 					Filename:     filepath.Base(p.request.localPath),
 					S3Key:        p.request.s3Key,
 					LastError:    p.lastError,

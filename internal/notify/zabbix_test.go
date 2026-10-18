@@ -34,6 +34,24 @@ func TestZabbixChannelSendPayloads(t *testing.T) {
 		send  func(*ZabbixChannel, *config.Snapshot) error
 	}{
 		{
+			name: "recording storage low", key: "encoder.upload.storage", value: "event=RECORDING_STORAGE_LOW",
+			send: func(ch *ZabbixChannel, cfg *config.Snapshot) error {
+				return ch.SendRecordingStorage(context.Background(), cfg, []types.RecordingStorageStatus{{Path: "event=RECORDING_STORAGE_RESTORED", Low: true}, {Path: "/healthy"}})
+			},
+		},
+		{
+			name: "recording storage restored", key: "encoder.upload.storage", value: "event=RECORDING_STORAGE_RESTORED",
+			send: func(ch *ZabbixChannel, cfg *config.Snapshot) error {
+				return ch.SendRecordingStorage(context.Background(), cfg, []types.RecordingStorageStatus{{Path: "/healthy"}})
+			},
+		},
+		{
+			name: "recording storage unavailable", key: "encoder.upload.storage", value: "event=RECORDING_STORAGE_LOW",
+			send: func(ch *ZabbixChannel, cfg *config.Snapshot) error {
+				return ch.SendRecordingStorage(context.Background(), cfg, []types.RecordingStorageStatus{{Path: "/offline", Error: "disk missing"}})
+			},
+		},
+		{
 			name:  "silence start",
 			key:   "encoder.silence",
 			value: "event=SILENCE level_l=-48.5 level_r=-52.3 threshold=-40.0",

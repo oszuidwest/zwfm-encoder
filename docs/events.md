@@ -689,6 +689,23 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
 
 ---
 
+### `recording_storage_low` / `recording_storage_restored`
+
+Recording storage warnings have category `recorder`, severity `warning`, reason `problem`;
+recovery has severity `success`, reason `recovery`. Incidents are grouped by path, independently
+of recorder names and upload incidents. Checks run on manager start and every minute, outside
+capture/status locks. Warnings fire below 1 GiB or 5% available, or on a probe/metadata-scan error;
+only transitions produce events. These checks never delete recordings.
+
+Details: `path`, `available_bytes` (including zero), `total_bytes`, `threshold_bytes`, `low`,
+`error` (when a check failed), and `checked_at`. A failed probe is not a recovery.
+Webhook events use the same two event names and carry the aggregate snapshot in `storage_paths`;
+email and the separate Zabbix `<upload key>.storage` item also report aggregate recovery only
+when no monitored path remains unhealthy. `/ready` exposes the cached observations and rejects
+observations older than three minutes.
+
+---
+
 ### `cleanup_completed`
 
 - **Severity:** `success`
@@ -828,4 +845,6 @@ under `attention` with status `Ongoing` until it ends:
 | `upload_failed` | recorder | error | problem | Upload Failed | S3 upload failed |
 | `upload_retry` | recorder | warning | problem | Retry | Failed upload being retried |
 | `upload_abandoned` | recorder | error | problem | Abandoned | Upload abandoned after 24h |
+| `recording_storage_low` | recorder | warning | problem | Storage Low | Recording path low or unavailable |
+| `recording_storage_restored` | recorder | success | recovery | Storage Restored | Recording path recovered |
 | `cleanup_completed` | recorder | success | routine | Cleanup | Retention cleanup completed |

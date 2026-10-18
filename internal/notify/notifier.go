@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
 // logQueueDepth buffers ordered event-log writes from audio cycle handlers.
@@ -48,8 +50,11 @@ type AlertOrchestrator struct {
 	logMu       sync.RWMutex
 	logQueue    chan logJob   // serialized log writes; single worker guarantees JSONL write order
 	inputQueues []chan func() // per-channel input alert deliveries, index-aligned with dispatcher.Channels()
-	closeOnce   sync.Once     // ensures Close drains and stops the worker exactly once
-	closed      bool
+	// storageQueues hold each channel's newest storage state, so input alerts
+	// cannot evict a storage transition that is only sent once.
+	storageQueues []chan func()
+	closeOnce     sync.Once // ensures Close drains and stops the worker exactly once
+	closed        bool
 }
 
 // pendingRecoveryData holds recovery event data while waiting for the audio dump.
@@ -81,13 +86,16 @@ func NewAlertOrchestrator(cfg *config.Config, dispatcher *Dispatcher) *AlertOrch
 	// raised, so a restoration never lands before its loss and an old
 	// restoration never lands after a newer loss and clears a live outage.
 	for range dispatcher.Channels() {
-		queue := make(chan func(), inputQueueDepth)
-		o.inputQueues = append(o.inputQueues, queue)
-		go func() {
-			for deliver := range queue {
-				deliver()
-			}
-		}()
+		input, storage := make(chan func(), inputQueueDepth), make(chan func(), 1)
+		o.inputQueues = append(o.inputQueues, input)
+		o.storageQueues = append(o.storageQueues, storage)
+		for _, queue := range []chan func(){input, storage} {
+			go func() {
+				for deliver := range queue {
+					deliver()
+				}
+			}()
+		}
 	}
 	return o
 }
@@ -325,6 +333,16 @@ func (o *AlertOrchestrator) HandleUploadAbandoned(params UploadAbandonedData) {
 	o.dispatcher.DispatchUploadAbandoned(ctx, cfg, params)
 }
 
+// HandleRecordingStorage sends storage changes through the ordered channel workers,
+// so a delayed low-space notification cannot arrive after its recovery.
+func (o *AlertOrchestrator) HandleRecordingStorage(paths []types.RecordingStorageStatus) {
+	paths = slices.Clone(paths)
+	o.enqueueOrdered(o.storageQueues, "recording_storage", AlertChannel.IsConfiguredForUpload,
+		func(ch AlertChannel, ctx context.Context, cfg *config.Snapshot) error {
+			return ch.SendRecordingStorage(ctx, cfg, paths)
+		})
+}
+
 // HandleInputLost alerts every channel configured for audio alerts and logs an
 // audio input loss. Calls must be ordered with [AlertOrchestrator.HandleInputRestored].
 func (o *AlertOrchestrator) HandleInputLost(data InputData) {
@@ -344,26 +362,11 @@ func (o *AlertOrchestrator) handleInputEvent(
 	send func(AlertChannel, context.Context, *config.Snapshot, InputData) error,
 	write func(*eventlog.Logger, time.Time, *eventlog.InputDetails) error,
 ) {
-	cfg := o.cfg.Snapshot()
-	o.mu.Lock()
-	ctx := o.notifyCtx
-	o.mu.Unlock()
-
 	now := time.Now()
-	o.logMu.RLock()
-	if !o.closed {
-		for i, ch := range o.dispatcher.Channels() {
-			if !ch.IsConfiguredForSilence(&cfg) {
-				continue
-			}
-			chCfg := cfg // Each channel gets its own Snapshot copy.
-			deliver := func() {
-				logNotifyResult(func() error { return send(ch, ctx, &chCfg, data) }, ch.Name(), eventType)
-			}
-			enqueueInputAlert(o.inputQueues[i], deliver, ch.Name(), eventType)
-		}
-	}
-	o.logMu.RUnlock()
+	o.enqueueOrdered(o.inputQueues, eventType, AlertChannel.IsConfiguredForSilence,
+		func(ch AlertChannel, ctx context.Context, cfg *config.Snapshot) error {
+			return send(ch, ctx, cfg, data)
+		})
 
 	o.enqueueLog(eventType, func() {
 		if err := write(o.eventLogger, now, &eventlog.InputDetails{
@@ -374,6 +377,33 @@ func (o *AlertOrchestrator) handleInputEvent(
 			slog.Warn("failed to log audio input event", "event_type", eventType, "error", err)
 		}
 	})
+}
+
+// enqueueOrdered queues send on each configured channel's FIFO worker.
+// Each channel gets its own Snapshot copy.
+func (o *AlertOrchestrator) enqueueOrdered(
+	queues []chan func(), eventType string, configured func(AlertChannel, *config.Snapshot) bool,
+	send func(AlertChannel, context.Context, *config.Snapshot) error,
+) {
+	cfg := o.cfg.Snapshot()
+	o.mu.Lock()
+	ctx := o.notifyCtx
+	o.mu.Unlock()
+
+	o.logMu.RLock()
+	defer o.logMu.RUnlock()
+	if o.closed {
+		return
+	}
+	for i, ch := range o.dispatcher.Channels() {
+		if !configured(ch, &cfg) {
+			continue
+		}
+		chCfg := cfg
+		enqueueInputAlert(queues[i], func() {
+			logNotifyResult(func() error { return send(ch, ctx, &chCfg) }, ch.Name(), eventType)
+		}, ch.Name(), eventType)
+	}
 }
 
 // enqueueInputAlert queues deliver, discarding the oldest queued alert when
@@ -437,8 +467,8 @@ func (o *AlertOrchestrator) Close() {
 		o.logMu.Lock()
 		o.closed = true
 		queue := o.logQueue
-		for _, inputQueue := range o.inputQueues {
-			close(inputQueue)
+		for _, queue := range slices.Concat(o.inputQueues, o.storageQueues) {
+			close(queue)
 		}
 		o.logMu.Unlock()
 
