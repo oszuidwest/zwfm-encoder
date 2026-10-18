@@ -287,7 +287,7 @@ func TestWriteErrorWithEmptyOutputIsNotRecovered(t *testing.T) {
 	}
 	waitForRecorderState(t, r, types.ProcessRunning)
 	r.mu.RLock()
-	file, result := r.currentFile, r.result
+	file := r.currentFile
 	r.mu.RUnlock()
 	deadline := time.Now().Add(3 * time.Second)
 	for r.Status().State == types.ProcessRunning && time.Now().Before(deadline) {
@@ -296,9 +296,6 @@ func TestWriteErrorWithEmptyOutputIsNotRecovered(t *testing.T) {
 	}
 	if err := r.Stop(); err != nil {
 		t.Fatal(err)
-	}
-	if result.BytesWritten() == 0 {
-		t.Fatal("FFmpeg accepted no PCM; the size check was not reached")
 	}
 	// A queued recovery persists metadata before uploading and an upload removes
 	// the spool file, so both checks hold only if nothing was queued.

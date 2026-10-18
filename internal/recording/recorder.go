@@ -25,6 +25,9 @@ var afterFunc = time.AfterFunc
 
 // reserveRecordingFile lets tests hold a reservation like an unresponsive network share.
 var reserveRecordingFile = func(path string) (*os.File, error) {
+	if err := util.ValidatePath("recording file", path); err != nil {
+		return nil, fmt.Errorf("invalid recording file: %w", err)
+	}
 	return os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o666) //nolint:gosec // Preserve FFmpeg's output permissions (restricted by umask/ACLs); path uses a validated directory and sanitized filename.
 }
 
@@ -504,13 +507,14 @@ func (r *GenericRecorder) cleanupAfterWriteError(result *ffmpeg.StartResult, cur
 	r.reportError(currentFile, writeErr)
 
 	// Persist recovery before releasing Stop; network retries run independently.
-	if currentFile != "" && result.BytesWritten() > 0 {
+	if currentFile != "" {
 		if err := output.checkOwnership(); err != nil {
 			r.reportError(currentFile, err)
 			return
 		}
 		output.close() // Windows cannot remove a spool file while our handle is open.
-		// Accepted stdin does not mean FFmpeg wrote anything to the file.
+		// A failed Windows pipe write can report zero accepted bytes even after
+		// FFmpeg consumed PCM. Ownership and actual output size decide recovery.
 		if req, ok := r.prepareUploadRequest(currentFile); ok && req.fileSize > 0 {
 			r.addToRetryQueue(req, writeErr.Error())
 			go r.processRetryQueue()

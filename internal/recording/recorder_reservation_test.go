@@ -176,3 +176,23 @@ func TestFailedEncoderStartReleasesReservation(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 }
+
+func TestReservationRejectsTraversalAtFileOpen(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	allowed := filepath.Join(dir, "allowed")
+	if err := os.Mkdir(allowed, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := allowed + string(os.PathSeparator) + ".." + string(os.PathSeparator) + "outside.ts" //nolint:gocritic // Preserve the raw traversal input under test.
+	file, err := reserveRecordingFile(path)
+	if file != nil {
+		_ = file.Close()
+	}
+	if err == nil {
+		t.Fatal("raw traversal accepted at file-open boundary")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "outside.ts")); !os.IsNotExist(err) {
+		t.Fatalf("rejected file was created: %v", err)
+	}
+}
