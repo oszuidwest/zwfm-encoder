@@ -48,9 +48,11 @@ sudo su
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/oszuidwest/zwfm-encoder/main/deploy/install.sh)"
 ```
 
-The web interface will be available at `http://<raspberry-pi-ip>:8080`
+The web interface is available at `http://<raspberry-pi-ip>:8080` on your trusted LAN or through your VPN. New installations bind to `0.0.0.0:8080` by default; no domain name, certificate or reverse proxy is required. Choose local-only access in the installer if you plan to use a proxy or SSH tunnel. See [Admin security](#admin-security) for network restrictions and optional HTTPS setup.
 
 **Default credentials:** `admin` / `encoder`
+
+New installations are reachable from the LAN right away, so replace the default password before connecting the device to a shared network.
 
 ## Updating
 
@@ -216,12 +218,72 @@ Configuration is stored in `/etc/encoder/config.json` on production systems. For
 
 ```json
 {
-  "system": { "port": 8080, "username": "admin", "password": "encoder" },
+  "system": { "bind_address": "0.0.0.0", "port": 8080, "username": "admin", "password": "encoder" },
   "web": { "station_name": "ZuidWest FM" }
 }
 ```
 
 The installer creates a minimal config file. All other settings are configured through the web interface.
+
+The example above uses the legacy plaintext field for illustration; new installs and automatically created configs store a salted hash instead. Use the migration below for existing configs.
+
+## Admin security
+
+The encoder is intended to run as an internal appliance, managed directly by IP on a trusted LAN or through a VPN. Keep its web port restricted to the management network with your firewall/VPN rules; do not forward it from the public internet. HTTPS through a reverse proxy is optional. The encoder itself serves HTTP. The `/health` and `/ready` endpoints require no session and follow the same network restrictions.
+
+### LAN and VPN access
+
+The default `system.bind_address` is `0.0.0.0`, allowing access at `http://<device-ip>:8080` on all interfaces. Like `::` and an empty value, it uses Go's wildcard listener, which also accepts IPv6 where the OS allows dual-stack sockets. You can bind to a specific LAN or VPN interface by setting its numeric IPv4 or IPv6 address instead. A bind address must not include a port. Restart the encoder after changing the bind address or port.
+
+Direct HTTP access relies on that trusted network for transport protection: passwords and session cookies are not encrypted by HTTP. A VPN encrypts traffic only as far as its endpoint; if it terminates at a router, the router-to-encoder hop still uses HTTP. Use the optional HTTPS setup below when that network path is not trusted or your policy requires browser-to-proxy encryption.
+
+Password hashing, login limits and CSRF protection apply to both HTTP and HTTPS. CSRF protection remains useful on a private network because a malicious website can try to make an authenticated administrator's browser send requests to the appliance.
+
+### Passwords and existing installations
+
+Generate a hash using the encoder binary. Read the password from stdin, not a command-line argument or shell history (Bash example):
+
+```bash
+read -r -s -p 'Admin password: ' encoder_password
+printf '\n'
+printf '%s' "$encoder_password" | /usr/local/bin/encoder -hash-password
+unset encoder_password
+```
+
+In `config.json`, replace `system.password` with `system.password_hash` containing the entire printed value; **remove the plaintext field**. Restart the encoder and verify login before deleting any recovery copy. Both fields together, malformed hashes and unsupported work factors are rejected. The command accepts one non-empty password line, preserves spaces, and does not load or modify configuration. It uses Go's standard-library PBKDF2-HMAC-SHA256 with a fresh 16-byte salt and 600,000 iterations, following the [OWASP PBKDF2 work-factor guidance](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html).
+
+Existing plaintext credentials and omitted `bind_address` remain supported so an update does not lock out a LAN appliance; loading an existing config does not rewrite it. Migrate credentials explicitly using the steps above. New configs and fresh installer runs store hashed credentials and allow direct LAN/VPN access by default; the installer also offers local-only binding (`127.0.0.1`). An omitted or empty bind retains the legacy all-interface listener. If the installer downloads an older binary without `-hash-password`, it warns and retains the legacy plaintext field until you upgrade and migrate; older binaries also ignore `bind_address`, so keep those behind a firewall. Config files and old backups may contain other secrets, so keep them owner-only (`0600`) and protect/delete recovery copies according to your retention policy. Older releases cannot read `password_hash`; restore a plaintext `system.password` before downgrading.
+
+### Optional HTTPS reverse proxy
+
+If you want HTTPS, one option is Caddy on the same host with the following Caddyfile after setting the encoder's `bind_address` to `127.0.0.1`. Keep the proxy restricted to your management network too. Replace the domain and configure DNS and certificate issuance for your environment; see [Caddy's automatic HTTPS deployment requirements](https://caddyserver.com/docs/automatic-https). This example assumes a domain and a working certificate issuance method; neither is needed for the normal LAN/VPN installation.
+
+```caddyfile
+encoder.example.com {
+    header Strict-Transport-Security "max-age=31536000"
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+Caddy's [reverse proxy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy) supports WebSockets and sets `X-Forwarded-Proto`. Preserve the original `Host`, overwrite forwarded protocol headers at your trusted proxy, and do not expose the backend listener to untrusted peers. Session cookies use `HttpOnly`, `SameSite=Strict` and `Secure` for TLS/forwarded HTTPS requests. For a remote proxy, use a private bind address and firewall the backend to that proxy only.
+
+For this same-host Caddy example, add `"trusted_proxies": ["127.0.0.1/32"]` to the existing `system` object, keeping its other fields. The default empty list trusts no proxy, including loopback. Only explicitly configured proxy CIDRs may supply `X-Forwarded-For` for login limits; the chain is read right-to-left until the first untrusted hop. Malformed forwarding data is rejected without consuming a shared proxy/account budget. Use exact proxy IPs (`/32` for IPv4, `/128` for IPv6) where possible, never a client subnet or all-address `/0` range. Invalid CIDRs and `/0` are rejected. If Caddy is itself behind another proxy, configure its [trusted proxy handling](https://caddyserver.com/docs/caddyfile/options#trusted-proxies) too; do not pass arbitrary client-supplied forwarding headers through.
+
+### Optional local-only access and SSH tunnel
+
+For local-only access, choose no at the installer's LAN/VPN prompt or set `system.bind_address` to `127.0.0.1` and restart. You can then tunnel from your workstation with `ssh -L 8080:127.0.0.1:8080 user@raspberry-pi-ip` and open `http://127.0.0.1:8080` locally. For the Windows tray UI on the device, loopback works directly.
+
+### Login limits and API clients
+
+The server allows five login attempts per client IPv4 address or IPv6 `/64` and ten per submitted username per minute, including successful attempts. Only requests with a valid one-use login CSRF token consume this budget; both limits are reserved atomically before password verification. Throttled attempts receive HTTP 429 with `Retry-After: 60`; wait and reload the login form before retrying, because its submitted token has been consumed. Rejected attempts do not extend the fixed window. The bounded in-memory cache reclaims old unrelated entries that have not reached their limit when full, instead of refusing every new client, and resets on restart. Password-hash verification runs one login at a time, so it uses at most one CPU core; when too many logins wait, the server answers HTTP 503 with `Retry-After: 1`. Rejected logins are logged with the peer address and the reason; submitted usernames are not logged. Forwarded IPs are used only from `system.trusted_proxies`; without it, proxy clients share the peer-IP limit. A proxy can additionally apply its own per-client rate limit. Do not repeatedly restart the encoder to evade throttling.
+
+The username budget is intentionally shared across clients to resist distributed guessing. An active attack can temporarily deny new logins for that account, without revoking existing sessions. This is not a substitute for the documented firewall/VPN/access-control boundary; do not expose password-only admin login directly to the public internet.
+
+Login forms use one-use tokens that expire after ten minutes; the oldest form tokens may be evicted earlier when the bounded anonymous token pool is busy. Reload an expired form to obtain a fresh token. A full pool does not block new login forms.
+
+Every session-authenticated mutation (POST/PUT/PATCH/DELETE) requires `X-CSRF-Token` matching that session's random token, and a mutation without a valid session gets `401` with a JSON error instead of a redirect to the login page; the authenticated page supplies it in `<meta name="csrf-token">`, and the UI sends it automatically. Tokens expire/revoke with the session, and responses containing them are not cached. Logout is `POST /logout` with this header; GET does not log out. Browser cross-origin unsafe requests are also rejected using Go's cross-origin protection, including login. This follows the [OWASP synchronizer-token pattern](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html).
+
+Custom session-based clients must fetch the authenticated page and send its token with mutations. The separate recording automation endpoints (`/api/recordings/start` and `/api/recordings/stop`) still use `X-API-Key`, not session cookies, so they do not require a CSRF token. Existing sessions are in memory and end on restart.
 
 ## Streaming Modes
 

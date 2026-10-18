@@ -22,7 +22,6 @@ func TestSetupRoutesRejectsUnauthenticatedRequests(t *testing.T) {
 	// TestSetupRoutesAPIKeyAuth.
 	unprotected := map[string]bool{
 		"/login":                     true,
-		"/logout":                    true,
 		"GET /health":                true,
 		"GET /ready":                 true,
 		"/style.css":                 true,
@@ -56,6 +55,12 @@ func TestSetupRoutesRejectsUnauthenticatedRequests(t *testing.T) {
 				t.Fatalf("request %s %s reached pattern %q, want %q", method, path, req.Pattern, pattern)
 			}
 
+			// Pages redirect to the login form; API requests and mutations answer
+			// 401 so the page's fetch does not follow the redirect and report success.
+			if method != http.MethodGet || strings.HasPrefix(path, "/api/") {
+				assertStatus(t, rec, http.StatusUnauthorized)
+				return
+			}
 			assertStatus(t, rec, http.StatusFound)
 			if location := rec.Header().Get("Location"); location != "/login" {
 				t.Fatalf("Location = %q, want /login", location)
