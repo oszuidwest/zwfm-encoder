@@ -239,14 +239,13 @@ Password hashing, login limits and CSRF protection apply to both HTTP and HTTPS.
 
 ### Passwords and existing installations
 
-Generate a hash using the encoder binary. Read the password from stdin, not a command-line argument or shell history (Bash example):
+Generate a hash using the encoder binary. On a terminal it prompts for the password without echoing it:
 
 ```bash
-read -r -s -p 'Admin password: ' encoder_password
-printf '\n'
-printf '%s' "$encoder_password" | /usr/local/bin/encoder -hash-password
-unset encoder_password
+/usr/local/bin/encoder -hash-password
 ```
+
+Scripts can pipe one password line on stdin instead; never pass it as a command-line argument.
 
 In `config.json`, replace `system.password` with `system.password_hash` containing the entire printed value; **remove the plaintext field**. Restart the encoder and verify login before deleting any recovery copy. Both fields together, malformed hashes and unsupported work factors are rejected. The command accepts one non-empty password line, preserves spaces, and does not load or modify configuration. It uses Go's standard-library PBKDF2-HMAC-SHA256 with a fresh 16-byte salt and 600,000 iterations, following the [OWASP PBKDF2 work-factor guidance](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html).
 

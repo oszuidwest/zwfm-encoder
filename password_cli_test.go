@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -42,3 +43,22 @@ func TestPrintPasswordHash(t *testing.T) {
 type failingHashWriter struct{}
 
 func (failingHashWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestPasswordInputKeepsPipesScripted(t *testing.T) {
+	t.Parallel()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+	go func() { _, _ = w.WriteString("piped secret\n"); _ = w.Close() }()
+	var prompt bytes.Buffer
+	input, err := passwordInput(r, &prompt)
+	if err != nil || prompt.Len() != 0 {
+		t.Fatalf("pipe got a prompt %q or error %v", prompt.String(), err)
+	}
+	var out bytes.Buffer
+	if err := printPasswordHash(input, &out); err != nil || !strings.HasPrefix(out.String(), "$pbkdf2-sha256$") {
+		t.Fatalf("piped password not hashed: %q, %v", out.String(), err)
+	}
+}
