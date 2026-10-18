@@ -84,7 +84,7 @@ func TestS3Connection(cfg *S3Config) error {
 		return fmt.Errorf("upload test file: %w", err)
 	}
 	defer func() {
-		// HeadObject may have used up the probe's deadline; clean up with a fresh one.
+		// The PUT may have used up the probe's deadline; clean up with a fresh one.
 		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancelCleanup()
 		if _, err := client.DeleteObject(cleanupCtx, &s3.DeleteObjectInput{
