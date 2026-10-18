@@ -15,20 +15,17 @@ import (
 )
 
 func TestRecordersReserveDifferentFilesBeforeEncoding(t *testing.T) {
-	neverRotate(t)
 	cfg := localOnDemandRecorder(t, "same-name")
 	second := *cfg
 	second.ID = "second"
 	a := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0]})
 	b := NewGenericRecorder(GenericRecorderConfig{Recorder: &second, FFmpegPath: os.Args[0]})
-	for _, r := range []*GenericRecorder{a, b} {
-		if err := r.Start(); err != nil {
-			t.Fatal(err)
-		}
+	files := make([]string, 2)
+	for i, r := range []*GenericRecorder{a, b} {
 		t.Cleanup(func() { _ = r.Stop() })
-		waitForRecorderState(t, r, types.ProcessRunning)
+		files[i] = startCaptureTestRecorder(t, r)
 	}
-	if a.currentFile == b.currentFile {
+	if files[0] == files[1] {
 		t.Fatal("two live recorders claimed the same output file")
 	}
 	for i, r := range []*GenericRecorder{a, b} {
@@ -37,7 +34,7 @@ func TestRecordersReserveDifferentFilesBeforeEncoding(t *testing.T) {
 		if err := r.Stop(); err != nil {
 			t.Fatal(err)
 		}
-		assertRecordedCapture(t, r.currentFile, pcm)
+		assertRecordedCapture(t, files[i], pcm)
 	}
 }
 
@@ -136,14 +133,14 @@ func TestDiscardReservationLeavesReplacementUntouched(t *testing.T) {
 	}
 	output := &recordingOutput{file: file}
 	if err := os.Remove(path); err != nil {
-		output.close()
+		_ = file.Close()
 		if runtime.GOOS == "windows" {
 			t.Skipf("Windows protects the open reservation from replacement: %v", err)
 		}
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
-		output.close()
+		_ = file.Close()
 		t.Fatal(err)
 	}
 	output.discard()
@@ -156,24 +153,13 @@ func TestDiscardReservationLeavesReplacementUntouched(t *testing.T) {
 func TestFailedEncoderStartReleasesReservation(t *testing.T) {
 	cfg := localOnDemandRecorder(t, "failed-start")
 	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, FFmpegPath: filepath.Join(t.TempDir(), "missing-ffmpeg")})
-	if err := r.Start(); err != nil {
-		t.Fatal(err)
+	r.state, r.startGen = types.ProcessStarting, 1
+	r.startAsync(1) // Returns after the failed-start cleanup.
+	if r.Status().State != types.ProcessError {
+		t.Fatalf("missing FFmpeg did not fail the start: %+v", r.Status())
 	}
-	waitForRecorderState(t, r, types.ProcessError)
-	// The error is published before the failed-start cleanup finishes.
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		entries, err := os.ReadDir(cfg.LocalPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(entries) == 0 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("failed startup left reserved files: %v", entries)
-		}
-		time.Sleep(time.Millisecond)
+	if entries, err := os.ReadDir(cfg.LocalPath); err != nil || len(entries) != 0 {
+		t.Fatalf("failed startup left reserved files: %v, %v", entries, err)
 	}
 }
 
@@ -192,7 +178,5 @@ func TestReservationRejectsTraversalAtFileOpen(t *testing.T) {
 	if err == nil {
 		t.Fatal("raw traversal accepted at file-open boundary")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "outside.ts")); !os.IsNotExist(err) {
-		t.Fatalf("rejected file was created: %v", err)
-	}
+	assertNoRecording(t, filepath.Join(dir, "outside.ts"))
 }

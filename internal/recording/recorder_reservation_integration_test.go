@@ -1,5 +1,3 @@
-//go:build integration
-
 package recording
 
 import (
@@ -17,7 +15,7 @@ import (
 func TestRealFFmpegWritesReservedOutputForEveryCodec(t *testing.T) {
 	ffmpegPath, err := exec.LookPath("ffmpeg")
 	if err != nil {
-		t.Fatal("integration test requires ffmpeg on PATH")
+		t.Skip("ffmpeg not available")
 	}
 	for _, codec := range []types.Codec{types.CodecPCM, types.CodecMP3, types.CodecOpus} {
 		t.Run(string(codec), func(t *testing.T) {
@@ -27,7 +25,7 @@ func TestRealFFmpegWritesReservedOutputForEveryCodec(t *testing.T) {
 			path := startCaptureTestRecorder(t, r)
 			info, err := os.Stat(path)
 			if err != nil {
-				t.Fatalf("output was not reserved before audio: %v, %v", info, err)
+				t.Fatalf("output was not reserved before audio: %v", err)
 			}
 			r.WriteAudio(bytes.Repeat([]byte{0, 1, 0, 2}, 48000))
 			if err := r.Stop(); err != nil {

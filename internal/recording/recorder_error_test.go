@@ -148,9 +148,7 @@ func TestFailedRotationStartEmitsRecorderError(t *testing.T) {
 		t.Fatalf("rotation failure filename = %q, want attempted new output, not %q", filename, filepath.Base(previous))
 	}
 	assertRecorderErrorLog(t, logs, filename)
-	if _, err := os.Stat(filepath.Join(cfg.LocalPath, filename)); !os.IsNotExist(err) {
-		t.Fatalf("failed rotation left an unstarted reservation: %v", err)
-	}
+	assertNoRecording(t, filepath.Join(cfg.LocalPath, filename)) // The unstarted reservation.
 }
 
 func TestWriteErrorRecoveryUploadDoesNotDelayStop(t *testing.T) {
@@ -297,14 +295,11 @@ func TestWriteErrorWithEmptyOutputIsNotRecovered(t *testing.T) {
 	if err := r.Stop(); err != nil {
 		t.Fatal(err)
 	}
-	// A queued recovery persists metadata before uploading and an upload removes
-	// the spool file, so both checks hold only if nothing was queued.
+	// A queued recovery persists metadata before uploading.
 	if metadata, err := os.ReadDir(r.pendingUploadDir()); err == nil && len(metadata) != 0 {
 		t.Fatalf("empty output registered for recovery: %v", metadata)
 	}
-	if info, err := os.Stat(file); err != nil || info.Size() != 0 {
-		t.Fatalf("output = %v, %v; want the fake's empty file left in place", info, err)
-	}
+	assertNoRecording(t, file) // An empty placeholder is not left behind.
 	if put := len(uploads()); put != 0 {
 		t.Fatalf("empty output uploaded %d times", put)
 	}
