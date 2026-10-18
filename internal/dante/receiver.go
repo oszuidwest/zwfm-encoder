@@ -124,13 +124,12 @@ func validateChannels(left, right channelInfo) error {
 
 func selectLocalAddress(interfaceID string, interfaces []net.Interface, transmitter *net.UDPAddr) (net.IP, error) {
 	if interfaceID != "" {
-		addresses, err := interfaceAddresses(&interfaces[0])
+		networks, err := discoveryNetworks(interfaces[:1])
 		if err != nil {
-			return nil, fmt.Errorf("list interface addresses: %w", err)
+			return nil, err
 		}
-		for _, address := range addresses {
-			if network, ok := address.(*net.IPNet); ok && network.IP.To4() != nil &&
-				!network.IP.IsLoopback() && network.Contains(transmitter.IP) {
+		for _, network := range networks[interfaces[0].Index] {
+			if network.Contains(transmitter.IP) {
 				return network.IP.To4(), nil
 			}
 		}

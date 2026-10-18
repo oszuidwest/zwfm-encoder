@@ -322,7 +322,7 @@ func validateDiscoverySource(source *net.UDPAddr, ifIndex int, networks map[int]
 		return errors.New("missing UDP source")
 	}
 	if source.Port != 5353 {
-		return fmt.Errorf("source port %d is not mDNS port 5353", source.Port)
+		return errors.New("not from mDNS port 5353")
 	}
 	if ifIndex <= 0 {
 		return errors.New("missing receiving interface")
@@ -334,7 +334,7 @@ func validateDiscoverySource(source *net.UDPAddr, ifIndex int, networks map[int]
 	if !slices.ContainsFunc(networks[ifIndex], func(network *net.IPNet) bool {
 		return network.Contains(source.IP)
 	}) {
-		return fmt.Errorf("source is outside receiving interface %d IPv4 subnets", ifIndex)
+		return fmt.Errorf("outside the IPv4 subnets of receiving interface %d", ifIndex)
 	}
 	return nil
 }
@@ -364,10 +364,10 @@ func mergeDiscoveryResponse(info *channelInfo, packet []byte, source net.IP, req
 		return false, nil
 	}
 	if requiredSource != nil && !source.Equal(requiredSource) {
-		return false, fmt.Errorf("transmitter address %s does not match required %s", source, requiredSource)
+		return false, fmt.Errorf("does not match required transmitter %s", requiredSource)
 	}
 	if info.address != nil && !source.Equal(info.address) {
-		return false, fmt.Errorf("transmitter address %s does not match earlier response from %s", source, info.address)
+		return false, fmt.Errorf("does not match earlier response from %s", info.address)
 	}
 
 	port, txt, err := parseDNSResponse(packet, requested)

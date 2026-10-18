@@ -53,7 +53,7 @@ func TestDiscoveryTimeoutIncludesRejectedSource(t *testing.T) {
 				reason := "subnet"
 				switch mode {
 				case "different transmitter":
-					want, reason = "192.0.2.21:5353", "does not match required 192.0.2.20"
+					want, reason = "192.0.2.21:5353", "does not match required transmitter 192.0.2.20"
 				case "wrong port":
 					want, reason = "192.0.2.20:12345", "port"
 				case "missing interface":
