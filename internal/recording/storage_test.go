@@ -236,6 +236,19 @@ func TestAbandonedUploadsRemainVisibleAfterRemovalAndRestart(t *testing.T) {
 	if err := restarted.AddRecorder(cfg); err != nil {
 		t.Fatal(err)
 	}
+	// A check while processRetryQueue has the queue drained must not count it.
+	rr := restarted.recorders[cfg.ID]
+	rr.mu.Lock()
+	queued := rr.retryQueue
+	rr.retryQueue = nil
+	rr.mu.Unlock()
+	restarted.checkStorage(restarted.cleanupStopCh)
+	if restarted.AbandonedUploadCount() != 0 {
+		t.Fatal("restored upload counted as abandoned while its retry ran")
+	}
+	rr.mu.Lock()
+	rr.retryQueue = queued
+	rr.mu.Unlock()
 	restarted.checkStorage(restarted.cleanupStopCh)
 	if restarted.AbandonedUploadCount() != 0 || restarted.PendingUploadCount() != 1 {
 		t.Fatal("restart did not give abandoned upload a fresh retry window")
@@ -246,5 +259,24 @@ func TestAbandonedUploadsRemainVisibleAfterRemovalAndRestart(t *testing.T) {
 	m.checkStorage(m.cleanupStopCh)
 	if m.AbandonedUploadCount() != 0 {
 		t.Fatal("removed file still counted as retained audio")
+	}
+}
+
+func TestUnreadableUploadMetadataDoesNotFailStorageCheck(t *testing.T) {
+	t.Parallel()
+	spool := t.TempDir()
+	m := storageTestManager(t, spool)
+	dir := filepath.Join(spool, "uploads", "gone")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a"+pendingUploadMetadataSuffix), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m.checkStorage(m.cleanupStopCh)
+	for _, p := range m.StorageStatuses() {
+		if p.Error != "" {
+			t.Fatalf("one unreadable metadata file failed %s: %s", p.Path, p.Error)
+		}
 	}
 }

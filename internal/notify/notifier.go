@@ -330,25 +330,11 @@ func (o *AlertOrchestrator) HandleUploadAbandoned(params UploadAbandonedData) {
 // HandleRecordingStorage sends storage changes through the ordered channel workers,
 // so a delayed low-space notification cannot arrive after its recovery.
 func (o *AlertOrchestrator) HandleRecordingStorage(paths []types.RecordingStorageStatus) {
-	cfg := o.cfg.Snapshot()
-	o.mu.Lock()
-	ctx := o.notifyCtx
-	o.mu.Unlock()
 	paths = slices.Clone(paths)
-	o.logMu.RLock()
-	defer o.logMu.RUnlock()
-	if o.closed {
-		return
-	}
-	for i, ch := range o.dispatcher.Channels() {
-		if !ch.IsConfiguredForUpload(&cfg) {
-			continue
-		}
-		chCfg := cfg
-		enqueueInputAlert(o.inputQueues[i], func() {
-			logNotifyResult(func() error { return ch.SendRecordingStorage(ctx, &chCfg, paths) }, ch.Name(), "recording_storage")
-		}, ch.Name(), "recording_storage")
-	}
+	o.enqueueOrdered("recording_storage", AlertChannel.IsConfiguredForUpload,
+		func(ch AlertChannel, ctx context.Context, cfg *config.Snapshot) error {
+			return ch.SendRecordingStorage(ctx, cfg, paths)
+		})
 }
 
 // HandleInputLost alerts every channel configured for audio alerts and logs an
@@ -370,26 +356,11 @@ func (o *AlertOrchestrator) handleInputEvent(
 	send func(AlertChannel, context.Context, *config.Snapshot, InputData) error,
 	write func(*eventlog.Logger, time.Time, *eventlog.InputDetails) error,
 ) {
-	cfg := o.cfg.Snapshot()
-	o.mu.Lock()
-	ctx := o.notifyCtx
-	o.mu.Unlock()
-
 	now := time.Now()
-	o.logMu.RLock()
-	if !o.closed {
-		for i, ch := range o.dispatcher.Channels() {
-			if !ch.IsConfiguredForSilence(&cfg) {
-				continue
-			}
-			chCfg := cfg // Each channel gets its own Snapshot copy.
-			deliver := func() {
-				logNotifyResult(func() error { return send(ch, ctx, &chCfg, data) }, ch.Name(), eventType)
-			}
-			enqueueInputAlert(o.inputQueues[i], deliver, ch.Name(), eventType)
-		}
-	}
-	o.logMu.RUnlock()
+	o.enqueueOrdered(eventType, AlertChannel.IsConfiguredForSilence,
+		func(ch AlertChannel, ctx context.Context, cfg *config.Snapshot) error {
+			return send(ch, ctx, cfg, data)
+		})
 
 	o.enqueueLog(eventType, func() {
 		if err := write(o.eventLogger, now, &eventlog.InputDetails{
@@ -400,6 +371,33 @@ func (o *AlertOrchestrator) handleInputEvent(
 			slog.Warn("failed to log audio input event", "event_type", eventType, "error", err)
 		}
 	})
+}
+
+// enqueueOrdered queues send on each configured channel's FIFO worker.
+// Each channel gets its own Snapshot copy.
+func (o *AlertOrchestrator) enqueueOrdered(
+	eventType string, configured func(AlertChannel, *config.Snapshot) bool,
+	send func(AlertChannel, context.Context, *config.Snapshot) error,
+) {
+	cfg := o.cfg.Snapshot()
+	o.mu.Lock()
+	ctx := o.notifyCtx
+	o.mu.Unlock()
+
+	o.logMu.RLock()
+	defer o.logMu.RUnlock()
+	if o.closed {
+		return
+	}
+	for i, ch := range o.dispatcher.Channels() {
+		if !configured(ch, &cfg) {
+			continue
+		}
+		chCfg := cfg
+		enqueueInputAlert(o.inputQueues[i], func() {
+			logNotifyResult(func() error { return send(ch, ctx, &chCfg) }, ch.Name(), eventType)
+		}, ch.Name(), eventType)
+	}
 }
 
 // enqueueInputAlert queues deliver, discarding the oldest queued alert when

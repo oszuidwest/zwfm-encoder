@@ -2,8 +2,9 @@ package recording
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -19,18 +20,16 @@ const storageCheckInterval = time.Minute
 // SetStorageChangeCallback installs an alert handler before Start. The handler
 // receives all current path observations whenever the set of unhealthy paths changes.
 func (m *Manager) SetStorageChangeCallback(cb func([]types.RecordingStorageStatus)) {
-	m.storageMu.Lock()
-	defer m.storageMu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.onStorageChange = cb
 }
 
 func (m *Manager) handleUploadAbandoned(event *UploadAbandonedEvent) {
-	m.storageMu.Lock()
+	m.mu.Lock()
 	m.abandoned[event.LocalPath] = struct{}{}
-	m.storageMu.Unlock()
-	m.mu.RLock()
 	cb := m.onUploadAbandoned
-	m.mu.RUnlock()
+	m.mu.Unlock()
 	if cb != nil {
 		cb(*event)
 	}
@@ -39,15 +38,15 @@ func (m *Manager) handleUploadAbandoned(event *UploadAbandonedEvent) {
 // AbandonedUploadCount includes retained uploads of removed recorders. It does
 // not re-queue them; missing files are reconciled by the background disk check.
 func (m *Manager) AbandonedUploadCount() int {
-	m.storageMu.RLock()
-	defer m.storageMu.RUnlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return len(m.abandoned)
 }
 
 // StorageStatuses returns cached observations without accessing recording disks.
 func (m *Manager) StorageStatuses() []types.RecordingStorageStatus {
-	m.storageMu.RLock()
-	defer m.storageMu.RUnlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return slices.Clone(m.storagePaths)
 }
 
@@ -55,11 +54,6 @@ func (m *Manager) monitorStorage(stop <-chan struct{}) {
 	ticker := time.NewTicker(storageCheckInterval)
 	defer ticker.Stop()
 	for {
-		select {
-		case <-stop:
-			return
-		default:
-		}
 		m.checkStorage(stop)
 		select {
 		case <-stop:
@@ -76,57 +70,55 @@ func (m *Manager) checkStorage(stop <-chan struct{}) {
 		return
 	}
 	defer m.storageProbeMu.Unlock()
-	ordered, activeUploads := m.storageTargets()
+	ordered, activeUploads, known := m.storageTargets()
 	observations := m.probeStorage(ordered)
 	// Scan retained metadata too: removing a recorder must not hide its abandoned
 	// audio after a process restart. This scan never modifies metadata or audio.
 	abandoned, scanErr := scanAbandonedUploads(m.spoolDir, activeUploads)
 	if scanErr != nil {
-		for i := range observations {
-			if observations[i].Path == filepath.Clean(m.spoolDir) {
-				observations[i].Error = strings.TrimPrefix(fmt.Sprintf("%s; scan abandoned uploads: %v", observations[i].Error, scanErr), "; ")
-			}
+		// storageTargets always includes the spool.
+		spool := &observations[slices.IndexFunc(observations, func(o types.RecordingStorageStatus) bool {
+			return o.Path == filepath.Clean(m.spoolDir)
+		})]
+		msg := "scan abandoned uploads: " + scanErr.Error()
+		if spool.Error != "" {
+			msg = spool.Error + "; " + msg
 		}
+		spool.Error = msg
 	}
-	m.storageMu.RLock()
-	known := make([]string, 0, len(m.abandoned))
-	for path := range m.abandoned {
-		known = append(known, path)
-	}
-	m.storageMu.RUnlock()
-	missing := make([]string, 0)
+	var missing []string
 	for _, path := range known {
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			missing = append(missing, path)
 		}
 	}
 
-	m.mu.RLock()
+	m.mu.Lock()
 	if !m.running || m.cleanupStopCh != stop {
-		m.mu.RUnlock()
+		m.mu.Unlock()
 		return // An old, blocked run must not publish into a new run.
 	}
-	m.storageMu.Lock()
 	previous := m.storagePaths
 	m.storagePaths = observations
-	for path := range abandoned {
-		m.abandoned[path] = struct{}{}
-	}
-	for _, path := range missing {
-		delete(m.abandoned, path)
+	if scanErr == nil {
+		m.abandoned = abandoned // The metadata on disk is authoritative.
+	} else {
+		maps.Copy(m.abandoned, abandoned)
+		for _, path := range missing {
+			delete(m.abandoned, path)
+		}
 	}
 	cb := m.onStorageChange
-	m.storageMu.Unlock()
-	m.mu.RUnlock()
+	m.mu.Unlock()
 	// Logging and delivery run outside status locks (and never on capture).
-	m.logStorageChanges(previous, observations)
-	if cb != nil && !slices.Equal(storageProblems(previous), storageProblems(observations)) {
+	if m.logStorageChanges(previous, observations) && cb != nil {
 		cb(slices.Clone(observations))
 	}
 }
 
-func (m *Manager) storageTargets() (ordered []string, activeUploads map[string]struct{}) {
+func (m *Manager) storageTargets() (ordered []string, activeUploads map[string]struct{}, abandoned []string) {
 	m.mu.RLock()
+	defer m.mu.RUnlock()
 	paths := map[string]struct{}{filepath.Clean(m.spoolDir): {}}
 	activeUploads = make(map[string]struct{})
 	for _, r := range m.recorders {
@@ -140,13 +132,7 @@ func (m *Manager) storageTargets() (ordered []string, activeUploads map[string]s
 		}
 		r.mu.RUnlock()
 	}
-	m.mu.RUnlock()
-	ordered = make([]string, 0, len(paths))
-	for path := range paths {
-		ordered = append(ordered, path)
-	}
-	slices.Sort(ordered)
-	return ordered, activeUploads
+	return slices.Sorted(maps.Keys(paths)), activeUploads, slices.Collect(maps.Keys(m.abandoned))
 }
 
 func (m *Manager) probeStorage(ordered []string) []types.RecordingStorageStatus {
@@ -170,42 +156,41 @@ func (m *Manager) probeStorage(ordered []string) []types.RecordingStorageStatus 
 	return observations
 }
 
-func storageProblems(paths []types.RecordingStorageStatus) []string {
-	var problems []string
-	for _, p := range paths {
-		if p.Low || p.Error != "" {
-			problems = append(problems, p.Path)
-		}
+// logStorageChanges logs per-path health transitions, including paths that left
+// monitoring while unhealthy, and reports whether any transition happened.
+func (m *Manager) logStorageChanges(previous, current []types.RecordingStorageStatus) (changed bool) {
+	was := make(map[string]types.RecordingStorageStatus, len(previous))
+	for _, p := range previous {
+		was[p.Path] = p
 	}
-	return problems
-}
-
-func (m *Manager) logStorageChanges(previous, current []types.RecordingStorageStatus) {
+	transitions := make([]types.RecordingStorageStatus, 0)
 	for _, p := range current {
-		oldProblem := false
-		for _, old := range previous {
-			if old.Path == p.Path {
-				oldProblem = old.Low || old.Error != ""
-			}
+		old := was[p.Path]
+		delete(was, p.Path)
+		if p.Unhealthy() != old.Unhealthy() {
+			transitions = append(transitions, p)
 		}
-		if problem := p.Low || p.Error != ""; problem != oldProblem {
-			t := eventlog.RecordingStorageLow
-			message := "Recording storage is low or unavailable"
-			if !problem {
-				t, message = eventlog.RecordingStorageRestored, "Recording storage recovered"
-			}
-			if m.eventLogger != nil {
-				if err := m.eventLogger.Log(&eventlog.Event{Type: t, Message: message, Details: p}); err != nil {
-					slog.Warn("failed to log recording storage event", "error", err)
-				}
-			}
-			if problem {
-				slog.Warn(message, "path", p.Path, "available_bytes", p.AvailableBytes, "error", p.Error)
-			} else {
-				slog.Info(message, "path", p.Path, "available_bytes", p.AvailableBytes)
+	}
+	for _, old := range was {
+		if old.Unhealthy() {
+			transitions = append(transitions, types.RecordingStorageStatus{Path: old.Path, CheckedAt: time.Now()})
+		}
+	}
+	for _, p := range transitions {
+		t, message := eventlog.RecordingStorageRestored, "Recording storage recovered"
+		if p.Unhealthy() {
+			t, message = eventlog.RecordingStorageLow, "Recording storage is low or unavailable"
+			slog.Warn(message, "path", p.Path, "available_bytes", p.AvailableBytes, "error", p.Error)
+		} else {
+			slog.Info(message, "path", p.Path, "available_bytes", p.AvailableBytes)
+		}
+		if m.eventLogger != nil {
+			if err := m.eventLogger.Log(&eventlog.Event{Type: t, Message: message, Details: p}); err != nil {
+				slog.Warn("failed to log recording storage event", "error", err)
 			}
 		}
 	}
+	return len(transitions) > 0
 }
 
 func scanAbandonedUploads(spool string, active map[string]struct{}) (map[string]struct{}, error) {
@@ -221,13 +206,19 @@ func scanAbandonedUploads(spool string, active map[string]struct{}) (map[string]
 		if d.IsDir() || !strings.HasSuffix(d.Name(), pendingUploadMetadataSuffix) {
 			return nil
 		}
+		// One unreadable file (a finished retry removing it, or a power cut
+		// mid-write) must not fail the spool check; it holds no abandonment.
 		data, err := os.ReadFile(path) //nolint:gosec // Metadata in the manager-owned spool; read-only.
-		if err != nil {
-			return err
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
 		}
 		var meta pendingUploadMetadata
-		if err := json.Unmarshal(data, &meta); err != nil {
-			return err
+		if err == nil {
+			err = json.Unmarshal(data, &meta)
+		}
+		if err != nil {
+			slog.Warn("skipping unreadable upload metadata", "path", path, "error", err)
+			return nil
 		}
 		if _, queued := active[meta.LocalPath]; !queued && meta.Abandoned && meta.LocalPath != "" {
 			if _, err := os.Stat(meta.LocalPath); err == nil {

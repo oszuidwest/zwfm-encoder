@@ -46,8 +46,7 @@ type Manager struct {
 	cleanupStopCh     chan struct{} // Stop signal for cleanup scheduler; created per run in Start, closed in Stop
 	hourlyRetryStopCh chan struct{} // Stop signal for hourly retry scheduler; created per run in Start, closed in Stop
 
-	storageMu       sync.RWMutex // Cached observations only; never held across filesystem I/O.
-	storageProbeMu  sync.Mutex   // Bounds non-cancellable filesystem probes across Stop/Start.
+	storageProbeMu  sync.Mutex // Bounds non-cancellable filesystem probes across Stop/Start.
 	storagePaths    []types.RecordingStorageStatus
 	abandoned       map[string]struct{}
 	onStorageChange func([]types.RecordingStorageStatus)
@@ -121,11 +120,9 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 		return fmt.Errorf("reconcile pending uploads: %w", err)
 	}
 	// A process restart gives restored uploads a fresh retry window.
-	m.storageMu.Lock()
 	for i := range recorder.retryQueue {
 		delete(m.abandoned, recorder.retryQueue[i].request.localPath)
 	}
-	m.storageMu.Unlock()
 
 	m.recorders[cfg.ID] = recorder
 	m.publishAudioRecordersLocked()

@@ -923,6 +923,9 @@ type ReadyComponent struct {
 
 const readinessMaxPendingUploads = 0
 
+// readinessMaxStorageAge rejects storage observations older than three check intervals.
+const readinessMaxStorageAge = 3 * time.Minute
+
 // handleHealth returns the health status of the encoder.
 // It returns 200 OK if healthy, 503 Service Unavailable if unhealthy.
 // Health is defined as: encoder running AND FFmpeg available.
@@ -1176,7 +1179,7 @@ func readyRecordingStorage(paths []types.RecordingStorageStatus, recorders []typ
 		}
 	}
 	for _, p := range paths {
-		if p.Low || p.Error != "" || time.Since(p.CheckedAt) > 3*time.Minute {
+		if p.Unhealthy() || time.Since(p.CheckedAt) > readinessMaxStorageAge {
 			return ReadyComponent{OK: false, Message: "recording storage is low, unavailable or stale", Details: details}
 		}
 	}

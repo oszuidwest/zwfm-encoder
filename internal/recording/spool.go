@@ -126,7 +126,7 @@ func (r *GenericRecorder) loadPendingUpload(metadataPath string) (pendingUpload,
 		meta.BaseKey = path.Join(path.Dir(meta.S3Key), filepath.Base(meta.LocalPath))
 	}
 
-	return pendingUpload{
+	pending := pendingUpload{
 		request: uploadRequest{
 			localPath:         meta.LocalPath,
 			s3Key:             meta.S3Key,
@@ -139,7 +139,14 @@ func (r *GenericRecorder) loadPendingUpload(metadataPath string) (pendingUpload,
 		retryCount:   meta.RetryCount,
 		lastError:    meta.LastError,
 		metadataPath: metadataPath,
-	}, true, nil
+	}
+	if meta.Abandoned {
+		// Retrying again: the abandonment scan must not count it meanwhile.
+		if err := r.savePendingUpload(&pending); err != nil {
+			slog.Warn("failed to persist restored upload", "id", r.id, "path", metadataPath, "error", err)
+		}
+	}
+	return pending, true, nil
 }
 
 func (r *GenericRecorder) recoverOrphanSpoolFiles(existing []pendingUpload) ([]pendingUpload, error) {

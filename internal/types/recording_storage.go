@@ -12,3 +12,8 @@ type RecordingStorageStatus struct {
 	Error          string    `json:"error,omitempty"`
 	CheckedAt      time.Time `json:"checked_at"`
 }
+
+// Unhealthy reports whether the path is below its threshold or could not be checked.
+func (s *RecordingStorageStatus) Unhealthy() bool {
+	return s.Low || s.Error != ""
+}

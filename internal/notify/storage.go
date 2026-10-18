@@ -3,19 +3,21 @@ package notify
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
+	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
 func recordingStorageMessage(paths []types.RecordingStorageStatus) (event, message string) {
-	event = "recording_storage_restored"
-	var lines []string
+	event = string(eventlog.RecordingStorageRestored)
+	if slices.ContainsFunc(paths, func(p types.RecordingStorageStatus) bool { return p.Unhealthy() }) {
+		event = string(eventlog.RecordingStorageLow)
+	}
+	lines := make([]string, 0, len(paths))
 	for _, p := range paths {
-		if p.Low || p.Error != "" {
-			event = "recording_storage_low"
-		}
 		line := fmt.Sprintf("%s: %d bytes available; warning below %d bytes", p.Path, p.AvailableBytes, p.ThresholdBytes)
 		if p.Error != "" {
 			line += "; check failed: " + p.Error
@@ -38,7 +40,7 @@ func (c *WebhookChannel) SendRecordingStorage(
 func recordingStorageEmail(station string, paths []types.RecordingStorageStatus) (subject, body string) {
 	event, message := recordingStorageMessage(paths)
 	subject = "[OK] Recording Storage Restored - " + station
-	if event == "recording_storage_low" {
+	if event == string(eventlog.RecordingStorageLow) {
 		subject = "[ALERT] Recording Storage Low or Unavailable - " + station
 	}
 	return subject, message + "\n\nNo recordings have been automatically evicted. Check disk space and S3 uploads."
@@ -48,13 +50,10 @@ func recordingStorageEmail(station string, paths []types.RecordingStorageStatus)
 func (c *EmailChannel) SendRecordingStorage(
 	ctx context.Context, cfg *config.Snapshot, paths []types.RecordingStorageStatus,
 ) error {
-	graphCfg := BuildGraphConfig(cfg)
-	client, err := NewGraphClient(graphCfg)
-	if err != nil {
-		return err
-	}
-	subject, body := recordingStorageEmail(cfg.StationName, paths)
-	return sendEmailWithClient(ctx, graphCfg, client, subject, body)
+	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client *GraphClient) error {
+		subject, body := recordingStorageEmail(cfg.StationName, paths)
+		return sendEmailWithClient(ctx, graphCfg, client, subject, body)
+	})
 }
 
 // SendRecordingStorage uses a separate item derived from the upload key so disk
@@ -67,9 +66,6 @@ func (c *ZabbixChannel) SendRecordingStorage(
 		return nil
 	}
 	event, _ := recordingStorageMessage(paths)
-	value := "event=RECORDING_STORAGE_RESTORED"
-	if event == "recording_storage_low" {
-		value = "event=RECORDING_STORAGE_LOW"
-	}
-	return sendZabbixEvent(ctx, cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixUploadKey+".storage", value)
+	return sendZabbixEvent(ctx, cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost,
+		cfg.ZabbixUploadKey+".storage", "event="+strings.ToUpper(event))
 }
