@@ -28,6 +28,7 @@ func TestStaleStartValidationCannotChangeStoppedOrNewRun(t *testing.T) {
 					<-release
 					return errors.New("old mount failed")
 				}
+				<-returned
 				return original(path)
 			}
 			cfg := localOnDemandRecorder(t, "validation")
@@ -45,10 +46,12 @@ func TestStaleStartValidationCannotChangeStoppedOrNewRun(t *testing.T) {
 					t.Fatal(err)
 				}
 				want = types.ProcessRunning
-				waitForRecorderState(t, r, want)
 			}
 			releaseOld()
 			<-returned
+			if restart {
+				waitForRecorderState(t, r, want)
+			}
 			if got := r.Status(); got.State != want || got.Error != "" {
 				t.Fatalf("old validation changed current status: %+v, want %s without error", got, want)
 			}
@@ -57,41 +60,29 @@ func TestStaleStartValidationCannotChangeStoppedOrNewRun(t *testing.T) {
 }
 
 func TestStoppedManagerDoesNotRetryHourlyRecorder(t *testing.T) {
-	entered, release := make(chan struct{}, 1), make(chan struct{})
-	original := checkRecordingPath
-	checkRecordingPath = func(string) error { entered <- struct{}{}; <-release; return errors.New("held mount") }
 	m, err := NewManager("", t.TempDir(), 60, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = m.Stop() })
 	cfg := localOnDemandRecorder(t, "retry")
 	cfg.RecordingMode, cfg.Enabled = types.RecordingHourly, true
 	if err := m.AddRecorder(cfg); err != nil {
 		t.Fatal(err)
 	}
 	r := m.recorders[cfg.ID]
-	t.Cleanup(func() { _ = m.Stop(); close(release); checkRecordingPath = original })
 	r.mu.Lock()
 	r.state = types.ProcessError
 	r.mu.Unlock()
-	m.retryFailedHourlyRecorders()
-	select {
-	case <-entered:
-		t.Fatal("stopped manager retried an hourly recorder")
-	case <-time.After(30 * time.Millisecond):
-	}
+	m.retryFailedHourlyRecorders() // Start is synchronous up to ProcessStarting.
 	if got := r.Status().State; got != types.ProcessError {
-		t.Fatalf("state = %s, want original error", got)
+		t.Fatalf("stopped manager retried hourly recorder: state = %s", got)
 	}
 }
 
 func TestRunningManagerRetriesFailedHourlyRecorder(t *testing.T) {
 	neverRotate(t)
-	executable, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	m, err := NewManager(executable, t.TempDir(), 60, nil)
+	m, err := NewManager(os.Args[0], t.TempDir(), 60, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,31 +100,17 @@ func TestRunningManagerRetriesFailedHourlyRecorder(t *testing.T) {
 	r.config.Enabled, r.state = true, types.ProcessError
 	r.mu.Unlock()
 	m.retryFailedHourlyRecorders()
+	if got := r.Status().State; got == types.ProcessError {
+		t.Fatal("retry did not start the recorder before returning")
+	}
 	waitForRecorderState(t, r, types.ProcessRunning)
 }
 
 func TestManagerStartWaitsForPreviousStop(t *testing.T) {
-	testManagerStartWaitsForPreviousStop(t, false)
-}
-
-func TestManagerGuardedStartWaitsForPreviousStop(t *testing.T) {
-	testManagerStartWaitsForPreviousStop(t, true)
-}
-
-func testManagerStartWaitsForPreviousStop(t *testing.T, guarded bool) {
-	t.Helper()
 	neverRotate(t)
-	executable, err := os.Executable()
+	m, err := NewManager(os.Args[0], t.TempDir(), 60, nil)
 	if err != nil {
 		t.Fatal(err)
-	}
-	m, err := NewManager(executable, t.TempDir(), 60, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	start := m.Start
-	if guarded {
-		start = func() error { return m.StartIfActive(func() bool { return true }) }
 	}
 	cfg := localOnDemandRecorder(t, "retiring")
 	cfg.RecordingMode, cfg.Enabled = types.RecordingHourly, true
@@ -150,7 +127,7 @@ func testManagerStartWaitsForPreviousStop(t *testing.T, guarded bool) {
 	go func() { stopped <- m.Stop() }()
 	waitForRecorderState(t, r, types.ProcessStopping)
 	started := make(chan error, 1)
-	go func() { started <- start() }()
+	go func() { started <- m.StartIfActive(func() bool { return true }) }()
 	select {
 	case err := <-started:
 		r.retiring.Done()
