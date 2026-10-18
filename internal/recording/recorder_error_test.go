@@ -262,7 +262,16 @@ func TestWriteErrorRecoversAudioDespiteZeroAcceptedBytes(t *testing.T) {
 	cfg := testS3Recorder()
 	cfg.RecordingMode, cfg.S3Endpoint = types.RecordingOnDemand, "http://127.0.0.1:1"
 	r, _ := errorTestRecorder(t, cfg)
-	startCaptureTestRecorder(t, r)
+	file := startCaptureTestRecorder(t, r)
+	// The recovery upload runs in the background and holds the file open for a
+	// moment; Windows cannot remove the temp dir before it is closed.
+	t.Cleanup(func() {
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+			if err := os.Remove(file); err == nil || os.IsNotExist(err) {
+				return
+			}
+		}
+	})
 	r.mu.RLock()
 	result := r.result
 	r.mu.RUnlock()
