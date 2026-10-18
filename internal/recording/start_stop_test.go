@@ -113,6 +113,15 @@ func TestRunningManagerRetriesFailedHourlyRecorder(t *testing.T) {
 }
 
 func TestManagerStartWaitsForPreviousStop(t *testing.T) {
+	testManagerStartWaitsForPreviousStop(t, false)
+}
+
+func TestManagerGuardedStartWaitsForPreviousStop(t *testing.T) {
+	testManagerStartWaitsForPreviousStop(t, true)
+}
+
+func testManagerStartWaitsForPreviousStop(t *testing.T, guarded bool) {
+	t.Helper()
 	neverRotate(t)
 	executable, err := os.Executable()
 	if err != nil {
@@ -121,6 +130,10 @@ func TestManagerStartWaitsForPreviousStop(t *testing.T) {
 	m, err := NewManager(executable, t.TempDir(), 60, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	start := m.Start
+	if guarded {
+		start = func() error { return m.StartIfActive(func() bool { return true }) }
 	}
 	cfg := localOnDemandRecorder(t, "retiring")
 	cfg.RecordingMode, cfg.Enabled = types.RecordingHourly, true
@@ -137,7 +150,7 @@ func TestManagerStartWaitsForPreviousStop(t *testing.T) {
 	go func() { stopped <- m.Stop() }()
 	waitForRecorderState(t, r, types.ProcessStopping)
 	started := make(chan error, 1)
-	go func() { started <- m.Start() }()
+	go func() { started <- start() }()
 	select {
 	case err := <-started:
 		r.retiring.Done()
