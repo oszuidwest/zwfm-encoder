@@ -412,7 +412,7 @@ const (
 const MaxReadLimit = 500
 
 // ReadLast returns up to n events starting from offset, filtered by type.
-// Events are returned in reverse chronological order (newest first).
+// Events are returned in reverse append order (newest first).
 // The second return value reports whether more events are available.
 func ReadLast(filePath string, n, offset int, filter TypeFilter) ([]Event, bool, error) {
 	// Cap n to prevent excessive memory allocation (defense in depth)
