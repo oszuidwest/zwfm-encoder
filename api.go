@@ -47,7 +47,7 @@ func (s *Server) writeNoContent(w http.ResponseWriter) {
 func (s *Server) writeConfigError(w http.ResponseWriter, err error) {
 	if errors.Is(err, config.ErrSaveCommitted) {
 		s.broadcastConfigChanged()
-		s.writeError(w, http.StatusInternalServerError, err.Error()+"; reload the saved configuration and restart the encoder application to reconcile runtime state")
+		s.writeError(w, http.StatusInternalServerError, err.Error()+"; reload the page to see the saved configuration, resolve the error and restart the encoder application")
 		return
 	}
 	if errors.Is(err, config.ErrStreamNotFound) || errors.Is(err, config.ErrRecorderNotFound) {
@@ -227,7 +227,7 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 
 	// Apply ALL settings atomically (single lock, single file write)
 	if err := s.config.ApplySettings(&req); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeConfigError(w, err)
 		return
 	}
 
@@ -882,7 +882,7 @@ func (s *Server) handleAPITestZabbix(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAPIRegenerateKey(w http.ResponseWriter, r *http.Request) {
 	newKey := config.GenerateAPIKey()
 	if err := s.config.SetRecordingAPIKey(newKey); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err.Error())
+		s.writeConfigError(w, err)
 		return
 	}
 

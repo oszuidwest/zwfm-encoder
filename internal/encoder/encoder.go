@@ -1094,7 +1094,7 @@ func (e *Encoder) AddRecorder(cfg *types.Recorder) error {
 		return err
 	}
 	if err := e.recordingManager.AddRecorder(cfg); err != nil {
-		return fmt.Errorf("recorder %s configuration was saved, but runtime creation failed; resolve the error and restart the encoder application: %w", cfg.ID, err)
+		return fmt.Errorf("%w: create recorder %s: %w", config.ErrSaveCommitted, cfg.ID, err)
 	}
 	return nil
 }
@@ -1107,8 +1107,9 @@ func (e *Encoder) RemoveRecorder(id string) error {
 	if err := e.config.RemoveRecorder(id); err != nil {
 		return err
 	}
+	// Only fails for a recorder the runtime never had, which is the wanted state.
 	if err := e.recordingManager.RemoveRecorder(id); err != nil {
-		return fmt.Errorf("recorder %s deletion was saved, but runtime removal failed; resolve the error and restart the encoder application: %w", id, err)
+		slog.Warn("error removing recorder from manager", "id", id, "error", err)
 	}
 	return nil
 }
@@ -1122,7 +1123,7 @@ func (e *Encoder) UpdateRecorder(cfg *types.Recorder) error {
 		return err
 	}
 	if err := e.recordingManager.UpdateRecorder(cfg); err != nil {
-		return fmt.Errorf("recorder %s configuration was saved, but runtime update failed; resolve the error and restart the encoder application: %w", cfg.ID, err)
+		return fmt.Errorf("%w: update recorder %s: %w", config.ErrSaveCommitted, cfg.ID, err)
 	}
 	return nil
 }

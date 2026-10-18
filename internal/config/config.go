@@ -35,9 +35,10 @@ var (
 	// ErrRecorderNotFound is returned when a recorder ID does not exist in config.
 	ErrRecorderNotFound = errors.New("recorder not found")
 
-	// ErrSaveCommitted means the replacement succeeded, but its durability check
-	// failed. The new configuration must not be rolled back in memory.
-	ErrSaveCommitted = errors.New("configuration was saved, but durability could not be confirmed")
+	// ErrSaveCommitted means the change is in the saved file, but storage did
+	// not confirm the write or the runtime could not apply it. The change must
+	// not be rolled back in memory.
+	ErrSaveCommitted = errors.New("configuration was saved, but the change was not fully applied")
 )
 
 // Variable so persistence tests can exercise a failure after the atomic rename.
@@ -718,10 +719,27 @@ func (c *Config) saveLocked() (retErr error) {
 		return util.WrapError("rename config", err)
 	}
 	if err := syncConfigDir(dir); err != nil {
-		return fmt.Errorf("%w: %w", ErrSaveCommitted, err)
+		return fmt.Errorf("%w: storage did not confirm the write: %w", ErrSaveCommitted, err)
 	}
 
 	return nil
+}
+
+// cloneDataLocked returns the persisted fields without sharing slice storage.
+func (c *Config) cloneDataLocked() *ConfigData {
+	data := c.ConfigData
+	data.Streaming.Streams = slices.Clone(data.Streaming.Streams)
+	data.Recording.Recorders = slices.Clone(data.Recording.Recorders)
+	return &data
+}
+
+// restoreUnlessCommitted restores previous when *err means the save never replaced the file.
+//
+//nolint:gocritic // err points at the caller's named result, read when its defer runs.
+func (c *Config) restoreUnlessCommitted(err *error, previous *ConfigData) {
+	if *err != nil && !errors.Is(*err, ErrSaveCommitted) {
+		c.ConfigData = *previous
+	}
 }
 
 // Stream management.
@@ -760,12 +778,7 @@ func (c *Config) AddStream(stream *types.Stream) (err error) {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	previous := slices.Clone(c.Streaming.Streams)
-	defer func() {
-		if err != nil && !errors.Is(err, ErrSaveCommitted) {
-			c.Streaming.Streams = previous
-		}
-	}()
+	defer c.restoreUnlessCommitted(&err, c.cloneDataLocked())
 
 	// Generate unique ID
 	shortID, err := generateShortID()
@@ -794,12 +807,7 @@ func (c *Config) RemoveStream(id string) (err error) {
 	if i == -1 {
 		return fmt.Errorf("%w: %s", ErrStreamNotFound, id)
 	}
-	previous := slices.Clone(c.Streaming.Streams)
-	defer func() {
-		if err != nil && !errors.Is(err, ErrSaveCommitted) {
-			c.Streaming.Streams = previous
-		}
-	}()
+	defer c.restoreUnlessCommitted(&err, c.cloneDataLocked())
 
 	c.Streaming.Streams = slices.Delete(c.Streaming.Streams, i, i+1)
 	return c.saveLocked()
@@ -819,12 +827,7 @@ func (c *Config) UpdateStream(stream *types.Stream) (err error) {
 		return fmt.Errorf("%w: %s", ErrStreamNotFound, stream.ID)
 	}
 
-	previous := slices.Clone(c.Streaming.Streams)
-	defer func() {
-		if err != nil && !errors.Is(err, ErrSaveCommitted) {
-			c.Streaming.Streams = previous
-		}
-	}()
+	defer c.restoreUnlessCommitted(&err, c.cloneDataLocked())
 	c.Streaming.Streams[i] = *stream
 	if err := c.validateStreams(); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidStreamConfig, err)
@@ -861,12 +864,7 @@ func (c *Config) AddRecorder(recorder *types.Recorder) (err error) {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	previous := slices.Clone(c.Recording.Recorders)
-	defer func() {
-		if err != nil && !errors.Is(err, ErrSaveCommitted) {
-			c.Recording.Recorders = previous
-		}
-	}()
+	defer c.restoreUnlessCommitted(&err, c.cloneDataLocked())
 
 	// Generate unique ID
 	shortID, err := generateShortID()
@@ -897,12 +895,7 @@ func (c *Config) RemoveRecorder(id string) (err error) {
 	if i == -1 {
 		return fmt.Errorf("%w: %s", ErrRecorderNotFound, id)
 	}
-	previous := slices.Clone(c.Recording.Recorders)
-	defer func() {
-		if err != nil && !errors.Is(err, ErrSaveCommitted) {
-			c.Recording.Recorders = previous
-		}
-	}()
+	defer c.restoreUnlessCommitted(&err, c.cloneDataLocked())
 
 	c.Recording.Recorders = slices.Delete(c.Recording.Recorders, i, i+1)
 	return c.saveLocked()
@@ -921,12 +914,7 @@ func (c *Config) UpdateRecorder(recorder *types.Recorder) (err error) {
 	if i == -1 {
 		return fmt.Errorf("%w: %s", ErrRecorderNotFound, recorder.ID)
 	}
-	previous := slices.Clone(c.Recording.Recorders)
-	defer func() {
-		if err != nil && !errors.Is(err, ErrSaveCommitted) {
-			c.Recording.Recorders = previous
-		}
-	}()
+	defer c.restoreUnlessCommitted(&err, c.cloneDataLocked())
 	c.Recording.Recorders[i] = *recorder
 	if err := c.validateRecorders(); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidRecorderConfig, err)
@@ -973,9 +961,10 @@ func (c *Config) RecordingAPIKey() string {
 // Individual setters.
 
 // SetRecordingAPIKey updates the recording API key and persists the change.
-func (c *Config) SetRecordingAPIKey(key string) error {
+func (c *Config) SetRecordingAPIKey(key string) (err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	defer c.restoreUnlessCommitted(&err, c.cloneDataLocked())
 	c.Recording.APIKey = key
 	return c.saveLocked()
 }
@@ -1307,13 +1296,14 @@ func (s *SettingsUpdate) Validate() []string {
 }
 
 // ApplySettings validates and updates all settings atomically with a single file write.
-func (c *Config) ApplySettings(s *SettingsUpdate) error {
+func (c *Config) ApplySettings(s *SettingsUpdate) (err error) {
 	if errs := s.Validate(); len(errs) > 0 {
 		return fmt.Errorf("invalid settings: %s", strings.Join(errs, "; "))
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	defer c.restoreUnlessCommitted(&err, c.cloneDataLocked())
 
 	// Audio
 	c.Audio.Input = s.AudioInput

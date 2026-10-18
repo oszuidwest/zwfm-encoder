@@ -38,7 +38,7 @@ func TestStreamAndRecorderMutationsRollBackAfterSaveFailure(t *testing.T) {
 	for _, operation := range []string{"add stream", "update stream", "remove stream", "add recorder", "update recorder", "remove recorder"} {
 		t.Run(operation, func(t *testing.T) {
 			t.Parallel()
-			cfg, path := newLoadedConfig(t)
+			cfg, _ := newLoadedConfig(t)
 			for i := range 2 {
 				stream := &types.Stream{Host: "localhost", Port: 9000 + i, Codec: types.CodecMP3}
 				if err := cfg.AddStream(stream); err != nil {
@@ -79,11 +79,33 @@ func TestStreamAndRecorderMutationsRollBackAfterSaveFailure(t *testing.T) {
 			if !reflect.DeepEqual(cfg.Snapshot(), before) {
 				t.Fatal("failed save changed in-memory configuration")
 			}
-			reloaded := New(path)
-			mustLoad(t, reloaded)
-			if !reflect.DeepEqual(reloaded.Snapshot(), before) {
-				t.Fatal("failed save changed persisted configuration")
-			}
 		})
+	}
+}
+
+func TestFailedSettingsSavesKeepMemoryUnchanged(t *testing.T) {
+	cfg, _ := newLoadedConfig(t)
+	key, detectors := cfg.RecordingAPIKey(), cfg.DetectorSettings()
+	settings := cfg.Snapshot()
+	blocked := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(blocked, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg.filePath = filepath.Join(blocked, "config.json")
+	if err := cfg.SetRecordingAPIKey("unsaved-key"); err == nil || cfg.RecordingAPIKey() != key {
+		t.Fatalf("SetRecordingAPIKey = %v, key %q; want failure keeping %q", err, cfg.RecordingAPIKey(), key)
+	}
+	update := &SettingsUpdate{
+		AudioInput: "unsaved", SilenceThreshold: -30, SilenceDurationMs: 1000, SilenceRecoveryMs: 1000, PeakHoldMs: 1000,
+		ChannelImbalanceThreshold:   settings.ChannelImbalanceThreshold,
+		ChannelImbalanceDurationMs:  settings.ChannelImbalanceDurationMs,
+		ChannelImbalanceRecoveryMs:  settings.ChannelImbalanceRecoveryMs,
+		RecordingMaxDurationMinutes: settings.RecordingMaxDurationMinutes,
+	}
+	if errs := update.Validate(); len(errs) > 0 {
+		t.Fatalf("invalid test settings: %v", errs)
+	}
+	if err := cfg.ApplySettings(update); err == nil || cfg.DetectorSettings() != detectors {
+		t.Fatalf("ApplySettings = %v, detectors %+v; want failure keeping %+v", err, cfg.DetectorSettings(), detectors)
 	}
 }

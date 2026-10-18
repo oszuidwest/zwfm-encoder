@@ -1,9 +1,9 @@
 package encoder
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
@@ -46,8 +46,12 @@ func TestRecorderRuntimeFailureReportsPersistedChange(t *testing.T) {
 			case "remove":
 				err = e.RemoveRecorder(recorder.ID)
 			}
-			if err == nil || !strings.Contains(err.Error(), "saved") || !strings.Contains(err.Error(), "restart") {
-				t.Fatalf("runtime failure = %v, want explicit saved-state and recovery guidance", err)
+			switch {
+			case operation == "remove" && err != nil:
+				// A recorder the runtime never had is already in the wanted state.
+				t.Fatalf("removing a recorder missing from the runtime = %v, want success", err)
+			case operation != "remove" && !errors.Is(err, config.ErrSaveCommitted):
+				t.Fatalf("runtime failure = %v, want it reported as a saved change", err)
 			}
 			reloaded := config.New(path)
 			if err := reloaded.Load(); err != nil {
@@ -57,7 +61,7 @@ func TestRecorderRuntimeFailureReportsPersistedChange(t *testing.T) {
 				got := cfg.Recorder(recorder.ID)
 				if operation == "remove" {
 					if got != nil {
-						t.Fatal("failed runtime removal was not reported with persisted deletion")
+						t.Fatal("removal was not persisted")
 					}
 				} else if got == nil || got.Name != recorder.Name {
 					t.Fatalf("reported saved state differs from config: %+v", got)
