@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -29,20 +30,43 @@ func TestWriteConfigErrorRecorderNameConflict(t *testing.T) {
 	assertErrorEqual(t, rec, err.Error())
 }
 
-func TestWriteConfigErrorCommittedSaveReportsSavedState(t *testing.T) {
-	t.Parallel()
-	updates := make(chan any, 1)
-	s := &Server{wsClients: map[chan any]struct{}{updates: {}}}
-	rec := httptest.NewRecorder()
-	s.writeConfigError(rec, fmt.Errorf("%w: directory sync failed", config.ErrSaveCommitted))
-	assertStatus(t, rec, http.StatusInternalServerError)
-	if !strings.Contains(rec.Body.String(), "was saved") || !strings.Contains(rec.Body.String(), "restart") {
-		t.Fatalf("committed save response = %s, want saved state and recovery guidance", rec.Body.String())
+func TestCommittedSaveReportsSavedState(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX directory permissions as a regular user")
 	}
-	select {
-	case <-updates:
-	default:
-		t.Fatal("committed configuration did not notify dashboard clients to reload")
+	for _, name := range []string{"settings", "regenerate-key"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := config.New(filepath.Join(dir, "config.json"))
+			if err := cfg.Load(); err != nil {
+				t.Fatal(err)
+			}
+			body, err := json.Marshal(validBaselineSettings(cfg))
+			if err != nil {
+				t.Fatal(err)
+			}
+			updates := make(chan any, 1)
+			s := &Server{config: cfg, wsClients: map[chan any]struct{}{updates: {}}}
+			handler := s.handleAPISettings
+			if name == "regenerate-key" {
+				handler = s.handleAPIRegenerateKey
+			}
+			// The rename into dir works; opening dir to sync it does not.
+			if err := os.Chmod(dir, 0o300); err != nil { //nolint:gosec // An unreadable test directory is the point.
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(dir, 0o700) }) //nolint:gosec // Restore for cleanup.
+			rec := runJSONHandler(t, handler, http.MethodPost, "/api/"+name, string(body))
+			assertStatus(t, rec, http.StatusInternalServerError)
+			if !strings.Contains(rec.Body.String(), "was saved") || !strings.Contains(rec.Body.String(), "restart") {
+				t.Fatalf("committed save response = %s, want saved state and recovery guidance", rec.Body.String())
+			}
+			select {
+			case <-updates:
+			default:
+				t.Fatal("committed configuration did not notify dashboard clients to reload")
+			}
+		})
 	}
 }
 
