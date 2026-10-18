@@ -63,7 +63,7 @@ func TestEmptyRecordingsAreDiscardedButSilentAudioIsKept(t *testing.T) {
 func assertNoRecording(t *testing.T, path string) {
 	t.Helper()
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Errorf("empty recording %s still exists: %v", filepath.Base(path), err)
+		t.Errorf("recording output %s still exists: %v", filepath.Base(path), err)
 	}
 }
 
@@ -84,5 +84,17 @@ func TestEmptyFailedFinalizePreservesOutputForInspection(t *testing.T) {
 	if data, err := os.ReadFile(file); err != nil || string(data) != "header without audio" { //nolint:gosec // Test temp recording.
 		t.Fatalf("failed output = %q, %v; want preserved", data, err)
 	}
+	assertRecorderErrorEvent(t, eventPath, filepath.Base(file), "No space left on device")
+}
+
+func TestFailedFinalizeRemovesUntouchedPlaceholder(t *testing.T) {
+	t.Setenv(fakeFFmpegFailFinalizeEnv, "1")
+	r, eventPath := errorTestRecorder(t, localOnDemandRecorder(t, "failed-untouched"))
+	file := startCaptureTestRecorder(t, r)
+	if err := r.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	assertNoRecording(t, file)
+	assertNoRecording(t, file+unfinalizedRecordingSuffix)
 	assertRecorderErrorEvent(t, eventPath, filepath.Base(file), "No space left on device")
 }

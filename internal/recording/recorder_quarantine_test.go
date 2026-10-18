@@ -2,7 +2,6 @@ package recording
 
 import (
 	"bytes"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -58,7 +57,6 @@ func TestFailedRecordingIsNotRecoveredAfterRestart(t *testing.T) {
 					if restarted.PendingUploadCount() != 0 {
 						t.Fatal("quarantine bypassed by direct upload queueing")
 					}
-					restarted.processRetryQueue()
 				})
 			}
 		})
@@ -152,13 +150,13 @@ func TestFailedMarkerRemovalDoesNotQueueCompletedAudio(t *testing.T) {
 	file := startCaptureTestRecorder(t, r)
 	r.WriteAudio([]byte{1, 2, 3, 4})
 	marker := file + unfinalizedRecordingSuffix
-	if err := os.Remove(marker); err != nil { //nolint:gosec // Test temp marker.
+	if err := os.Remove(marker); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(marker, 0o700); err != nil { //nolint:gosec // Test temp marker.
+	if err := os.Mkdir(marker, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(marker, "hold"), nil, 0o600); err != nil { //nolint:gosec // Test temp marker.
+	if err := os.WriteFile(filepath.Join(marker, "hold"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Stop(); err != nil {
@@ -200,20 +198,14 @@ func TestMissingMarkerCannotMakeLegacyEmptySpoolFileUploadable(t *testing.T) {
 	if _, ok := r.prepareUploadRequest(file); ok {
 		t.Fatal("zero-byte output passed upload validation")
 	}
-	_, err := os.Stat(file)
-	if errors.Is(err, os.ErrNotExist) {
-		t.Fatal("recovery deleted retained legacy output")
-	}
+	assertRecordedCapture(t, file, nil) // Retained, not deleted.
 }
 
 func TestQuarantineAlsoBlocksPreviouslyPersistedUploadMetadata(t *testing.T) {
 	cfg := testS3Recorder()
 	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
 	file := writeSpoolFile(t, r.spoolDir, cfg.ID, "failed.mp3", "partial audio")
-	marker := file + unfinalizedRecordingSuffix
-	if err := os.WriteFile(marker, nil, 0o600); err != nil { //nolint:gosec // Test temp marker.
-		t.Fatal(err)
-	}
+	writeSpoolFile(t, r.spoolDir, cfg.ID, "failed.mp3"+unfinalizedRecordingSuffix, "")
 	pending := pendingUpload{request: uploadRequest{localPath: file, s3Key: "recordings/Test/failed.mp3", fileSize: 13}}
 	if err := r.savePendingUpload(&pending); err != nil {
 		t.Fatal(err)
@@ -251,9 +243,7 @@ func TestExistingMarkerReservesNameWithoutAnAudioFile(t *testing.T) {
 	for _, marker := range markers {
 		assertRecordedCapture(t, marker, []byte("existing quarantine"))
 	}
-	if _, err := os.Stat(file + unfinalizedRecordingSuffix); !os.IsNotExist(err) {
-		t.Fatalf("successful empty run left its own marker: %v", err)
-	}
+	assertNoRecording(t, file+unfinalizedRecordingSuffix) // A successful empty run clears its own marker.
 }
 
 func TestMarkerCreationFailureDoesNotStartEncoder(t *testing.T) {

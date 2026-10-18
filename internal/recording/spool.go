@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -101,23 +102,19 @@ func (r *GenericRecorder) loadPendingUpload(metadataPath string) (pendingUpload,
 		slog.Warn("removing incomplete pending upload metadata", "id", r.id, "path", metadataPath)
 		return pendingUpload{}, false, os.Remove(metadataPath)
 	}
-	if unfinalized, err := recordingUnfinalized(meta.LocalPath); err != nil || unfinalized {
-		return pendingUpload{}, false, err
+	info, ok, err := finalizedRecording(meta.LocalPath)
+	if errors.Is(err, os.ErrNotExist) {
+		slog.Warn("removing pending upload metadata for missing file", "id", r.id, "path", meta.LocalPath)
+		return pendingUpload{}, false, os.Remove(metadataPath)
 	}
-
-	info, err := os.Stat(meta.LocalPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			slog.Warn("removing pending upload metadata for missing file", "id", r.id, "path", meta.LocalPath)
-			return pendingUpload{}, false, os.Remove(metadataPath)
-		}
 		return pendingUpload{}, false, fmt.Errorf("stat pending upload file: %w", err)
+	}
+	if !ok {
+		return pendingUpload{}, false, nil
 	}
 	if meta.FileSize == 0 {
 		meta.FileSize = info.Size()
-	}
-	if info.Size() == 0 {
-		return pendingUpload{}, false, nil
 	}
 	// Restart also re-queues uploads whose retry window expired while offline.
 	if meta.FirstAttempt.IsZero() || meta.Abandoned || time.Since(meta.FirstAttempt) > MaxUploadRetryAge {
@@ -170,13 +167,13 @@ func (r *GenericRecorder) recoverOrphanSpoolFiles(existing []pendingUpload) ([]p
 		if entry.IsDir() {
 			continue
 		}
-
-		filePath := filepath.Join(dir, entry.Name())
-		if unfinalized, err := recordingUnfinalized(filePath); err != nil {
-			return nil, err
-		} else if unfinalized {
+		if recording, ok := strings.CutSuffix(entry.Name(), unfinalizedRecordingSuffix); ok {
+			slog.Warn("recording kept in quarantine for inspection; it is not uploaded automatically",
+				"id", r.id, "file", filepath.Join(dir, recording))
 			continue
 		}
+
+		filePath := filepath.Join(dir, entry.Name())
 		if _, ok := known[filePath]; ok {
 			continue
 		}
@@ -184,11 +181,11 @@ func (r *GenericRecorder) recoverOrphanSpoolFiles(existing []pendingUpload) ([]p
 			continue // A shared/case-aliased spool directory does not prove ownership.
 		}
 
-		info, err := entry.Info()
+		info, ok, err := finalizedRecording(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("stat recorder spool file: %w", err)
 		}
-		if !info.Mode().IsRegular() || info.Size() == 0 {
+		if !ok {
 			continue
 		}
 		pending := pendingUpload{

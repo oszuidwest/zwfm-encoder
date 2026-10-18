@@ -84,17 +84,9 @@ func (r *GenericRecorder) prepareUploadRequest(filePath string) (uploadRequest, 
 		slog.Warn("invalid recording upload path", "id", r.id, "path", filePath, "error", err)
 		return uploadRequest{}, false
 	}
-	if unfinalized, err := recordingUnfinalized(filePath); err != nil || unfinalized {
-		slog.Warn("recording is not finalized; upload skipped", "id", r.id, "path", filePath, "error", err)
-		return uploadRequest{}, false
-	}
-
-	info, err := os.Stat(filePath)
-	if err != nil {
-		slog.Warn("failed to stat recording file", "id", r.id, "error", err)
-		return uploadRequest{}, false
-	}
-	if !info.Mode().IsRegular() || info.Size() == 0 {
+	info, ok, err := finalizedRecording(filePath)
+	if !ok {
+		slog.Warn("recording is not uploadable; upload skipped", "id", r.id, "path", filePath, "error", err)
 		return uploadRequest{}, false
 	}
 

@@ -160,6 +160,30 @@ func TestReconcilePendingUploadsRecoversS3OnlySpoolFilesWithoutMetadata(t *testi
 		t.Fatalf("stat recovered metadata: %v", err)
 	}
 }
+func TestReconcileDoesNotFollowSpoolSymlinks(t *testing.T) {
+	t.Parallel()
+	spoolDir := t.TempDir()
+	cfg := testS3Recorder()
+	target := filepath.Join(t.TempDir(), "elsewhere.mp3")
+	if err := os.WriteFile(target, []byte("audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(filepath.Dir(writeSpoolFile(t, spoolDir, cfg.ID, "placeholder", "")), "link.mp3")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	m, err := NewManager("", spoolDir, 60, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.AddRecorder(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.recorders[cfg.ID].retryQueue; len(got) != 0 {
+		t.Fatalf("recovered %d spool entries, want none: a symlink is not a recording", len(got))
+	}
+}
+
 func TestProcessRetryQueueAbandonsExpiredUploadButKeepsRecoveryState(t *testing.T) {
 	t.Parallel()
 	spoolDir := t.TempDir()
