@@ -50,6 +50,11 @@ func TestDurationLimitDiscardsQueuedCallbackAfterWriteError(t *testing.T) {
 				time.Sleep(5 * time.Millisecond)
 			}
 			waitForRecorderState(t, r, types.ProcessError)
+			// The failed run's deadline must not clear its error.
+			callbacks[0]()
+			if status := r.Status(); status.State != types.ProcessError || status.Error == "" {
+				t.Fatalf("old duration callback cleared the write error: %+v", status)
+			}
 			t.Setenv(fakeFFmpegFailWriteEnv, "")
 			if !limited {
 				m.SetMaxDurationMinutes(0)
@@ -58,9 +63,6 @@ func TestDurationLimitDiscardsQueuedCallbackAfterWriteError(t *testing.T) {
 				t.Fatal(err)
 			}
 			waitForRecorderState(t, r, types.ProcessRunning)
-			r.mu.RLock()
-			file := r.currentFile
-			r.mu.RUnlock()
 			callbacks[0]() // Already queued callbacks can run even after Timer.Stop.
 			if status := r.Status(); status.State != types.ProcessRunning {
 				t.Fatalf("old duration callback stopped restarted recording: %+v", status)
@@ -68,11 +70,6 @@ func TestDurationLimitDiscardsQueuedCallbackAfterWriteError(t *testing.T) {
 			if timers[0].Stop() {
 				t.Error("old duration timer was still armed")
 			}
-			r.mu.RLock()
-			if r.currentFile != file {
-				t.Error("stale callback changed the current file")
-			}
-			r.mu.RUnlock()
 			if limited {
 				callbacks[len(callbacks)-1]()
 				waitForRecorderState(t, r, types.ProcessStopped)

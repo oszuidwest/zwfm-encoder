@@ -203,7 +203,8 @@ func (r *GenericRecorder) Start() error {
 		return ErrRecorderStopping
 	}
 
-	// Clear any previous error and set starting state
+	// Clear any previous error and set starting state. A stale start can still
+	// move a run to Error without cancelling its limit, so cancel it here too.
 	r.cancelDurationLimitLocked()
 	r.lastError = ""
 	r.audioDrops.Store(0)
@@ -378,7 +379,8 @@ func (r *GenericRecorder) Stop() error {
 	return r.stopLocked()
 }
 
-// stopLocked takes over r.mu and releases it before waiting for cleanup.
+// stopLocked must be called with r.mu held; it unlocks r.mu before waiting
+// for cleanup.
 func (r *GenericRecorder) stopLocked() error {
 	// Already stopped or stopping
 	if r.state == types.ProcessStopped || r.state == types.ProcessStopping {
@@ -495,6 +497,8 @@ func (r *GenericRecorder) handleWriteError(result *ffmpeg.StartResult, writeErr 
 	if r.state != types.ProcessStopping {
 		r.state = types.ProcessError
 	}
+	// The run is over; its duration limit must not later stop or clear anything.
+	r.cancelDurationLimitLocked()
 	r.recording.Store(false)
 	r.lastError = writeErr.Error()
 	capturedFile := r.currentFile
