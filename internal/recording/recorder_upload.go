@@ -172,6 +172,12 @@ const maxS3KeySuffix = 10
 // before writes so a committed upload can be recognized after a lost response.
 func (r *GenericRecorder) doUpload(p *pendingUpload) error {
 	req := &p.request
+	// Also for an upload queued before its file was marked.
+	if _, ok, err := finalizedRecording(req.localPath); err != nil {
+		return fmt.Errorf("open recording for upload: %w", err)
+	} else if !ok {
+		return errRecordingNotUploadable
+	}
 	file, err := os.Open(req.localPath)
 	if err != nil {
 		return fmt.Errorf("open recording for upload: %w", err)
@@ -288,6 +294,8 @@ func isS3KeyConflict(err error) bool {
 }
 
 var errNoS3Client = &noS3ClientError{}
+
+var errRecordingNotUploadable = errors.New("recording is marked unfinalized, empty or not a regular file; upload skipped")
 
 // Compile-time interface check.
 var _ transfermanager.ObjectBytesTransferredListener = (*uploadProgressListener)(nil)

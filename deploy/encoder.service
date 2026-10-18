@@ -8,6 +8,9 @@ Type=simple
 ExecStart=/usr/local/bin/encoder -config /etc/encoder/config.json
 Restart=always
 RestartSec=5
+# Stop only the encoder: it finalizes its FFmpeg children itself. Signalling
+# FFmpeg directly fails the open recording, which then stays quarantined.
+KillMode=mixed
 
 # Run as dedicated service user
 User=encoder
