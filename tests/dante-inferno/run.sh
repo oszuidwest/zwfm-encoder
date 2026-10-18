@@ -8,13 +8,8 @@ revision=9767558e0905c9e9c960f5a60e050fbdc38300b7
 inferno_image=zwfm-dante-audit-inferno-release:9767558
 runtime_image=zwfm-dante-audit-runtime:9767558
 sender_id=
-receiver_id=
 network_id=
 cleanup() {
-    if [[ -n "$receiver_id" ]]; then
-        docker logs "$receiver_id" > "$audit_dir/results.log" 2>&1 || true
-        docker rm -f "$receiver_id" >/dev/null || true
-    fi
     if [[ -n "$sender_id" ]]; then
         docker logs "$sender_id" > "$audit_dir/sender-console.log" 2>&1 || true
         docker rm -f "$sender_id" >/dev/null || true
@@ -36,14 +31,10 @@ cp "$audit_dir/inferno/test/dockerized_trx/fake_usrvclock_server/fake_usrvclock_
 docker build -f "$script_dir/Dockerfile" --build-arg "INFERNO_IMAGE=$inferno_image" \
     -t "$runtime_image" "$audit_dir"
 cp "$script_dir/sender.py" "$script_dir/relay.py" "$audit_dir/"
-case $(docker info --format '{{.Architecture}}') in
-    aarch64|arm64) target_arch=arm64 ;;
-    x86_64|amd64) target_arch=amd64 ;;
-    *) echo 'Unsupported Docker architecture' >&2; exit 1 ;;
-esac
+target_arch=$(docker version --format '{{.Server.Arch}}')
 cd "$repo_dir"
 go test -race ./internal/dante
-GOOS=linux GOARCH="$target_arch" CGO_ENABLED=0 go test -c -tags=integration \
+GOOS=linux GOARCH="$target_arch" CGO_ENABLED=0 go test -c \
     -o "$audit_dir/dante-linux.test" ./internal/dante
 network_id=$(docker network create "zwfm-dante-inferno-$(basename "$audit_dir")")
 sender_id=$(docker run -d --init --network "$network_id" \
@@ -51,7 +42,7 @@ sender_id=$(docker run -d --init --network "$network_id" \
     "$runtime_image" python3 -u /test/sender.py)
 ready=false
 for _ in {1..30}; do
-    if docker logs "$sender_id" | grep -q '^READY:'; then
+    if grep -q '^READY:' <(docker logs "$sender_id"); then
         ready=true
         break
     fi
@@ -62,10 +53,8 @@ if [[ "$ready" != true ]]; then
     echo 'Inferno sender did not become ready' >&2
     exit 1
 fi
-receiver_id=$(docker create --network "$network_id" \
+docker run --rm --network "$network_id" \
     --mount "type=bind,src=$audit_dir,dst=/test,readonly" \
     -e 'DANTE_INFERNO_INPUT=dante://inferno-audit/TX%201/TX%202?interface=eth0' \
     "$runtime_image" /test/dante-linux.test \
-    -test.run '^TestInfernoInteroperability$' -test.v -test.timeout=90s)
-docker start -a "$receiver_id"
-test "$(docker wait "$receiver_id")" = 0
+    -test.run '^TestInfernoInteroperability$' -test.v -test.timeout=90s 2>&1 | tee "$audit_dir/results.log"

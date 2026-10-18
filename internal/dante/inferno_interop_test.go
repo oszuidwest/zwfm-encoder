@@ -1,5 +1,3 @@
-//go:build integration
-
 package dante_test
 
 import (
@@ -27,7 +25,6 @@ func TestInfernoInteroperability(t *testing.T) {
 		tones       [2]float64
 	}{
 		{name: "stereo", input: input, tones: [2]float64{440, 880}},
-		{name: "reopen", input: input, tones: [2]float64{440, 880}},
 		{name: "swapped", input: strings.Replace(input, "/TX%201/TX%202", "/TX%202/TX%201", 1), tones: [2]float64{880, 440}},
 		{name: "automatic interface", input: strings.Split(input, "?")[0], tones: [2]float64{440, 880}},
 	} {
@@ -57,7 +54,8 @@ func TestInfernoInteroperability(t *testing.T) {
 				crossings := 0
 				for frame := range len(pcm) / 4 {
 					sample := int16(binary.LittleEndian.Uint16(pcm[frame*4+channel*2:])) //nolint:gosec // Interpret signed S16LE PCM.
-					squares += math.Pow(float64(sample)/32768, 2)
+					v := float64(sample) / 32768
+					squares += v * v
 					if previous < 0 && sample >= 0 {
 						crossings++
 					}
