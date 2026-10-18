@@ -97,6 +97,7 @@ type GenericRecorder struct {
 	retryProcessMu sync.Mutex // Only one retry batch may own paths at a time.
 	retryQueue     []pendingUpload
 	retryInFlight  map[string]struct{} // Paths remain owned while temporarily absent from retryQueue; protected by mu.
+	retryRequested bool                // A pass asked for during a batch runs after it; protected by mu.
 	retryEnqueueMu sync.Mutex          // Serializes persistence/publication without holding the state lock over disk I/O.
 
 	// Rotation timer (hourly mode)

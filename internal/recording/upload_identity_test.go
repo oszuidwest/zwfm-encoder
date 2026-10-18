@@ -15,7 +15,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
@@ -500,26 +502,41 @@ func TestRetryEnqueueWhileUploadIsInFlightKeepsIdentity(t *testing.T) {
 	}
 }
 
-func TestOverlappingRetryBatchLeavesQueuedUploadsAlone(t *testing.T) {
+func TestRetryRequestedDuringBatchRunsAfterIt(t *testing.T) {
 	t.Parallel()
 	store, cfg := newIdentityStore(t)
 	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
 	file := writeSpoolFile(t, r.spoolDir, r.id, filepath.Base(uploadTestKey), "audio")
 	r.addToRetryQueue(uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: 5, deleteAfterUpload: true}, "down")
-	queued := filepath.Join(r.spoolDir, "queued-meanwhile.mp3")
+	queued := writeSpoolFile(t, r.spoolDir, r.id, "queued-meanwhile.mp3", "later")
 	var once sync.Once
-	// While the first batch uploads, queue another file and start a second batch.
-	store.beforeWrite = func(string) {
+	var overlapped atomic.Bool
+	// While the first batch uploads, queue another file and ask for a retry pass.
+	store.beforeWrite = func(key string) {
 		once.Do(func() {
-			r.addToRetryQueue(uploadRequest{localPath: queued, s3Key: "queued-meanwhile.mp3", fileSize: 5}, "queued meanwhile")
+			r.addToRetryQueue(uploadRequest{localPath: queued, s3Key: "queued-meanwhile.mp3", fileSize: 5, deleteAfterUpload: true}, "queued meanwhile")
 			r.processRetryQueue()
 		})
+		if key == "queued-meanwhile.mp3" {
+			r.mu.RLock()
+			_, first := r.retryInFlight[file]
+			r.mu.RUnlock()
+			overlapped.Store(first)
+		}
 	}
 	r.processRetryQueue()
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	if len(r.retryQueue) != 1 || r.retryQueue[0].request.localPath != queued {
-		t.Fatalf("queue = %+v, want only the file queued during the first batch, untouched by the overlap", r.retryQueue)
+	deadline := time.Now().Add(5 * time.Second)
+	for r.PendingUploadCount() != 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	store.mu.Lock()
+	_, uploaded := store.objects["queued-meanwhile.mp3"]
+	store.mu.Unlock()
+	if !uploaded || r.PendingUploadCount() != 0 {
+		t.Fatalf("file queued during a batch waited for the hourly retry: uploaded=%t, pending=%d", uploaded, r.PendingUploadCount())
+	}
+	if overlapped.Load() {
+		t.Fatal("the follow-up pass ran while the first batch still owned its paths")
 	}
 }
 

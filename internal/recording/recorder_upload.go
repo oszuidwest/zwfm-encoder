@@ -377,11 +377,23 @@ func (r *GenericRecorder) enqueuePendingUpload(pending *pendingUpload) {
 // path the first one still owns; files queued meanwhile stay persisted in the
 // spool for a later batch.
 func (r *GenericRecorder) processRetryQueue() {
-	if !r.retryProcessMu.TryLock() {
-		return // Another batch is already processing this recorder's uploads.
-	}
-	defer r.retryProcessMu.Unlock()
 	r.mu.Lock()
+	if !r.retryProcessMu.TryLock() {
+		// Another batch owns this recorder's uploads; it runs once more afterwards.
+		r.retryRequested = true
+		r.mu.Unlock()
+		return
+	}
+	defer func() {
+		r.mu.Lock()
+		again := r.retryRequested
+		r.retryRequested = false
+		r.retryProcessMu.Unlock()
+		r.mu.Unlock()
+		if again {
+			go r.processRetryQueue()
+		}
+	}()
 	if len(r.retryQueue) == 0 {
 		r.mu.Unlock()
 		return
