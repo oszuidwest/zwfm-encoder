@@ -20,6 +20,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/term"
@@ -97,11 +98,33 @@ func passwordInput(stdin *os.File, prompt io.Writer) (io.Reader, error) {
 	if !term.IsTerminal(fd) {
 		return stdin, nil
 	}
-	_, _ = fmt.Fprint(prompt, "Password: ")
+	// A signal skips ReadPassword's own restore and would leave echo off.
+	state, err := term.GetState(fd)
+	if err != nil {
+		return nil, fmt.Errorf("read terminal state: %w", err)
+	}
+	interrupted, done := make(chan os.Signal, 1), make(chan struct{})
+	signal.Notify(interrupted, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		select {
+		case <-interrupted:
+			_ = term.Restore(fd, state)
+			_, _ = fmt.Fprintln(prompt)
+			os.Exit(130)
+		case <-done:
+		}
+	}()
+	defer func() { signal.Stop(interrupted); close(done) }()
+
+	_, _ = fmt.Fprint(prompt, "Password (Ctrl+C cancels): ")
 	password, err := term.ReadPassword(fd)
 	_, _ = fmt.Fprintln(prompt)
 	if err != nil {
 		return nil, fmt.Errorf("read password: %w", err)
+	}
+	// Canonical terminal input stops at 4095 bytes without telling us.
+	if len(password) >= 4095 {
+		return nil, fmt.Errorf("password too long for terminal input; pipe it on stdin instead")
 	}
 	return bytes.NewReader(password), nil
 }
