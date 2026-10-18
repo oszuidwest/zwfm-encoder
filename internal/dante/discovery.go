@@ -237,6 +237,8 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 	}
 	lookupCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
+	// The deadline also rejects a query written before the asynchronous
+	// interrupt has closed the socket.
 	lookupDeadline, _ := lookupCtx.Deadline()
 	if err := conn.SetDeadline(lookupDeadline); err != nil {
 		return channelInfo{}, fmt.Errorf("set discovery deadline: %w", err)
@@ -256,10 +258,7 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 		now := time.Now()
 		if !now.Before(nextQuery) {
 			if err := queryDante(conn, interfaces, query, destination); err != nil {
-				if contextErr := lookupCtx.Err(); contextErr != nil {
-					err = contextErr
-				}
-				return channelInfo{}, fmt.Errorf("send discovery query for %q: %w", channel, err)
+				return channelInfo{}, fmt.Errorf("send discovery query for %q: %w", channel, contextOr(lookupCtx, err))
 			}
 			nextQuery = now.Add(time.Second)
 		}
@@ -268,7 +267,7 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 			deadline = earlierTime(deadline, contextDeadline)
 		}
 		if err := conn.SetReadDeadline(deadline); err != nil {
-			return channelInfo{}, fmt.Errorf("set discovery deadline: %w", err)
+			return channelInfo{}, fmt.Errorf("set discovery deadline: %w", contextOr(lookupCtx, err))
 		}
 		n, source, ifIndex, err := readPacket(buffer)
 		if err != nil {
@@ -303,6 +302,15 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 			return info, nil
 		}
 	}
+}
+
+// contextOr reports ctx's error instead of err once ctx is done: the
+// cancellation interrupt closes the socket, which surfaces as a socket error.
+func contextOr(ctx context.Context, err error) error {
+	if contextErr := ctx.Err(); contextErr != nil {
+		return contextErr
+	}
+	return err
 }
 
 func discoveryNetworks(interfaces []net.Interface) (map[int][]*net.IPNet, error) {

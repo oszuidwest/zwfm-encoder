@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net"
 	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -158,4 +160,125 @@ func TestDiscoveryBlockedWriteIsBounded(t *testing.T) {
 			})
 		})
 	}
+}
+
+// cancelOnReadDeadline cancels discovery between its query and the read
+// deadline, and reports the socket the interrupt then closes.
+type cancelOnReadDeadline struct {
+	net.PacketConn
+	cancel context.CancelFunc
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (c *cancelOnReadDeadline) SetReadDeadline(time.Time) error {
+	c.cancel()
+	<-c.closed
+	return net.ErrClosed
+}
+
+func (c *cancelOnReadDeadline) Close() error {
+	c.once.Do(func() { close(c.closed) })
+	return c.PacketConn.Close()
+}
+
+func TestDiscoveryCancellationBeforeReadDeadlineReportsCancellation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newFakeTransmitter()
+		defer h.close(t)
+		h.start(t)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		listen := listenDanteUDP
+		listenDanteUDP = func(local *net.UDPAddr) (net.PacketConn, error) {
+			conn, err := listen(local)
+			return &cancelOnReadDeadline{PacketConn: conn, cancel: cancel, closed: make(chan struct{})}, err
+		}
+		if _, err := discoverChannel(ctx, h.interfaces, "tx", "Left", nil); !errors.Is(err, context.Canceled) {
+			t.Fatalf("discoverChannel = %v, want context.Canceled", err)
+		}
+	})
+}
+
+// slowInterruptConn holds the cancellation interrupt's deadline change.
+type slowInterruptConn struct {
+	net.Conn
+	cancel  context.CancelFunc
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (c *slowInterruptConn) SetDeadline(deadline time.Time) error {
+	if !deadline.After(time.Now()) {
+		close(c.entered)
+		<-c.release
+	}
+	return c.Conn.SetDeadline(deadline)
+}
+
+func (c *slowInterruptConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	// Cancel once the response is in, so the exchange succeeds while its
+	// interrupt is still running.
+	c.once.Do(func() { c.cancel(); <-c.entered })
+	return n, err
+}
+
+func TestControlExchangeWaitsForStartedInterrupt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		client, peer := net.Pipe()
+		defer func() { _ = client.Close(); _ = peer.Close() }()
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		conn := &slowInterruptConn{Conn: client, cancel: cancel, entered: make(chan struct{}), release: make(chan struct{})}
+		go func() {
+			_, _ = peer.Read(make([]byte, 64))
+			_, _ = peer.Write(controlResponse(stopFlowSequence, stopFlowOpcode, 1, nil))
+		}()
+		var returned atomic.Bool
+		done := make(chan error, 1)
+		go func() {
+			_, err := exchangeControl(ctx, conn, buildStopRequest([6]byte{}), time.Second)
+			returned.Store(true)
+			done <- err
+		}()
+		synctest.Wait()
+		// Returning now would let the late interrupt expire the reused socket.
+		if returned.Load() {
+			t.Fatal("exchange returned while its interrupt was still changing the deadline")
+		}
+		close(conn.release)
+		if err := <-done; err != nil {
+			t.Fatalf("exchange = %v, want success", err)
+		}
+	})
+}
+
+type firstDeadlineConn struct {
+	net.Conn
+	first time.Time
+}
+
+func (c *firstDeadlineConn) SetDeadline(deadline time.Time) error {
+	if c.first.IsZero() {
+		c.first = deadline
+	}
+	return c.Conn.SetDeadline(deadline)
+}
+
+func TestControlDeadlineHonoursEarlierContextDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		client, peer := net.Pipe()
+		defer func() { _ = client.Close(); _ = peer.Close() }()
+		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+		defer cancel()
+		conn := &firstDeadlineConn{Conn: client}
+		if _, err := exchangeControl(ctx, conn, buildStopRequest([6]byte{}), time.Second); err == nil {
+			t.Fatal("exchange succeeded without a peer")
+		}
+		if want, _ := ctx.Deadline(); !conn.first.Equal(want) {
+			t.Fatalf("socket deadline = %s, want the context deadline %s", conn.first, want)
+		}
+	})
 }
