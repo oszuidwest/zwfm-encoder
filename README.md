@@ -48,7 +48,7 @@ sudo su
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/oszuidwest/zwfm-encoder/main/deploy/install.sh)"
 ```
 
-New installations bind the web interface to `127.0.0.1:8080`. Use a local TLS reverse proxy or an SSH tunnel for remote access; see [Admin security](#admin-security). Answering yes to the installer's LAN-exposure prompt selects `0.0.0.0` and is only suitable behind a trusted network boundary. For a specific IPv4/IPv6 bind, edit `system.bind_address` in the config before restarting.
+The web interface is available at `http://<raspberry-pi-ip>:8080` on your trusted LAN or through your VPN. New installations bind to `0.0.0.0:8080` by default; no domain name, certificate or reverse proxy is required. Choose local-only access in the installer if you plan to use a proxy or SSH tunnel. See [Admin security](#admin-security) for network restrictions and optional HTTPS setup.
 
 **Default credentials:** `admin` / `encoder`
 
@@ -218,7 +218,7 @@ Configuration is stored in `/etc/encoder/config.json` on production systems. For
 
 ```json
 {
-  "system": { "bind_address": "127.0.0.1", "port": 8080, "username": "admin", "password": "encoder" },
+  "system": { "bind_address": "0.0.0.0", "port": 8080, "username": "admin", "password": "encoder" },
   "web": { "station_name": "ZuidWest FM" }
 }
 ```
@@ -229,7 +229,15 @@ The example above uses the legacy plaintext field for illustration; new installs
 
 ## Admin security
 
-The HTTP listener does not terminate TLS itself. For production, bind it to loopback and put a TLS reverse proxy on the same host. Do not publish port 8080, and keep a firewall/VPN or access-control layer in front of the admin interface. Public `/health` and `/ready` endpoints still require no session.
+The encoder is intended to run as an internal appliance, managed directly by IP on a trusted LAN or through a VPN. Keep its web port restricted to the management network with your firewall/VPN rules; do not forward it from the public internet. HTTPS through a reverse proxy is optional. The encoder itself serves HTTP. The `/health` and `/ready` endpoints require no session and follow the same network restrictions.
+
+### LAN and VPN access
+
+The default `system.bind_address` is `0.0.0.0`, allowing access at `http://<device-ip>:8080` on all IPv4 interfaces. You can bind to a specific LAN or VPN interface by setting its numeric IP address instead. IPv6 addresses are also supported; `::` listens on all IPv6 interfaces, with IPv4 availability depending on the OS. A bind address must not include a port. Restart the encoder after changing the bind address or port.
+
+Direct HTTP access relies on that trusted network for transport protection: passwords and session cookies are not encrypted by HTTP. A VPN encrypts traffic only as far as its endpoint; if it terminates at a router, the router-to-encoder hop still uses HTTP. Use the optional HTTPS setup below when that network path is not trusted or your policy requires browser-to-proxy encryption.
+
+Password hashing, login limits and CSRF protection apply to both HTTP and HTTPS. CSRF protection remains useful on a private network because a malicious website can try to make an authenticated administrator's browser send requests to the appliance.
 
 ### Passwords and existing installations
 
@@ -244,11 +252,11 @@ unset encoder_password
 
 In `config.json`, replace `system.password` with `system.password_hash` containing the entire printed value; **remove the plaintext field**. Restart the encoder and verify login before deleting any recovery copy. Both fields together, malformed hashes and unsupported work factors are rejected. The command accepts one non-empty password line, preserves spaces, and does not load or modify configuration. It uses Go's standard-library PBKDF2-HMAC-SHA256 with a fresh 16-byte salt and 600,000 iterations, following the [OWASP PBKDF2 work-factor guidance](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html).
 
-Existing plaintext credentials and omitted `bind_address` remain supported so an update does not lock out a LAN appliance; loading an existing config does not rewrite it. Explicitly migrate credentials and set `system.bind_address` to `127.0.0.1` for production. New configs and fresh installer runs use loopback and hashed credentials. If the installer downloads an older binary without `-hash-password`, it warns and retains the legacy plaintext field until you upgrade and migrate; older binaries also ignore `bind_address`, so keep those behind a firewall. A bind address must be a numeric IPv4/IPv6 address, without a port; `0.0.0.0`/`::` (or the legacy empty value) deliberately expose all matching interfaces. These settings take effect after restart. Config files and old backups may contain other secrets, so keep them owner-only (`0600`) and protect/delete recovery copies according to your retention policy.
+Existing plaintext credentials and omitted `bind_address` remain supported so an update does not lock out a LAN appliance; loading an existing config does not rewrite it. Migrate credentials explicitly using the steps above. New configs and fresh installer runs store hashed credentials and allow direct LAN/VPN access by default; the installer also offers local-only binding (`127.0.0.1`). An omitted or empty bind retains the legacy all-interface listener. If the installer downloads an older binary without `-hash-password`, it warns and retains the legacy plaintext field until you upgrade and migrate; older binaries also ignore `bind_address`, so keep those behind a firewall. Config files and old backups may contain other secrets, so keep them owner-only (`0600`) and protect/delete recovery copies according to your retention policy.
 
-### TLS reverse proxy
+### Optional HTTPS reverse proxy
 
-For example, run Caddy on the same host with the following Caddyfile after setting the encoder's `bind_address` to `127.0.0.1`. Replace the domain, point its DNS at this host and allow the ports needed for Caddy's certificate issuance/HTTPS. Follow [Caddy's automatic HTTPS deployment requirements](https://caddyserver.com/docs/automatic-https).
+If you want HTTPS, one option is Caddy on the same host with the following Caddyfile after setting the encoder's `bind_address` to `127.0.0.1`. Keep the proxy restricted to your management network too. Replace the domain and configure DNS and certificate issuance for your environment; see [Caddy's automatic HTTPS deployment requirements](https://caddyserver.com/docs/automatic-https). This example assumes a domain and a working certificate issuance method; neither is needed for the normal LAN/VPN installation.
 
 ```caddyfile
 encoder.example.com {
@@ -261,7 +269,9 @@ Caddy's [reverse proxy](https://caddyserver.com/docs/caddyfile/directives/revers
 
 For this same-host Caddy example, add `"trusted_proxies": ["127.0.0.1/32"]` to the existing `system` object, keeping its other fields. The default empty list trusts no proxy, including loopback. Only explicitly configured proxy CIDRs may supply `X-Forwarded-For` for login limits; the chain is read right-to-left until the first untrusted hop. Malformed forwarding data is rejected without consuming a shared proxy/account budget. Use exact proxy IPs (`/32` for IPv4, `/128` for IPv6) where possible, never a client subnet or all-address `/0` range. Invalid CIDRs and `/0` are rejected. If Caddy is itself behind another proxy, configure its [trusted proxy handling](https://caddyserver.com/docs/caddyfile/options#trusted-proxies) too; do not pass arbitrary client-supplied forwarding headers through.
 
-Without a proxy, keep loopback and tunnel from your workstation: `ssh -L 8080:127.0.0.1:8080 user@raspberry-pi-ip`, then open `http://127.0.0.1:8080` locally. For the Windows tray UI on the device, loopback works directly.
+### Optional local-only access and SSH tunnel
+
+For local-only access, choose no at the installer's LAN/VPN prompt or set `system.bind_address` to `127.0.0.1` and restart. You can then tunnel from your workstation with `ssh -L 8080:127.0.0.1:8080 user@raspberry-pi-ip` and open `http://127.0.0.1:8080` locally. For the Windows tray UI on the device, loopback works directly.
 
 ### Login limits and API clients
 

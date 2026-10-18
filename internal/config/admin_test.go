@@ -20,6 +20,7 @@ func TestAdminPasswordHashAndBindAddress(t *testing.T) {
 	for _, tc := range []struct{ name, bind, password, hash, wantErr string }{
 		{name: "legacy", password: "test-secret"},
 		{name: "hashed loopback", bind: "127.0.0.1", hash: hash},
+		{name: "private interface", bind: "192.168.1.20", hash: hash},
 		{name: "IPv6", bind: "::1", hash: hash},
 		{name: "explicit wildcard", bind: "0.0.0.0", hash: hash},
 		{name: "hostname rejected", bind: "localhost", hash: hash, wantErr: "system.bind_address"},
@@ -71,12 +72,12 @@ func TestAdminPasswordHashAndBindAddress(t *testing.T) {
 	}
 }
 
-func TestNewConfigUsesHashedPasswordAndLoopback(t *testing.T) {
+func TestNewConfigUsesHashedPasswordAndLANAccess(t *testing.T) {
 	t.Parallel()
 	cfg, path := newLoadedConfig(t)
 	snapshot := cfg.Snapshot()
-	if snapshot.WebBindAddress != "127.0.0.1" || snapshot.WebPassword != "" || !util.VerifyPasswordHash(DefaultWebPassword, snapshot.WebPasswordHash) {
-		t.Fatal("new config is not loopback-bound with a hashed credential")
+	if snapshot.WebBindAddress != "0.0.0.0" || snapshot.WebPassword != "" || !util.VerifyPasswordHash(DefaultWebPassword, snapshot.WebPasswordHash) {
+		t.Fatal("new config must allow direct LAN access with a hashed credential")
 	}
 	data, err := os.ReadFile(path) //nolint:gosec // G304: path is a config fixture inside t.TempDir.
 	if err != nil {

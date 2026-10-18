@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"regexp"
@@ -35,17 +36,33 @@ func TestAllSessionMutationRoutesRequireCSRF(t *testing.T) {
 	}
 }
 
-func TestAdminHTTPSLoginMutationAndLogout(t *testing.T) {
+func TestAdminLoginMutationAndLogout(t *testing.T) {
 	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		newServer func(http.Handler) *httptest.Server
+		secure    bool
+	}{
+		{name: "HTTP appliance", newServer: httptest.NewServer},
+		{name: "HTTPS", newServer: httptest.NewTLSServer, secure: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			checkAdminLoginMutationAndLogout(t, tc.newServer, tc.secure)
+		})
+	}
+}
+
+func checkAdminLoginMutationAndLogout(t *testing.T, newServer func(http.Handler) *httptest.Server, secure bool) {
+	t.Helper()
 	s := newRouteTestServer(t)
 	// A busy anonymous token pool must not block a legitimate login.
 	for range 4096 {
 		s.sessions.CreateCSRFToken()
 	}
-	ts := httptest.NewTLSServer(s.SetupRoutes())
+	ts := newServer(s.SetupRoutes())
 	defer ts.Close()
-	client := ts.Client()
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client := newAdminTestClient(t, ts)
 	get, err := client.Get(ts.URL + "/login")
 	if err != nil {
 		t.Fatal(err)
@@ -64,14 +81,13 @@ func TestAdminHTTPSLoginMutationAndLogout(t *testing.T) {
 		t.Fatalf("login = %d, cookies %v", login.StatusCode, login.Cookies())
 	}
 	cookie := login.Cookies()[0]
-	assertAdminCookieFlags(t, cookie)
+	assertAdminCookieFlags(t, cookie, secure)
 	request := func(method, path, token, origin string) *http.Response {
 		t.Helper()
 		req, err := http.NewRequestWithContext(t.Context(), method, ts.URL+path, http.NoBody)
 		if err != nil {
 			t.Fatal(err)
 		}
-		req.AddCookie(cookie)
 		if token != "" {
 			req.Header.Set("X-CSRF-Token", token)
 		}
@@ -120,10 +136,22 @@ func TestAdminHTTPSLoginMutationAndLogout(t *testing.T) {
 	checkAdminLogout(t, s, request, token, cookie)
 }
 
-func assertAdminCookieFlags(t *testing.T, cookie *http.Cookie) {
+func newAdminTestClient(t *testing.T, ts *httptest.Server) *http.Client {
 	t.Helper()
-	if !cookie.Secure || !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode {
-		t.Fatal("HTTPS session cookie flags weakened")
+	client := ts.Client()
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Jar = jar
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return client
+}
+
+func assertAdminCookieFlags(t *testing.T, cookie *http.Cookie, secure bool) {
+	t.Helper()
+	if cookie.Secure != secure || !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode {
+		t.Fatalf("session cookie flags = %+v, want Secure=%v, HttpOnly and SameSite=Strict", cookie, secure)
 	}
 }
 

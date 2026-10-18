@@ -120,8 +120,8 @@ if [ "$KEEP_CONFIG" != "y" ]; then
   # Web port
   prompt_user "WEB_PORT" "8080" "Enter the web interface port" "num"
 
-  # Production access goes through a local TLS proxy or an SSH tunnel.
-  prompt_user "WEB_EXPOSE_LAN" "n" "Expose plain HTTP to the LAN? (n: use a local TLS proxy or SSH tunnel)" "y/n"
+  # Direct LAN/VPN access is the normal appliance setup.
+  prompt_user "WEB_EXPOSE_LAN" "y" "Allow web access via this device's IP on your LAN/VPN? (n: local access only)" "y/n"
   WEB_BIND_ADDRESS="127.0.0.1"
   if [ "$WEB_EXPOSE_LAN" == "y" ]; then
     WEB_BIND_ADDRESS="0.0.0.0"
@@ -406,7 +406,7 @@ echo -e "\n${BOLD}Web Interface${NC}"
 DISPLAY_BIND=$(jq -r '.system.bind_address // "0.0.0.0"' "$CONFIG_FILE")
 if [ "$DISPLAY_BIND" == "127.0.0.1" ] && "${INSTALL_DIR}/encoder" -help 2>&1 | grep -F -- '-hash-password' > /dev/null; then
   echo -e "  URL:      ${BOLD}http://127.0.0.1:${DISPLAY_PORT}${NC} (local only)"
-  echo -e "  Remote access: configure a local TLS reverse proxy, or tunnel with:"
+  echo -e "  Remote access with this local-only bind: use a reverse proxy, or tunnel with:"
   echo -e "  ${BOLD}ssh -L ${DISPLAY_PORT}:127.0.0.1:${DISPLAY_PORT} <user>@${FIRST_IP}${NC}"
 else
   echo -e "  URL:      ${BOLD}http://${FIRST_IP}:${DISPLAY_PORT}${NC} (check configured bind address)"

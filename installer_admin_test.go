@@ -99,7 +99,7 @@ func TestInstallerBindChoice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, fragment, found := strings.Cut(string(script), "  # Production access goes through a local TLS proxy or an SSH tunnel.")
+	_, fragment, found := strings.Cut(string(script), "  # Direct LAN/VPN access is the normal appliance setup.")
 	if !found {
 		t.Fatal("installer bind prompt missing")
 	}
@@ -111,14 +111,21 @@ func TestInstallerBindChoice(t *testing.T) {
 	stub := `set -euo pipefail
 prompt_user() {
   [ "$4" = "y/n" ] || exit 1
-  case "$AUTH_TEST_EXPOSE" in
-    y|n) printf -v "$1" '%s' "$AUTH_TEST_EXPOSE" ;;
+  choice="${AUTH_TEST_EXPOSE:-$2}"
+  case "$choice" in
+    y|n) printf -v "$1" '%s' "$choice" ;;
     *) exit 2 ;;
   esac
 }
 `
-	for _, tc := range []struct{ input, want string }{{"n", "127.0.0.1"}, {"y", "0.0.0.0"}, {"localhost", ""}, {"127.0.0.1:8080", ""}} {
-		t.Run(tc.input, func(t *testing.T) {
+	for _, tc := range []struct{ name, input, want string }{
+		{name: "default LAN access", want: "0.0.0.0"},
+		{name: "local only", input: "n", want: "127.0.0.1"},
+		{name: "explicit LAN access", input: "y", want: "0.0.0.0"},
+		{name: "hostname rejected", input: "localhost"},
+		{name: "address with port rejected", input: "127.0.0.1:8080"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			cmd := util.CommandContext(t.Context(), "bash", "-c", stub+fragment+`printf '%s' "$WEB_BIND_ADDRESS"`)
 			cmd.Env = append(os.Environ(), "AUTH_TEST_EXPOSE="+tc.input)
 			out, err := cmd.CombinedOutput()

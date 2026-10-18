@@ -40,8 +40,8 @@ var (
 const (
 	// DefaultWebPort is the default HTTP server port (8080).
 	DefaultWebPort = 8080
-	// DefaultWebBindAddress keeps new configurations local until a proxy is configured.
-	DefaultWebBindAddress = "127.0.0.1"
+	// DefaultWebBindAddress allows direct appliance access on a trusted LAN or VPN.
+	DefaultWebBindAddress = "0.0.0.0"
 	// DefaultWebUsername is the default web interface username (admin).
 	DefaultWebUsername = "admin"
 	// DefaultWebPassword is the default web interface password (encoder).
