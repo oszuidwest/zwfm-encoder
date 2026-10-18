@@ -76,15 +76,18 @@ func (m *Manager) checkStorage(stop <-chan struct{}) {
 	// audio after a process restart. This scan never modifies metadata or audio.
 	abandoned, scanErr := scanAbandonedUploads(m.spoolDir, activeUploads)
 	if scanErr != nil {
-		// storageTargets always includes the spool.
-		spool := &observations[slices.IndexFunc(observations, func(o types.RecordingStorageStatus) bool {
+		i := slices.IndexFunc(observations, func(o types.RecordingStorageStatus) bool {
 			return o.Path == filepath.Clean(m.spoolDir)
-		})]
-		msg := "scan abandoned uploads: " + scanErr.Error()
-		if spool.Error != "" {
-			msg = spool.Error + "; " + msg
+		})
+		if i < 0 {
+			observations = append(observations, types.RecordingStorageStatus{Path: filepath.Clean(m.spoolDir), CheckedAt: time.Now()})
+			i = len(observations) - 1
 		}
-		spool.Error = msg
+		msg := "scan abandoned uploads: " + scanErr.Error()
+		if observations[i].Error != "" {
+			msg = observations[i].Error + "; " + msg
+		}
+		observations[i].Error = msg
 	}
 	var missing []string
 	for _, path := range known {
@@ -100,13 +103,11 @@ func (m *Manager) checkStorage(stop <-chan struct{}) {
 	}
 	previous := m.storagePaths
 	m.storagePaths = observations
-	if scanErr == nil {
-		m.abandoned = abandoned // The metadata on disk is authoritative.
-	} else {
-		maps.Copy(m.abandoned, abandoned)
-		for _, path := range missing {
-			delete(m.abandoned, path)
-		}
+	// Add, never replace: an abandonment the callback reported after the scan
+	// started is not on disk yet. Restored uploads are saved as not abandoned.
+	maps.Copy(m.abandoned, abandoned)
+	for _, path := range missing {
+		delete(m.abandoned, path)
 	}
 	cb := m.onStorageChange
 	m.mu.Unlock()
@@ -119,7 +120,11 @@ func (m *Manager) checkStorage(stop <-chan struct{}) {
 func (m *Manager) storageTargets() (ordered []string, activeUploads map[string]struct{}, abandoned []string) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	paths := map[string]struct{}{filepath.Clean(m.spoolDir): {}}
+	paths := make(map[string]struct{})
+	// An encoder that does not record has no spool to fill.
+	if len(m.recorders) > 0 || len(m.abandoned) > 0 {
+		paths[filepath.Clean(m.spoolDir)] = struct{}{}
+	}
 	activeUploads = make(map[string]struct{})
 	for _, r := range m.recorders {
 		cfg := r.Config()

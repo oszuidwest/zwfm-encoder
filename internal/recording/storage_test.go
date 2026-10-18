@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -278,5 +279,117 @@ func TestUnreadableUploadMetadataDoesNotFailStorageCheck(t *testing.T) {
 		if p.Error != "" {
 			t.Fatalf("one unreadable metadata file failed %s: %s", p.Path, p.Error)
 		}
+	}
+}
+
+func TestRemovedLowPathClosesIncident(t *testing.T) {
+	t.Parallel()
+	m := storageTestManager(t, t.TempDir())
+	cfg := localOnDemandRecorder(t, "local")
+	cfg.Enabled = true
+	if err := m.AddRecorder(cfg); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(t.TempDir(), "events.jsonl")
+	logger, err := eventlog.NewLogger(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = logger.Close() })
+	m.eventLogger = logger
+	m.diskSpace = func(p string) (uint64, uint64, error) {
+		if p == filepath.Clean(cfg.LocalPath) {
+			return 0, 10 << 30, nil
+		}
+		return 10 << 30, 20 << 30, nil
+	}
+	m.checkStorage(m.cleanupStopCh)
+	if err := m.RemoveRecorder(cfg.ID); err != nil {
+		t.Fatal(err)
+	}
+	m.checkStorage(m.cleanupStopCh)
+	events, _, err := eventlog.ReadLast(logPath, 100, 0, eventlog.FilterRecorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var low, restored int
+	for _, e := range events {
+		switch e.Type {
+		case eventlog.RecordingStorageLow:
+			low++
+		case eventlog.RecordingStorageRestored:
+			restored++
+		}
+	}
+	if low != 1 || restored != 1 {
+		t.Fatalf("removed low path incident: low=%d restored=%d, want 1 and 1", low, restored)
+	}
+}
+
+func TestSpoolIsNotMonitoredWithoutRecorders(t *testing.T) {
+	t.Parallel()
+	m := storageTestManager(t, t.TempDir())
+	m.diskSpace = func(string) (uint64, uint64, error) { return 0, 10 << 30, nil }
+	m.checkStorage(m.cleanupStopCh)
+	if got := m.StorageStatuses(); len(got) != 0 {
+		t.Fatalf("an encoder without recorders reported recording storage: %+v", got)
+	}
+}
+
+func TestFailedAbandonmentSaveKeepsUploadVisible(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX permissions as a regular user")
+	}
+	spool := t.TempDir()
+	m := storageTestManager(t, spool)
+	cfg := testS3Recorder()
+	if err := m.AddRecorder(cfg); err != nil {
+		t.Fatal(err)
+	}
+	r := m.recorders[cfg.ID]
+	file := writeSpoolFile(t, spool, cfg.ID, "abandoned.mp3", "audio")
+	p := pendingUpload{request: uploadRequest{localPath: file, s3Key: "recordings/x.mp3", fileSize: 5}, firstAttempt: time.Now().Add(-25 * time.Hour)}
+	if err := r.savePendingUpload(&p); err != nil {
+		t.Fatal(err)
+	}
+	// A full or read-only spool cannot persist the abandonment itself.
+	dir := filepath.Dir(p.metadataPath)
+	if err := os.Chmod(dir, 0o500); err != nil { //nolint:gosec // A read-only test directory is the point.
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) }) //nolint:gosec // Restore for cleanup.
+	r.retryQueue = []pendingUpload{p}
+	r.processRetryQueue()
+	m.checkStorage(m.cleanupStopCh)
+	if m.AbandonedUploadCount() != 1 {
+		t.Fatal("an abandonment that could not be saved vanished from readiness")
+	}
+}
+
+func TestDeletedAbandonedFileLeavesTheCount(t *testing.T) {
+	t.Parallel()
+	spool := t.TempDir()
+	m := storageTestManager(t, spool)
+	cfg := testS3Recorder()
+	if err := m.AddRecorder(cfg); err != nil {
+		t.Fatal(err)
+	}
+	r := m.recorders[cfg.ID]
+	file := writeSpoolFile(t, spool, cfg.ID, "abandoned.mp3", "audio")
+	p := pendingUpload{request: uploadRequest{localPath: file, s3Key: "recordings/x.mp3", fileSize: 5}, firstAttempt: time.Now().Add(-25 * time.Hour)}
+	if err := r.savePendingUpload(&p); err != nil {
+		t.Fatal(err)
+	}
+	r.retryQueue = []pendingUpload{p}
+	r.processRetryQueue()
+	if m.AbandonedUploadCount() != 1 {
+		t.Fatal("abandonment not counted")
+	}
+	if err := os.Remove(file); err != nil { // Metadata still says abandoned.
+		t.Fatal(err)
+	}
+	m.checkStorage(m.cleanupStopCh)
+	if m.AbandonedUploadCount() != 0 {
+		t.Fatal("a deleted abandoned file is still counted as retained audio")
 	}
 }

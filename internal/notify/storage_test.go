@@ -81,14 +81,31 @@ func TestRecordingStorageAlertsOrderedAndIndependentOfSubscriptions(t *testing.T
 	paths[0].Low = false
 	o.HandleRecordingStorage(paths)
 	assertNoCall(t, ch.calls, "recovery overtook blocked low-space delivery")
+	// A burst of input alerts on the same channel must not evict the queued
+	// recovery, which is sent only once.
+	for range inputQueueDepth + 1 {
+		enqueueInputAlert(o.inputQueues[0], func() {}, "test", "input_lost")
+	}
 	close(ch.release)
 	if !awaitCall(t, ch.calls, "low-space alert") || awaitCall(t, ch.calls, "recovery alert") {
 		t.Fatal("storage alerts were reordered or caller's mutation leaked into queued state")
 	}
-	for _, queue := range o.inputQueues {
+	for _, queue := range o.storageQueues {
 		done := make(chan struct{})
 		queue <- func() { close(done) }
 		awaitCall(t, done, "delivery barrier")
 	}
 	assertNoCall(t, unconfigured.calls, "unconfigured storage channel")
+}
+
+func TestStorageItemKeyKeepsZabbixParameters(t *testing.T) {
+	t.Parallel()
+	for key, want := range map[string]string{
+		"upload.alert":         "upload.alert.storage",
+		"upload.alert[studio]": "upload.alert.storage[studio]",
+	} {
+		if got := storageItemKey(key); got != want {
+			t.Errorf("storageItemKey(%q) = %q, want %q", key, got, want)
+		}
+	}
 }

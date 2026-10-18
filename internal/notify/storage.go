@@ -67,5 +67,14 @@ func (c *ZabbixChannel) SendRecordingStorage(
 	}
 	event, _ := recordingStorageMessage(paths)
 	return sendZabbixEvent(ctx, cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost,
-		cfg.ZabbixUploadKey+".storage", "event="+strings.ToUpper(event))
+		storageItemKey(cfg.ZabbixUploadKey), "event="+strings.ToUpper(event))
+}
+
+// storageItemKey derives the storage trapper key from the upload key, before
+// any parameters: upload.alert[studio] becomes upload.alert.storage[studio].
+func storageItemKey(uploadKey string) string {
+	if i := strings.IndexByte(uploadKey, '['); i >= 0 {
+		return uploadKey[:i] + ".storage" + uploadKey[i:]
+	}
+	return uploadKey + ".storage"
 }
