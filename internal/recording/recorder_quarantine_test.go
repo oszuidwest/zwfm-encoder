@@ -2,6 +2,7 @@ package recording
 
 import (
 	"bytes"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -54,7 +55,7 @@ func TestFailedRecordingIsNotRecoveredAfterRestart(t *testing.T) {
 						t.Fatalf("failed output queued after restart: %d uploads", got)
 					}
 					restarted.queueForUpload(file)
-					if restarted.PendingUploadCount() != 0 {
+					if restarted.PendingUploadCount() != 0 || len(restarted.uploadQueue) != 0 {
 						t.Fatal("quarantine bypassed by direct upload queueing")
 					}
 				})
@@ -259,4 +260,21 @@ func TestMarkerCreationFailureDoesNotStartEncoder(t *testing.T) {
 	if entries, err := os.ReadDir(cfg.LocalPath); err != nil || len(entries) != 0 {
 		t.Fatalf("failed marker creation left an unowned output: %v, %v", entries, err)
 	}
+}
+
+func TestQueuedUploadSkipsFileMarkedAfterQueueing(t *testing.T) {
+	endpoint, uploads := conditionalPutServer(t, "", func(http.ResponseWriter, string) bool { return false })
+	cfg := testS3Recorder()
+	cfg.S3Endpoint = endpoint
+	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
+	file := writeSpoolFile(t, r.spoolDir, cfg.ID, "late.mp3", "audio")
+	writeSpoolFile(t, r.spoolDir, cfg.ID, "late.mp3"+unfinalizedRecordingSuffix, "")
+	pending := pendingUpload{request: uploadRequest{localPath: file, s3Key: "recordings/Test/late.mp3", fileSize: 5, deleteAfterUpload: true}}
+	if err := r.doUpload(&pending); !errors.Is(err, errRecordingNotUploadable) {
+		t.Fatalf("upload of a marked file = %v, want errRecordingNotUploadable", err)
+	}
+	if got := len(uploads()); got != 0 {
+		t.Fatalf("marked file uploaded %d times", got)
+	}
+	assertRecordedCapture(t, file, []byte("audio"))
 }
