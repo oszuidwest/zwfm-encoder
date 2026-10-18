@@ -1,11 +1,51 @@
 package encoder
 
 import (
+	"bytes"
+	"io"
 	"testing"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
+
+type inputReadFunc func([]byte) (int, error)
+
+func (f inputReadFunc) Read(p []byte) (int, error) { return f(p) }
+
+func TestInputReadinessClearsAfterFlushedPCMEnds(t *testing.T) {
+	e := newSourceLifecycleTestEncoder(t, "exit")
+	e.state, e.sourceRunID = types.StateRunning, 1
+	e.stopChan = make(chan struct{})
+	t.Cleanup(func() { e.state = types.StateStopped })
+	pcm := bytes.NewReader(singleChannelPCM(LevelUpdateSamples, 16384, 16384))
+	sawTail := false
+	e.sourceStdout = io.NopCloser(inputReadFunc(func(p []byte) (int, error) {
+		n, err := pcm.Read(p)
+		if err == io.EOF {
+			// The media timeout flush reaches consumers before teardown completes.
+			sawTail = e.Status().InputReady && e.AudioLevels().Left > -10
+		}
+		return n, err
+	}))
+	e.runDistributor(1)
+	if !sawTail {
+		t.Fatal("flushed PCM did not reach readiness and the level meter")
+	}
+	if e.Status().InputReady {
+		t.Fatal("input is ready after the terminal read while source teardown is pending")
+	}
+}
+
+func TestDistributorExitKeepsNewerRunReady(t *testing.T) {
+	t.Parallel()
+	e := &Encoder{state: types.StateRunning, sourceRunID: 2}
+	e.noteAudio(2)
+	e.runDistributor(1)
+	if !e.Status().InputReady {
+		t.Fatal("old distributor invalidated the newer run's audio")
+	}
+}
 
 func TestInputReadinessRequiresRecentPCMFromCurrentRun(t *testing.T) {
 	t.Parallel()

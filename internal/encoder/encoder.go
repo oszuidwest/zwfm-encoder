@@ -1027,6 +1027,13 @@ func (e *Encoder) runDistributor(runID uint64) {
 
 	// Publish silence from this goroutine so it wins after the last live level.
 	defer e.resetAudioLevels()
+	defer func() {
+		e.audioMu.Lock()
+		if e.audioRunID == runID {
+			e.audioRunID = 0
+		}
+		e.audioMu.Unlock()
+	}()
 
 	for {
 		e.mu.RLock()
