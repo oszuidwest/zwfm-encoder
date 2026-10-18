@@ -82,7 +82,12 @@ func TestStoppedManagerDoesNotRetryHourlyRecorder(t *testing.T) {
 
 func TestRunningManagerRetriesFailedHourlyRecorder(t *testing.T) {
 	neverRotate(t)
-	m, err := NewManager(os.Args[0], t.TempDir(), 60, nil)
+	// os.Executable, not os.Args: gosec taints the args into the spool paths.
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := NewManager(executable, t.TempDir(), 60, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +113,12 @@ func TestRunningManagerRetriesFailedHourlyRecorder(t *testing.T) {
 
 func TestManagerStartWaitsForPreviousStop(t *testing.T) {
 	neverRotate(t)
-	m, err := NewManager(os.Args[0], t.TempDir(), 60, nil)
+	// os.Executable, not os.Args: gosec taints the args into the spool paths.
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := NewManager(executable, t.TempDir(), 60, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
