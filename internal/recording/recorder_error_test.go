@@ -214,6 +214,85 @@ func TestWriteErrorRecoveryUploadDoesNotDelayStop(t *testing.T) {
 	t.Fatal("recovery upload did not finish after Stop")
 }
 
+func TestWriteErrorKeepsReplacedRecording(t *testing.T) {
+	t.Setenv(fakeFFmpegFailWriteEnv, "1")
+	endpoint, uploads := conditionalPutServer(t, "", func(http.ResponseWriter, string) bool { return false })
+	cfg := testS3Recorder()
+	cfg.RecordingMode, cfg.StorageMode = types.RecordingOnDemand, types.StorageBoth
+	cfg.LocalPath, cfg.S3Endpoint = t.TempDir(), endpoint
+	r, path := errorTestRecorder(t, cfg)
+	file := startCaptureTestRecorder(t, r)
+	r.mu.RLock()
+	result := r.result
+	r.mu.RUnlock()
+	r.WriteAudio(make([]byte, 4096))
+	_ = result.Wait() // The fake exits after the first 4096 bytes.
+	other := filepath.Join(t.TempDir(), "foreign")
+	if err := os.WriteFile(other, []byte("pre-existing recording"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(file); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("Windows protects the open reservation from replacement: %v", err)
+		}
+		t.Fatal(err)
+	}
+	if err := os.Rename(other, file); err != nil {
+		t.Fatal(err)
+	}
+	writeUntilRecorderLeavesRunning(t, r)
+	if err := r.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if metadata, err := os.ReadDir(r.pendingUploadDir()); err == nil && len(metadata) != 0 {
+		t.Fatalf("replacement registered for recovery: %v", metadata)
+	}
+	if got := len(uploads()); got != 0 {
+		t.Errorf("uploaded unrelated replacement %d times", got)
+	}
+	assertRecordedCapture(t, file, []byte("pre-existing recording"))
+	assertRecorderErrorEvent(t, path, filepath.Base(file), "replaced")
+}
+
+func TestWriteErrorRecoversAudioDespiteZeroAcceptedBytes(t *testing.T) {
+	// A failed Windows pipe write can report zero accepted bytes after FFmpeg
+	// consumed PCM; the fake models it by exiting before reading stdin.
+	t.Setenv(fakeFFmpegFailWriteEnv, "empty")
+	t.Setenv(fakeFFmpegEmptyHeaderEnv, "1")
+	cfg := testS3Recorder()
+	cfg.RecordingMode, cfg.S3Endpoint = types.RecordingOnDemand, "http://127.0.0.1:1"
+	r, _ := errorTestRecorder(t, cfg)
+	startCaptureTestRecorder(t, r)
+	r.mu.RLock()
+	result := r.result
+	r.mu.RUnlock()
+	_ = result.Wait()
+	writeUntilRecorderLeavesRunning(t, r)
+	if err := r.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if result.BytesWritten() != 0 {
+		t.Fatalf("pipe accepted %d bytes, want 0", result.BytesWritten())
+	}
+	metadata, err := filepath.Glob(filepath.Join(r.pendingUploadDir(), "*"+pendingUploadMetadataSuffix))
+	if err != nil || len(metadata) != 1 { // A retry may be rewriting it next to a .tmp file.
+		t.Fatalf("output with audio not registered for recovery: %v, %v", metadata, err)
+	}
+}
+
+// writeUntilRecorderLeavesRunning feeds audio until a write error stops r.
+func writeUntilRecorderLeavesRunning(t *testing.T, r *GenericRecorder) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for r.Status().State == types.ProcessRunning {
+		if time.Now().After(deadline) {
+			t.Fatal("write error did not stop the recorder")
+		}
+		r.WriteAudio(make([]byte, 16384))
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func errorTestRecorder(t *testing.T, cfg *types.Recorder) (recorder *GenericRecorder, eventPath string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "events.jsonl")

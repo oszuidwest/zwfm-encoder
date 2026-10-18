@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,35 +40,59 @@ func TestRecordersReserveDifferentFilesBeforeEncoding(t *testing.T) {
 }
 
 func TestReservationCollisionKeepsConcurrentForeignFile(t *testing.T) {
-	cfg := localOnDemandRecorder(t, "collision")
-	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0]})
-	originalReserve := reserveRecordingFile
-	var foreign string
-	// Simulate a file appearing immediately before the atomic create, not before
-	// a separate existence check. The recorder must retry rather than adopt it.
-	first := true
-	reserveRecordingFile = func(path string) (*os.File, error) {
-		if first {
-			first = false
-			foreign = path
-			if err := os.WriteFile(path, []byte("foreign audio"), 0o600); err != nil { //nolint:gosec // Test temp recording.
-				return nil, err
-			}
+	for _, symlink := range []bool{false, true} {
+		name := "file"
+		if symlink {
+			name = "dangling symlink"
 		}
-		return originalReserve(path)
+		t.Run(name, func(t *testing.T) {
+			if symlink {
+				probe := filepath.Join(t.TempDir(), "probe")
+				if err := os.Symlink(probe+"-target", probe); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
+			}
+			cfg := localOnDemandRecorder(t, "collision")
+			r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0]})
+			originalReserve := reserveRecordingFile
+			var foreign string
+			target := filepath.Join(t.TempDir(), "outside.ts")
+			// Simulate an entry appearing immediately before the atomic create, not
+			// before a separate existence check. The recorder must retry rather than
+			// adopt it or follow it.
+			first := true
+			reserveRecordingFile = func(path string) (*os.File, error) {
+				if first {
+					first = false
+					foreign = path
+					if symlink {
+						if err := os.Symlink(target, path); err != nil {
+							return nil, err
+						}
+					} else if err := os.WriteFile(path, []byte("foreign audio"), 0o600); err != nil { //nolint:gosec // Test temp recording.
+						return nil, err
+					}
+				}
+				return originalReserve(path)
+			}
+			t.Cleanup(func() { _ = r.Stop(); reserveRecordingFile = originalReserve })
+			path := startCaptureTestRecorder(t, r)
+			pcm := []byte{1, 2, 3, 4}
+			r.WriteAudio(pcm)
+			if err := r.Stop(); err != nil {
+				t.Fatal(err)
+			}
+			if path == foreign || !strings.HasSuffix(path, "-2.ts") {
+				t.Fatalf("collision was not retried: output=%s, foreign=%s", path, foreign)
+			}
+			assertRecordedCapture(t, path, pcm)
+			if symlink {
+				assertNoRecording(t, target) // The link was not followed.
+			} else {
+				assertRecordedCapture(t, foreign, []byte("foreign audio"))
+			}
+		})
 	}
-	t.Cleanup(func() { _ = r.Stop(); reserveRecordingFile = originalReserve })
-	path := startCaptureTestRecorder(t, r)
-	pcm := []byte{1, 2, 3, 4}
-	r.WriteAudio(pcm)
-	if err := r.Stop(); err != nil {
-		t.Fatal(err)
-	}
-	if path == foreign || !strings.HasSuffix(path, "-2.ts") {
-		t.Fatalf("collision was not retried: output=%s, foreign=%s", path, foreign)
-	}
-	assertRecordedCapture(t, path, pcm)
-	assertRecordedCapture(t, foreign, []byte("foreign audio"))
 }
 
 func TestStopDuringReservationRemovesUnstartedOutput(t *testing.T) {
@@ -115,7 +140,12 @@ func TestReservationErrorDoesNotLaunchEncoder(t *testing.T) {
 	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0]})
 	r.state, r.startGen = types.ProcessStarting, 1
 	originalReserve := reserveRecordingFile
+	var calls atomic.Int32
 	reserveRecordingFile = func(path string) (*os.File, error) {
+		if calls.Add(1) > 1 {
+			t.Error("a non-collision error was retried under another name")
+			return originalReserve(path)
+		}
 		return nil, &os.PathError{Op: "open", Path: path, Err: os.ErrPermission}
 	}
 	t.Cleanup(func() { reserveRecordingFile = originalReserve; _ = r.Stop() })
@@ -147,6 +177,25 @@ func TestDiscardReservationLeavesReplacementUntouched(t *testing.T) {
 	assertRecordedCapture(t, path, []byte("replacement"))
 	if _, err := file.Stat(); !errors.Is(err, os.ErrClosed) {
 		t.Fatalf("reservation descriptor not closed: %v", err)
+	}
+}
+
+func TestReleaseReportsDisappearedOutput(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "reserved.ts")
+	file, err := reserveRecordingFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := &recordingOutput{file: file}
+	if err := os.Remove(path); err != nil {
+		_ = file.Close()
+		if runtime.GOOS == "windows" {
+			t.Skipf("Windows protects the open reservation from removal: %v", err)
+		}
+		t.Fatal(err)
+	}
+	if _, err := output.release(); !errors.Is(err, os.ErrNotExist) || !strings.Contains(err.Error(), "disappeared") {
+		t.Fatalf("release of a removed output = %v, want a disappeared error", err)
 	}
 }
 
