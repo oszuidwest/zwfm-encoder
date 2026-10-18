@@ -14,8 +14,8 @@ import (
 type Receiver struct {
 	reader      *io.PipeReader
 	writer      *io.PipeWriter
-	mediaConn   *net.UDPConn
-	controlConn *net.UDPConn
+	mediaConn   net.PacketConn
+	controlConn net.Conn
 	cancel      context.CancelFunc
 	done        chan struct{}
 	terminal    error
@@ -55,11 +55,11 @@ func Open(ctx context.Context, input string) (_ *Receiver, err error) {
 		return nil, err
 	}
 
-	mediaConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: localIP})
+	mediaConn, err := listenDanteUDP(&net.UDPAddr{IP: localIP})
 	if err != nil {
 		return nil, fmt.Errorf("open media socket: %w", err)
 	}
-	controlConn, err := net.DialUDP("udp4", &net.UDPAddr{IP: localIP}, transmitter)
+	controlConn, err := dialDanteUDP(&net.UDPAddr{IP: localIP}, transmitter)
 	if err != nil {
 		_ = mediaConn.Close()
 		return nil, fmt.Errorf("open control socket: %w", err)
@@ -126,7 +126,7 @@ func selectLocalAddress(interfaceID string, interfaces []net.Interface, transmit
 	if interfaceID != "" {
 		return firstIPv4Address(&interfaces[0])
 	}
-	conn, err := net.DialUDP("udp4", nil, transmitter)
+	conn, err := dialDanteUDP(nil, transmitter)
 	if err != nil {
 		return nil, fmt.Errorf("select local address for transmitter: %w", err)
 	}

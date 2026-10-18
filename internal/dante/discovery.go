@@ -163,7 +163,7 @@ func parseDNSResponse(packet []byte, requested string) (uint16, *channelInfo, er
 
 func discoveryInterfaces(interfaceID string) ([]net.Interface, error) {
 	if interfaceID != "" {
-		iface, err := net.InterfaceByName(interfaceID)
+		iface, err := lookupInterface(interfaceID)
 		if err == nil {
 			err = checkDiscoveryInterface(iface)
 		}
@@ -173,7 +173,7 @@ func discoveryInterfaces(interfaceID string) ([]net.Interface, error) {
 		return []net.Interface{*iface}, nil
 	}
 
-	interfaces, err := net.Interfaces()
+	interfaces, err := listInterfaces()
 	if err != nil {
 		return nil, fmt.Errorf("list network interfaces: %w", err)
 	}
@@ -196,7 +196,7 @@ func checkDiscoveryInterface(iface *net.Interface) error {
 }
 
 func firstIPv4Address(iface *net.Interface) (net.IP, error) {
-	addresses, err := iface.Addrs()
+	addresses, err := interfaceAddresses(iface)
 	if err != nil {
 		return nil, fmt.Errorf("list addresses: %w", err)
 	}
@@ -223,7 +223,7 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 	if err != nil {
 		return channelInfo{}, err
 	}
-	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero})
+	conn, err := listenDanteUDP(&net.UDPAddr{IP: net.IPv4zero})
 	if err != nil {
 		return channelInfo{}, fmt.Errorf("open discovery socket: %w", err)
 	}
@@ -231,8 +231,7 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 		_ = conn.Close()
 	}()
 
-	packetConn := ipv4.NewPacketConn(conn)
-	readPacket, err := discoveryPacketReader(conn)
+	readPacket, err := readDanteDiscovery(conn)
 	if err != nil {
 		return channelInfo{}, fmt.Errorf("enable discovery receive interface: %w", err)
 	}
@@ -252,7 +251,7 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 	for {
 		now := time.Now()
 		if !now.Before(nextQuery) {
-			if err := sendDiscoveryQuery(packetConn, interfaces, query, destination); err != nil {
+			if err := queryDante(conn, interfaces, query, destination); err != nil {
 				return channelInfo{}, fmt.Errorf("send discovery query for %q: %w", channel, err)
 			}
 			nextQuery = now.Add(time.Second)
@@ -302,7 +301,7 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 func discoveryNetworks(interfaces []net.Interface) (map[int][]*net.IPNet, error) {
 	networks := make(map[int][]*net.IPNet)
 	for i := range interfaces {
-		addresses, err := interfaces[i].Addrs()
+		addresses, err := interfaceAddresses(&interfaces[i])
 		if err != nil {
 			return nil, fmt.Errorf("network interface %q addresses: %w", interfaces[i].Name, err)
 		}
@@ -327,7 +326,8 @@ func validDiscoverySource(source *net.UDPAddr, ifIndex int, networks map[int][]*
 }
 
 // sendDiscoveryQuery succeeds when any interface accepts the query.
-func sendDiscoveryQuery(conn *ipv4.PacketConn, interfaces []net.Interface, query []byte, destination *net.UDPAddr) error {
+func sendDiscoveryQuery(socket net.PacketConn, interfaces []net.Interface, query []byte, destination *net.UDPAddr) error {
+	conn := ipv4.NewPacketConn(socket)
 	var errs []error
 	for index := range interfaces {
 		err := conn.SetMulticastInterface(&interfaces[index])
