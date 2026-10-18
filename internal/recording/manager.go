@@ -66,6 +66,25 @@ func NewManager(ffmpegPath, spoolDir string, maxDurationMinutes int, eventLogger
 		return nil, fmt.Errorf("create recording spool directory: %w", err)
 	}
 
+	// A restart must still close storage incidents the previous run left open.
+	var storagePaths []types.RecordingStorageStatus
+	if eventLogger != nil {
+		events, _, err := eventlog.ReadLast(eventLogger.Path(), eventlog.MaxReadLimit, 0, eventlog.FilterStorage)
+		if err != nil {
+			slog.Warn("could not restore recording storage incidents", "error", err)
+		}
+		seen := make(map[string]bool)
+		for _, e := range events { // Newest first: the latest event per path decides.
+			details, _ := e.Details.(map[string]any)
+			if path, _ := details["path"].(string); path != "" && !seen[path] {
+				seen[path] = true
+				if e.Type == eventlog.RecordingStorageLow {
+					storagePaths = append(storagePaths, types.RecordingStorageStatus{Path: path, Low: true})
+				}
+			}
+		}
+	}
+
 	return &Manager{
 		recorders:          make(map[string]*GenericRecorder),
 		removing:           make(map[string]struct{}),
@@ -73,6 +92,7 @@ func NewManager(ffmpegPath, spoolDir string, maxDurationMinutes int, eventLogger
 		ffmpegPath:         ffmpegPath,
 		maxDurationMinutes: maxDurationMinutes,
 		eventLogger:        eventLogger,
+		storagePaths:       storagePaths,
 		abandoned:          make(map[string]struct{}),
 		diskSpace:          diskSpace,
 	}, nil
@@ -130,8 +150,8 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 	// A process restart gives restored uploads a fresh retry window.
 	for i := range recorder.retryQueue {
 		delete(m.abandoned, recorder.retryQueue[i].request.localPath)
+		m.restoreGen++
 	}
-	m.restoreGen++
 
 	m.recorders[cfg.ID] = recorder
 	m.publishAudioRecordersLocked()

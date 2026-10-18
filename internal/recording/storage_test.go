@@ -430,3 +430,52 @@ func TestScanDuringRestoreDoesNotResurrectAbandonment(t *testing.T) {
 		t.Fatalf("restored upload: abandoned=%d pending=%d, want 0 and 1", m.AbandonedUploadCount(), m.PendingUploadCount())
 	}
 }
+
+func TestRestartClosesStorageIncidentLeftOpen(t *testing.T) {
+	for _, mode := range []string{"recovered", "still low", "buried"} {
+		t.Run(mode, func(t *testing.T) {
+			spool, logPath := t.TempDir(), filepath.Join(t.TempDir(), "events.jsonl")
+			cfg := localOnDemandRecorder(t, "local")
+			cfg.Enabled = true
+			low := func(string) (uint64, uint64, error) { return 0, 20 << 30, nil }
+			logger, err := eventlog.NewLogger(logPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			old := storageTestManager(t, spool)
+			old.eventLogger, old.diskSpace = logger, low
+			if err := old.AddRecorder(cfg); err != nil {
+				t.Fatal(err)
+			}
+			old.checkStorage(old.cleanupStopCh) // The process stops with the incident open.
+			if mode == "buried" { // More than ReadLast's limit of unrelated events.
+				for range 600 {
+					_ = logger.Log(&eventlog.Event{Type: eventlog.RecorderStarted, Message: "unrelated"})
+				}
+			}
+			fresh, err := NewManager("", spool, 0, logger)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fresh.running, fresh.cleanupStopCh = true, make(chan struct{})
+			fresh.diskSpace = func(string) (uint64, uint64, error) { return 10 << 30, 20 << 30, nil }
+			if mode == "still low" {
+				fresh.diskSpace = low
+			}
+			if err := fresh.AddRecorder(cfg); err != nil {
+				t.Fatal(err)
+			}
+			callbacks := 0
+			fresh.SetStorageChangeCallback(func([]types.RecordingStorageStatus) { callbacks++ })
+			fresh.checkStorage(fresh.cleanupStopCh)
+			want := 1 // One aggregate recovery.
+			if mode == "still low" {
+				want = 0 // No duplicate low.
+			}
+			if callbacks != want {
+				t.Fatalf("callbacks after restart = %d, want %d (recovery once, no duplicate low)", callbacks, want)
+			}
+			_ = logger.Close()
+		})
+	}
+}

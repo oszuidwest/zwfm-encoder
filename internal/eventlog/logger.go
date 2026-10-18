@@ -373,6 +373,8 @@ const (
 	FilterInput TypeFilter = "input"
 	// FilterRecorder selects recorder events.
 	FilterRecorder TypeFilter = "recorder"
+	// FilterStorage selects recording storage warnings and recoveries.
+	FilterStorage TypeFilter = "storage"
 )
 
 // MaxReadLimit caps the number of events returned by [ReadLast].
@@ -511,6 +513,8 @@ func matchesFilter(t EventType, filter TypeFilter) bool {
 		return t.Category() == CategoryAudio
 	case FilterRecorder:
 		return t.Category() == CategoryRecorder
+	case FilterStorage:
+		return t == RecordingStorageLow || t == RecordingStorageRestored
 	default: // FilterAll and unknown filters match everything
 		return true
 	}
