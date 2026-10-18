@@ -41,7 +41,8 @@ const (
 	inputStallTimeout = 10 * time.Second
 	// Leave headroom for capture's WaitDelay kill and source-loop cleanup.
 	sourceShutdownTimeout = types.ShutdownTimeout + 2*time.Second
-	restartTimeout        = 30 * time.Second
+	// restartTimeout bounds the wait for source teardown after Stop returns.
+	restartTimeout = 30 * time.Second
 )
 
 // ErrNoAudioInput is returned when no audio input device is configured.
@@ -573,22 +574,45 @@ func (e *Encoder) resetDetection() {
 	e.alertOrchestrator.DrainLogs()
 }
 
-// Restart stops and restarts the encoder.
+// Restart stops and restarts the encoder. It waits for the old source to
+// finish its teardown, up to restartTimeout after Stop returns, and publishes
+// a failure in the status shown on the dashboard.
 func (e *Encoder) Restart() error {
-	ctx, cancel := context.WithTimeout(context.Background(), restartTimeout)
-	defer cancel()
-	return e.restart(ctx)
+	e.mu.RLock()
+	generation := e.lifecycleGeneration
+	e.mu.RUnlock()
+	return e.restart(generation)
 }
 
-func (e *Encoder) restart(ctx context.Context) (err error) {
+// RestartInBackground restarts a running or starting encoder without waiting.
+// An explicit Stop after this call supersedes the restart.
+func (e *Encoder) RestartInBackground() {
+	e.mu.RLock()
+	active := e.state == types.StateRunning || e.state == types.StateStarting
+	generation := e.lifecycleGeneration
+	e.mu.RUnlock()
+	if !active {
+		return
+	}
+	go func() {
+		if err := e.restart(generation); err != nil {
+			slog.Error("failed to restart encoder", "error", err)
+		}
+	}()
+}
+
+func (e *Encoder) restart(generation uint64) (err error) {
 	e.mu.Lock()
 	if e.restartGate == nil {
 		e.restartGate = make(chan struct{}, 1)
 	}
 	gate := e.restartGate
-	generation := e.lifecycleGeneration
 	e.mu.Unlock()
-	acquired := false
+	// Unbounded: a restart ahead of this one may wait minutes for consumers to
+	// stop, and this one must not report a failure that is not its own. A
+	// channel, unlike sync.Mutex, blocks durably under synctest.
+	gate <- struct{}{}
+	defer func() { <-gate }()
 	defer func() {
 		if err != nil {
 			e.mu.Lock()
@@ -597,28 +621,12 @@ func (e *Encoder) restart(ctx context.Context) (err error) {
 			}
 			e.mu.Unlock()
 		}
-		if acquired {
-			<-gate
-		}
 	}()
-	select {
-	case gate <- struct{}{}:
-		acquired = true
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	stopResult := make(chan error, 1)
-	go func() { stopResult <- e.stop(&generation) }()
-	select {
-	case stopErr := <-stopResult:
-		if stopErr != nil {
-			slog.Warn("stop reported an error before restart", "error", stopErr)
-		}
-	case <-ctx.Done():
-		return fmt.Errorf("stop: %w", ctx.Err())
+
+	// Not bounded either: consumers can take long to stop (a final upload),
+	// and giving up would leave the encoder stopped for good.
+	if stopErr := e.stop(&generation); stopErr != nil {
+		slog.Warn("stop reported an error before restart", "error", stopErr)
 	}
 	e.mu.RLock()
 	done := e.stopDone
@@ -626,11 +634,15 @@ func (e *Encoder) restart(ctx context.Context) (err error) {
 	if done != nil {
 		select {
 		case <-done:
-		case <-ctx.Done():
-			return fmt.Errorf("wait for source teardown: %w", ctx.Err())
+		case <-time.After(restartTimeout):
+			return fmt.Errorf("source teardown did not finish within %s", restartTimeout)
 		}
 	}
-	return e.start(&generation)
+	// A Start from the UI or tray may already have brought the encoder up.
+	if err := e.start(&generation); !errors.Is(err, ErrAlreadyRunning) {
+		return err
+	}
+	return nil
 }
 
 // Close releases process-lifetime resources. Callers should stop the encoder first.
