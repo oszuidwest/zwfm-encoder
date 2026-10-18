@@ -46,6 +46,9 @@ func TestGeneratedRecorderIDsKeepReadablePrefixes(t *testing.T) {
 		if got := (&Recorder{ID: id}).RecordingFilePrefix(); got != want {
 			t.Errorf("prefix of %q = %q, want %q", id, got, want)
 		}
+	} // Too long to stay readable within filename limits: hashed like any long ID.
+	if got := (&Recorder{ID: "recorder-" + strings.Repeat("a", 72)}).RecordingFilePrefix(); !strings.HasPrefix(got, "@h") || len(got) != 66 {
+		t.Errorf("long generated ID prefix = %q, want a 66-byte @h hash", got)
 	}
 }
 
