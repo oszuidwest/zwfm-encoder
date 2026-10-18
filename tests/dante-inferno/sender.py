@@ -18,6 +18,7 @@ try:
                INFERNO_CLOCK_PATH='/tmp/audit-clock', INFERNO_NAME='inferno-audit',
                INFERNO_BIND_IP='eth0', INFERNO_SAMPLE_RATE='48000',
                INFERNO_TX_CHANNELS='2', INFERNO_RX_CHANNELS='2',
+               INFERNO_TX_LATENCY_NS='50000000',
                INFERNO_ALT_PORT='14450', INFERNO_PROCESS_ID='1', RUST_LOG='info')
     start(['test-clock'], 'clock', env=env)
     time.sleep(1)
