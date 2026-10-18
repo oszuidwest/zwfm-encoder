@@ -94,7 +94,7 @@ type Encoder struct {
 	retryCount          int
 	backoff             *util.Backoff
 	inputLostAt         time.Time                         // start of the open outage; zero when no input_lost awaits its input_restored
-	audioMu             sync.Mutex                        // guards audioRunID, steadyAudioSince and lastAudioAt
+	audioMu             sync.Mutex                        // guards audioRunID, steadyAudioSince, lastAudioAt and audioEnded
 	audioRunID          uint64                            // source run the audio times belong to
 	steadyAudioSince    time.Time                         // start of audioRunID's PCM without pauses over inputAudioGap
 	lastAudioAt         time.Time                         // latest PCM of audioRunID

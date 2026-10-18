@@ -41,13 +41,16 @@ func TestInputReadinessClearsAfterFlushedPCMEnds(t *testing.T) {
 	}
 }
 
-func TestDistributorExitKeepsNewerRunReady(t *testing.T) {
+func TestRestartedRunIsReadyAfterEarlierRunEnded(t *testing.T) {
 	t.Parallel()
-	e := &Encoder{state: types.StateRunning, sourceRunID: 2}
+	e := &Encoder{state: types.StateRunning, sourceRunID: 1}
+	e.noteAudio(1)
+	e.runDistributor(1) // run 1's PCM ends
+	e.sourceRunID = 2
 	e.noteAudio(2)
-	e.runDistributor(1)
+	e.runDistributor(1) // a stale exit of the old run
 	if !e.Status().InputReady {
-		t.Fatal("old distributor invalidated the newer run's audio")
+		t.Fatal("the restarted run is not ready after an earlier run's PCM ended")
 	}
 }
 
