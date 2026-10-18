@@ -312,3 +312,56 @@ func TestFailedOutputMarkerHoldsTheReason(t *testing.T) {
 		t.Fatalf("failed output marker = %q, %v; want the failure reason", reason, err)
 	}
 }
+
+func TestRecorderIDCannotBeReaddedWhileItsRemovalStops(t *testing.T) {
+	t.Parallel()
+	m, err := NewManager("", t.TempDir(), 60, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := testS3Recorder()
+	m.mu.Lock()
+	m.removing[cfg.ID] = struct{}{} // RemoveRecorder is still stopping the old run.
+	m.mu.Unlock()
+	if err := m.AddRecorder(cfg); err == nil {
+		t.Fatal("re-added a recorder whose spool still holds the removed run's output")
+	}
+	if err := m.RemoveRecorder("missing"); err == nil {
+		t.Fatal("removing an unknown recorder succeeded")
+	}
+	m.mu.Lock()
+	delete(m.removing, cfg.ID)
+	m.mu.Unlock()
+	if err := m.AddRecorder(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RemoveRecorder(cfg.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(m.removing) != 0 {
+		t.Fatalf("finished removal still blocks its ID: %v", m.removing)
+	}
+}
+
+func TestDiscardMarksAReplacedReservationAsFailed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "reserved.ts")
+	file, err := reserveRecordingFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := &recordingOutput{file: file}
+	if err := output.markUnfinalized(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		_ = file.Close()
+		t.Skipf("the platform protects the open reservation: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output.discard()
+	if failed, err := recordingFailed(path); err != nil || !failed {
+		t.Fatalf("replaced reservation would pass for a crash leftover: failed=%t, %v", failed, err)
+	}
+}

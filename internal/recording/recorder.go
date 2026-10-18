@@ -787,11 +787,13 @@ func (o *recordingOutput) discard() {
 	}
 	if _, err := o.release(); err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
+			o.recordFailure(err) // A replacement must not pass for a crash leftover.
 			slog.Warn("cannot discard recording reservation", "file", o.file.Name(), "error", err)
 		}
 		return
 	}
 	if err := o.remove(); err != nil {
+		o.recordFailure(err)
 		slog.Warn("failed to discard recording reservation", "file", o.file.Name(), "error", err)
 	}
 }
