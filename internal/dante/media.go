@@ -71,6 +71,9 @@ func (p *mediaProcessor) parse(datagram []byte) (mediaPacket, bool) {
 	}
 	seconds := uint64(binary.BigEndian.Uint32(datagram[1:5]))
 	offset := uint64(binary.BigEndian.Uint32(datagram[5:9]))
+	if offset >= sampleRate {
+		return mediaPacket{}, false
+	}
 	return mediaPacket{
 		position: seconds*sampleRate + offset,
 		payload:  append([]byte(nil), datagram[mediaHeaderSize:]...),
@@ -189,7 +192,12 @@ func receiveMedia(
 			return err
 		}
 		if keepaliveTarget != nil && !now.Before(nextKeepalive) {
-			_, _ = conn.WriteTo([]byte{0x13, 0x37}, keepaliveTarget)
+			if err := conn.SetWriteDeadline(now.Add(keepaliveInterval)); err != nil {
+				return fmt.Errorf("set keepalive deadline: %w", err)
+			}
+			if _, err := conn.WriteTo([]byte{0x13, 0x37}, keepaliveTarget); err != nil {
+				return fmt.Errorf("send media keepalive: %w", err)
+			}
 			nextKeepalive = now.Add(keepaliveInterval)
 		}
 

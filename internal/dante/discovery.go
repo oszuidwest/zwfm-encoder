@@ -31,7 +31,9 @@ type channelInfo struct {
 func parseTXT(items []string) (channelInfo, error) {
 	values := make(map[string]string)
 	for _, item := range items {
-		if key, value, found := strings.Cut(item, "="); found {
+		key, value, _ := strings.Cut(item, "=")
+		key = strings.ToLower(key)
+		if _, exists := values[key]; !exists {
 			values[key] = value
 		}
 	}

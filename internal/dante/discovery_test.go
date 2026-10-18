@@ -33,6 +33,12 @@ func TestParseTXT(t *testing.T) {
 				id: 9, rate: 48000, bits: 16, nchan: 4, fppMax: 64, fppMin: 8,
 			},
 		},
+		{
+			name:  "case insensitive keys and first duplicate wins",
+			items: []string{"ID=9", "id=1", "RATE=48000", "rate=44100", "ENC=24", "enc=16", "NCHAN=2", "FPP=32,16"},
+			want:  channelInfo{id: 9, rate: 48000, bits: 24, nchan: 2, fppMax: 32, fppMin: 16},
+		},
+		{name: "boolean first occurrence cannot be replaced", items: []string{"id", "id=1", "rate=48000", "enc=24", "nchan=2", "fpp=32,32"}, wantError: true},
 		{name: "missing ID", items: []string{"rate=48000", "enc=24", "nchan=2", "fpp=32,32"}, wantError: true},
 		{name: "ID overflow", items: []string{"id=65536", "rate=48000", "enc=24", "nchan=2", "fpp=32,32"}, wantError: true},
 		{name: "malformed rate", items: []string{"id=1", "rate=x", "enc=24", "nchan=2", "fpp=32,32"}, wantError: true},
