@@ -320,6 +320,8 @@ func FuzzGroupEvents(f *testing.F) {
 				},
 			})
 		}
+		// GroupEvents takes ReadLast's newest-first order.
+		slices.Reverse(events)
 		views := DecorateEvents(events)
 		groups := GroupEvents(views, nil)
 		assertPartition(t, views, &groups)
@@ -831,12 +833,12 @@ func TestGroupEventsPairsInputByAppendOrderAfterClockRollback(t *testing.T) {
 	for _, restoredSecond := range []int{-3600, 0, 10} {
 		t.Run(fmt.Sprint(restoredSecond), func(t *testing.T) {
 			// ReadLast supplies reverse append order, independent of the clock.
-			events := DecorateEvents([]Event{
+			events := decorateNewestFirst(
 				testEvent(base, -7200, InputLost, map[string]any{"error": "latest outage"}),
 				testEvent(base, restoredSecond, InputRestored, nil),
 				testEvent(base, 20, SilenceStart, map[string]any{"incident_id": 7}),
 				testEvent(base, 0, InputLost, map[string]any{"error": "first outage"}),
-			})
+			)
 			groups := GroupEvents(events, nil)
 			if len(groups.Resolved) != 1 || len(groups.Attention) != 2 {
 				t.Fatalf("groups = %+v, want one resolved input outage and two open incidents", groups)
@@ -878,9 +880,10 @@ func TestGroupEventsPairsStreamAndSilenceByAppendOrderAfterClockRollback(t *test
 	if len(groups.Attention) != 0 || len(groups.Resolved) != 2 {
 		t.Fatalf("groups = %+v, want both incidents resolved", groups)
 	}
+	recovery := map[string]EventType{"Stream disconnected": StreamStarted, "Silence on input": SilenceEnd}
 	for _, item := range groups.Resolved {
-		if last := item.Events[len(item.Events)-1].Type; last != StreamStarted && last != SilenceEnd {
-			t.Fatalf("%s lists %q last, want its recovery", item.Title, last)
+		if last := item.Events[len(item.Events)-1].Type; last != recovery[item.Title] {
+			t.Fatalf("%s lists %q last, want %q", item.Title, last, recovery[item.Title])
 		}
 	}
 	assertPartition(t, events, &groups)
