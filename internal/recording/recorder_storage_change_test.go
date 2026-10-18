@@ -154,3 +154,26 @@ func TestRecordingDirectoryRejectsTraversalBeforeCreation(t *testing.T) {
 		})
 	}
 }
+
+func TestSwitchingToOnDemandCancelsHourlyRotation(t *testing.T) {
+	neverRotate(t)
+	r := startHourlyTestRecorder(t, "mode-switch")
+	r.mu.RLock()
+	previous, path, generation := r.result, r.currentFile, r.rotationGeneration
+	r.mu.RUnlock()
+	updated := r.Config()
+	updated.RecordingMode = types.RecordingOnDemand
+	if err := r.UpdateConfig(&updated); err != nil {
+		t.Fatal(err)
+	}
+	var rearmed atomic.Int32
+	never := afterFunc
+	afterFunc = func(d time.Duration, f func()) *time.Timer { rearmed.Add(1); return never(d, f) }
+	r.rotateFile(generation) // A callback that was already due.
+	r.mu.RLock()
+	unchanged := r.result == previous && r.currentFile == path
+	r.mu.RUnlock()
+	if !unchanged || rearmed.Load() != 0 {
+		t.Fatalf("on-demand recorder rotated (unchanged=%t) or rescheduled %d rotations", unchanged, rearmed.Load())
+	}
+}
