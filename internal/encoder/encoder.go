@@ -1104,14 +1104,17 @@ func (e *Encoder) RemoveRecorder(id string) error {
 	if e.recordingManager == nil {
 		return ErrRecordingNotAvailable
 	}
-	if err := e.config.RemoveRecorder(id); err != nil {
+	// A deletion in the file but not confirmed by storage is still a deletion:
+	// the recorder must stop, or it keeps recording with no way to reach it.
+	err := e.config.RemoveRecorder(id)
+	if err != nil && !errors.Is(err, config.ErrSaveCommitted) {
 		return err
 	}
 	// Only fails for a recorder the runtime never had, which is the wanted state.
-	if err := e.recordingManager.RemoveRecorder(id); err != nil {
-		slog.Warn("error removing recorder from manager", "id", id, "error", err)
+	if rmErr := e.recordingManager.RemoveRecorder(id); rmErr != nil {
+		slog.Warn("error removing recorder from manager", "id", id, "error", rmErr)
 	}
-	return nil
+	return err
 }
 
 // UpdateRecorder modifies a recorder configuration.
