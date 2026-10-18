@@ -349,6 +349,10 @@ func (r *GenericRecorder) enqueuePendingUpload(pending *pendingUpload) {
 	r.mu.RLock()
 
 	// Prevent duplicates
+	if _, exists := r.retryInFlight[pending.request.localPath]; exists {
+		r.mu.RUnlock()
+		return
+	}
 	for i := range r.retryQueue {
 		if r.retryQueue[i].request.localPath == pending.request.localPath {
 			r.mu.RUnlock()
@@ -370,6 +374,10 @@ func (r *GenericRecorder) enqueuePendingUpload(pending *pendingUpload) {
 // processRetryQueue attempts to upload all pending files.
 // Called from rotateFile() at hour boundaries.
 func (r *GenericRecorder) processRetryQueue() {
+	if !r.retryProcessMu.TryLock() {
+		return // Another batch is already processing this recorder's uploads.
+	}
+	defer r.retryProcessMu.Unlock()
 	r.mu.Lock()
 	if len(r.retryQueue) == 0 {
 		r.mu.Unlock()
@@ -379,7 +387,20 @@ func (r *GenericRecorder) processRetryQueue() {
 	// Copy and clear queue
 	pending := slices.Clone(r.retryQueue)
 	r.retryQueue = nil
+	if r.retryInFlight == nil {
+		r.retryInFlight = make(map[string]struct{})
+	}
+	for i := range pending {
+		r.retryInFlight[pending[i].request.localPath] = struct{}{}
+	}
 	r.mu.Unlock()
+	defer func() {
+		r.mu.Lock()
+		for i := range pending {
+			delete(r.retryInFlight, pending[i].request.localPath)
+		}
+		r.mu.Unlock()
+	}()
 
 	now := time.Now()
 

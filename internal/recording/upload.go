@@ -72,7 +72,16 @@ func TestS3Connection(cfg *S3Config) error {
 		return fmt.Errorf("storage does not support conditional writes (If-None-Match), which recordings need to never overwrite each other: %w", err)
 	}
 	if err != nil {
-		return fmt.Errorf("upload test file: %w", err)
+		// A committed PUT can lose its response and retry as 412. Only our
+		// unique identity proves this object is ours to accept and delete.
+		verifyCtx, cancelVerify := context.WithTimeout(context.Background(), 10*time.Second)
+		head, headErr := client.HeadObject(verifyCtx, &s3.HeadObjectInput{
+			Bucket: aws.String(cfg.Bucket), Key: aws.String(testKey),
+		})
+		cancelVerify()
+		if headErr != nil || head.Metadata["zwfm-upload-id"] != uploadID {
+			return fmt.Errorf("upload test file: %w", err)
+		}
 	}
 	defer func() {
 		// HeadObject may have used up the probe's deadline; clean up with a fresh one.

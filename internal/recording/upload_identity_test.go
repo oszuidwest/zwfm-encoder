@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
@@ -34,17 +35,18 @@ type multipartTestUpload struct {
 
 // identityStore models committed objects separately from in-progress multipart uploads.
 type identityStore struct {
-	mu             sync.Mutex
-	objects        map[string]storedTestUpload
-	multipart      map[string]*multipartTestUpload
-	nextID         int
-	loseResponse   bool
-	headStatus     int
-	rejectKey      string
-	stripIdentity  bool
-	inBodyConflict bool
-	beforeWrite    func(string)
-	keys           []string
+	mu              sync.Mutex
+	objects         map[string]storedTestUpload
+	multipart       map[string]*multipartTestUpload
+	nextID          int
+	loseResponse    bool
+	headStatus      int
+	rejectKey       string
+	stripIdentity   bool
+	foreignIdentity bool
+	inBodyConflict  bool
+	beforeWrite     func(string)
+	keys            []string
 }
 
 func newIdentityStore(t *testing.T) (*identityStore, *types.Recorder) {
@@ -160,6 +162,9 @@ func (s *identityStore) commit(w http.ResponseWriter, req *http.Request, key str
 	}
 	if s.stripIdentity {
 		object.id = ""
+	}
+	if s.foreignIdentity {
+		object.id = "foreign"
 	}
 	s.objects[key] = object
 	if s.loseResponse {
@@ -441,6 +446,89 @@ func TestConcurrentRetryEnqueueKeepsOnePersistedIdentity(t *testing.T) {
 	if err != nil || len(persisted) != 1 || r.PendingUploadCount() != 1 || persisted[0].uploadID == "" ||
 		persisted[0].uploadID != r.retryQueue[0].uploadID {
 		t.Fatalf("concurrent enqueue changed/duplicated identity: persisted %+v, queued %+v, %v", persisted, r.retryQueue, err)
+	}
+}
+
+func TestRetryEnqueueWhileUploadIsInFlightKeepsIdentity(t *testing.T) {
+	t.Parallel()
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprintf("failure=%t", fail), func(t *testing.T) {
+			t.Parallel()
+			store, cfg := newIdentityStore(t)
+			if fail {
+				store.rejectKey = uploadTestKey
+			}
+			r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
+			file := writeSpoolFile(t, r.spoolDir, r.id, filepath.Base(uploadTestKey), "audio")
+			req := uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: 5, deleteAfterUpload: true}
+			r.addToRetryQueue(req, "down")
+			originalID := r.retryQueue[0].uploadID
+			entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			unblock := func() { once.Do(func() { close(release) }) }
+			store.beforeWrite = func(string) { close(entered); <-release }
+			go func() { defer close(done); r.processRetryQueue() }()
+			t.Cleanup(func() {
+				unblock()
+				select {
+				case <-done:
+				case <-time.After(10 * time.Second):
+					t.Error("retry did not finish after releasing the test store")
+				}
+			})
+			select {
+			case <-entered:
+			case <-time.After(10 * time.Second):
+				t.Fatal("retry did not reach the test store")
+			}
+			r.addToRetryQueue(req, "duplicate while retrying")
+			persisted, err := r.loadPendingUploads()
+			if err != nil || len(persisted) != 1 || persisted[0].uploadID != originalID {
+				t.Fatalf("in-flight enqueue replaced identity: %+v, %v; want %s", persisted, err, originalID)
+			}
+			unblock()
+			<-done
+			want := 0
+			if fail {
+				want = 1
+			}
+			if len(r.retryQueue) != want || fail && r.retryQueue[0].uploadID != originalID {
+				t.Fatalf("queue after retry = %+v, want %d entries with original identity", r.retryQueue, want)
+			}
+			r.mu.RLock()
+			remaining := len(r.retryInFlight)
+			r.mu.RUnlock()
+			if remaining != 0 {
+				t.Fatal("completed batch retained in-flight ownership")
+			}
+		})
+	}
+}
+
+func TestS3ConnectionLostPutResponseCleansOnlyOwnedProbe(t *testing.T) {
+	t.Parallel()
+	for _, foreign := range []bool{false, true} {
+		t.Run(fmt.Sprintf("foreign=%t", foreign), func(t *testing.T) {
+			t.Parallel()
+			store, cfg := newIdentityStore(t)
+			store.loseResponse, store.foreignIdentity = true, foreign
+			err := TestRecorderS3Connection(cfg)
+			if !foreign && err != nil || foreign && err == nil {
+				t.Fatalf("connection test = %v, foreign=%t", err, foreign)
+			}
+			store.mu.Lock()
+			defer store.mu.Unlock()
+			want := 0
+			if foreign {
+				want = 1
+			}
+			if len(store.objects) != want {
+				t.Fatalf("remaining objects = %v, want %d", store.objects, want)
+			}
+			if len(store.keys) < 2 {
+				t.Fatal("test did not exercise the conditional PUT retry")
+			}
+		})
 	}
 }
 
