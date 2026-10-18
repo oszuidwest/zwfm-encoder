@@ -158,7 +158,7 @@ A datagram of 9 bytes or shorter, whose sample offset is 48000 or more, or whose
 
 ### 5.2 Keepalive
 
-At least every 250 ms, once media has been received, send a 2-byte UDP datagram `0x13 0x37` from the media socket to the source address of the most recent accepted media datagram. Without keepalives the transmitter stops the flow. Bound each write to the 200 ms keepalive interval: a write that times out ends reception, other send errors are tolerated, because the transmitter tolerates missed keepalives, and reported with the 5-second media timeout if the flow then stops.
+At least every 250 ms, once media has been received, send a 2-byte UDP datagram `0x13 0x37` from the media socket to the source address of the most recent accepted media datagram. Without keepalives the transmitter stops the flow. Bound each write to the 200 ms keepalive interval. A write that times out ends reception. Other send errors are tolerated, because the transmitter tolerates missed keepalives; if the flow then stops, the 5-second media timeout reports the last of them.
 
 ### 5.3 Ordering, loss and timeouts
 
