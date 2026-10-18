@@ -48,3 +48,12 @@ func TestGeneratedRecorderIDsKeepReadablePrefixes(t *testing.T) {
 		}
 	}
 }
+
+func TestInitializeFileIdentityKeepsRestoredLegacyPrefix(t *testing.T) {
+	t.Parallel()
+	r := Recorder{ID: "r1", Name: "Renamed", LegacyFilePrefix: "Before"} // Restored after a downgrade.
+	r.InitializeFileIdentity()
+	if !r.IDBasedFiles || r.LegacyFilePrefix != "Before" {
+		t.Fatalf("restored legacy prefix overwritten: %+v", r)
+	}
+}

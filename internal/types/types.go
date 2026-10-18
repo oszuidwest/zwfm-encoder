@@ -458,16 +458,19 @@ type Recorder struct {
 	LegacyFilePrefix string `json:"legacy_file_prefix,omitempty"`
 }
 
-// InitializeFileIdentity captures the pre-upgrade prefix once, before any rename.
 // generatedRecorderID reports whether id has the generated recorder-<hex> form.
 func generatedRecorderID(id string) bool {
 	suffix, ok := strings.CutPrefix(id, "recorder-")
 	return ok && suffix != "" && len(id) <= 80 && strings.Trim(suffix, "0123456789abcdef") == ""
 }
 
+// InitializeFileIdentity captures the pre-upgrade prefix once, before any rename.
+// A prefix restored by hand after a downgrade is kept.
 func (r *Recorder) InitializeFileIdentity() {
 	if !r.IDBasedFiles {
-		r.LegacyFilePrefix = util.SanitizeFilename(r.Name)
+		if r.LegacyFilePrefix == "" {
+			r.LegacyFilePrefix = util.SanitizeFilename(r.Name)
+		}
 		r.IDBasedFiles = true
 	}
 }
