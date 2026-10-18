@@ -40,6 +40,9 @@ func TestLegacyRecorderIdentityPersistsThroughReplacementAndReload(t *testing.T)
 	if !newRecorder.IDBasedFiles || newRecorder.LegacyFilePrefix != "" || newRecorder.RecordingFilePrefix() == prefix {
 		t.Fatal("a new ID adopted the earlier recorder's legacy prefix")
 	}
+	if len(strings.TrimPrefix(newRecorder.ID, "recorder-")) != 32 {
+		t.Fatal("persistent recorder ownership needs a 128-bit random ID")
+	}
 	mustLoad(t, New(path))
 }
 

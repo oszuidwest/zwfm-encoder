@@ -848,12 +848,12 @@ func (c *Config) AddRecorder(recorder *types.Recorder) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Generate unique ID
-	shortID, err := generateShortID()
-	if err != nil {
+	// Recorder IDs also own files left after deletion, so use 128 random bits.
+	idBytes := make([]byte, 16)
+	if _, err := rand.Read(idBytes); err != nil {
 		return fmt.Errorf("failed to generate ID: %w", err)
 	}
-	recorder.ID = fmt.Sprintf("recorder-%s", shortID)
+	recorder.ID = "recorder-" + hex.EncodeToString(idBytes)
 	// A new ID must never adopt recordings left by a deleted recorder's name.
 	recorder.IDBasedFiles, recorder.LegacyFilePrefix = true, ""
 
