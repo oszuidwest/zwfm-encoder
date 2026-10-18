@@ -511,13 +511,17 @@ func TestRetryRequestedDuringBatchRunsAfterIt(t *testing.T) {
 	queued := writeSpoolFile(t, r.spoolDir, r.id, "queued-meanwhile.mp3", "later")
 	var once sync.Once
 	var overlapped atomic.Bool
+	var queuedID string
 	// While the first batch uploads, queue another file and ask for a retry pass.
-	store.beforeWrite = func(key string) {
+	store.beforeWrite = func(id string) {
 		once.Do(func() {
 			r.addToRetryQueue(uploadRequest{localPath: queued, s3Key: "queued-meanwhile.mp3", fileSize: 5, deleteAfterUpload: true}, "queued meanwhile")
+			r.mu.RLock()
+			queuedID = r.retryQueue[0].uploadID
+			r.mu.RUnlock()
 			r.processRetryQueue()
 		})
-		if key == "queued-meanwhile.mp3" {
+		if id == queuedID {
 			r.mu.RLock()
 			_, first := r.retryInFlight[file]
 			r.mu.RUnlock()
