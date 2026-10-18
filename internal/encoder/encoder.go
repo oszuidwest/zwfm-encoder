@@ -39,6 +39,9 @@ const (
 	inputStartupTimeout = 30 * time.Second
 	// inputStallTimeout ends a source run whose audio stops for this long.
 	inputStallTimeout = 10 * time.Second
+	// Leave headroom for capture's WaitDelay kill and source-loop cleanup.
+	sourceShutdownTimeout = types.ShutdownTimeout + 2*time.Second
+	restartTimeout        = 30 * time.Second
 )
 
 // ErrNoAudioInput is returned when no audio input device is configured.
@@ -84,6 +87,8 @@ type Encoder struct {
 	sourceStdout        io.Reader
 	sourceRunID         uint64
 	sourceLoopDone      chan struct{}
+	stopDone            chan struct{}
+	restartGate         chan struct{} // Serializes restarts; initialized under mu.
 	state               types.EncoderState
 	stopChan            chan struct{}
 	mu                  sync.RWMutex
@@ -465,12 +470,19 @@ func (e *Encoder) Start() error {
 func (e *Encoder) Stop() error {
 	e.mu.Lock()
 
-	if e.state == types.StateStopped || e.state == types.StateStopping {
+	if e.state == types.StateStopped {
 		e.mu.Unlock()
 		return nil
 	}
+	if e.state == types.StateStopping {
+		done := e.stopDone
+		e.mu.Unlock()
+		return waitForSourceStop(done)
+	}
 
 	e.state = types.StateStopping
+	e.stopDone = make(chan struct{})
+	stopped := e.stopDone
 
 	if e.stopChan != nil {
 		close(e.stopChan)
@@ -487,7 +499,6 @@ func (e *Encoder) Stop() error {
 		sourceCancel()
 	}
 
-	stopped := make(chan struct{})
 	// A timed-out Stop must keep Start out until the old loop and cleanup finish.
 	go func() {
 		if loopDone != nil {
@@ -500,15 +511,21 @@ func (e *Encoder) Stop() error {
 		close(stopped)
 	}()
 
+	if err := waitForSourceStop(stopped); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+func waitForSourceStop(stopped <-chan struct{}) error {
 	select {
 	case <-stopped:
 		slog.Info("source capture stopped gracefully")
-	case <-time.After(types.ShutdownTimeout):
+		return nil
+	case <-time.After(sourceShutdownTimeout):
 		slog.Warn("source capture did not stop in time")
-		errs = append(errs, fmt.Errorf("source shutdown timeout"))
+		return errors.New("source shutdown timeout")
 	}
-
-	return errors.Join(errs...)
 }
 
 // stopConsumers stops managed streams and recorders and combines their errors.
@@ -540,10 +557,58 @@ func (e *Encoder) resetDetection() {
 
 // Restart stops and restarts the encoder.
 func (e *Encoder) Restart() error {
-	if err := e.Stop(); err != nil {
-		return fmt.Errorf("stop: %w", err)
+	ctx, cancel := context.WithTimeout(context.Background(), restartTimeout)
+	defer cancel()
+	return e.restart(ctx)
+}
+
+func (e *Encoder) restart(ctx context.Context) (err error) {
+	e.mu.Lock()
+	if e.restartGate == nil {
+		e.restartGate = make(chan struct{}, 1)
 	}
-	time.Sleep(1 * time.Second)
+	gate := e.restartGate
+	e.mu.Unlock()
+	acquired := false
+	defer func() {
+		if err != nil {
+			e.mu.Lock()
+			e.lastError = fmt.Sprintf("audio input restart failed: %v", err)
+			e.mu.Unlock()
+		}
+		if acquired {
+			<-gate
+		}
+	}()
+	select {
+	case gate <- struct{}{}:
+		acquired = true
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	stopResult := make(chan error, 1)
+	go func() { stopResult <- e.Stop() }()
+	select {
+	case stopErr := <-stopResult:
+		if stopErr != nil {
+			slog.Warn("stop reported an error before restart", "error", stopErr)
+		}
+	case <-ctx.Done():
+		return fmt.Errorf("stop: %w", ctx.Err())
+	}
+	e.mu.RLock()
+	done := e.stopDone
+	e.mu.RUnlock()
+	if done != nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return fmt.Errorf("wait for source teardown: %w", ctx.Err())
+		}
+	}
 	return e.Start()
 }
 
