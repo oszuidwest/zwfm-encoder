@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"html/template"
 	"log/slog"
 	"net"
@@ -70,7 +71,7 @@ func NewServer(cfg *config.Config, enc *encoder.Encoder) *Server {
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	conn, err := server.UpgradeConnection(w, r)
+	conn, err := server.UpgradeConnection(w, r, s.config.Snapshot().TrustedProxies)
 	if err != nil {
 		slog.Error("WebSocket upgrade failed", "error", err)
 		return
@@ -392,7 +393,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
 			return
 		}
-		if !s.sessions.AllowLogin(r, username, cfg.TrustedProxies) {
+		if err := s.sessions.AllowLogin(r, username, cfg.TrustedProxies); err != nil {
+			if errors.Is(err, server.ErrInvalidLoginAddress) {
+				http.Error(w, "Invalid client address. Check the trusted proxy forwarding configuration.", http.StatusBadRequest)
+				return
+			}
 			slog.Warn("login rate limited", "remote", r.RemoteAddr)
 			w.Header().Set("Retry-After", "60")
 			http.Error(w, "Too many login attempts. Try again later.", http.StatusTooManyRequests)

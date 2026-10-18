@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+[ "${WEB_PASSWORD+x}" != x ] || exit 4
 case "$1" in
   -help)
+    if [ -n "${AUTH_TEST_HELP_COUNT:-}" ]; then
+      printf 'help\n' >> "$AUTH_TEST_HELP_COUNT"
+    fi
     [ "$AUTH_TEST_MODE" != "help-fail" ] || exit 1
     if [ "$AUTH_TEST_MODE" != "legacy" ]; then
       printf '%s\n' '  -hash-password'

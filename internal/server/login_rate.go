@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"log/slog"
 	"maps"
 	"net"
@@ -8,6 +9,13 @@ import (
 	"net/netip"
 	"strings"
 	"time"
+)
+
+var (
+	// ErrInvalidLoginAddress distinguishes malformed forwarding data from throttling.
+	ErrInvalidLoginAddress = errors.New("invalid client or forwarded address")
+	// ErrLoginRateLimited means the client/account retry window is exhausted.
+	ErrLoginRateLimited = errors.New("too many login attempts")
 )
 
 const (
@@ -21,12 +29,13 @@ type loginAttempt struct {
 }
 
 // AllowLogin reserves an attempt against both client network and submitted username.
-func (sm *SessionManager) AllowLogin(r *http.Request, username string, trustedProxies []string) bool {
+// Invalid forwarding data is rejected without consuming either budget.
+func (sm *SessionManager) AllowLogin(r *http.Request, username string, trustedProxies []string) error {
 	ip := loginClientAddress(r, trustedProxies).Unmap()
 	if !ip.IsValid() || ip.IsUnspecified() || ip.IsMulticast() {
 		// The forwarding header itself is client input and is not logged.
 		slog.Warn("login rejected: unusable client or forwarded address", "remote", r.RemoteAddr)
-		return false
+		return ErrInvalidLoginAddress
 	}
 	host := ip.String()
 	if ip.Is6() {
@@ -44,7 +53,7 @@ func (sm *SessionManager) AllowLogin(r *http.Request, username string, trustedPr
 	for _, key := range keys {
 		attempt, exists := sm.loginAttempts[key]
 		if attempt.count >= loginLimit(key) {
-			return false
+			return ErrLoginRateLimited
 		}
 		if !exists {
 			newBuckets++
@@ -53,7 +62,7 @@ func (sm *SessionManager) AllowLogin(r *http.Request, username string, trustedPr
 	for len(sm.loginAttempts)+newBuckets > maxLoginBuckets {
 		if !sm.evictLoginBucket(keys) {
 			slog.Warn("login rejected: every rate-limit bucket is exhausted", "remote", r.RemoteAddr)
-			return false
+			return ErrLoginRateLimited
 		}
 	}
 	for _, key := range keys {
@@ -64,7 +73,7 @@ func (sm *SessionManager) AllowLogin(r *http.Request, username string, trustedPr
 		attempt.count++
 		sm.loginAttempts[key] = attempt
 	}
-	return true
+	return nil
 }
 
 // loginLimit is the number of attempts per window for a bucket key.

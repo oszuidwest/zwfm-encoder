@@ -1,5 +1,19 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
+
+# Keep inherited non-interactive credentials out of every child process.
+export -n WEB_PASSWORD
+ENCODER_STOPPED=false
+
+installer_failed() {
+  local status=$1
+  printf 'Installation failed (exit %s).\n' "$status" >&2
+  if [ "$ENCODER_STOPPED" = true ]; then
+    printf 'The encoder may still be stopped. Check: systemctl status encoder; journalctl -u encoder -n 50. Repair the failed step before starting it again.\n' >&2
+  fi
+  exit "$status"
+}
+trap 'installer_failed "$?"' ERR
 
 # Configuration
 GITHUB_REPO="oszuidwest/zwfm-encoder"
@@ -115,7 +129,8 @@ if [ "$KEEP_CONFIG" != "y" ]; then
   prompt_user "WEB_USERNAME" "admin" "Enter the web interface username" "str"
 
   # Web password
-  prompt_user "WEB_PASSWORD" "encoder" "Enter the web interface password" "str"
+  prompt_secret "WEB_PASSWORD" "Enter the web interface password"
+  export -n WEB_PASSWORD
 
   # Web port
   prompt_user "WEB_PORT" "8080" "Enter the web interface port" "num"
@@ -216,10 +231,12 @@ apt_install --silent ffmpeg alsa-utils jq
 if systemctl is-active --quiet encoder 2>/dev/null; then
   echo -e "${BLUE}►► Stopping existing encoder service...${NC}"
   systemctl stop encoder
+  ENCODER_STOPPED=true
 fi
 
 # Kill any rogue encoder processes not managed by systemd
 if pkill -x encoder 2>/dev/null; then
+  ENCODER_STOPPED=true
   echo -e "${YELLOW}Killed orphaned encoder process(es)${NC}"
 fi
 
@@ -372,6 +389,7 @@ if ! systemctl is-active --quiet encoder; then
   echo -e "Check logs with: ${BOLD}journalctl -u encoder -n 50${NC}"
   exit 1
 else
+  ENCODER_STOPPED=false
   echo -e "${GREEN}✓ Encoder service is running${NC}"
 fi
 
@@ -404,7 +422,10 @@ DISPLAY_PORT=$(jq -r '.system.port // 8080' "$CONFIG_FILE" 2>/dev/null || echo "
 
 echo -e "\n${BOLD}Web Interface${NC}"
 DISPLAY_BIND=$(jq -r '.system.bind_address // "0.0.0.0"' "$CONFIG_FILE")
-if [ "$DISPLAY_BIND" == "127.0.0.1" ] && "${INSTALL_DIR}/encoder" -help 2>&1 | grep -F -- '-hash-password' > /dev/null; then
+if [ "${ENCODER_HELP+x}" != x ]; then
+  ENCODER_HELP=$("${INSTALL_DIR}/encoder" -help 2>&1)
+fi
+if [ "$DISPLAY_BIND" == "127.0.0.1" ] && printf '%s' "$ENCODER_HELP" | grep -F -- '-hash-password' > /dev/null; then
   echo -e "  URL:      ${BOLD}http://127.0.0.1:${DISPLAY_PORT}${NC} (local only)"
   echo -e "  Remote access with this local-only bind: use a reverse proxy, or tunnel with:"
   echo -e "  ${BOLD}ssh -L ${DISPLAY_PORT}:127.0.0.1:${DISPLAY_PORT} <user>@${FIRST_IP}${NC}"
