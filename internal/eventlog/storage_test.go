@@ -25,3 +25,12 @@ func TestStorageIncidentsGroupedByPathAndIndependentOfUploads(t *testing.T) {
 	}
 	assertPartition(t, events, &groups)
 }
+
+func TestStorageRecoveryOfUnmonitoredPathSaysSo(t *testing.T) {
+	t.Parallel()
+	base := time.Date(2026, 10, 18, 10, 0, 0, 0, time.UTC)
+	events := decorateNewestFirst(testEvent(base, 1, RecordingStorageRestored, map[string]any{"path": "/old"}))
+	if events[0].Detail != "Path no longer monitored" {
+		t.Fatalf("recovery of a path that left monitoring reads %q", events[0].Detail)
+	}
+}

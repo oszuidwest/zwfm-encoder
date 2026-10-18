@@ -653,14 +653,24 @@ func eventDetail(event groupedEvent) string {
 	return eventDetailFor(event.view.Type, event.details)
 }
 
+// storageDetail describes a recording storage observation.
+func storageDetail(t EventType, details map[string]any) string {
+	if errMsg := detailString(details, "error"); errMsg != "" {
+		return errMsg
+	}
+	// Every probe sets a threshold; a recovery without one closes a path that
+	// left monitoring.
+	if t == RecordingStorageRestored && detailInt64(details, "threshold_bytes") == 0 {
+		return "Path no longer monitored"
+	}
+	return fmt.Sprintf("%d bytes available (warning below %d bytes)",
+		detailInt64(details, "available_bytes"), detailInt64(details, "threshold_bytes"))
+}
+
 func eventDetailFor(t EventType, details map[string]any) string {
 	switch t {
 	case RecordingStorageLow, RecordingStorageRestored:
-		if errMsg := detailString(details, "error"); errMsg != "" {
-			return errMsg
-		}
-		return fmt.Sprintf("%d bytes available (warning below %d bytes)",
-			detailInt64(details, "available_bytes"), detailInt64(details, "threshold_bytes"))
+		return storageDetail(t, details)
 	case StreamError:
 		return cmp.Or(detailString(details, "error"), "Unknown error")
 	case StreamRetry:
