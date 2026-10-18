@@ -30,7 +30,8 @@ type UploadAbandonedCallback func(UploadAbandonedEvent)
 
 // Manager coordinates multiple GenericRecorders.
 type Manager struct {
-	mu sync.RWMutex
+	mu          sync.RWMutex
+	lifecycleMu sync.Mutex // Serializes Start/Stop without blocking status throughout teardown.
 
 	recorders          map[string]*GenericRecorder
 	audioRecorders     atomic.Pointer[[]*GenericRecorder] // Immutable capture view; no I/O/management locks.
@@ -208,6 +209,8 @@ func (m *Manager) StopRecorder(id string) error {
 
 // Start begins recorder management and is idempotent across source retries.
 func (m *Manager) Start() error {
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -250,6 +253,8 @@ func (m *Manager) IsRunning() bool {
 
 // Stop stops all recorders and background schedulers.
 func (m *Manager) Stop() error {
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
 	m.mu.Lock()
 	// Close scheduler channels once; on-demand recorders may still need Stop.
 	if m.running {
@@ -354,6 +359,9 @@ func (m *Manager) startHourlyRetryScheduler(stopCh <-chan struct{}) {
 func (m *Manager) retryFailedHourlyRecorders() {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	if !m.running {
+		return
+	}
 
 	for _, recorder := range m.recorders {
 		cfg := recorder.Config()
@@ -361,11 +369,9 @@ func (m *Manager) retryFailedHourlyRecorders() {
 			status := recorder.Status()
 			if status.State == types.ProcessError {
 				slog.Info("retrying failed hourly recorder at hour boundary", "id", cfg.ID, "name", cfg.Name)
-				go func(r *GenericRecorder) {
-					if err := r.Start(); err != nil {
-						slog.Warn("failed to retry hourly recorder", "id", r.ID(), "error", err)
-					}
-				}(recorder)
+				if err := recorder.Start(); err != nil {
+					slog.Warn("failed to retry hourly recorder", "id", recorder.ID(), "error", err)
+				}
 			}
 		}
 	}

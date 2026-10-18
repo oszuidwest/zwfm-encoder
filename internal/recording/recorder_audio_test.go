@@ -97,6 +97,7 @@ func TestStatusReportsAudioDrops(t *testing.T) {
 }
 
 func TestCaptureRecordingFlagFollowsLifecycle(t *testing.T) {
+	t.Setenv(fakeFFmpegFailWriteEnv, "1")
 	r := NewGenericRecorder(GenericRecorderConfig{
 		Recorder: localOnDemandRecorder(t, "capture-state"), FFmpegPath: os.Args[0], SpoolDir: t.TempDir(),
 	})
@@ -106,7 +107,11 @@ func TestCaptureRecordingFlagFollowsLifecycle(t *testing.T) {
 		if !r.IsRecording() {
 			t.Fatal("running recorder is not accepting audio")
 		}
-		r.setError("test failure")
+		deadline := time.Now().Add(3 * time.Second)
+		for r.Status().State == types.ProcessRunning && time.Now().Before(deadline) {
+			r.WriteAudio(make([]byte, 16384))
+			time.Sleep(5 * time.Millisecond)
+		}
 		waitForRecorderState(t, r, types.ProcessError)
 		r.WriteAudio([]byte{1, 2, 3, 4})
 		if r.IsRecording() || len(r.audioCh) != 0 {
