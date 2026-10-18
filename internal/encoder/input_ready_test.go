@@ -35,6 +35,10 @@ func TestInputReadinessClearsAfterFlushedPCMEnds(t *testing.T) {
 	if e.Status().InputReady {
 		t.Fatal("input is ready after the terminal read while source teardown is pending")
 	}
+	// Supervision reads these to report the source's own exit error, not a stall.
+	if _, last := e.audioTimes(1); last.IsZero() {
+		t.Fatal("distributor exit erased the run's audio history")
+	}
 }
 
 func TestDistributorExitKeepsNewerRunReady(t *testing.T) {

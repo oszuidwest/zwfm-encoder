@@ -98,6 +98,7 @@ type Encoder struct {
 	audioRunID          uint64                            // source run the audio times belong to
 	steadyAudioSince    time.Time                         // start of audioRunID's PCM without pauses over inputAudioGap
 	lastAudioAt         time.Time                         // latest PCM of audioRunID
+	audioEnded          bool                              // audioRunID's distributor has stopped reading
 	audioLevels         atomic.Pointer[audio.AudioLevels] // published lock-free; see AudioLevels
 	silenceDetect       *audio.SilenceDetector
 	imbalanceDetect     *audio.ImbalanceDetector
@@ -371,7 +372,7 @@ func (e *Encoder) AudioLevels() audio.AudioLevels {
 func (e *Encoder) Status() types.EncoderStatus {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	_, lastAudio := e.audioTimes(e.sourceRunID)
+	lastAudio := e.liveAudioAt(e.sourceRunID)
 
 	var uptime string
 	var uptimeSeconds int64
@@ -951,8 +952,31 @@ func (e *Encoder) noteAudio(runID uint64) {
 	if e.audioRunID != runID || now.Sub(e.lastAudioAt) > inputAudioGap {
 		e.audioRunID = runID
 		e.steadyAudioSince = now
+		e.audioEnded = false
 	}
 	e.lastAudioAt = now
+}
+
+// endAudio marks runID's PCM as ended once its distributor stops reading, so
+// readiness drops with the last PCM instead of after source teardown. The
+// audio times stay, so supervision can still tell a teardown from a stall.
+func (e *Encoder) endAudio(runID uint64) {
+	e.audioMu.Lock()
+	defer e.audioMu.Unlock()
+	if e.audioRunID == runID {
+		e.audioEnded = true
+	}
+}
+
+// liveAudioAt returns when runID last delivered PCM, or zero once its PCM has
+// ended or before it started.
+func (e *Encoder) liveAudioAt(runID uint64) time.Time {
+	e.audioMu.Lock()
+	defer e.audioMu.Unlock()
+	if e.audioRunID != runID || e.audioEnded {
+		return time.Time{}
+	}
+	return e.lastAudioAt
 }
 
 // audioTimes returns since when runID has delivered PCM without long pauses
@@ -1027,13 +1051,7 @@ func (e *Encoder) runDistributor(runID uint64) {
 
 	// Publish silence from this goroutine so it wins after the last live level.
 	defer e.resetAudioLevels()
-	defer func() {
-		e.audioMu.Lock()
-		if e.audioRunID == runID {
-			e.audioRunID = 0
-		}
-		e.audioMu.Unlock()
-	}()
+	defer e.endAudio(runID)
 
 	for {
 		e.mu.RLock()
