@@ -60,7 +60,7 @@ func (sm *SessionManager) AllowLogin(r *http.Request, username string, trustedPr
 	}
 	for _, key := range keys {
 		attempt := sm.loginAttempts[key]
-		// The window is fixed: rejected attempts must never prolong it.
+		// Fixed window: only the first counted attempt sets the expiry.
 		if attempt.count == 0 {
 			attempt.expiresAt = now.Add(loginWindow)
 		}

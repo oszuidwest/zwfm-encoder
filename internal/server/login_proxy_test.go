@@ -31,7 +31,7 @@ func TestLoginClientAddressTrustBoundary(t *testing.T) {
 		{name: "empty hop", peer: "127.0.0.1:1234", header: "198.51.100.1, ", trusted: []string{"127.0.0.1/32"}, want: "invalid IP"},
 		{name: "unspecified", peer: "127.0.0.1:1234", header: "0.0.0.0", trusted: []string{"127.0.0.1/32"}, want: "invalid IP"},
 		{name: "multicast", peer: "127.0.0.1:1234", header: "224.0.0.251", trusted: []string{"127.0.0.1/32"}, want: "invalid IP"},
-		{name: "oversized header", peer: "127.0.0.1:1234", header: strings.Repeat("1", 4097), trusted: []string{"127.0.0.1/32"}, want: "invalid IP"},
+		{name: "oversized header", peer: "127.0.0.1:1234", header: strings.Repeat(" ", 4096) + "198.51.100.1", trusted: []string{"127.0.0.1/32"}, want: "invalid IP"},
 		{name: "too many hops", peer: "127.0.0.1:1234", header: strings.Repeat("10.0.0.2,", 32) + "198.51.100.1", trusted: []string{"127.0.0.1/32", "10.0.0.2/32"}, want: "invalid IP"},
 		{name: "invalid trust fails closed", peer: "127.0.0.1:1234", header: "198.51.100.1", trusted: []string{"invalid", "0.0.0.0/0"}, want: "127.0.0.1"},
 		{name: "mapped peer needs IPv4 trust", peer: "[::ffff:127.0.0.1]:1234", header: "198.51.100.1", trusted: []string{"::/1"}, want: "::ffff:127.0.0.1"},
@@ -133,7 +133,7 @@ func TestLoginEvictionKeepsExhaustedBuckets(t *testing.T) {
 	sm := NewSessionManager()
 	now := time.Now()
 	// The exhausted account bucket is the oldest, so plain oldest-first eviction would reset it.
-	sm.loginAttempts["user:admin"] = loginAttempt{count: 10, expiresAt: now.Add(time.Second)}
+	sm.loginAttempts["user:admin"] = loginAttempt{count: 10, expiresAt: now.Add(30 * time.Second)}
 	for i := range maxLoginBuckets - 1 {
 		sm.loginAttempts[fmt.Sprint("ip:", i)] = loginAttempt{count: 1, expiresAt: now.Add(time.Minute)}
 	}

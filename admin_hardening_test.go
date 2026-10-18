@@ -318,7 +318,7 @@ func TestLoginRejectsMalformedOrQueryCredentials(t *testing.T) {
 
 func TestServerStartUsesConfiguredBind(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ bind, want string }{{"127.0.0.1", "127.0.0.1:0"}, {"::1", "[::1]:0"}} {
+	for _, tc := range []struct{ bind, want string }{{"", ":0"}, {"127.0.0.1", "127.0.0.1:0"}, {"::1", "[::1]:0"}} {
 		t.Run(tc.bind, func(t *testing.T) {
 			s := newRouteTestServer(t)
 			// Port zero is test-only, so the OS chooses an unused loopback port.

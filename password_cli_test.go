@@ -25,7 +25,7 @@ func TestPrintPasswordHash(t *testing.T) {
 	if err := printPasswordHash(strings.NewReader(strings.Repeat("p", 4096)+"\r\n"), io.Discard); err != nil {
 		t.Fatalf("longest password line rejected: %v", err)
 	}
-	for _, input := range []string{"", "\n", "one\ntwo", strings.Repeat("p", 4097), strings.Repeat("p", 4097) + "\n"} {
+	for _, input := range []string{"", "\n", "one\ntwo", strings.Repeat("p", 4097), strings.Repeat("p", 4097) + "\n", strings.Repeat("p", 4096) + "\nextra"} {
 		var out bytes.Buffer
 		if err := printPasswordHash(strings.NewReader(input), &out); err == nil || out.Len() != 0 {
 			t.Fatal("invalid password produced a hash")

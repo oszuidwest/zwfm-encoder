@@ -76,7 +76,7 @@ type SystemConfig struct {
 	FFmpegPath string `json:"ffmpeg_path"`
 	// Port is the HTTP server port to listen on.
 	Port int `json:"port"`
-	// BindAddress is a numeric IP; empty preserves the legacy all-interface listener.
+	// BindAddress is a numeric IP to listen on; empty, 0.0.0.0 and :: listen on all interfaces.
 	BindAddress string `json:"bind_address,omitempty"`
 	// TrustedProxies lists proxy CIDRs allowed to supply X-Forwarded-For for login limits.
 	TrustedProxies []string `json:"trusted_proxies,omitempty"`
