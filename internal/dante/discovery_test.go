@@ -97,6 +97,11 @@ func TestMergeDiscoveryResponseAcceptsOnlyRequiredSource(t *testing.T) {
 		t.Fatalf("foreign response was accepted: %#v", info)
 	}
 
+	unrelated := buildMixedDNSResponse(t, "Other@tx"+serviceSuffix, "Another@tx"+serviceSuffix)
+	if _, err := mergeDiscoveryResponse(&info, unrelated, foreignSource, requested, requiredSource); err != nil {
+		t.Fatalf("unrelated response = %v, want it ignored without a diagnostic", err)
+	}
+
 	complete, err = mergeDiscoveryResponse(&info, packet, requiredSource, requested, requiredSource)
 	if err != nil {
 		t.Fatalf("required response: %v", err)
@@ -106,6 +111,12 @@ func TestMergeDiscoveryResponseAcceptsOnlyRequiredSource(t *testing.T) {
 	}
 	if !info.address.Equal(requiredSource) {
 		t.Fatalf("source = %v, want %v", info.address, requiredSource)
+	}
+
+	// Without a required source, later records must still come from the first responder.
+	_, err = mergeDiscoveryResponse(&info, packet, foreignSource, requested, nil)
+	if err == nil || !strings.Contains(err.Error(), "does not match earlier response") || !info.address.Equal(requiredSource) {
+		t.Fatalf("second responder = %v, address %v; want rejection keeping %v", err, info.address, requiredSource)
 	}
 }
 

@@ -76,15 +76,32 @@ func TestOpenUsesSelectedInterfaceAddressOnTransmitterSubnet(t *testing.T) {
 		defer h.close(t)
 		h.addresses = append([]net.Addr{&net.IPNet{IP: net.IPv4(169, 254, 1, 2), Mask: net.CIDRMask(16, 32)}}, h.addresses...)
 		h.start(t)
+		// The fake network fills in an address for nil, so record what Open asks for.
+		var bound []net.IP
+		listen, dial := listenDanteUDP, dialDanteUDP
+		listenDanteUDP = func(local *net.UDPAddr) (net.PacketConn, error) {
+			if !local.IP.IsUnspecified() {
+				bound = append(bound, local.IP)
+			}
+			return listen(local)
+		}
+		dialDanteUDP = func(local, remote *net.UDPAddr) (net.Conn, error) {
+			if local != nil {
+				bound = append(bound, local.IP)
+			}
+			return dial(local, remote)
+		}
 		r, err := Open(t.Context(), testInput+"?interface=test0")
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer func() { _ = r.Close() }()
-		for _, conn := range []interface{ LocalAddr() net.Addr }{r.mediaConn, r.controlConn} {
-			if got := conn.LocalAddr().(*net.UDPAddr).IP; !got.Equal(net.IPv4(192, 0, 2, 10)) {
-				t.Fatalf("bound address = %s, want address on transmitter subnet", got)
-			}
+		want := net.IPv4(192, 0, 2, 10)
+		if flow := <-h.flows; !flow.target.IP.Equal(want) {
+			t.Fatalf("flow request media address = %s, want %s", flow.target.IP, want)
+		}
+		if len(bound) != 2 || !bound[0].Equal(want) || !bound[1].Equal(want) {
+			t.Fatalf("requested local addresses = %v, want media and control on %s", bound, want)
 		}
 	})
 }

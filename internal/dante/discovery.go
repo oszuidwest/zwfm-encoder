@@ -363,19 +363,20 @@ func mergeDiscoveryResponse(info *channelInfo, packet []byte, source net.IP, req
 	if source == nil {
 		return false, nil
 	}
+	port, txt, err := parseDNSResponse(packet, requested)
+	if err != nil {
+		return false, fmt.Errorf("malformed response: %w", err)
+	}
+	// Other devices answer other names; only answers to this request are
+	// worth reporting as a mismatch.
+	if port == 0 && txt == nil {
+		return false, nil
+	}
 	if requiredSource != nil && !source.Equal(requiredSource) {
 		return false, fmt.Errorf("does not match required transmitter %s", requiredSource)
 	}
 	if info.address != nil && !source.Equal(info.address) {
 		return false, fmt.Errorf("does not match earlier response from %s", info.address)
-	}
-
-	port, txt, err := parseDNSResponse(packet, requested)
-	if err != nil {
-		return false, fmt.Errorf("malformed response: %w", err)
-	}
-	if port == 0 && txt == nil {
-		return false, nil
 	}
 	if info.address == nil {
 		info.address = source
