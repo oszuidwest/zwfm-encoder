@@ -251,7 +251,7 @@ func TestSlowRestartIsReportedWhileItWaits(t *testing.T) {
 		go func() { done <- e.Restart() }()
 		time.Sleep(restartTimeout + time.Millisecond)
 		synctest.Wait()
-		if got := e.Status().LastError; !strings.Contains(got, "still waiting") {
+		if got := e.Status().LastError; !strings.Contains(got, "still waiting for the previous input") {
 			t.Fatalf("last error while the restart waits = %q, want it to say so", got)
 		}
 		close(release)
@@ -311,7 +311,7 @@ func TestStaleRestartLeavesOperatorRunAlone(t *testing.T) {
 func TestStallNoticeEndsWithTheRestart(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		release := make(chan struct{})
-		e, _ := startDanteEncoder(t, heldTeardown(release))
+		e, opens := startDanteEncoder(t, heldTeardown(release))
 		done := make(chan error, 1)
 		go func() { done <- e.Restart() }()
 		time.Sleep(restartTimeout + time.Millisecond)
@@ -319,12 +319,13 @@ func TestStallNoticeEndsWithTheRestart(t *testing.T) {
 		// An explicit Stop supersedes the restart; its notice must not stay behind.
 		stopped := make(chan error, 1)
 		go func() { stopped <- e.Stop() }()
+		synctest.Wait() // Stop has invalidated the restart before teardown ends.
 		close(release)
 		<-done
 		<-stopped
 		synctest.Wait()
-		if got := e.Status().LastError; got != "" {
-			t.Fatalf("last error after a superseded restart = %q, want none", got)
+		if got := e.Status().LastError; got != "" || opens.Load() != 1 {
+			t.Fatalf("after a superseded restart: last error %q, source opens %d; want none and 1", got, opens.Load())
 		}
 	})
 }
