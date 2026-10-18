@@ -15,7 +15,6 @@ const (
 	fakeFFmpegEnv = "ZWFM_RECORDING_FAKE_FFMPEG"
 	// fakeFFmpegFinalizeEnv overrides how long the fake takes to finalize.
 	fakeFFmpegFinalizeEnv     = "ZWFM_RECORDING_FAKE_FFMPEG_FINALIZE"
-	fakeFFmpegRefuseEnv       = "ZWFM_RECORDING_FAKE_FFMPEG_REFUSE"
 	fakeFFmpegFailFinalizeEnv = "ZWFM_RECORDING_FAKE_FFMPEG_FAIL_FINALIZE"
 	fakeFFmpegEmptyHeaderEnv  = "ZWFM_RECORDING_FAKE_FFMPEG_EMPTY_HEADER"
 	fakeFFmpegFailWriteEnv    = "ZWFM_RECORDING_FAKE_FFMPEG_FAIL_WRITE"
@@ -42,28 +41,13 @@ func TestMain(m *testing.M) {
 }
 
 // runFakeFFmpeg copies stdin to the output file (the last argument), so
-// recordings hold the exact PCM written. Like the real FFmpeg with -n it never
-// overwrites a file, and it refuses to run without -n. Unlike the real FFmpeg,
-// which creates its file at start, the fake writes it only when it exits, so
-// its existence shows the recording was finalized.
+// recordings hold the exact PCM written. It requires -y and an already-reserved
+// output. Data is written only on exit, simulating delayed encoder finalization.
 func runFakeFFmpeg(args []string) int {
-	if !slices.Contains(args, "-n") {
+	if !slices.Contains(args, "-y") {
 		return 2
 	}
 	output := args[len(args)-1]
-	if os.Getenv(fakeFFmpegRefuseEnv) == "1" {
-		// FFmpeg may consume PCM before discovering that -n refuses the output.
-		if _, err := io.ReadFull(os.Stdin, make([]byte, 4096)); err != nil {
-			return 1
-		}
-		// Only an existing output is refused.
-		if _, err := os.Stat(output); err != nil { //nolint:gosec // G703: path comes from the recorder under test.
-			return 1
-		}
-		// Real FFmpeg can print warnings before the refusal and an error after it.
-		_, _ = fmt.Fprintf(os.Stderr, "Guessed Channel Layout: stereo\nFile '%s' already exists. Exiting.\nError opening output file %s.\n", output, output)
-		return 0
-	}
 	reader := io.Reader(os.Stdin)
 	failWrite := os.Getenv(fakeFFmpegFailWriteEnv)
 	if failWrite != "" {
@@ -86,7 +70,7 @@ func runFakeFFmpeg(args []string) int {
 	}
 	time.Sleep(finalize)
 
-	file, err := os.OpenFile(output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // G304: path comes from the recorder under test.
+	file, err := os.OpenFile(output, os.O_WRONLY|os.O_TRUNC, 0o600) //nolint:gosec // G304: path comes from the recorder under test.
 	if err != nil {
 		return 1
 	}

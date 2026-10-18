@@ -41,7 +41,7 @@ func TestChangedStorageIsPreparedBeforeEncoderLaunch(t *testing.T) {
 			entered, blocked, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 			release := sync.OnceFunc(func() { close(blocked) })
 			delay := sync.OnceFunc(func() { close(entered); <-blocked })
-			originalCheck, originalStat := checkRecordingPath, recordingStat
+			originalCheck, originalReserve := checkRecordingPath, reserveRecordingFile
 			checkRecordingPath = func(path string) error {
 				if phase == "validation" {
 					delay()
@@ -49,11 +49,11 @@ func TestChangedStorageIsPreparedBeforeEncoderLaunch(t *testing.T) {
 				}
 				return originalCheck(path)
 			}
-			recordingStat = func(path string) (os.FileInfo, error) {
+			reserveRecordingFile = func(path string) (*os.File, error) {
 				if phase != "validation" && strings.HasPrefix(path, cfg.LocalPath+string(os.PathSeparator)) {
 					delay()
 				}
-				return originalStat(path)
+				return originalReserve(path)
 			}
 			go func() {
 				defer close(done)
@@ -67,7 +67,7 @@ func TestChangedStorageIsPreparedBeforeEncoderLaunch(t *testing.T) {
 				release()
 				<-done
 				_ = r.Stop()
-				checkRecordingPath, recordingStat = originalCheck, originalStat
+				checkRecordingPath, reserveRecordingFile = originalCheck, originalReserve
 			})
 			select {
 			case <-entered:

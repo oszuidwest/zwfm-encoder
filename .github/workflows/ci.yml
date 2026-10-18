@@ -79,6 +79,11 @@ jobs:
           CGO_ENABLED: '1'
         run: go test -race -shuffle=on -count=1 -v ./internal/dante
 
+      - name: Test native recording file reservations and lifecycle
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race -shuffle=on -count=1 -v ./internal/recording
+
   frontend:
     name: Frontend
     runs-on: ubuntu-latest

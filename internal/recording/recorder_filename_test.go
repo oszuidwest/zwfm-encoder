@@ -99,7 +99,7 @@ func recordOnce(t *testing.T, recorder *GenericRecorder, dir string) []string {
 }
 
 // TestHourlyStartKeepsEarlierRecordingOfSameMinute covers an app restart: the
-// name history is empty, so only the file on disk and FFmpeg -n protect it.
+// name history is empty, so only the exclusive reservation protects it.
 func TestHourlyStartKeepsEarlierRecordingOfSameMinute(t *testing.T) {
 	t.Parallel()
 

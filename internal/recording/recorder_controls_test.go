@@ -41,13 +41,13 @@ func TestBlockedFilenameCheckDoesNotBlockRecorderControls(t *testing.T) {
 			entered, blocked, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 			release := sync.OnceFunc(func() { close(blocked) })
 			markEntered := sync.OnceFunc(func() { close(entered) })
-			originalStat := recordingStat
-			recordingStat = func(path string) (os.FileInfo, error) {
+			originalReserve := reserveRecordingFile
+			reserveRecordingFile = func(path string) (*os.File, error) {
 				if strings.HasPrefix(path, cfg.LocalPath+string(os.PathSeparator)) {
 					markEntered()
 					<-blocked
 				}
-				return originalStat(path)
+				return originalReserve(path)
 			}
 			go func() {
 				defer close(done)
@@ -57,7 +57,7 @@ func TestBlockedFilenameCheckDoesNotBlockRecorderControls(t *testing.T) {
 					r.startAsync(1)
 				}
 			}()
-			t.Cleanup(func() { release(); <-done; recordingStat = originalStat; _ = m.Stop() })
+			t.Cleanup(func() { release(); <-done; reserveRecordingFile = originalReserve; _ = m.Stop() })
 			select {
 			case <-entered:
 			case <-time.After(3 * time.Second):
@@ -109,16 +109,16 @@ func TestFilenamePreparationRevalidatesConfigAndRun(t *testing.T) {
 			r.state, r.startGen = types.ProcessStarting, 1
 			entered, blocked, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 			release := sync.OnceFunc(func() { close(blocked) })
-			originalStat := recordingStat
+			originalReserve := reserveRecordingFile
 			blockFirst := sync.OnceFunc(func() { close(entered); <-blocked })
-			recordingStat = func(path string) (os.FileInfo, error) {
+			reserveRecordingFile = func(path string) (*os.File, error) {
 				if strings.HasPrefix(path, cfg.LocalPath+string(os.PathSeparator)) {
 					blockFirst()
 				}
-				return originalStat(path)
+				return originalReserve(path)
 			}
 			go func() { defer close(done); r.startAsync(1) }()
-			t.Cleanup(func() { release(); <-done; recordingStat = originalStat; _ = r.Stop() })
+			t.Cleanup(func() { release(); <-done; reserveRecordingFile = originalReserve; _ = r.Stop() })
 			select {
 			case <-entered:
 			case <-time.After(3 * time.Second):
@@ -143,6 +143,9 @@ func TestFilenamePreparationRevalidatesConfigAndRun(t *testing.T) {
 			r.mu.RUnlock()
 			release()
 			<-done
+			if files, err := os.ReadDir(cfg.LocalPath); err != nil || len(files) != 0 {
+				t.Fatalf("stale configuration left recording reservations: %v, %v", files, err)
+			}
 			r.mu.RLock()
 			defer r.mu.RUnlock()
 			if r.state != types.ProcessRunning || !strings.HasPrefix(r.currentFile, filepath.Join(updated.LocalPath, "Updated-")) {

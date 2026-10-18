@@ -3,13 +3,13 @@ package recording
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -19,10 +19,13 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-func TestRefusedRecordingIsNotUploaded(t *testing.T) {
-	t.Setenv(fakeFFmpegRefuseEnv, "1")
-	for _, termination := range []string{"write failure", "stop"} {
-		t.Run(termination, func(t *testing.T) {
+func TestReplacedRecordingIsNotUploadedOrRemoved(t *testing.T) {
+	for _, audio := range []bool{false, true} {
+		name := "empty"
+		if audio {
+			name = "audio"
+		}
+		t.Run(name, func(t *testing.T) {
 			endpoint, uploads := conditionalPutServer(t, "", func(http.ResponseWriter, string) bool { return false })
 			cfg := testS3Recorder()
 			cfg.RecordingMode, cfg.StorageMode = types.RecordingOnDemand, types.StorageBoth
@@ -36,40 +39,44 @@ func TestRefusedRecordingIsNotUploaded(t *testing.T) {
 			file := r.currentFile
 			result := r.result
 			r.mu.RUnlock()
-			// Another recording already holds the name when FFmpeg opens it.
-			if err := os.WriteFile(file, []byte("pre-existing recording"), 0o600); err != nil { //nolint:gosec // Test temp output.
-				t.Fatal(err)
-			}
-			if termination == "stop" {
+			if audio {
 				r.WriteAudio(make([]byte, 4096))
-				if err := result.Wait(); err != nil {
-					t.Fatalf("fake refusal should exit 0: %v", err)
+				deadline := time.Now().Add(3 * time.Second)
+				for result.BytesWritten() == 0 && time.Now().Before(deadline) {
+					time.Sleep(time.Millisecond)
 				}
 				if result.BytesWritten() == 0 {
-					t.Fatal("refusal must be detected even after accepting audio")
+					t.Fatal("encoder did not accept test audio")
 				}
-			} else {
-				deadline := time.Now().Add(3 * time.Second)
-				for time.Now().Before(deadline) && !strings.Contains(r.Status().Error, "already exists") {
-					r.WriteAudio(make([]byte, 16384))
-					time.Sleep(5 * time.Millisecond)
-				}
-				waitForRecorderState(t, r, types.ProcessError)
 			}
-			message := r.Status().Error
+			result.CloseStdin()
+			if err := result.Wait(); err != nil {
+				t.Fatal(err)
+			}
+			// Replace the inode after FFmpeg exits but before finalization claims it.
+			other := filepath.Join(t.TempDir(), "foreign")
+			if err := os.WriteFile(other, []byte("pre-existing recording"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(file); err != nil { //nolint:gosec // Test temp recording.
+				if runtime.GOOS == "windows" {
+					t.Skipf("Windows protects the open reservation from replacement: %v", err)
+				}
+				t.Fatal(err)
+			}
+			if err := os.Rename(other, file); err != nil { //nolint:gosec // Test temp recording.
+				t.Fatal(err)
+			}
 			if err := r.Stop(); err != nil {
 				t.Fatal(err)
 			}
-			if want := fmt.Sprintf("File '%s' already exists. Exiting.", file); termination == "write failure" && message != want {
-				t.Errorf("recorder error = %q, want only FFmpeg's refusal %q", message, want)
-			}
 			if got := len(uploads()); got != 0 {
-				t.Errorf("uploaded refused file %d times", got)
+				t.Errorf("uploaded unrelated replacement %d times", got)
 			}
 			if data, err := os.ReadFile(file); err != nil || string(data) != "pre-existing recording" { //nolint:gosec // Test temp output.
 				t.Fatalf("pre-existing recording = %q, %v; want untouched", data, err)
 			}
-			assertRecorderErrorEvent(t, path, filepath.Base(file), "already exists")
+			assertRecorderErrorEvent(t, path, filepath.Base(file), "replaced")
 		})
 	}
 }
@@ -141,6 +148,9 @@ func TestFailedRotationStartEmitsRecorderError(t *testing.T) {
 		t.Fatalf("rotation failure filename = %q, want attempted new output, not %q", filename, filepath.Base(previous))
 	}
 	assertRecorderErrorLog(t, logs, filename)
+	if _, err := os.Stat(filepath.Join(cfg.LocalPath, filename)); !os.IsNotExist(err) {
+		t.Fatalf("failed rotation left an unstarted reservation: %v", err)
+	}
 }
 
 func TestWriteErrorRecoveryUploadDoesNotDelayStop(t *testing.T) {
