@@ -63,6 +63,10 @@ const (
 type GenericRecorder struct {
 	mu sync.RWMutex // Protects state, config, file paths
 
+	// prepareLocks serializes output preparation per directory; preparation
+	// runs without mu. Protected by mu; one entry per directory ever used.
+	prepareLocks map[string]*sync.Mutex
+
 	id                 string
 	config             types.Recorder
 	ffmpegPath         string
@@ -319,13 +323,26 @@ func (r *GenericRecorder) startAsync(gen uint64) {
 
 func (r *GenericRecorder) reportError(file string, err error) {
 	r.mu.Lock()
+	p := r.recordErrorLocked(file, err)
+	r.mu.Unlock()
+	r.emitError(p, err)
+}
+
+// recordErrorLocked sets the status error and returns its event details, so a
+// caller that has just checked ownership under r.mu cannot be overtaken by a
+// newer run before the status changes. Must be called with r.mu held.
+func (r *GenericRecorder) recordErrorLocked(file string, err error) *eventlog.RecorderDetails {
 	r.lastError = err.Error()
 	p := r.captureLogParamsLocked()
 	p.Error = err.Error()
 	if file != "" {
 		p.Filename = filepath.Base(file)
 	}
-	r.mu.Unlock()
+	return p
+}
+
+// emitError logs an error recorded by recordErrorLocked; call it without r.mu.
+func (r *GenericRecorder) emitError(p *eventlog.RecorderDetails, err error) {
 	slog.Error("recorder error", "id", r.id, "file", p.Filename, "error", err)
 	r.logEvent(eventlog.RecorderError, p)
 }
@@ -593,7 +610,11 @@ func (r *GenericRecorder) prepareFilenameLocked(fileTime time.Time) (output *rec
 		}
 		base := r.generateFilename(fileTime)
 		used := maps.Clone(r.usedFilenames)
+		lock := r.prepareLockLocked(outputDir)
 		r.mu.Unlock()
+		// A check hung on a directory must not gain another blocked syscall
+		// with every Start after a Stop; another directory is not held up.
+		lock.Lock()
 		var output *recordingOutput
 		err := prepareRecordingDir(cfg.StorageMode, outputDir)
 		if err == nil {
@@ -609,6 +630,7 @@ func (r *GenericRecorder) prepareFilenameLocked(fileTime time.Time) (output *rec
 				output = &recordingOutput{file: file}
 			}
 		}
+		lock.Unlock()
 		r.mu.Lock()
 		if r.startGen != gen || r.state != state {
 			r.mu.Unlock()
@@ -681,9 +703,23 @@ func (o *recordingOutput) discard() {
 	}
 }
 
+// prepareLockLocked returns the preparation lock of dir. Must be called with
+// r.mu held.
+func (r *GenericRecorder) prepareLockLocked(dir string) *sync.Mutex {
+	if r.prepareLocks == nil {
+		r.prepareLocks = make(map[string]*sync.Mutex)
+	}
+	lock := r.prepareLocks[dir]
+	if lock == nil {
+		lock = new(sync.Mutex)
+		r.prepareLocks[dir] = lock
+	}
+	return lock
+}
+
 func prepareRecordingDir(storageMode types.StorageMode, dir string) error {
 	if err := util.ValidatePath("recording directory", dir); err != nil {
-		return fmt.Errorf("invalid recording directory: %w", err)
+		return err
 	}
 	if storageMode == types.StorageS3 {
 		if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // Spool directory needs to be readable.
@@ -691,8 +727,9 @@ func prepareRecordingDir(storageMode types.StorageMode, dir string) error {
 		}
 		return nil
 	}
-	if err := checkRecordingPath(dir); err != nil {
-		return fmt.Errorf("local path is not writable: %w", err)
+	// CheckPathWritable logs the cause; its error adds nothing for the status.
+	if checkRecordingPath(dir) != nil {
+		return errors.New("local path is not writable")
 	}
 	return nil
 }
@@ -877,8 +914,9 @@ func (r *GenericRecorder) rotateFile(generation uint64) {
 	}
 	if prepareErr != nil {
 		r.scheduleRotationLocked(at)
+		p := r.recordErrorLocked("", prepareErr)
 		r.mu.Unlock()
-		r.reportError("", prepareErr)
+		r.emitError(p, prepareErr)
 		return
 	}
 
@@ -888,7 +926,9 @@ func (r *GenericRecorder) rotateFile(generation uint64) {
 	r.retiring.Add(1)
 	defer r.retiring.Done()
 	startErr := r.startEncoderLocked(output)
+	var failure *eventlog.RecorderDetails
 	if startErr != nil {
+		failure = r.recordErrorLocked(output.file.Name(), startErr)
 		// The current encoder still runs: keep recording into its file instead
 		// of stopping until the hourly retry.
 		r.result, r.writerDone, r.currentFile, r.currentOutput = previous.result, previous.writerDone, previous.file, previous.output
@@ -900,9 +940,9 @@ func (r *GenericRecorder) rotateFile(generation uint64) {
 	}
 	r.scheduleRotationLocked(at)
 	r.mu.Unlock()
-	if startErr != nil {
+	if failure != nil {
 		output.discard()
-		r.reportError(output.file.Name(), startErr)
+		r.emitError(failure, startErr)
 	}
 
 	r.finishEncoder(previous)
