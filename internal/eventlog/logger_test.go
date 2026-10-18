@@ -57,8 +57,12 @@ func TestLoggerSeparatesExistingTailOnReopen(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.HasPrefix(string(data), tc.tail) {
-				t.Fatalf("existing tail changed: %q", data)
+			sep := "\n"
+			if tc.tail == "" || strings.HasSuffix(tc.tail, "\n") {
+				sep = ""
+			}
+			if !strings.HasPrefix(string(data), tc.tail+sep+"{") {
+				t.Fatalf("existing tail changed or got an extra separator: %q", data)
 			}
 		})
 	}

@@ -219,7 +219,8 @@ func newLogger(filePath string, maxSizeBytes int64) (*Logger, error) {
 
 // terminateLogTail appends a newline when a crash left the last line
 // unterminated, so the next event starts on its own line. It writes to the
-// file directly: a newline written through the RollingWriter could rotate the
+// file directly: through the RollingWriter, the newline could trigger its own
+// rotation, and with a cap below one event the next write would then push the
 // previous event out of the retained logs.
 func terminateLogTail(filePath string) error {
 	f, err := os.OpenFile(filePath, os.O_RDWR|os.O_APPEND, 0) //nolint:gosec // Trusted application event-log path.
