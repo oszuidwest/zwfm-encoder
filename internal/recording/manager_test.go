@@ -1,6 +1,7 @@
 package recording
 
 import (
+	"encoding/json"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"os"
 	"path/filepath"
@@ -159,7 +160,7 @@ func TestReconcilePendingUploadsRecoversS3OnlySpoolFilesWithoutMetadata(t *testi
 		t.Fatalf("stat recovered metadata: %v", err)
 	}
 }
-func TestProcessRetryQueueAbandonsExpiredUploadAndRemovesMetadata(t *testing.T) {
+func TestProcessRetryQueueAbandonsExpiredUploadButKeepsRecoveryState(t *testing.T) {
 	t.Parallel()
 	spoolDir := t.TempDir()
 	cfg := testS3Recorder()
@@ -179,7 +180,6 @@ func TestProcessRetryQueueAbandonsExpiredUploadAndRemovesMetadata(t *testing.T) 
 		retryCount:   3,
 		lastError:    "still down",
 	}
-	pending.metadataPath = recorder.pendingUploadMetadataPath(pending.request)
 	if err := recorder.savePendingUpload(&pending); err != nil {
 		t.Fatal(err)
 	}
@@ -188,11 +188,9 @@ func TestProcessRetryQueueAbandonsExpiredUploadAndRemovesMetadata(t *testing.T) 
 	if got := len(recorder.retryQueue); got != 0 {
 		t.Fatalf("retryQueue len = %d, want 0", got)
 	}
-	if _, err := os.Stat(pending.metadataPath); !os.IsNotExist(err) {
-		t.Fatalf("metadata stat error = %v, want not exist", err)
-	}
-	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
-		t.Fatalf("file stat error = %v, want not exist", err)
+	assertAbandonedMetadata(t, pending.metadataPath)
+	if data, err := os.ReadFile(filePath); err != nil || string(data) != "audio" { //nolint:gosec // Test temp recording.
+		t.Fatalf("abandoned recording = %q, %v; want preserved audio", data, err)
 	}
 }
 func TestProcessRetryQueueKeepsLocalFileForExpiredBothUpload(t *testing.T) {
@@ -221,7 +219,6 @@ func TestProcessRetryQueueKeepsLocalFileForExpiredBothUpload(t *testing.T) {
 		retryCount:   3,
 		lastError:    "still down",
 	}
-	pending.metadataPath = recorder.pendingUploadMetadataPath(pending.request)
 	if err := recorder.savePendingUpload(&pending); err != nil {
 		t.Fatal(err)
 	}
@@ -230,9 +227,7 @@ func TestProcessRetryQueueKeepsLocalFileForExpiredBothUpload(t *testing.T) {
 	if got := len(recorder.retryQueue); got != 0 {
 		t.Fatalf("retryQueue len = %d, want 0", got)
 	}
-	if _, err := os.Stat(pending.metadataPath); !os.IsNotExist(err) {
-		t.Fatalf("metadata stat error = %v, want not exist", err)
-	}
+	assertAbandonedMetadata(t, pending.metadataPath)
 	if _, err := os.Stat(filePath); err != nil {
 		t.Fatalf("stat local file: %v", err)
 	}
@@ -254,7 +249,6 @@ func TestProcessRetryQueueRemovesMetadataForMissingFile(t *testing.T) {
 		firstAttempt: time.Now(),
 		lastError:    "missing",
 	}
-	pending.metadataPath = recorder.pendingUploadMetadataPath(pending.request)
 	if err := recorder.savePendingUpload(&pending); err != nil {
 		t.Fatal(err)
 	}
@@ -289,4 +283,17 @@ func writeSpoolFile(t *testing.T, spoolDir, recorderID, name, data string) strin
 		t.Fatalf("write spool file: %v", err)
 	}
 	return path
+}
+
+// assertAbandonedMetadata checks that expiry kept the metadata and marked it abandoned.
+func assertAbandonedMetadata(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path) //nolint:gosec // Test temp metadata.
+	if err != nil {
+		t.Fatalf("abandoned upload metadata was removed: %v", err)
+	}
+	var meta pendingUploadMetadata
+	if err := json.Unmarshal(data, &meta); err != nil || !meta.Abandoned {
+		t.Fatalf("abandoned upload metadata = %s, %v; want abandoned", data, err)
+	}
 }

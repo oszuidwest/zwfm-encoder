@@ -26,6 +26,13 @@ var afterFunc = time.AfterFunc
 // recordingStat lets tests hold a filename check like an unresponsive network share.
 var recordingStat = os.Stat
 
+// clockSynced and clockSyncPoll gate the first file on a synchronized clock;
+// tests replace them.
+var (
+	clockSynced   = clockSynchronized
+	clockSyncPoll = time.Second
+)
+
 // errRecorderStopped marks intentional stop/rotation cancellation.
 var errRecorderStopped = errors.New("recorder stopped")
 
@@ -58,6 +65,7 @@ type GenericRecorder struct {
 	spoolDir  string
 	state     types.ProcessState
 	lastError string
+	startGen  uint64 // Identifies the latest Start; an older start must not launch.
 
 	// FFmpeg process (encapsulates cmd, stdin, stderr with thread-safe access)
 	result *ffmpeg.StartResult
@@ -86,7 +94,8 @@ type GenericRecorder struct {
 	uploadClosed        bool      // Routes late uploads to retry after Stop.
 
 	// Retry queue for failed uploads (protected by mu)
-	retryQueue []pendingUpload
+	retryQueue     []pendingUpload
+	retryEnqueueMu sync.Mutex // Serializes persistence/publication without holding the state lock over disk I/O.
 
 	// Rotation timer (hourly mode)
 	rotationTimer      *time.Timer
@@ -199,12 +208,47 @@ func (r *GenericRecorder) Start() error {
 	r.state = types.ProcessStarting
 
 	// Start async validation and startup
-	go r.startAsync()
+	r.startGen++
+	go r.startAsync(r.startGen)
 
 	return nil
 }
 
-func (r *GenericRecorder) startAsync() {
+// waitForClockSync holds the first file until the system clock is synchronized:
+// file names and retention dates come from it, and a Raspberry Pi has no
+// real-time clock. It reports false when Stop or a newer Start took over.
+func (r *GenericRecorder) waitForClockSync(gen uint64) bool {
+	if clockSynced() {
+		return true
+	}
+	slog.Warn("system clock is not synchronized, recording starts once it is", "id", r.id)
+	for !clockSynced() {
+		r.mu.Lock()
+		current := r.state == types.ProcessStarting && r.startGen == gen
+		if current {
+			r.lastError = "waiting for system clock synchronization"
+		}
+		r.mu.Unlock()
+		if !current {
+			return false
+		}
+		time.Sleep(clockSyncPoll)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current := r.state == types.ProcessStarting && r.startGen == gen
+	if current {
+		r.lastError = ""
+	}
+	return current
+}
+
+func (r *GenericRecorder) startAsync(gen uint64) {
+	// Wait before validating, so a configuration changed meanwhile is the one checked.
+	if !r.waitForClockSync(gen) {
+		return
+	}
+
 	// Read config values we need for validation
 	r.mu.RLock()
 	storageMode := r.config.StorageMode
@@ -239,8 +283,8 @@ func (r *GenericRecorder) startAsync() {
 	// Now lock and start the encoder
 	r.mu.Lock()
 
-	// Re-check state in case Stop() was called during validation
-	if r.state != types.ProcessStarting {
+	// Re-check state in case Stop() or a newer Start() took over during validation
+	if r.state != types.ProcessStarting || r.startGen != gen {
 		r.mu.Unlock()
 		return
 	}
@@ -500,8 +544,8 @@ func (r *GenericRecorder) drainProcess(result *ffmpeg.StartResult) error {
 		func() { slog.Error("recorder ffmpeg force killed", "id", r.id) })
 
 	// FFmpeg's -n refusal can exit successfully, even after accepting stdin.
-	if outputRefused(result.Stderr()) {
-		return errors.New(strings.TrimSpace(result.Stderr()))
+	if line, ok := refusalLine(result.Stderr()); ok {
+		return errors.New(line)
 	}
 	if err != nil {
 		if message := util.ExtractLastError(result.Stderr()); message != "" {
@@ -512,7 +556,18 @@ func (r *GenericRecorder) drainProcess(result *ffmpeg.StartResult) error {
 }
 
 func outputRefused(stderr string) bool {
-	return strings.Contains(stderr, "already exists. Exiting.")
+	_, ok := refusalLine(stderr)
+	return ok
+}
+
+// refusalLine finds FFmpeg's -n refusal among warnings and the error lines that follow it.
+func refusalLine(stderr string) (string, bool) {
+	for line := range strings.Lines(stderr) {
+		if strings.Contains(line, "already exists. Exiting.") {
+			return strings.TrimSpace(line), true
+		}
+	}
+	return "", false
 }
 
 // Status returns the recorder process status.
@@ -786,7 +841,7 @@ func (r *GenericRecorder) scheduleDurationLimitLocked() {
 }
 
 func (r *GenericRecorder) generateFilename(t time.Time) string {
-	safeName := sanitizeFilename(r.config.Name)
+	safeName := util.SanitizeFilename(r.config.Name)
 	return fmt.Sprintf("%s-%s.%s", safeName, t.Format(recordingTimestampLayout), r.config.Codec.FileExtension())
 }
 
@@ -818,7 +873,7 @@ func (r *GenericRecorder) rememberFilenameLocked(filename string) {
 
 func s3ObjectKey(recorderName, filename string) string {
 	// Prefix: recordings/{sanitized-recorder-name}/filename
-	safeName := sanitizeFilename(recorderName)
+	safeName := util.SanitizeFilename(recorderName)
 	return fmt.Sprintf("recordings/%s/%s", safeName, filename)
 }
 
@@ -829,23 +884,6 @@ func (r *GenericRecorder) isS3Configured() bool {
 
 func (r *GenericRecorder) createS3Client() *s3.Client {
 	return createS3Client(RecorderToS3Config(&r.config))
-}
-
-func sanitizeFilename(name string) string {
-	result := strings.Map(func(c rune) rune {
-		switch {
-		case (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_':
-			return c
-		case c == ' ':
-			return '-'
-		default:
-			return -1
-		}
-	}, name)
-	if result == "" {
-		return "recording"
-	}
-	return result
 }
 
 // TestRecorderS3Connection tests S3 connectivity for a recorder configuration.

@@ -198,8 +198,8 @@ func (m *Manager) StopRecorder(id string) error {
 		return ErrHourlyRecorderNotControllable
 	}
 
-	// Check if not recording
-	if !recorder.IsRecording() {
+	// A start that waits for clock synchronization can be cancelled too.
+	if state := recorder.Status().State; state != types.ProcessRunning && state != types.ProcessStarting {
 		return ErrNotRecording
 	}
 

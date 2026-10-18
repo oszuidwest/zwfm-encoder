@@ -166,7 +166,7 @@ func (p *mediaProcessor) appendSilence(frames uint64) error {
 // receiveMedia requires conn to be closed when ctx is cancelled.
 func receiveMedia(
 	ctx context.Context,
-	conn *net.UDPConn,
+	conn net.PacketConn,
 	transmitter net.IP,
 	bits uint16,
 	output io.Writer,
@@ -189,7 +189,7 @@ func receiveMedia(
 			return err
 		}
 		if keepaliveTarget != nil && !now.Before(nextKeepalive) {
-			_, _ = conn.WriteToUDP([]byte{0x13, 0x37}, keepaliveTarget)
+			_, _ = conn.WriteTo([]byte{0x13, 0x37}, keepaliveTarget)
 			nextKeepalive = now.Add(keepaliveInterval)
 		}
 
@@ -203,7 +203,7 @@ func receiveMedia(
 		if err := conn.SetReadDeadline(deadline); err != nil {
 			return fmt.Errorf("set media deadline: %w", err)
 		}
-		n, source, err := conn.ReadFromUDP(buffer)
+		n, address, err := conn.ReadFrom(buffer)
 		if err != nil {
 			if contextErr := ctx.Err(); contextErr != nil {
 				return contextErr
@@ -213,7 +213,8 @@ func receiveMedia(
 			}
 			return fmt.Errorf("receive media: %w", err)
 		}
-		if !source.IP.Equal(transmitter) {
+		source, ok := address.(*net.UDPAddr)
+		if !ok || !source.IP.Equal(transmitter) {
 			continue
 		}
 		valid, err := processor.receive(buffer[:n], time.Now())

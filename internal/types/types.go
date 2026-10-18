@@ -80,8 +80,6 @@ const (
 const (
 	// ShutdownTimeout is the duration to wait for graceful shutdown.
 	ShutdownTimeout = 3 * time.Second
-	// PollInterval is the interval for polling process state.
-	PollInterval = 50 * time.Millisecond
 )
 
 // Codec identifies an audio encoding format.
@@ -503,6 +501,8 @@ type EncoderStatus struct {
 	LastError        string       `json:"last_error,omitzero"`
 	StreamCount      int          `json:"stream_count"`
 	SourceRetryCount int          `json:"source_retry_count,omitzero"`
+	// InputReady reports recent PCM from the current run with no open input outage.
+	InputReady bool `json:"input_ready"`
 }
 
 // WSRuntimeStatus contains runtime status sent to clients periodically.

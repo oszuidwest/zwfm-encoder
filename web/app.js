@@ -1581,7 +1581,7 @@ document.addEventListener('alpine:init', () => {
                         break;
                     case 'starting':
                         stateClass = 'state-warning';
-                        statusText = 'Starting...';
+                        statusText = status.error || 'Starting...';
                         break;
                     case 'running':
                         stateClass = 'state-success';

@@ -3,8 +3,10 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,11 +135,25 @@ func TestSendWebhookTestPayload(t *testing.T) {
 func TestWebhookChannelRejectsNonSuccessStatus(t *testing.T) {
 	t.Parallel()
 
-	for _, status := range []int{http.StatusMultipleChoices, http.StatusInternalServerError} {
+	for _, status := range []int{
+		http.StatusMultipleChoices,
+		http.StatusMovedPermanently,
+		http.StatusFound,
+		http.StatusSeeOther,
+		http.StatusTemporaryRedirect,
+		http.StatusPermanentRedirect,
+		http.StatusInternalServerError,
+	} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			t.Parallel()
 
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/target" {
+					t.Error("webhook followed redirect")
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				w.Header().Set("Location", "/target")
 				w.WriteHeader(status)
 			}))
 			defer server.Close()
@@ -145,8 +161,8 @@ func TestWebhookChannelRejectsNonSuccessStatus(t *testing.T) {
 			err := (&WebhookChannel{}).SendSilenceStart(context.Background(), &config.Snapshot{
 				WebhookURL: server.URL,
 			}, -48, -52)
-			if err == nil {
-				t.Fatalf("SendSilenceStart() error = nil for status %d", status)
+			if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("status %d", status)) {
+				t.Fatalf("SendSilenceStart() error = %v, want status %d", err, status)
 			}
 		})
 	}

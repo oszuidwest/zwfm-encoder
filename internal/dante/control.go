@@ -107,7 +107,7 @@ func buildStopRequest(handle [6]byte) []byte {
 }
 
 // exchangeControl returns the first successful response matching the request.
-func exchangeControl(ctx context.Context, conn *net.UDPConn, request []byte, timeout time.Duration) ([]byte, error) {
+func exchangeControl(ctx context.Context, conn net.Conn, request []byte, timeout time.Duration) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
