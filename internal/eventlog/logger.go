@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -202,6 +203,10 @@ func NewLogger(filePath string) (*Logger, error) {
 }
 
 func newLogger(filePath string, maxSizeBytes int64) (*Logger, error) {
+	if err := terminateLogTail(filePath); err != nil {
+		// Best effort: a glued event is better than refusing to start the encoder.
+		slog.Warn("could not terminate event log tail", "path", filePath, "error", err)
+	}
 	writer, err := util.NewRollingWriter(filePath, maxSizeBytes)
 	if err != nil {
 		return nil, fmt.Errorf("open event log: %w", err)
@@ -210,6 +215,38 @@ func newLogger(filePath string, maxSizeBytes int64) (*Logger, error) {
 		filePath: filePath,
 		writer:   writer,
 	}, nil
+}
+
+// terminateLogTail appends a newline when a crash left the last line
+// unterminated, so the next event starts on its own line. It writes to the
+// file directly: through the RollingWriter, the newline could trigger its own
+// rotation, and with a cap below one event the next write would then push the
+// previous event out of the retained logs.
+func terminateLogTail(filePath string) error {
+	f, err := os.OpenFile(filePath, os.O_RDWR|os.O_APPEND, 0) //nolint:gosec // Trusted application event-log path.
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if info.Size() == 0 {
+		return nil
+	}
+	var last [1]byte
+	if _, err := f.ReadAt(last[:], info.Size()-1); err != nil {
+		return err
+	}
+	if last[0] == '\n' {
+		return nil
+	}
+	_, err = f.Write([]byte{'\n'})
+	return err
 }
 
 // Log writes an event, using the current time if Timestamp is zero.
