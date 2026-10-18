@@ -155,7 +155,6 @@ func TestTruncatedLogDoesNotRepeatInputRecoveryAfterReopen(t *testing.T) {
 		}
 		e.state, e.sourceRunID = types.StateRunning, 1
 		e.confirmInput(1, time.Now())
-		e.alertOrchestrator.DrainLogs()
 		e.state = types.StateStopped
 		if err := e.Close(); err != nil {
 			t.Fatal(err)

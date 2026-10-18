@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -25,10 +26,18 @@ func TestDefaultLogPathIsInsideDefaultLogDir(t *testing.T) {
 
 func TestLoggerSeparatesExistingTailOnReopen(t *testing.T) {
 	t.Parallel()
-	for _, tail := range []string{"", "\n", `{"type":"stream_started","msg":"old"}`, `{"type":`} {
-		t.Run(tail, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, tail string
+		want       []string
+	}{
+		{name: "empty", want: []string{"new"}},
+		{name: "terminated", tail: "\n", want: []string{"new"}},
+		{name: "valid unterminated", tail: `{"type":"stream_started","msg":"old"}`, want: []string{"new", "old"}},
+		{name: "fragment", tail: `{"type":`, want: []string{"new"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "encoder.jsonl")
-			if err := os.WriteFile(path, []byte(tail), 0o600); err != nil {
+			if err := os.WriteFile(path, []byte(tc.tail), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			logger, err := NewLogger(path)
@@ -43,22 +52,20 @@ func TestLoggerSeparatesExistingTailOnReopen(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := []string{"new"}
-			if json.Valid([]byte(tail)) {
-				want = append(want, "old")
-			}
-			assertMessages(t, events, want)
+			assertMessages(t, events, tc.want)
 			data, err := os.ReadFile(path) //nolint:gosec // Test-controlled temporary log path.
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.HasPrefix(string(data), tail) {
+			if !strings.HasPrefix(string(data), tc.tail) {
 				t.Fatalf("existing tail changed: %q", data)
 			}
 		})
 	}
 }
 
+// The tail newline must bypass the RollingWriter: written through it, the
+// newline would rotate the only previous event out of the retained logs.
 func TestLoggerTailBoundaryDoesNotRotateAwayPreviousEvent(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "encoder.jsonl")
@@ -78,6 +85,29 @@ func TestLoggerTailBoundaryDoesNotRotateAwayPreviousEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertMessages(t, events, []string{"new", "old"})
+}
+
+func TestLoggerStartsWhenTailCannotBeRepaired(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("write-only file modes are POSIX-specific")
+	}
+	path := filepath.Join(t.TempDir(), "encoder.jsonl")
+	if err := os.WriteFile(path, []byte(`{"type":`), 0o200); err != nil {
+		t.Fatal(err)
+	}
+	if f, err := os.Open(path); err == nil { //nolint:gosec // Test-controlled temporary log path.
+		_ = f.Close()
+		t.Skip("file modes do not restrict reads for this user")
+	}
+	logger, err := NewLogger(path)
+	if err != nil {
+		t.Fatalf("NewLogger() with an unreadable tail = %v, want a working logger", err)
+	}
+	defer func() { _ = logger.Close() }()
+	if err := logger.Log(&Event{Type: InputRestored, Message: "new"}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestReadLastReturnsNewestWithLimitOffsetAndHasMore(t *testing.T) {

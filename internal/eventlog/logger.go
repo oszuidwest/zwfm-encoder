@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -203,7 +204,8 @@ func NewLogger(filePath string) (*Logger, error) {
 
 func newLogger(filePath string, maxSizeBytes int64) (*Logger, error) {
 	if err := terminateLogTail(filePath); err != nil {
-		return nil, fmt.Errorf("terminate event log tail: %w", err)
+		// Best effort: a glued event is better than refusing to start the encoder.
+		slog.Warn("could not terminate event log tail", "path", filePath, "error", err)
 	}
 	writer, err := util.NewRollingWriter(filePath, maxSizeBytes)
 	if err != nil {
@@ -215,6 +217,10 @@ func newLogger(filePath string, maxSizeBytes int64) (*Logger, error) {
 	}, nil
 }
 
+// terminateLogTail appends a newline when a crash left the last line
+// unterminated, so the next event starts on its own line. It writes to the
+// file directly: a newline written through the RollingWriter could rotate the
+// previous event out of the retained logs.
 func terminateLogTail(filePath string) error {
 	f, err := os.OpenFile(filePath, os.O_RDWR|os.O_APPEND, 0) //nolint:gosec // Trusted application event-log path.
 	if os.IsNotExist(err) {
@@ -225,17 +231,20 @@ func terminateLogTail(filePath string) error {
 	}
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
-	if err != nil || info.Size() == 0 {
+	if err != nil {
 		return err
 	}
-	var tail [1]byte
-	if _, err := f.ReadAt(tail[:], info.Size()-1); err != nil {
+	if info.Size() == 0 {
+		return nil
+	}
+	var last [1]byte
+	if _, err := f.ReadAt(last[:], info.Size()-1); err != nil {
 		return err
 	}
-	// Isolate a crash fragment without discarding a valid unterminated event.
-	if tail[0] != '\n' {
-		_, err = f.Write([]byte{'\n'})
+	if last[0] == '\n' {
+		return nil
 	}
+	_, err = f.Write([]byte{'\n'})
 	return err
 }
 
