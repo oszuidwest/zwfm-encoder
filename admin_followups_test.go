@@ -21,8 +21,12 @@ func TestMalformedTrustedForwardingReportsBadRequestNotThrottle(t *testing.T) {
 	// Budget accounting is covered by TestMalformedForwardingCannotExhaustProxyBudget.
 	for _, address := range []string{"unknown", "198.51.100.1:1234", "[2001:db8::1]", "bad", "198.51.100.1"} {
 		rec := postAdminLogin(t, handler, "wrong", "127.0.0.1:1234", address)
-		bad := address != "198.51.100.1"
-		if bad != (rec.Code == http.StatusBadRequest && strings.Contains(rec.Body.String(), "trusted proxy")) || rec.Header().Get("Retry-After") != "" {
+		// A valid address reaches the password check and gets the form back.
+		want, hint := http.StatusBadRequest, "trusted proxy"
+		if address == "198.51.100.1" {
+			want, hint = http.StatusOK, `name="csrf_token"`
+		}
+		if rec.Code != want || !strings.Contains(rec.Body.String(), hint) || rec.Header().Get("Retry-After") != "" {
 			t.Fatalf("forwarded %q: status=%d body=%s", address, rec.Code, rec.Body.String())
 		}
 	}

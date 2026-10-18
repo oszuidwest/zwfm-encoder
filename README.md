@@ -50,9 +50,7 @@ sudo su
 
 The web interface is available at `http://<raspberry-pi-ip>:8080` on your trusted LAN or through your VPN. New installations bind to `0.0.0.0:8080` by default; no domain name, certificate or reverse proxy is required. Choose local-only access in the installer if you plan to use a proxy or SSH tunnel. See [Admin security](#admin-security) for network restrictions and optional HTTPS setup.
 
-**Default credentials:** `admin` / `encoder`
-
-New installations are reachable from the LAN right away, so replace the default password before connecting the device to a shared network.
+Sign in as `admin` with the password you entered during installation. The installer has no default password; `admin` / `encoder` only applies when the encoder starts without a configuration file, so replace it before connecting such a device to a shared network.
 
 ## Updating
 

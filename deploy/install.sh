@@ -8,7 +8,7 @@ ENCODER_STOPPED=false
 # An EXIT trap also covers explicit `exit 1` paths and library exits, which ERR misses.
 installer_exit() {
   local status=$?
-  rm -f "${FUNCTIONS_LIB_PATH:-}" || true
+  rm -f "${FUNCTIONS_LIB_PATH:-}" "${ENCODER_CANDIDATE:-}" || true
   [ "$status" -eq 0 ] && return
   printf 'Installation failed (exit %s).\n' "$status" >&2
   if [ "$ENCODER_STOPPED" = true ]; then
@@ -226,19 +226,6 @@ fi
 echo -e "${BLUE}►► Installing FFmpeg, alsa-utils, and jq...${NC}"
 apt_install --silent ffmpeg alsa-utils jq
 
-# Stop existing service if running
-if systemctl is-active --quiet encoder 2>/dev/null; then
-  echo -e "${BLUE}►► Stopping existing encoder service...${NC}"
-  ENCODER_STOPPED=true # Also when the stop itself fails.
-  systemctl stop encoder
-fi
-
-# Kill any rogue encoder processes not managed by systemd
-if pkill -x encoder 2>/dev/null; then
-  ENCODER_STOPPED=true
-  echo -e "${YELLOW}Killed orphaned encoder process(es)${NC}"
-fi
-
 # Create dedicated service user
 if ! id -u encoder &>/dev/null; then
   echo -e "${BLUE}►► Creating encoder service user...${NC}"
@@ -308,9 +295,36 @@ if [ -z "$ENCODER_ASSET_INFO" ]; then
 fi
 IFS=$'\t' read -r ENCODER_ASSET_NAME ENCODER_BINARY_URL <<< "$ENCODER_ASSET_INFO"
 echo -e "${GREEN}✓ Asset: ${ENCODER_ASSET_NAME}${NC}"
-file_download "$ENCODER_BINARY_URL" "${INSTALL_DIR}/encoder" "encoder binary"
-chmod +x "${INSTALL_DIR}/encoder"
-ENCODER_HELP=$("${INSTALL_DIR}/encoder" -help 2>&1)
+# Download next to the current binary and check it before stopping anything.
+ENCODER_CANDIDATE=$(mktemp "${INSTALL_DIR}/encoder.new.XXXXXX")
+file_download "$ENCODER_BINARY_URL" "$ENCODER_CANDIDATE" "encoder binary"
+chmod 0755 "$ENCODER_CANDIDATE" # mktemp creates 0600, whatever the umask.
+ENCODER_HELP=$("$ENCODER_CANDIDATE" -help 2>&1)
+
+# Refuse a release that cannot read the kept configuration
+KEPT_CONFIG="$CONFIG_FILE"
+[ -f "$KEPT_CONFIG" ] || KEPT_CONFIG="${INSTALL_DIR}/config.json" # Migrated below.
+if [ "$KEEP_CONFIG" == "y" ] && [[ $ENCODER_HELP != *-hash-password* ]] &&
+  jq -e '.system.password_hash // empty' "$KEPT_CONFIG" > /dev/null 2>&1; then
+  echo -e "${RED}Release ${LATEST_RELEASE} cannot read the hashed web password in ${KEPT_CONFIG}. The running encoder was left untouched; install a newer release, or restore a plaintext system.password first.${NC}" >&2
+  exit 1
+fi
+
+# Stop existing service if running
+if systemctl is-active --quiet encoder 2>/dev/null; then
+  echo -e "${BLUE}►► Stopping existing encoder service...${NC}"
+  ENCODER_STOPPED=true # Also when the stop itself fails.
+  systemctl stop encoder
+fi
+
+# Kill any rogue encoder processes not managed by systemd
+if pkill -x encoder 2>/dev/null; then
+  ENCODER_STOPPED=true
+  echo -e "${YELLOW}Killed orphaned encoder process(es)${NC}"
+fi
+
+mv -f "$ENCODER_CANDIDATE" "${INSTALL_DIR}/encoder"
+ENCODER_CANDIDATE=
 
 # Create config directory with proper ownership
 echo -e "${BLUE}►► Setting up configuration directory...${NC}"
