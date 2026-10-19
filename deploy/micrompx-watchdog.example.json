@@ -1,0 +1,17 @@
+{
+  "site": "Example transmitter",
+  "pcm_status": "/proc/asound/sndrpihifiberry/pcm0p/sub0/status",
+  "state_dir": "/var/lib/micrompx-watchdog",
+  "email_file": "/etc/micrompx-watchdog/m365.json",
+  "send_mail": false,
+  "heartbeat_url": "",
+  "poll_seconds": 10,
+  "recovery_seconds": 900,
+  "reminder_seconds": 900,
+  "unknown_seconds": 60,
+  "critical_count": 3,
+  "critical_window_seconds": 60,
+  "stalled_checks": 2,
+  "retention_days": 7,
+  "evidence_mib": 64
+}

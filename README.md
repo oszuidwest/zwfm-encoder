@@ -29,6 +29,8 @@ The Windows build launches as a systray application without a console window: ri
 
 This is bare-metal software for a Raspberry Pi with a HiFiBerry sound card. Audio capture goes directly through ALSA (`arecord`). Install via the curl script in [Installation](#installation) below. CI publishes the binary as a GitHub release asset; no container image is published.
 
+For MicroMPX decoder sites, the repository also includes an optional [local, observe-only watchdog](docs/micrompx-watchdog.md). It runs on each decoder Pi, reuses M365 alert delivery, and detects logged starvation and stalled ALSA playback without installing the encoder or restarting/changing the decoder.
+
 ## Requirements
 
 - Raspberry Pi 4 or 5

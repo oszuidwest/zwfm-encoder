@@ -1,0 +1,7 @@
+{
+  "tenant_id": "00000000-0000-0000-0000-000000000000",
+  "client_id": "00000000-0000-0000-0000-000000000000",
+  "client_secret": "REPLACE_BEFORE_ENABLING_MAIL",
+  "from_address": "techniek@zuidwesttv.nl",
+  "recipients": "operators@example.invalid"
+}

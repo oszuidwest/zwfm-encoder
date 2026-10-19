@@ -1,0 +1,32 @@
+[Unit]
+Description=Local observe-only MicroMPX watchdog
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/micrompx-watchdog -config /etc/micrompx-watchdog/config.json
+# No decoder restart/reset is supported. The watchdog itself is also not auto-restarted.
+Restart=no
+TimeoutStopSec=60
+User=micrompx-watchdog
+Group=micrompx-watchdog
+SupplementaryGroups=systemd-journal
+StateDirectory=micrompx-watchdog
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadOnlyPaths=/proc/asound
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
