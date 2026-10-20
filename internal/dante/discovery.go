@@ -1,6 +1,7 @@
 package dante
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -237,8 +238,14 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 	}
 	lookupCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
+	// The deadline also rejects a query written before the asynchronous
+	// interrupt has closed the socket.
+	lookupDeadline, _ := lookupCtx.Deadline()
+	if err := conn.SetDeadline(lookupDeadline); err != nil {
+		return channelInfo{}, fmt.Errorf("set discovery deadline: %w", err)
+	}
 	stopInterrupt := context.AfterFunc(lookupCtx, func() {
-		_ = conn.SetReadDeadline(time.Now())
+		_ = conn.Close()
 	})
 	defer stopInterrupt()
 
@@ -246,13 +253,13 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 	buffer := make([]byte, 65535)
 	nextQuery := time.Time{}
 	var info channelInfo
-	var lastParseErr error
+	lookup := discoveryLookup{parent: ctx, ctx: lookupCtx, deadline: lookupDeadline, channel: channel}
 
 	for {
 		now := time.Now()
 		if !now.Before(nextQuery) {
 			if err := queryDante(conn, interfaces, query, destination); err != nil {
-				return channelInfo{}, fmt.Errorf("send discovery query for %q: %w", channel, err)
+				return channelInfo{}, cmp.Or(lookup.ended(err, lookupDeadline), fmt.Errorf("send discovery query for %q: %w", channel, err))
 			}
 			nextQuery = now.Add(time.Second)
 		}
@@ -261,25 +268,15 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 			deadline = earlierTime(deadline, contextDeadline)
 		}
 		if err := conn.SetReadDeadline(deadline); err != nil {
-			return channelInfo{}, fmt.Errorf("set discovery deadline: %w", err)
+			return channelInfo{}, cmp.Or(lookup.ended(err, time.Time{}), fmt.Errorf("set discovery deadline: %w", err))
 		}
 		n, source, ifIndex, err := readPacket(buffer)
 		if err != nil {
-			if lookupErr := lookupCtx.Err(); lookupErr != nil {
-				if contextErr := ctx.Err(); contextErr != nil {
-					return channelInfo{}, fmt.Errorf("discover channel %q: %w", channel, contextErr)
-				}
-				if lastParseErr != nil {
-					return channelInfo{}, fmt.Errorf(
-						"discover channel %q timed out after malformed response: %w",
-						channel,
-						lastParseErr,
-					)
-				}
-				return channelInfo{}, fmt.Errorf("discover channel %q: %w", channel, lookupErr)
+			if ended := lookup.ended(err, deadline); ended != nil {
+				return channelInfo{}, ended
 			}
 			if errors.Is(err, os.ErrDeadlineExceeded) {
-				continue
+				continue // The next query is due before the lookup deadline.
 			}
 			return channelInfo{}, fmt.Errorf("receive discovery response for %q: %w", channel, err)
 		}
@@ -289,13 +286,36 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 		}
 		complete, parseErr := mergeDiscoveryResponse(&info, buffer[:n], source.IP, instance, requiredSource)
 		if parseErr != nil {
-			lastParseErr = parseErr
+			lookup.lastParseErr = parseErr
 			continue
 		}
 		if complete {
 			return info, nil
 		}
 	}
+}
+
+// discoveryLookup tells why a channel lookup ended.
+type discoveryLookup struct {
+	parent, ctx  context.Context
+	deadline     time.Time
+	channel      string
+	lastParseErr error
+}
+
+// ended returns nil for a plain transport error, else the caller's
+// cancellation or the lookup's own timeout (naming a malformed response).
+func (l *discoveryLookup) ended(err error, operationDeadline time.Time) error {
+	switch {
+	case l.parent.Err() != nil:
+		return fmt.Errorf("discover channel %q: %w", l.channel, l.parent.Err())
+	case errors.Is(err, os.ErrDeadlineExceeded) && operationDeadline.Equal(l.deadline) || errors.Is(err, net.ErrClosed) && l.ctx.Err() != nil:
+		if l.lastParseErr != nil {
+			return fmt.Errorf("discover channel %q timed out after malformed response: %w", l.channel, l.lastParseErr)
+		}
+		return fmt.Errorf("discover channel %q: %w", l.channel, context.DeadlineExceeded)
+	}
+	return nil
 }
 
 func discoveryNetworks(interfaces []net.Interface) (map[int][]*net.IPNet, error) {
