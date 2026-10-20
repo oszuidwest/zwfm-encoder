@@ -72,7 +72,7 @@ Discovery requirements:
 - Accept responses only from UDP source port 5353 and an IPv4 subnet on the receiving interface, which must be one of the queried interfaces. Receive-interface metadata is required; a different selected interface's subnet cannot authorize a reply. RFC 6762 section 11 specifies this subnet check for unicast replies; IP TTL 255 is not required, and TTL receive control is unavailable in `x/net/ipv4` on Windows. Windows obtains the interface via Winsock `IP_PKTINFO`.
 - Validate response, standard opcode, successful rcode, non-truncated message and the query's ID (zero). If questions are included, they must match the requested instance, IN class and SRV/TXT types. Accept only IN resource records, masking the cache-flush bit. Responders that omit the echoed questions remain supported.
 - Hosts with several network interfaces (for example a transmitter on a primary and a secondary network, or a host on both wired and wireless) answer from several source addresses. Observed: without an interface configured, the two channels were sometimes resolved from different addresses of the same transmitter. Therefore resolve the left channel first, then resolve the right channel accepting only responses whose source address equals the left channel's transmitter address.
-- Parse all TXT values defensively. A malformed TXT record for the requested name is ignored (keep waiting; it may come from another host); if the lookup times out, report the last parse error. `id` must fit in 16 bits.
+- Parse all TXT values defensively. A malformed TXT record for the requested name is ignored (keep waiting; it may come from another host); if the lookup times out, report the last rejected reply with its source and reason (wrong source port, receiving interface or subnet, wrong transmitter address, or malformed). `id` must fit in 16 bits.
 
 Validation after resolving both channels:
 
@@ -81,7 +81,7 @@ Validation after resolving both channels:
 
 Local address selection:
 
-- With `interface`: the first non-loopback IPv4 address of that interface; the interface must be up and multicast-capable.
+- With `interface`: a non-loopback IPv4 address of that interface whose subnet contains the transmitter; the interface must be up and multicast-capable. Fail with an explicit subnet error if no address matches.
 - Without: the source address the operating system would use to reach the transmitter (for example via the local address of a connected UDP socket).
 
 ## 4. Flow control protocol (UDP)

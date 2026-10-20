@@ -44,8 +44,11 @@ func TestLookupTimeoutKeepsMalformedResponseAndTransportErrors(t *testing.T) {
 				return 1, &net.UDPAddr{IP: net.IPv4(192, 0, 2, 10), Port: 5353}, 7, nil
 			}, nil
 		}
-		if _, err := discoverChannel(t.Context(), h.interfaces, "tx", "Left", nil); err == nil || !strings.Contains(err.Error(), "malformed response") {
-			t.Fatalf("timeout at SetReadDeadline lost the malformed-response diagnostic: %v", err)
+		_, err := discoverChannel(t.Context(), h.interfaces, "tx", "Left", nil)
+		if !errors.Is(err, context.DeadlineExceeded) ||
+			!strings.Contains(err.Error(), "malformed response") ||
+			!strings.Contains(err.Error(), "192.0.2.10:5353") {
+			t.Fatalf("timeout at SetReadDeadline lost the deadline cause or rejected-response diagnostic: %v", err)
 		}
 		listenDanteUDP = listen
 		reset := errors.New("connection reset")
