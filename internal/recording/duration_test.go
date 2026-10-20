@@ -9,6 +9,68 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
+func TestModeChangesRescheduleRecordingBounds(t *testing.T) {
+	neverRotate(t)
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := localOnDemandRecorder(t, "mode-bounds")
+	cfg.RecordingMode = types.RecordingHourly
+	r := NewGenericRecorder(GenericRecorderConfig{
+		Recorder: cfg, FFmpegPath: executable, SpoolDir: t.TempDir(), MaxDurationMinutes: 60,
+	})
+	t.Cleanup(func() { _ = r.Stop() })
+	startCaptureTestRecorder(t, r)
+	var callbacks []func()
+	var delays []time.Duration
+	never := afterFunc
+	afterFunc = func(d time.Duration, callback func()) *time.Timer {
+		callbacks = append(callbacks, callback)
+		delays = append(delays, d)
+		return never(d, callback)
+	}
+	cfg.RecordingMode = types.RecordingOnDemand
+	if err := r.UpdateConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(callbacks) != 1 || delays[0] != time.Hour {
+		t.Fatalf("on-demand timers = %v, want one 60-minute limit", delays)
+	}
+	if err := r.UpdateConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(callbacks) != 1 {
+		t.Fatal("an edit without a mode change extended the duration limit")
+	}
+	cfg.RecordingMode = types.RecordingHourly
+	if err := r.UpdateConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(callbacks) != 2 {
+		t.Fatal("returning to hourly mode did not schedule a rotation")
+	}
+	callbacks[0]() // A duration callback already queued before the mode change.
+	if r.Status().State != types.ProcessRunning {
+		t.Fatal("the old duration limit stopped hourly recording")
+	}
+	before := r.currentFile
+	callbacks[1]()
+	if r.currentFile == before || len(callbacks) != 3 {
+		t.Fatal("the hourly callback did not rotate and schedule the next file")
+	}
+	if err := r.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.RecordingMode = types.RecordingOnDemand
+	if err := r.UpdateConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(callbacks) != 3 {
+		t.Fatal("editing a stopped recorder scheduled a timer")
+	}
+}
+
 func TestDurationLimitDiscardsQueuedCallbackAfterWriteError(t *testing.T) {
 	for _, limited := range []bool{true, false} {
 		name := "limited restart"

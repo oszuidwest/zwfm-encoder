@@ -611,6 +611,13 @@ func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 			r.rotationTimer = nil
 		}
 		r.rotationGeneration++
+		if r.state == types.ProcessRunning && r.maxDurationMinutes > 0 {
+			r.scheduleDurationLimitLocked()
+		}
+	} else if cfg.RecordingMode == types.RecordingHourly && r.config.RecordingMode != types.RecordingHourly &&
+		r.state == types.ProcessRunning {
+		r.cancelDurationLimitLocked()
+		r.scheduleRotationLocked(time.Now())
 	}
 	r.config = *cfg
 	// Note: S3 client will be recreated on next use if config changed
