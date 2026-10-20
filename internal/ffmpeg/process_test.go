@@ -1,6 +1,7 @@
 package ffmpeg
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os/exec"
@@ -13,9 +14,9 @@ func TestStartProcessWithStdoutCapturesOutput(t *testing.T) {
 	if err != nil {
 		t.Skip("cat not available")
 	}
-	result, err := StartProcessWithStdout(catPath, nil)
+	result, err := StartProcessWithStdoutContext(context.Background(), catPath, nil)
 	if err != nil {
-		t.Fatalf("StartProcessWithStdout() error = %v", err)
+		t.Fatalf("StartProcessWithStdoutContext() error = %v", err)
 	}
 	if _, err := result.WriteStdin([]byte("encoded bytes")); err != nil {
 		t.Fatalf("WriteStdin() error = %v", err)

@@ -208,10 +208,20 @@ func (m *Manager) StopRecorder(id string) error {
 
 // Start begins recorder management and is idempotent across source retries.
 func (m *Manager) Start() error {
+	return m.StartIfActive(nil)
+}
+
+// StartIfActive checks source ownership under the same lock used by Stop.
+// The predicate must not call this manager.
+func (m *Manager) StartIfActive(active func() bool) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	if active != nil && !active() {
+		m.mu.Unlock()
+		return nil
+	}
 
 	if m.running {
+		m.mu.Unlock()
 		return nil
 	}
 	m.running = true
@@ -221,11 +231,12 @@ func (m *Manager) Start() error {
 	m.hourlyRetryStopCh = make(chan struct{})
 
 	// Start hourly recorders (ondemand never auto-starts)
+	startErrors := make(map[string]error)
 	for id, recorder := range m.recorders {
 		cfg := recorder.Config()
 		if cfg.RecordingMode == types.RecordingHourly && cfg.Enabled {
 			if err := recorder.Start(); err != nil {
-				slog.Warn("failed to auto-start recorder", "id", id, "error", err)
+				startErrors[id] = err
 			}
 		}
 	}
@@ -237,7 +248,12 @@ func (m *Manager) Start() error {
 	m.startHourlyRetryScheduler(m.hourlyRetryStopCh)
 	go m.processUploadRetryQueues()
 
-	slog.Info("recording manager started", "recorders", len(m.recorders))
+	count := len(m.recorders)
+	m.mu.Unlock()
+	for id, err := range startErrors {
+		slog.Warn("failed to auto-start recorder", "id", id, "error", err)
+	}
+	slog.Info("recording manager started", "recorders", count)
 	return nil
 }
 
