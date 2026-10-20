@@ -285,6 +285,33 @@ func TestInputChangeStartsEncoderLeftStoppedByAFailure(t *testing.T) {
 	})
 }
 
+func TestInputChangeRecoversAfterExplicitStopAndRestart(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e, opens := startDanteEncoder(t, slowTeardown(0))
+		if err := e.Stop(); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.Restart(); err != nil {
+			t.Fatal(err)
+		}
+		synctest.Wait()
+		if e.State() != types.StateRunning || opens.Load() != 2 {
+			t.Fatalf("state=%s, opens=%d; want a running replacement", e.State(), opens.Load())
+		}
+
+		e.config.Audio.Input = ""
+		if err := e.Restart(); !errors.Is(err, ErrNoAudioInput) {
+			t.Fatalf("Restart without input = %v, want ErrNoAudioInput", err)
+		}
+		e.config.Audio.Input = "dante://tx/Left/Right"
+		e.RestartInBackground()
+		synctest.Wait()
+		if e.State() != types.StateRunning || opens.Load() != 3 {
+			t.Fatalf("state=%s, opens=%d; a working input must recover after the failed restart", e.State(), opens.Load())
+		}
+	})
+}
+
 func TestStaleRestartLeavesOperatorRunAlone(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e, opens := startDanteEncoder(t, slowTeardown(0))

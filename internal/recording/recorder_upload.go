@@ -85,7 +85,7 @@ func (r *GenericRecorder) prepareUploadRequest(filePath string) (uploadRequest, 
 		return uploadRequest{}, false
 	}
 
-	info, err := os.Stat(filePath)
+	info, err := os.Stat(filePath) // #nosec G703 -- ValidatePath rejects traversal above.
 	if err != nil {
 		slog.Warn("failed to stat recording file", "id", r.id, "error", err)
 		return uploadRequest{}, false

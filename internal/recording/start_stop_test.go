@@ -47,6 +47,10 @@ func TestStaleStartValidationCannotChangeStoppedOrNewRun(t *testing.T) {
 				if err := r.Start(); err != nil {
 					t.Fatal(err)
 				}
+				// The same directory is still being checked: the new run waits for it.
+				if got := r.Status().State; got != types.ProcessStarting {
+					t.Fatalf("restart state = %s while the old check runs, want starting", got)
+				}
 				want = types.ProcessRunning
 			}
 			releaseOld()

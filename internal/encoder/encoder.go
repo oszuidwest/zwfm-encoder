@@ -467,6 +467,7 @@ func (e *Encoder) start(expectedGeneration *uint64) error {
 		return ErrAlreadyRunning
 	}
 
+	e.operatorStopped = false
 	e.state = types.StateStarting
 	e.stopChan = make(chan struct{})
 	e.sourceLoopDone = make(chan struct{})

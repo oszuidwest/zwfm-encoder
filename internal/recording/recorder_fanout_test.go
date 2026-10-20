@@ -68,7 +68,6 @@ func TestBlockedFilenameCheckDoesNotStopCaptureFanout(t *testing.T) {
 			updated := make(chan error, 1)
 			if tc.update {
 				go func() { updated <- m.UpdateRecorder(slowCfg) }()
-				waitForBlockedManagerUpdate(t, m)
 			} else {
 				updated <- nil
 			}
@@ -86,15 +85,18 @@ func TestBlockedFilenameCheckDoesNotStopCaptureFanout(t *testing.T) {
 			case <-time.After(time.Second):
 				t.Error("capture fan-out waited for the blocked filename check")
 			}
+			select {
+			case err := <-updated:
+				requireRecorderUpdate(t, err)
+			case <-time.After(time.Second):
+				t.Error("config update waited for the blocked filename check")
+			}
 			release()
 			<-delivered
 			if tc.rotation {
 				<-rotated
 			} else {
 				waitForRecorderState(t, slow, types.ProcessRunning)
-			}
-			if err := <-updated; err != nil {
-				t.Fatal(err)
 			}
 			if err := m.Stop(); err != nil {
 				t.Fatal(err)
@@ -104,6 +106,13 @@ func TestBlockedFilenameCheckDoesNotStopCaptureFanout(t *testing.T) {
 				assertRecordedCapture(t, file, want)
 			}
 		})
+	}
+}
+
+func requireRecorderUpdate(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Errorf("recorder update failed: %v", err)
 	}
 }
 
@@ -124,17 +133,4 @@ func assertRecordedCapture(t *testing.T, file string, want []byte) {
 	if err != nil || !bytes.Equal(got, want) {
 		t.Errorf("recorded %s = %v, %v; want %v", filepath.Base(file), got, err, want)
 	}
-}
-
-func waitForBlockedManagerUpdate(t *testing.T, m *Manager) {
-	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if !m.mu.TryRLock() {
-			return // Update owns the manager lock while waiting for the recorder.
-		}
-		m.mu.RUnlock()
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatal("config update did not acquire manager lock")
 }

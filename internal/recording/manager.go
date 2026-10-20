@@ -150,10 +150,9 @@ func (m *Manager) RemoveRecorder(id string) error {
 
 // UpdateRecorder updates an existing recorder configuration.
 func (m *Manager) UpdateRecorder(cfg *types.Recorder) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
+	m.mu.RLock()
 	recorder, exists := m.recorders[cfg.ID]
+	m.mu.RUnlock()
 	if !exists {
 		return fmt.Errorf("recorder not found: %s", cfg.ID)
 	}
