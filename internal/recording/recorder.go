@@ -276,6 +276,7 @@ func (r *GenericRecorder) startAsync(gen uint64) {
 
 	r.mu.Lock()
 
+	// Clock synchronization may have yielded to Stop or a newer Start.
 	if r.state != types.ProcessStarting || r.startGen != gen {
 		r.mu.Unlock()
 		return
@@ -319,6 +320,7 @@ func (r *GenericRecorder) startAsync(gen uint64) {
 	r.state = types.ProcessRunning
 	r.recording.Store(true)
 
+	// Snapshot event fields before releasing mu.
 	logParams := r.captureLogParamsLocked()
 	name := r.config.Name
 	mode := r.config.RecordingMode
@@ -423,6 +425,7 @@ func (r *GenericRecorder) stopLocked() error {
 	r.stopOnce = sync.Once{}      // Allow the next Stop to close uploadStopCh.
 	r.uploadWorkerRunning = false // Allow the next Start to launch a worker.
 
+	// Snapshot event fields before releasing mu.
 	logParams := r.captureLogParamsLocked()
 	name := r.config.Name
 	r.mu.Unlock()
@@ -616,6 +619,7 @@ func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 	updated := *cfg
 	updated.IDBasedFiles, updated.LegacyFilePrefix = true, r.config.LegacyFilePrefix
 	r.config = updated
+	// getOrCreateS3Client refreshes changed connection settings on next use.
 
 	return nil
 }

@@ -63,6 +63,7 @@ func (d *Distributor) ProcessSamples(buf []byte) {
 
 		now := time.Now()
 
+		// Refresh settings each metering window so edits apply during capture.
 		cfg := d.config.DetectorSettings()
 		d.peakHolder.SetHoldDuration(time.Duration(cfg.PeakHoldMs) * time.Millisecond)
 

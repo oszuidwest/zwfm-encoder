@@ -160,6 +160,7 @@
                     </div>
                 </div>
 
+                <!-- Source retry/error alert -->
                 <div class="alert" role="alert" x-show="hasSourceIssue" x-cloak>
                     <span class="icon-container" x-html="icons.warning"></span>
                     <div>
@@ -271,6 +272,7 @@
                 <button class="nav-btn" data-variant="save" type="button" tabindex="0" @click="saveSettings()" :disabled="!settingsDirty || saving" x-text="saving ? 'Saving...' : 'Save'">Save</button>
             </header>
 
+            <!-- Tab changes select a panel without saving configuration. -->
             <div class="tabs" role="tablist">
                 <template x-for="tab in settingsTabs" :key="tab.id">
                     <button class="tab" type="button" role="tab" :id="'tab-' + tab.id" :aria-selected="settingsTab === tab.id" :aria-controls="'panel-' + tab.id" :tabindex="settingsTab === tab.id ? 0 : -1" :title="tab.label" @click="showTab(tab.id)">

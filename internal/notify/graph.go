@@ -268,6 +268,7 @@ func (c *GraphClient) SendMailWithAttachment(
 // ValidateAuth checks token acquisition and mailbox lookup, accepting HTTP 403.
 // It does not verify mail-send permission.
 func (c *GraphClient) ValidateAuth() error {
+	// The OAuth transport acquires a token for this lookup.
 	apiURL := fmt.Sprintf("%s/users/%s", graphBaseURL, url.PathEscape(c.fromAddress))
 	req, err := http.NewRequest(http.MethodGet, apiURL, http.NoBody)
 	if err != nil {
@@ -285,6 +286,7 @@ func (c *GraphClient) ValidateAuth() error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// Mailbox-read access is optional for this authentication-only check.
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusForbidden:
 		return nil

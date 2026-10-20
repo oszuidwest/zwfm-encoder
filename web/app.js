@@ -485,6 +485,7 @@ document.addEventListener('alpine:init', () => {
         ws: null,
         _bannerTimeout: null,
 
+        // Computed state and form validation
         get hasSourceIssue() {
             // The encoder clears lastError once a reopened input is confirmed.
             return (this.encoder.sourceRetryCount > 0 && this.encoder.state !== 'stopped') ||
@@ -533,6 +534,7 @@ document.addEventListener('alpine:init', () => {
             document.addEventListener('keydown', (e) => this.handleGlobalKeydown(e));
         },
 
+        // Shared refresh for startup, config_changed, form entry and successful saves.
         async loadConfig() {
             try {
                 const data = await requestJSON(API.CONFIG);
@@ -548,6 +550,7 @@ document.addEventListener('alpine:init', () => {
             }
         },
 
+        // Bypass the server's device cache when the input dropdown gains focus.
         async refreshDevices() {
             try {
                 const data = await requestJSON(API.DEVICES);
@@ -672,6 +675,7 @@ document.addEventListener('alpine:init', () => {
             levels.display_left = applyPPM(levels.peak_left, this.levels.display_left ?? -60);
             levels.display_right = applyPPM(levels.peak_right, this.levels.display_right ?? -60);
 
+            // Hold the highest display level for peakHoldMs, then decay the marker.
             const HOLD_DECAY_PER_FRAME = PPM_DECAY_PER_FRAME * 2; // 2x faster decay for peak marker
 
             const updateHold = (display, prevHold, prevTime, key) => {
@@ -1914,6 +1918,7 @@ document.addEventListener('alpine:init', () => {
             }, TEST_FEEDBACK_MS);
         },
 
+        // Auto-dismiss toasts, keeping errors longer; evict the oldest at MAX_TOASTS.
         showToast(message, type = 'success') {
             const id = ++this._toastIdCounter;
             const duration = type === 'error' ? TOAST_DURATION_ERROR : TOAST_DURATION_SUCCESS;
@@ -1956,6 +1961,7 @@ document.addEventListener('alpine:init', () => {
             }
         },
 
+        // Cancel toast timers as well as messages on navigation and reconnect.
         clearToasts() {
             for (const toast of this.toasts) {
                 if (toast.timeoutId) clearTimeout(toast.timeoutId);
