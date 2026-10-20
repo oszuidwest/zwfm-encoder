@@ -3,13 +3,13 @@ package recording
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -19,10 +19,13 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-func TestRefusedRecordingIsNotUploaded(t *testing.T) {
-	t.Setenv(fakeFFmpegRefuseEnv, "1")
-	for _, termination := range []string{"write failure", "stop"} {
-		t.Run(termination, func(t *testing.T) {
+func TestReplacedRecordingIsNotUploadedOrRemoved(t *testing.T) {
+	for _, audio := range []bool{false, true} {
+		name := "empty"
+		if audio {
+			name = "audio"
+		}
+		t.Run(name, func(t *testing.T) {
 			endpoint, uploads := conditionalPutServer(t, "", func(http.ResponseWriter, string) bool { return false })
 			cfg := testS3Recorder()
 			cfg.RecordingMode, cfg.StorageMode = types.RecordingOnDemand, types.StorageBoth
@@ -36,40 +39,44 @@ func TestRefusedRecordingIsNotUploaded(t *testing.T) {
 			file := r.currentFile
 			result := r.result
 			r.mu.RUnlock()
-			// Another recording already holds the name when FFmpeg opens it.
-			if err := os.WriteFile(file, []byte("pre-existing recording"), 0o600); err != nil { //nolint:gosec // Test temp output.
-				t.Fatal(err)
-			}
-			if termination == "stop" {
+			if audio {
 				r.WriteAudio(make([]byte, 4096))
-				if err := result.Wait(); err != nil {
-					t.Fatalf("fake refusal should exit 0: %v", err)
+				deadline := time.Now().Add(3 * time.Second)
+				for result.BytesWritten() == 0 && time.Now().Before(deadline) {
+					time.Sleep(time.Millisecond)
 				}
 				if result.BytesWritten() == 0 {
-					t.Fatal("refusal must be detected even after accepting audio")
+					t.Fatal("encoder did not accept test audio")
 				}
-			} else {
-				deadline := time.Now().Add(3 * time.Second)
-				for time.Now().Before(deadline) && !strings.Contains(r.Status().Error, "already exists") {
-					r.WriteAudio(make([]byte, 16384))
-					time.Sleep(5 * time.Millisecond)
-				}
-				waitForRecorderState(t, r, types.ProcessError)
 			}
-			message := r.Status().Error
+			result.CloseStdin()
+			if err := result.Wait(); err != nil {
+				t.Fatal(err)
+			}
+			// Replace the inode after FFmpeg exits but before finalization claims it.
+			other := filepath.Join(t.TempDir(), "foreign")
+			if err := os.WriteFile(other, []byte("pre-existing recording"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(file); err != nil { //nolint:gosec // Test temp recording.
+				if runtime.GOOS == "windows" {
+					t.Skipf("Windows protects the open reservation from replacement: %v", err)
+				}
+				t.Fatal(err)
+			}
+			if err := os.Rename(other, file); err != nil { //nolint:gosec // Test temp recording.
+				t.Fatal(err)
+			}
 			if err := r.Stop(); err != nil {
 				t.Fatal(err)
 			}
-			if want := fmt.Sprintf("File '%s' already exists. Exiting.", file); termination == "write failure" && message != want {
-				t.Errorf("recorder error = %q, want only FFmpeg's refusal %q", message, want)
-			}
 			if got := len(uploads()); got != 0 {
-				t.Errorf("uploaded refused file %d times", got)
+				t.Errorf("uploaded unrelated replacement %d times", got)
 			}
 			if data, err := os.ReadFile(file); err != nil || string(data) != "pre-existing recording" { //nolint:gosec // Test temp output.
 				t.Fatalf("pre-existing recording = %q, %v; want untouched", data, err)
 			}
-			assertRecorderErrorEvent(t, path, filepath.Base(file), "already exists")
+			assertRecorderErrorEvent(t, path, filepath.Base(file), "replaced")
 		})
 	}
 }
@@ -141,6 +148,7 @@ func TestFailedRotationStartEmitsRecorderError(t *testing.T) {
 		t.Fatalf("rotation failure filename = %q, want attempted new output, not %q", filename, filepath.Base(previous))
 	}
 	assertRecorderErrorLog(t, logs, filename)
+	assertNoRecording(t, filepath.Join(cfg.LocalPath, filename)) // The unstarted reservation.
 }
 
 func TestWriteErrorRecoveryUploadDoesNotDelayStop(t *testing.T) {
@@ -204,6 +212,94 @@ func TestWriteErrorRecoveryUploadDoesNotDelayStop(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("recovery upload did not finish after Stop")
+}
+
+func TestWriteErrorKeepsReplacedRecording(t *testing.T) {
+	t.Setenv(fakeFFmpegFailWriteEnv, "1")
+	endpoint, uploads := conditionalPutServer(t, "", func(http.ResponseWriter, string) bool { return false })
+	cfg := testS3Recorder()
+	cfg.RecordingMode, cfg.StorageMode = types.RecordingOnDemand, types.StorageBoth
+	cfg.LocalPath, cfg.S3Endpoint = t.TempDir(), endpoint
+	r, path := errorTestRecorder(t, cfg)
+	file := startCaptureTestRecorder(t, r)
+	r.mu.RLock()
+	result := r.result
+	r.mu.RUnlock()
+	r.WriteAudio(make([]byte, 4096))
+	_ = result.Wait() // The fake exits after the first 4096 bytes.
+	other := filepath.Join(t.TempDir(), "foreign")
+	if err := os.WriteFile(other, []byte("pre-existing recording"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(file); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("Windows protects the open reservation from replacement: %v", err)
+		}
+		t.Fatal(err)
+	}
+	if err := os.Rename(other, file); err != nil {
+		t.Fatal(err)
+	}
+	writeUntilRecorderLeavesRunning(t, r)
+	if err := r.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if metadata, err := os.ReadDir(r.pendingUploadDir()); err == nil && len(metadata) != 0 {
+		t.Fatalf("replacement registered for recovery: %v", metadata)
+	}
+	if got := len(uploads()); got != 0 {
+		t.Errorf("uploaded unrelated replacement %d times", got)
+	}
+	assertRecordedCapture(t, file, []byte("pre-existing recording"))
+	assertRecorderErrorEvent(t, path, filepath.Base(file), "replaced")
+}
+
+func TestWriteErrorRecoversAudioDespiteZeroAcceptedBytes(t *testing.T) {
+	// A failed Windows pipe write can report zero accepted bytes after FFmpeg
+	// consumed PCM; the fake models it by exiting before reading stdin.
+	t.Setenv(fakeFFmpegFailWriteEnv, "empty")
+	t.Setenv(fakeFFmpegEmptyHeaderEnv, "1")
+	cfg := testS3Recorder()
+	cfg.RecordingMode, cfg.S3Endpoint = types.RecordingOnDemand, "http://127.0.0.1:1"
+	r, _ := errorTestRecorder(t, cfg)
+	file := startCaptureTestRecorder(t, r)
+	// The recovery upload runs in the background and holds the file open for a
+	// moment; Windows cannot remove the temp dir before it is closed.
+	t.Cleanup(func() {
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+			if err := os.Remove(file); err == nil || os.IsNotExist(err) {
+				return
+			}
+		}
+	})
+	r.mu.RLock()
+	result := r.result
+	r.mu.RUnlock()
+	_ = result.Wait()
+	writeUntilRecorderLeavesRunning(t, r)
+	if err := r.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if result.BytesWritten() != 0 {
+		t.Fatalf("pipe accepted %d bytes, want 0", result.BytesWritten())
+	}
+	metadata, err := filepath.Glob(filepath.Join(r.pendingUploadDir(), "*"+pendingUploadMetadataSuffix))
+	if err != nil || len(metadata) != 1 { // A retry may be rewriting it next to a .tmp file.
+		t.Fatalf("output with audio not registered for recovery: %v, %v", metadata, err)
+	}
+}
+
+// writeUntilRecorderLeavesRunning feeds audio until a write error stops r.
+func writeUntilRecorderLeavesRunning(t *testing.T, r *GenericRecorder) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for r.Status().State == types.ProcessRunning {
+		if time.Now().After(deadline) {
+			t.Fatal("write error did not stop the recorder")
+		}
+		r.WriteAudio(make([]byte, 16384))
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 func errorTestRecorder(t *testing.T, cfg *types.Recorder) (recorder *GenericRecorder, eventPath string) {
@@ -277,7 +373,7 @@ func TestWriteErrorWithEmptyOutputIsNotRecovered(t *testing.T) {
 	}
 	waitForRecorderState(t, r, types.ProcessRunning)
 	r.mu.RLock()
-	file, result := r.currentFile, r.result
+	file := r.currentFile
 	r.mu.RUnlock()
 	deadline := time.Now().Add(3 * time.Second)
 	for r.Status().State == types.ProcessRunning && time.Now().Before(deadline) {
@@ -287,17 +383,11 @@ func TestWriteErrorWithEmptyOutputIsNotRecovered(t *testing.T) {
 	if err := r.Stop(); err != nil {
 		t.Fatal(err)
 	}
-	if result.BytesWritten() == 0 {
-		t.Fatal("FFmpeg accepted no PCM; the size check was not reached")
-	}
-	// A queued recovery persists metadata before uploading and an upload removes
-	// the spool file, so both checks hold only if nothing was queued.
+	// A queued recovery persists metadata before uploading.
 	if metadata, err := os.ReadDir(r.pendingUploadDir()); err == nil && len(metadata) != 0 {
 		t.Fatalf("empty output registered for recovery: %v", metadata)
 	}
-	if info, err := os.Stat(file); err != nil || info.Size() != 0 {
-		t.Fatalf("output = %v, %v; want the fake's empty file left in place", info, err)
-	}
+	assertNoRecording(t, file) // An empty placeholder is not left behind.
 	if put := len(uploads()); put != 0 {
 		t.Fatalf("empty output uploaded %d times", put)
 	}

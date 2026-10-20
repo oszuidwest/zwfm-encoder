@@ -135,6 +135,16 @@ func (h pauseHandler) Handle(_ context.Context, record slog.Record) error { //no
 
 func TestStopWaitsForAnHourlyRetryInFlight(t *testing.T) {
 	m, r := runningManagerWithFailedHourlyRecorder(t)
+	// Hold async startup before filesystem preparation, so Stop invalidates
+	// it before the test's temporary directories can be cleaned up.
+	startupEntered, releaseStartup := make(chan struct{}), make(chan struct{})
+	previousClock := clockSynced
+	clockSynced = func() bool { close(startupEntered); <-releaseStartup; return true }
+	t.Cleanup(func() {
+		<-startupEntered
+		close(releaseStartup)
+		clockSynced = previousClock
+	})
 	entered, release := make(chan struct{}), make(chan struct{})
 	unblock := sync.OnceFunc(func() { close(release) })
 	previous := slog.Default()

@@ -23,8 +23,14 @@ import (
 // afterFunc schedules recorder timers; tests replace it to fire callbacks by hand.
 var afterFunc = time.AfterFunc
 
-// recordingStat lets tests hold a filename check like an unresponsive network share.
-var recordingStat = os.Stat
+// reserveRecordingFile exclusively creates path; tests replace it to hold a
+// reservation like an unresponsive network share.
+var reserveRecordingFile = func(path string) (*os.File, error) {
+	if err := util.ValidatePath("recording file", path); err != nil {
+		return nil, err
+	}
+	return os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o666) //nolint:gosec // Preserve FFmpeg's output permissions (restricted by umask/ACLs); path uses a validated directory and sanitized filename.
+}
 
 // checkRecordingPath lets lifecycle tests hold directory validation on a slow mount.
 var checkRecordingPath = util.CheckPathWritable
@@ -86,6 +92,7 @@ type GenericRecorder struct {
 
 	// Current recording
 	currentFile   string
+	currentOutput *recordingOutput     // Exclusively created file owned by the current encoder.
 	usedFilenames map[string]time.Time // Names started within usedFilenameWindow by this process; S3-only mode deletes the file itself after upload.
 
 	// S3 client (cached, recreated when config changes)
@@ -272,13 +279,13 @@ func (r *GenericRecorder) startAsync(gen uint64) {
 	}
 
 	// Start FFmpeg encoder
-	path, current, err := r.prepareFilenameLocked(time.Now())
+	output, current, err := r.prepareFilenameLocked(time.Now())
 	if !current {
 		r.mu.Unlock()
 		return
 	}
 	if err == nil {
-		err = r.startEncoderLocked(path)
+		err = r.startEncoderLocked(output)
 	}
 	if err != nil {
 		r.state = types.ProcessError
@@ -287,6 +294,7 @@ func (r *GenericRecorder) startAsync(gen uint64) {
 		params := r.captureLogParamsLocked()
 		params.Error = err.Error()
 		r.mu.Unlock()
+		output.discard()
 		slog.Error("recorder failed to start encoder", "id", r.id, "error", err)
 		r.logEvent(eventlog.RecorderError, params)
 		return
@@ -492,44 +500,49 @@ func (r *GenericRecorder) handleWriteError(result *ffmpeg.StartResult, writeErr 
 	r.cancelDurationLimitLocked()
 	r.recording.Store(false)
 	r.lastError = writeErr.Error()
-	capturedFile := r.currentFile
-	r.result = nil
+	run := r.claimEncoderLocked() // audioWriter closes writerDone on return.
 	r.currentFile = ""
 	r.audioMu.Lock()
 	r.audioCh = nil
 	r.audioMu.Unlock()
-	// audioWriter closes writerDone on return.
-	r.writerDone = nil
 	r.retiring.Add(1)
-	r.retiringFiles[capturedFile] = struct{}{}
+	r.retiringFiles[run.file] = struct{}{}
 	r.mu.Unlock()
 
 	// Let audioWriter return before cleanup waits on FFmpeg.
-	go r.cleanupAfterWriteError(result, capturedFile, writeErr)
+	go r.cleanupAfterWriteError(run, writeErr)
 }
 
 // cleanupAfterWriteError closes a broken FFmpeg process and preserves its partial file for upload.
 // The failing write has released stdinMu, so CloseStdin cannot deadlock.
-func (r *GenericRecorder) cleanupAfterWriteError(result *ffmpeg.StartResult, currentFile string, writeErr error) {
+func (r *GenericRecorder) cleanupAfterWriteError(run encoderRun, writeErr error) {
 	defer r.retiring.Done()
 	defer func() {
 		r.mu.Lock()
-		delete(r.retiringFiles, currentFile)
+		delete(r.retiringFiles, run.file)
 		r.mu.Unlock()
 	}()
-	result.CloseStdin()
-	if err := r.drainProcess(result); err != nil {
+	run.result.CloseStdin()
+	if err := r.drainProcess(run.result); err != nil {
 		writeErr = err
 	}
-	r.reportError(currentFile, writeErr)
+	r.reportError(run.file, writeErr)
 
 	// Persist recovery before releasing Stop; network retries run independently.
-	if currentFile != "" && result.BytesWritten() > 0 && !outputRefused(result.Stderr()) {
-		// Accepted stdin does not mean FFmpeg wrote anything to the file.
-		if req, ok := r.prepareUploadRequest(currentFile); ok && req.fileSize > 0 {
-			r.addToRetryQueue(req, writeErr.Error())
-			go r.processRetryQueue()
-		}
+	// The owned file's size decides, not accepted stdin bytes: a failed Windows
+	// pipe write can report zero after FFmpeg consumed PCM.
+	size, err := run.output.release()
+	if err != nil {
+		r.reportError(run.file, err)
+		return
+	}
+	if size == 0 {
+		r.discardEmpty(run)
+		return
+	}
+	if req, ok := r.prepareUploadRequest(run.file); ok {
+		r.addToRetryQueue(req, writeErr.Error())
+		go r.processRetryQueue()
 	}
 }
 
@@ -541,31 +554,12 @@ func (r *GenericRecorder) drainProcess(result *ffmpeg.StartResult) error {
 		},
 		func() { slog.Error("recorder ffmpeg force killed", "id", r.id) })
 
-	// FFmpeg's -n refusal can exit successfully, even after accepting stdin.
-	if line, ok := refusalLine(result.Stderr()); ok {
-		return errors.New(line)
-	}
 	if err != nil {
 		if message := util.ExtractLastError(result.Stderr()); message != "" {
 			return fmt.Errorf("%s: %w", message, err)
 		}
 	}
 	return err
-}
-
-func outputRefused(stderr string) bool {
-	_, ok := refusalLine(stderr)
-	return ok
-}
-
-// refusalLine finds FFmpeg's -n refusal among warnings and the error lines that follow it.
-func refusalLine(stderr string) (string, bool) {
-	for line := range strings.Lines(stderr) {
-		if strings.Contains(line, "already exists. Exiting.") {
-			return strings.TrimSpace(line), true
-		}
-	}
-	return "", false
 }
 
 // Status returns the recorder process status.
@@ -626,12 +620,13 @@ func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 	return nil
 }
 
-// prepareFilenameLocked releases mu for filesystem checks, then revalidates
-// ownership and configuration. Stop need not join a blocked check, and a stale
-// result cannot start an encoder. Called and returned with mu held.
-func (r *GenericRecorder) prepareFilenameLocked(fileTime time.Time) (path string, current bool, err error) {
+// prepareFilenameLocked reserves the next output file with mu released, then
+// revalidates ownership and configuration. Stop need not join a blocked check,
+// and a stale result cannot start an encoder: it returns false once the run is
+// no longer current. Called and returned with mu held.
+func (r *GenericRecorder) prepareFilenameLocked(fileTime time.Time) (*recordingOutput, bool, error) {
 	gen, state := r.startGen, r.state
-	for {
+	for r.startGen == gen && r.state == state {
 		cfg := r.config
 		outputDir := cfg.LocalPath
 		if cfg.StorageMode == types.StorageS3 {
@@ -644,26 +639,106 @@ func (r *GenericRecorder) prepareFilenameLocked(fileTime time.Time) (path string
 		// A check hung on a directory must not gain another blocked syscall
 		// with every Start after a Stop; another directory is not held up.
 		lock.Lock()
-		filename := base
+		var output *recordingOutput
 		err := prepareRecordingDir(cfg.StorageMode, outputDir)
 		if err == nil {
-			filename = nextRecordingFilename(base, func(name string) bool {
+			var file *os.File
+			nextRecordingFilename(base, func(name string) bool {
 				if _, exists := used[name]; exists {
 					return true
 				}
-				_, err := recordingStat(filepath.Join(outputDir, name))
-				return err == nil
+				file, err = reserveRecordingFile(filepath.Join(outputDir, name))
+				if err != nil {
+					err = fmt.Errorf("reserve recording file: %w", err)
+				}
+				return errors.Is(err, os.ErrExist)
 			})
+			if err == nil {
+				output = &recordingOutput{file: file}
+			}
 		}
 		lock.Unlock()
 		r.mu.Lock()
-		if r.startGen != gen || r.state != state {
-			return "", false, nil
+		if r.startGen == gen && r.state == state && r.config == cfg {
+			return output, true, err
 		}
-		if r.config != cfg {
-			continue // A concurrent edit must not launch into the old path/name.
+		// Stale run or concurrent edit: never launch into the old path/name. The
+		// cleanup keeps the directory lock, so a hung share holds one call at most.
+		if output != nil {
+			r.mu.Unlock()
+			lock.Lock()
+			output.discard()
+			lock.Unlock()
+			r.mu.Lock()
 		}
-		return filepath.Join(outputDir, filename), true, err
+	}
+	return nil, false, nil
+}
+
+// recordingOutput keeps the exclusive reservation open through finalization,
+// so a removed/replaced path cannot be mistaken for this encoder's file.
+// Recording directories must be writable only by trusted operators: FFmpeg
+// reopens the reserved path, so arbitrary hostile directory mutation is unsupported.
+type recordingOutput struct {
+	file *os.File
+}
+
+// release closes the reservation, once, before any upload or removal (Windows
+// cannot remove an open file). It returns the output size if the path still
+// names the file this recorder created.
+func (o *recordingOutput) release() (int64, error) {
+	defer func() {
+		if err := o.file.Close(); err != nil {
+			slog.Warn("failed to close recording reservation", "file", o.file.Name(), "error", err)
+		}
+	}()
+	owned, err := o.file.Stat()
+	if err != nil {
+		return 0, fmt.Errorf("stat recording output: %w", err)
+	}
+	info, err := os.Lstat(o.file.Name())
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, fmt.Errorf("recording output disappeared before finalization: %w", err)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("check recording output ownership: %w", err)
+	}
+	if !os.SameFile(owned, info) {
+		return 0, errors.New("recording output was replaced; refusing to upload or remove it")
+	}
+	return info.Size(), nil
+}
+
+// remove deletes a released output; one that is already gone counts as removed.
+func (o *recordingOutput) remove() error {
+	if err := os.Remove(o.file.Name()); err != nil && !errors.Is(err, os.ErrNotExist) { // #nosec G703 -- Reserved path is validated at creation; release verifies ownership before removal.
+		return err
+	}
+	return nil
+}
+
+// discardEmpty removes a released output without audio.
+func (r *GenericRecorder) discardEmpty(run encoderRun) {
+	if err := run.output.remove(); err != nil {
+		r.reportError(run.file, fmt.Errorf("remove empty recording: %w", err))
+		return
+	}
+	slog.Info("discarded recording without audio", "id", r.id, "file", filepath.Base(run.file))
+}
+
+// discard is for unstarted reservations; never remove an unrelated replacement.
+func (o *recordingOutput) discard() {
+	if o == nil {
+		return
+	}
+	if _, err := o.release(); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("cannot discard recording reservation", "file", o.file.Name(), "error", err)
+		}
+		return
+	}
+	if err := o.remove(); err != nil {
+		slog.Warn("failed to discard recording reservation", "file", o.file.Name(), "error", err)
 	}
 }
 
@@ -700,9 +775,7 @@ func prepareRecordingDir(storageMode types.StorageMode, dir string) error {
 
 // startEncoderLocked starts FFmpeg on the prepared output path.
 // Must be called with r.mu held, after revalidating file preparation.
-func (r *GenericRecorder) startEncoderLocked(path string) error {
-	r.currentFile = path
-
+func (r *GenericRecorder) startEncoderLocked(output *recordingOutput) error {
 	// Get codec configuration
 	codecArgs := types.BuildCodecArgs(r.config.Codec, r.config.Bitrate)
 	format := r.config.Codec.Format()
@@ -715,8 +788,8 @@ func (r *GenericRecorder) startEncoderLocked(path string) error {
 		"-f", format,
 		"-hide_banner",
 		"-loglevel", "warning",
-		"-n",
-		r.currentFile,
+		"-y", // This placeholder was exclusively created by this recorder.
+		output.file.Name(),
 	)
 
 	// Start FFmpeg process
@@ -725,7 +798,8 @@ func (r *GenericRecorder) startEncoderLocked(path string) error {
 		return err
 	}
 
-	r.rememberFilenameLocked(filepath.Base(path))
+	r.currentFile, r.currentOutput = output.file.Name(), output
+	r.rememberFilenameLocked(filepath.Base(r.currentFile))
 	r.result = result
 
 	// Scope writer state to this FFmpeg process; rotation creates fresh channels.
@@ -750,6 +824,7 @@ type encoderRun struct {
 	audioCh    chan []byte
 	writerDone chan struct{}
 	file       string
+	output     *recordingOutput
 }
 
 // claimEncoderLocked detaches the active FFmpeg process so that the caller
@@ -760,8 +835,10 @@ func (r *GenericRecorder) claimEncoderLocked() encoderRun {
 		audioCh:    r.audioCh,
 		writerDone: r.writerDone,
 		file:       r.currentFile,
+		output:     r.currentOutput,
 	}
 	r.result = nil
+	r.currentOutput = nil
 	// audioCh stays: a rotation keeps feeding it until the replacement is ready.
 	r.writerDone = nil
 	return run
@@ -815,18 +892,16 @@ func (r *GenericRecorder) finishEncoder(run encoderRun) {
 			"id", r.id, "file", filepath.Base(run.file), "chunks", abandoned, "total_drops", drops)
 	}
 
-	if run.file == "" || outputRefused(run.result.Stderr()) {
+	size, err := run.output.release()
+	if err != nil {
+		r.reportError(run.file, err)
 		return
 	}
 	if run.result.BytesWritten() == 0 {
-		// Only successful finalization proves this is our empty output to remove.
-		if finalizeErr != nil {
-			return
-		}
-		if err := os.Remove(run.file); err != nil && !errors.Is(err, os.ErrNotExist) {
-			r.reportError(run.file, fmt.Errorf("remove empty recording: %w", err))
-		} else {
-			slog.Info("discarded recording without audio", "id", r.id, "file", filepath.Base(run.file))
+		// A failed output FFmpeg wrote to is retained for inspection; an
+		// untouched placeholder holds nothing to inspect.
+		if finalizeErr == nil || size == 0 {
+			r.discardEmpty(run)
 		}
 		return
 	}
@@ -862,14 +937,15 @@ func (r *GenericRecorder) rotateFile(generation uint64) {
 	at := time.Now().Round(time.Minute)
 	r.rotationGeneration++ // Claim this callback before releasing mu for preparation.
 	claimedGeneration := r.rotationGeneration
-	path, current, prepareErr := r.prepareFilenameLocked(at)
+	output, current, prepareErr := r.prepareFilenameLocked(at)
 	if !current || r.rotationGeneration != claimedGeneration {
 		r.mu.Unlock()
+		output.discard()
 		return
 	}
 	if prepareErr != nil {
 		r.scheduleRotationLocked(at)
-		p := r.recordErrorLocked(path, prepareErr)
+		p := r.recordErrorLocked("", prepareErr)
 		r.mu.Unlock()
 		r.emitError(p, prepareErr)
 		return
@@ -880,13 +956,13 @@ func (r *GenericRecorder) rotateFile(generation uint64) {
 	previous := r.claimEncoderLocked()
 	r.retiring.Add(1)
 	defer r.retiring.Done()
-	startErr := r.startEncoderLocked(path)
+	startErr := r.startEncoderLocked(output)
 	var failure *eventlog.RecorderDetails
 	if startErr != nil {
-		failure = r.recordErrorLocked(r.currentFile, startErr)
+		failure = r.recordErrorLocked(output.file.Name(), startErr)
 		// The current encoder still runs: keep recording into its file instead
 		// of stopping until the hourly retry.
-		r.result, r.writerDone, r.currentFile = previous.result, previous.writerDone, previous.file
+		r.result, r.writerDone, r.currentOutput = previous.result, previous.writerDone, previous.output
 		previous = encoderRun{}
 	} else {
 		r.retiringFiles[previous.file] = struct{}{}
@@ -896,6 +972,7 @@ func (r *GenericRecorder) rotateFile(generation uint64) {
 	r.scheduleRotationLocked(at)
 	r.mu.Unlock()
 	if failure != nil {
+		output.discard()
 		r.emitError(failure, startErr)
 	}
 

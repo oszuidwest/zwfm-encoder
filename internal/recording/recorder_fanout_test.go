@@ -44,15 +44,15 @@ func TestBlockedFilenameCheckDoesNotStopCaptureFanout(t *testing.T) {
 			}
 			entered, blocked := make(chan struct{}, 1), make(chan struct{})
 			release := sync.OnceFunc(func() { close(blocked) })
-			previousStat := recordingStat
-			recordingStat = func(path string) (os.FileInfo, error) {
+			previousReserve := reserveRecordingFile
+			reserveRecordingFile = func(path string) (*os.File, error) {
 				if strings.HasPrefix(path, slowCfg.LocalPath+string(filepath.Separator)) {
 					entered <- struct{}{}
 					<-blocked
 				}
-				return previousStat(path)
+				return previousReserve(path)
 			}
-			t.Cleanup(func() { recordingStat = previousStat })
+			t.Cleanup(func() { reserveRecordingFile = previousReserve })
 			defer release()
 			rotated := make(chan struct{})
 			if tc.rotation {
