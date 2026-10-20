@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -1164,9 +1165,21 @@ func readyRecordingStorage(paths []types.RecordingStorageStatus, recorders []typ
 			}
 		}
 	}
+	checked := make(map[string]struct{}, len(paths))
 	for _, p := range paths {
 		if p.Unhealthy() || time.Since(p.CheckedAt) > readinessMaxStorageAge {
 			return ReadyComponent{OK: false, Message: "recording storage is low, unavailable or stale", Details: details}
+		}
+		checked[filepath.Clean(p.Path)] = struct{}{}
+	}
+	// A scan started before a configuration change may omit a newly required path.
+	for i := range recorders {
+		r := &recorders[i]
+		if !r.Enabled || r.StorageMode == types.StorageS3 {
+			continue
+		}
+		if _, ok := checked[filepath.Clean(r.LocalPath)]; !ok {
+			return ReadyComponent{OK: false, Message: "recording storage has not been checked", Details: details}
 		}
 	}
 	return ReadyComponent{OK: true, Details: details}

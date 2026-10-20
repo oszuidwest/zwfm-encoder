@@ -212,6 +212,79 @@ func TestBuildReadyResponseAllowsStoppedOnDemandRecorder(t *testing.T) {
 	}
 }
 
+func TestBuildReadyResponseRequiresEveryLocalStoragePath(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		mode types.StorageMode
+		add  bool
+	}{
+		{name: "added local recorder", mode: types.StorageLocal, add: true},
+		{name: "added local and S3 recorder", mode: types.StorageBoth, add: true},
+		{name: "changed local path", mode: types.StorageLocal},
+		{name: "changed local and S3 path", mode: types.StorageBoth},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			in := readyFixture()
+			if _, status := buildReadyResponse(&in); status != http.StatusOK {
+				t.Fatalf("initial status = %d, want 200", status)
+			}
+			// Keep the healthy observations from before the configuration change.
+			if tt.add {
+				in.recorders = append(in.recorders, types.Recorder{
+					ID: "recorder-2", Enabled: true, RecordingMode: types.RecordingOnDemand,
+					StorageMode: tt.mode, LocalPath: "/new-recordings",
+				})
+			} else {
+				in.recorders[0].StorageMode = tt.mode
+				in.recorders[0].LocalPath = "/new-recordings"
+			}
+			resp, status := buildReadyResponse(&in)
+			if status != http.StatusServiceUnavailable || resp.Components["recording_storage"].OK {
+				t.Fatalf("unchecked path: status=%d storage=%+v, want 503 and not ready", status, resp.Components["recording_storage"])
+			}
+			in.recordingStorage = append(in.recordingStorage, types.RecordingStorageStatus{
+				Path: "/new-recordings", CheckedAt: time.Now(),
+			})
+			resp, status = buildReadyResponse(&in)
+			if status != http.StatusOK || !resp.Components["recording_storage"].OK {
+				t.Fatalf("checked path: status=%d storage=%+v, want 200 and ready", status, resp.Components["recording_storage"])
+			}
+		})
+	}
+}
+
+func TestBuildReadyResponseStoragePathCoverageExceptions(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		enabled bool
+		mode    types.StorageMode
+		path    string
+	}{
+		{name: "disabled local recorder", mode: types.StorageLocal, path: "/unchecked"},
+		{name: "S3 ignores local path", enabled: true, mode: types.StorageS3, path: "/unused"},
+		{name: "shared local path", enabled: true, mode: types.StorageLocal, path: "/recordings"},
+		{name: "equivalent local path", enabled: true, mode: types.StorageBoth, path: "/recordings/./"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			in := readyFixture()
+			in.recorders = append(in.recorders, types.Recorder{
+				ID: "recorder-2", Enabled: tt.enabled, RecordingMode: types.RecordingOnDemand,
+				StorageMode: tt.mode, LocalPath: tt.path,
+			})
+			resp, status := buildReadyResponse(&in)
+			if status != http.StatusOK || !resp.Components["recording_storage"].OK {
+				t.Fatalf("status=%d storage=%+v, want 200 and ready", status, resp.Components["recording_storage"])
+			}
+		})
+	}
+}
+
 func TestBuildReadyResponseIgnoresListenerStreams(t *testing.T) {
 	t.Parallel()
 	input := readyFixture()
@@ -426,6 +499,8 @@ func readyFixture() readyInputs {
 				ID:            "recorder-1",
 				Enabled:       true,
 				RecordingMode: types.RecordingHourly,
+				StorageMode:   types.StorageLocal,
+				LocalPath:     "/recordings",
 			},
 		},
 		recorderStatuses: map[string]types.ProcessStatus{
