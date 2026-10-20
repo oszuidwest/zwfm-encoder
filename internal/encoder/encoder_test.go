@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -79,17 +80,20 @@ func TestStopWaitsForDistributorAfterSourceExit(t *testing.T) {
 	e := newSourceLifecycleTestEncoder(t, "exit")
 	e.config.Audio.Input = "dante://studio-tx/Left/Right"
 	reader, writer := io.Pipe()
+	reading := make(chan struct{})
 	t.Cleanup(func() { _ = writer.Close() })
 	e.openDanteSource = func(ctx context.Context, _ string) (source, error) {
 		// Wait returns on cancel, but reads stay blocked until the writer closes.
-		return fakeDanteSource{reader, ctx.Done()}, nil
+		return &readSignalingSource{fakeDanteSource: fakeDanteSource{reader, ctx.Done()}, reading: reading}, nil
 	}
 	if err := e.Start(); err != nil {
 		t.Fatal(err)
 	}
-	waitForCondition(t, time.Second, "source running", func() bool {
-		return e.State() == types.StateRunning
-	})
+	select {
+	case <-reading:
+	case <-time.After(time.Second):
+		t.Fatal("distributor did not start reading")
+	}
 	stopped := make(chan error, 1)
 	go func() { stopped <- e.Stop() }()
 	select {
@@ -104,6 +108,17 @@ func TestStopWaitsForDistributorAfterSourceExit(t *testing.T) {
 	if err := <-stopped; err != nil {
 		t.Fatalf("Stop() after the reader exited = %v", err)
 	}
+}
+
+type readSignalingSource struct {
+	fakeDanteSource
+	reading chan struct{}
+	once    sync.Once
+}
+
+func (r *readSignalingSource) Read(p []byte) (int, error) {
+	r.once.Do(func() { close(r.reading) })
+	return r.fakeDanteSource.Read(p)
 }
 
 func TestStartRejectsStateStopping(t *testing.T) {
