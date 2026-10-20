@@ -104,6 +104,8 @@ This receive-only Dante-compatible implementation is experimental and unofficial
 
 The compatible protocol behavior is described in [`docs/dante-protocol.md`](docs/dante-protocol.md).
 
+Protocol references, verification coverage and the independent Inferno Docker test are described in [`docs/dante-validation.md`](docs/dante-validation.md).
+
 The receiver was reimplemented using a two-team clean-room process: Claude produced the functional specification, and Codex implemented it in an isolated environment without network access or access to prior implementations.
 
 `Dante` is a trademark of Audinate Pty Ltd. This unofficial project is not affiliated with, authorized, sponsored, certified, approved, or endorsed by Audinate.
