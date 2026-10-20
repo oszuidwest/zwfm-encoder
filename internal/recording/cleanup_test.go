@@ -146,6 +146,9 @@ func TestCleanupLocalFilesDeletesOnlyExpiredOwnedFiles(t *testing.T) {
 	for _, file := range files {
 		writeCleanupFile(t, directory, file.name)
 		writeCleanupFile(t, directory, file.name+unfinalizedRecordingSuffix)
+		if err := os.Chmod(filepath.Join(directory, file.name+unfinalizedRecordingSuffix), 0o400); err != nil {
+			t.Fatal(err)
+		}
 		if file.name != "Studio-2000-01-01-00-05.mp3" {
 			if err := os.Chtimes(filepath.Join(directory, file.name), old, old); err != nil {
 				t.Fatal(err)

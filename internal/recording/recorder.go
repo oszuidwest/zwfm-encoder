@@ -38,6 +38,9 @@ var checkRecordingPath = util.CheckPathWritable
 // removeEmptyRecording lets tests reproduce a failed unlink without relying on mount permissions.
 var removeEmptyRecording = os.Remove
 
+// writeRecordingFailure lets tests simulate a full disk after marker truncation.
+var writeRecordingFailure = os.WriteFile
+
 // writerDrainTimeout bounds graceful writer drain; tests shorten it.
 var writerDrainTimeout = 5 * time.Second
 
@@ -717,25 +720,38 @@ func (o *recordingOutput) clearUnfinalized() error {
 }
 
 func removeUnfinalizedMarker(recording string) error {
-	if err := os.Remove(recording + unfinalizedRecordingSuffix); err != nil && !errors.Is(err, os.ErrNotExist) { // #nosec G703 -- Path comes from a validated reservation or a recorder-owned spool/retention entry.
+	marker := recording + unfinalizedRecordingSuffix
+	if info, err := os.Lstat(marker); err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o200 == 0 { // #nosec G703 -- Marker derives from a validated reservation or recorder-owned directory entry.
+		if err := os.Chmod(marker, 0o600); err != nil { // #nosec G703 -- Same recorder-owned regular marker checked above.
+			return fmt.Errorf("make unfinalized recording marker writable: %w", err)
+		}
+	}
+	if err := os.Remove(marker); err != nil && !errors.Is(err, os.ErrNotExist) { // #nosec G703 -- Path comes from a validated reservation or a recorder-owned spool/retention entry.
 		return fmt.Errorf("clear unfinalized recording marker: %w", err)
 	}
 	return nil
 }
 
-// recordFailure writes why the output failed into its marker. A marker without
-// a reason only means the run was interrupted (a crash or power loss), and
-// spool recovery uploads such a file as before quarantine existed.
+// recordFailure stores the reason and marks failure using read-only metadata,
+// independently of whether the reason write succeeds.
 func (o *recordingOutput) recordFailure(cause error) {
 	if !o.unfinalized {
 		return
 	}
-	if err := os.WriteFile(o.file.Name()+unfinalizedRecordingSuffix, []byte(cause.Error()+"\n"), 0o600); err != nil { //nolint:gosec // G703: our own marker next to the validated reservation.
-		slog.Warn("cannot record why a recording failed; it will be treated as interrupted", "file", o.file.Name(), "error", err)
+	marker := o.file.Name() + unfinalizedRecordingSuffix
+	if err := writeRecordingFailure(marker, []byte(cause.Error()+"\n"), 0o600); err != nil {
+		slog.Warn("cannot record why a recording failed", "file", o.file.Name(), "error", err)
+	}
+	info, err := os.Lstat(marker) // #nosec G703 -- Marker belongs to the validated recording reservation.
+	if err == nil && info.Mode().IsRegular() {
+		err = os.Chmod(marker, 0o400) // #nosec G703 -- Same validated reservation marker, checked as a regular file above.
+	}
+	if err != nil {
+		slog.Warn("cannot persist recording failure flag", "file", o.file.Name(), "error", err)
 	}
 }
 
-// recordingFailed reports whether path has a marker holding a failure reason;
+// recordingFailed recognizes a failure reason or read-only failure flag;
 // a marker that is not a plain file also counts as failed.
 func recordingFailed(path string) (bool, error) {
 	info, err := os.Lstat(path + unfinalizedRecordingSuffix)
@@ -745,7 +761,7 @@ func recordingFailed(path string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("check unfinalized recording marker: %w", err)
 	}
-	return !info.Mode().IsRegular() || info.Size() > 0, nil
+	return !info.Mode().IsRegular() || info.Size() > 0 || info.Mode().Perm()&0o200 == 0, nil
 }
 
 // finalizedRecording stats a recording for upload without following links. ok

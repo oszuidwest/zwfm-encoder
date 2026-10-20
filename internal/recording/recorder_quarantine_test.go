@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -311,6 +312,44 @@ func TestFailedOutputMarkerHoldsTheReason(t *testing.T) {
 	if err != nil || !strings.Contains(string(reason), "No space left on device") {
 		t.Fatalf("failed output marker = %q, %v; want the failure reason", reason, err)
 	}
+	info, err := os.Stat(file + unfinalizedRecordingSuffix)
+	if err != nil || info.Mode().Perm()&0o200 != 0 {
+		t.Fatalf("failed output marker is not read-only: %v, %v", info, err)
+	}
+}
+
+func TestFailedMarkerWriteStillQuarantinesOutput(t *testing.T) {
+	t.Setenv(fakeFFmpegFailFinalizeEnv, "1")
+	originalWrite := writeRecordingFailure
+	writeRecordingFailure = func(path string, _ []byte, _ os.FileMode) error {
+		if err := os.Truncate(path, 0); err != nil {
+			return err
+		}
+		return &os.PathError{Op: "write", Path: path, Err: syscall.ENOSPC}
+	}
+	t.Cleanup(func() { writeRecordingFailure = originalWrite })
+	cfg := testS3Recorder()
+	cfg.RecordingMode = types.RecordingOnDemand
+	r, _ := errorTestRecorder(t, cfg)
+	file := startCaptureTestRecorder(t, r)
+	r.WriteAudio([]byte{1, 2, 3, 4})
+	if err := r.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	marker, err := os.Stat(file + unfinalizedRecordingSuffix)
+	if err != nil || marker.Size() != 0 || marker.Mode().Perm()&0o200 != 0 {
+		t.Fatalf("failed reason write left marker %v, %v; want empty and read-only", marker, err)
+	}
+	restarted := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: r.spoolDir})
+	if err := restarted.reconcilePendingUploads(); err != nil {
+		t.Fatal(err)
+	}
+	restarted.queueForUpload(file)
+	if restarted.PendingUploadCount() != 0 || len(restarted.uploadQueue) != 0 {
+		t.Fatal("failed output with an empty marker became uploadable")
+	}
+	assertRecordedCapture(t, file, []byte{1, 2, 3, 4})
+	assertRecordingQuarantined(t, file)
 }
 
 func TestRecorderIDCannotBeReaddedWhileItsRemovalStops(t *testing.T) {
