@@ -48,6 +48,7 @@ func TestStopRecorderCancelsClockWait(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		synced := fakeClockSync(t)
 		cfg := localOnDemandRecorder(t, "clock-cancel")
+		cfg.Enabled = true
 		m, err := NewManager("", t.TempDir(), 0, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -55,6 +56,10 @@ func TestStopRecorderCancelsClockWait(t *testing.T) {
 		if err := m.AddRecorder(cfg); err != nil {
 			t.Fatal(err)
 		}
+		if err := m.Start(); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = m.Stop() }()
 		if err := m.StartRecorder(cfg.ID); err != nil {
 			t.Fatal(err)
 		}

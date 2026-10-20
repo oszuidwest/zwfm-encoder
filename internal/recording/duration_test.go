@@ -97,11 +97,15 @@ func TestDurationLimitDiscardsQueuedCallbackAfterWriteError(t *testing.T) {
 				t.Fatal(err)
 			}
 			cfg := localOnDemandRecorder(t, "duration")
+			cfg.Enabled = true
 			if err := m.AddRecorder(cfg); err != nil {
 				t.Fatal(err)
 			}
+			if err := m.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = m.Stop() })
 			r := m.recorders[cfg.ID]
-			t.Cleanup(func() { _ = r.Stop() })
 			if err := m.StartRecorder(cfg.ID); err != nil {
 				t.Fatal(err)
 			}

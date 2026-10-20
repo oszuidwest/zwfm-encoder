@@ -44,6 +44,10 @@ var openRecordingMarker = os.OpenFile
 // writeRecordingFailure lets tests simulate a full disk after marker truncation.
 var writeRecordingFailure = os.WriteFile
 
+// awaitStop waits for a Stop already in progress; tests replace it to see a
+// caller join that teardown.
+var awaitStop = func(done <-chan struct{}) { <-done }
+
 // writerDrainTimeout bounds graceful writer drain; tests shorten it.
 var writerDrainTimeout = 5 * time.Second
 
@@ -74,6 +78,13 @@ const (
 type GenericRecorder struct {
 	mu sync.RWMutex // Protects state, config, file paths
 
+	// reconcileMu serializes Manager.UpdateRecorder's runtime reconciliation
+	// and Manager.StopRecorder for this recorder, including a blocking Stop,
+	// so updates change the config and stop or start the recorder in the same
+	// order. Persisting the config happens before, outside this lock.
+	// Lock order: reconcileMu, then Manager.mu, then mu.
+	reconcileMu sync.Mutex
+
 	// prepareLocks serializes output preparation per directory; preparation
 	// runs without mu. Protected by mu; one entry per directory ever used.
 	prepareLocks map[string]*sync.Mutex
@@ -88,7 +99,8 @@ type GenericRecorder struct {
 	spoolDir  string
 	state     types.ProcessState
 	lastError string
-	startGen  uint64 // Identifies the latest Start; an older start must not launch.
+	startGen  uint64        // Identifies the latest Start; an older start must not launch.
+	stopDone  chan struct{} // Closed when the Stop that set ProcessStopping finishes.
 
 	result *ffmpeg.StartResult
 
@@ -220,7 +232,37 @@ func (r *GenericRecorder) IsCurrentFile(path string) bool {
 func (r *GenericRecorder) Start() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.startLocked()
+}
 
+// startHourly starts the recorder if its config is still enabled and hourly,
+// and does nothing otherwise. The config is checked under the lock
+// UpdateConfig takes, so a concurrent update cannot pass in between.
+func (r *GenericRecorder) startHourly() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.config.Enabled || r.config.RecordingMode != types.RecordingHourly {
+		return nil
+	}
+	return r.startLocked()
+}
+
+// startOnDemand starts the recorder if its config is still enabled and
+// on-demand, checked like startHourly.
+func (r *GenericRecorder) startOnDemand() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.config.RecordingMode == types.RecordingHourly {
+		return ErrHourlyRecorderNotControllable
+	}
+	if !r.config.Enabled {
+		return ErrRecorderDisabled
+	}
+	return r.startLocked()
+}
+
+// startLocked must be called with r.mu held.
+func (r *GenericRecorder) startLocked() error {
 	if r.state == types.ProcessRunning || r.state == types.ProcessStarting {
 		return ErrAlreadyRecording
 	}
@@ -374,7 +416,7 @@ func (r *GenericRecorder) logEvent(eventType eventlog.EventType, p *eventlog.Rec
 }
 
 // Stop finalizes recordings and drains the upload worker.
-// Calls made while already stopping return immediately.
+// Calls made while already stopping wait for that Stop to finish.
 func (r *GenericRecorder) Stop() error {
 	r.mu.Lock()
 	return r.stopLocked()
@@ -383,12 +425,21 @@ func (r *GenericRecorder) Stop() error {
 // stopLocked must be called with r.mu held; it unlocks r.mu before waiting
 // for cleanup.
 func (r *GenericRecorder) stopLocked() error {
-	if r.state == types.ProcessStopped || r.state == types.ProcessStopping {
+	if r.state == types.ProcessStopped {
 		r.mu.Unlock()
+		return nil
+	}
+	// Join the teardown in progress, so Manager.Stop cannot return before a
+	// Stop started elsewhere (such as a disabling update) has finalized.
+	if r.state == types.ProcessStopping {
+		done := r.stopDone
+		r.mu.Unlock()
+		awaitStop(done)
 		return nil
 	}
 
 	r.state = types.ProcessStopping
+	r.stopDone = make(chan struct{})
 	r.recording.Store(false)
 
 	// Always stop timers (may be running even after write error)
@@ -419,6 +470,7 @@ func (r *GenericRecorder) stopLocked() error {
 
 	r.mu.Lock()
 	r.state = types.ProcessStopped
+	close(r.stopDone)
 	r.lastError = ""
 	r.uploadStopCh = make(chan struct{}) // Fresh stop channel for next Start.
 	// Keep uploadQueue stable; uploadClosed reroutes late files.
@@ -433,6 +485,27 @@ func (r *GenericRecorder) stopLocked() error {
 	slog.Info("recorder stopped", "id", r.id, "name", name)
 	r.logEvent(eventlog.RecorderStopped, logParams)
 	return nil
+}
+
+// stopIfFailed tears down a failed run, including its upload worker, and
+// leaves any other state alone.
+func (r *GenericRecorder) stopIfFailed() error {
+	r.mu.Lock()
+	if r.state != types.ProcessError {
+		r.mu.Unlock()
+		return nil
+	}
+	return r.stopLocked()
+}
+
+// waitForStop waits for a Stop in progress, if any, without starting one.
+func (r *GenericRecorder) waitForStop() {
+	r.mu.RLock()
+	stopping, done := r.state == types.ProcessStopping, r.stopDone
+	r.mu.RUnlock()
+	if stopping {
+		awaitStop(done)
+	}
 }
 
 // WriteAudio queues pcm for non-blocking FFmpeg stdin writes.
@@ -594,11 +667,8 @@ func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 		return fmt.Errorf("recorder ID cannot change")
 	}
 
-	// Clear error state on config update (user may have fixed the issue)
-	if r.state == types.ProcessError {
-		r.state = types.ProcessStopped
-		r.lastError = ""
-	}
+	// A failed run keeps ProcessError, so the Stop or Start that
+	// Manager.UpdateRecorder follows up with still tears it down or reuses it.
 
 	// Leaving hourly mode cancels the pending rotation, including one already
 	// preparing its next file.

@@ -21,6 +21,12 @@ var (
 
 	// ErrRecorderStopping is returned when trying to start a recorder that is still stopping.
 	ErrRecorderStopping = errors.New("recorder is stopping")
+
+	// ErrRecorderDisabled is returned when trying to start a disabled recorder.
+	ErrRecorderDisabled = errors.New("recorder is disabled")
+
+	// ErrManagerNotRunning is returned when trying to start a recorder while recording is stopped.
+	ErrManagerNotRunning = errors.New("recording is not running")
 )
 
 // S3Config is the configuration for S3-compatible storage.

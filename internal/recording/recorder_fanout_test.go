@@ -29,7 +29,7 @@ func TestBlockedFilenameCheckDoesNotStopCaptureFanout(t *testing.T) {
 				t.Fatal(err)
 			}
 			slowCfg := localOnDemandRecorder(t, "slow")
-			slowCfg.RecordingMode = types.RecordingHourly
+			slowCfg.RecordingMode, slowCfg.Enabled = types.RecordingHourly, true
 			healthyCfg := localOnDemandRecorder(t, "healthy")
 			for _, cfg := range []*types.Recorder{slowCfg, healthyCfg} {
 				if err := m.AddRecorder(cfg); err != nil {
