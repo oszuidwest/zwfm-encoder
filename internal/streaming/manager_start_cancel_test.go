@@ -27,8 +27,8 @@ func TestStopCancelsStartWaitingForOldStreamResources(t *testing.T) {
 			t.Fatal(err)
 		}
 		old.writerWg.Done()
-		if err := <-done; !errors.Is(err, context.Canceled) {
-			t.Fatalf("resumed startup = %v, want cancellation before process creation", err)
+		if err := <-done; err != nil {
+			t.Fatalf("resumed startup = %v, want a cancelled claim reported like a lost one", err)
 		}
 		if len(m.Statuses(func(string) *types.Stream { return cfg })) != 0 {
 			t.Fatal("canceled startup published a late stream")
@@ -98,6 +98,33 @@ func TestListenerRetryLosingItsSourceDoesNotStrandFanout(t *testing.T) {
 	assertUDPPortAvailable(t, cfg.Port)
 }
 
+func TestCallerRetryLosingSourceRemovesItsEntry(t *testing.T) {
+	m := NewManager(fakeLongRunningExecutable(t))
+	cfg := validStream()
+	if ok, err := m.Start(cfg); err != nil || !ok {
+		t.Fatalf("Start() = %v, %v", ok, err)
+	}
+	entry := m.current(cfg.ID)
+	entry.backoff = util.NewBackoff(time.Millisecond, time.Millisecond)
+	ctx := &sourceEndingOnRetryConfig{cfg: cfg}
+	ctx.running.Store(true)
+	stop, done := make(chan struct{}), make(chan struct{})
+	defer close(stop)
+	go func() { defer close(done); m.MonitorAndRetry(cfg.ID, ctx, stop) }()
+	if err := entry.result.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("caller monitor did not finish after losing its source")
+	}
+	if m.current(cfg.ID) != nil {
+		t.Fatal("a rejected retry left the failed entry and its blocked writer behind")
+	}
+	entry.writerWg.Wait()
+}
+
 type sourceEndingOnRetryConfig struct {
 	cfg     *types.Stream
 	reads   atomic.Int32
@@ -111,4 +138,56 @@ func (c *sourceEndingOnRetryConfig) Stream(string) *types.Stream {
 		c.running.Store(false) // The source exits while the post-backoff config is being read.
 	}
 	return c.cfg
+}
+
+func TestStartPredicatesRunUnderStopLock(t *testing.T) {
+	m := NewManager("/nonexistent/ffmpeg-test")
+	cfg := validStream()
+	// Checked under the lock Stop takes, or a start can pass it just before Stop.
+	underStopLock := func() bool {
+		if m.mu.TryLock() {
+			m.mu.Unlock()
+			t.Error("start predicate ran without the lock Stop takes")
+		}
+		return false
+	}
+	_, _ = m.StartIfActive(cfg, underStopLock)
+	stream := &Stream{mode: types.StreamModeListener, state: types.ProcessRunning}
+	m.streams[cfg.ID] = stream
+	m.reserveListenerEncoderStart(cfg.ID, stream, underStopLock)
+}
+
+func TestStopKillsProcessOfStreamMarkedErrorByWriter(t *testing.T) {
+	// The fake closes stdin, so writes fail while the process keeps running.
+	m := NewManager(writeFakeFFmpeg(t, "#!/bin/sh\nexec 0<&-\nexec sleep 3600\n"))
+	cfg := validStream()
+	if started, err := m.Start(cfg); err != nil || !started {
+		t.Fatalf("Start() = %t, %v", started, err)
+	}
+	result := m.current(cfg.ID).result
+	t.Cleanup(func() { result.Cancel(nil); _ = result.Wait() })
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		m.WriteAudioFanOut(make([]byte, 4096))
+		m.mu.RLock()
+		state := m.streams[cfg.ID].state
+		m.mu.RUnlock()
+		if state == types.ProcessError {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("writer never marked the stream as errored")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := m.Stop(cfg.ID); err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan struct{})
+	go func() { _ = result.Wait(); close(exited) }()
+	select {
+	case <-exited:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Stop left the errored stream's FFmpeg process running")
+	}
 }

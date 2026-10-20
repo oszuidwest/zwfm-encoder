@@ -60,11 +60,6 @@ func StartProcessContext(ctx context.Context, ffmpegPath string, args []string) 
 	return startProcess(ctx, ffmpegPath, args, false)
 }
 
-// StartProcessWithStdout launches an FFmpeg subprocess with stdout available through [StartResult.Stdout].
-func StartProcessWithStdout(ffmpegPath string, args []string) (*StartResult, error) {
-	return StartProcessWithStdoutContext(context.Background(), ffmpegPath, args)
-}
-
 // StartProcessWithStdoutContext is StartProcessContext with a readable stdout pipe.
 func StartProcessWithStdoutContext(ctx context.Context, ffmpegPath string, args []string) (*StartResult, error) {
 	return startProcess(ctx, ffmpegPath, args, true)
@@ -85,7 +80,7 @@ func startProcess(ctx context.Context, ffmpegPath string, args []string, capture
 		stdoutPipe, err = cmd.StdoutPipe()
 		if err != nil {
 			cancel(fmt.Errorf("create stdout pipe: %w", err))
-			if closeErr := stdinPipe.Close(); closeErr != nil {
+			if closeErr := stdinPipe.Close(); closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
 				slog.Warn("failed to close stdin pipe", "error", closeErr)
 			}
 			return nil, fmt.Errorf("create stdout pipe: %w", err)
@@ -97,7 +92,8 @@ func startProcess(ctx context.Context, ffmpegPath string, args []string, capture
 
 	if err := cmd.Start(); err != nil {
 		cancel(fmt.Errorf("start ffmpeg: %w", err))
-		if closeErr := stdinPipe.Close(); closeErr != nil {
+		// exec closes the parent's pipe ends when Start fails.
+		if closeErr := stdinPipe.Close(); closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
 			slog.Warn("failed to close stdin pipe", "error", closeErr)
 		}
 		return nil, fmt.Errorf("start ffmpeg: %w", err)

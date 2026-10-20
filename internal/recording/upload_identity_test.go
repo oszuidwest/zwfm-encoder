@@ -15,7 +15,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
@@ -34,17 +36,19 @@ type multipartTestUpload struct {
 
 // identityStore models committed objects separately from in-progress multipart uploads.
 type identityStore struct {
-	mu             sync.Mutex
-	objects        map[string]storedTestUpload
-	multipart      map[string]*multipartTestUpload
-	nextID         int
-	loseResponse   bool
-	headStatus     int
-	rejectKey      string
-	stripIdentity  bool
-	inBodyConflict bool
-	beforeWrite    func(string)
-	keys           []string
+	mu              sync.Mutex
+	objects         map[string]storedTestUpload
+	multipart       map[string]*multipartTestUpload
+	nextID          int
+	loseResponse    bool
+	headStatus      int
+	headRequests    int
+	rejectKey       string
+	stripIdentity   bool
+	foreignIdentity bool
+	inBodyConflict  bool
+	beforeWrite     func(string)
+	keys            []string
 }
 
 func newIdentityStore(t *testing.T) (*identityStore, *types.Recorder) {
@@ -69,6 +73,7 @@ func (s *identityStore) serveHTTP(w http.ResponseWriter, req *http.Request) {
 	defer s.mu.Unlock()
 	switch {
 	case req.Method == http.MethodHead:
+		s.headRequests++
 		if s.headStatus != 0 {
 			w.WriteHeader(s.headStatus)
 			return
@@ -160,6 +165,9 @@ func (s *identityStore) commit(w http.ResponseWriter, req *http.Request, key str
 	}
 	if s.stripIdentity {
 		object.id = ""
+	}
+	if s.foreignIdentity {
+		object.id = "foreign"
 	}
 	s.objects[key] = object
 	if s.loseResponse {
@@ -441,6 +449,132 @@ func TestConcurrentRetryEnqueueKeepsOnePersistedIdentity(t *testing.T) {
 	if err != nil || len(persisted) != 1 || r.PendingUploadCount() != 1 || persisted[0].uploadID == "" ||
 		persisted[0].uploadID != r.retryQueue[0].uploadID {
 		t.Fatalf("concurrent enqueue changed/duplicated identity: persisted %+v, queued %+v, %v", persisted, r.retryQueue, err)
+	}
+}
+
+func TestRetryEnqueueWhileUploadIsInFlightKeepsIdentity(t *testing.T) {
+	t.Parallel()
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprintf("failure=%t", fail), func(t *testing.T) {
+			t.Parallel()
+			store, cfg := newIdentityStore(t)
+			if fail {
+				store.rejectKey = uploadTestKey
+			}
+			r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
+			file := writeSpoolFile(t, r.spoolDir, r.id, filepath.Base(uploadTestKey), "audio")
+			req := uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: 5, deleteAfterUpload: true}
+			r.addToRetryQueue(req, "down")
+			originalID := r.retryQueue[0].uploadID
+			type snapshot struct {
+				persisted []pendingUpload
+				err       error
+			}
+			seen := make(chan snapshot, 1)
+			var once sync.Once
+			// While the upload request is open, enqueue the same file again.
+			store.beforeWrite = func(string) {
+				once.Do(func() {
+					r.addToRetryQueue(req, "duplicate while retrying")
+					persisted, err := r.loadPendingUploads()
+					seen <- snapshot{persisted, err}
+				})
+			}
+			r.processRetryQueue()
+			got := <-seen
+			if got.err != nil || len(got.persisted) != 1 || got.persisted[0].uploadID != originalID {
+				t.Fatalf("in-flight enqueue replaced identity: %+v, %v; want %s", got.persisted, got.err, originalID)
+			}
+			want := 0
+			if fail {
+				want = 1
+			}
+			if len(r.retryQueue) != want || fail && r.retryQueue[0].uploadID != originalID {
+				t.Fatalf("queue after retry = %+v, want %d entries with original identity", r.retryQueue, want)
+			}
+			r.mu.RLock()
+			remaining := len(r.retryInFlight)
+			r.mu.RUnlock()
+			if remaining != 0 {
+				t.Fatal("completed batch retained in-flight ownership")
+			}
+		})
+	}
+}
+
+func TestRetryRequestedDuringBatchRunsAfterIt(t *testing.T) {
+	t.Parallel()
+	store, cfg := newIdentityStore(t)
+	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
+	file := writeSpoolFile(t, r.spoolDir, r.id, filepath.Base(uploadTestKey), "audio")
+	r.addToRetryQueue(uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: 5, deleteAfterUpload: true}, "down")
+	queued := writeSpoolFile(t, r.spoolDir, r.id, "queued-meanwhile.mp3", "later")
+	var once sync.Once
+	var overlapped atomic.Bool
+	var queuedID string
+	// While the first batch uploads, queue another file and ask for a retry pass.
+	store.beforeWrite = func(id string) {
+		once.Do(func() {
+			r.addToRetryQueue(uploadRequest{localPath: queued, s3Key: "queued-meanwhile.mp3", fileSize: 5, deleteAfterUpload: true}, "queued meanwhile")
+			r.mu.RLock()
+			queuedID = r.retryQueue[0].uploadID
+			r.mu.RUnlock()
+			r.processRetryQueue()
+		})
+		if id == queuedID {
+			r.mu.RLock()
+			_, first := r.retryInFlight[file]
+			r.mu.RUnlock()
+			overlapped.Store(first)
+		}
+	}
+	r.processRetryQueue()
+	// PendingUploadCount reads zero while a batch has the queue drained, so
+	// wait for the upload itself.
+	uploaded := func() bool {
+		store.mu.Lock()
+		defer store.mu.Unlock()
+		_, ok := store.objects["queued-meanwhile.mp3"]
+		return ok
+	}
+	for deadline := time.Now().Add(5 * time.Second); !uploaded() && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !uploaded() {
+		t.Fatal("file queued during a batch waited for the hourly retry")
+	}
+	if overlapped.Load() {
+		t.Fatal("the follow-up pass ran while the first batch still owned its paths")
+	}
+}
+
+func TestS3ConnectionLostPutResponseCleansOnlyOwnedProbe(t *testing.T) {
+	t.Parallel()
+	for _, foreign := range []bool{false, true} {
+		t.Run(fmt.Sprintf("foreign=%t", foreign), func(t *testing.T) {
+			t.Parallel()
+			store, cfg := newIdentityStore(t)
+			store.loseResponse, store.foreignIdentity = true, foreign
+			err := TestRecorderS3Connection(cfg)
+			if !foreign && err != nil || foreign && err == nil {
+				t.Fatalf("connection test = %v, foreign=%t", err, foreign)
+			}
+			store.mu.Lock()
+			defer store.mu.Unlock()
+			want := 0
+			if foreign {
+				want = 1
+			}
+			if len(store.objects) != want {
+				t.Fatalf("remaining objects = %v, want %d", store.objects, want)
+			}
+			if len(store.keys) < 2 {
+				t.Fatal("test did not exercise the conditional PUT retry")
+			}
+			if store.headRequests != 1 {
+				t.Fatalf("HEAD requests = %d, want reuse of the fresh verification result", store.headRequests)
+			}
+		})
 	}
 }
 
