@@ -60,19 +60,19 @@ Each transmitter channel is advertised as its own DNS-SD service instance:
 | `nchan` | Maximum number of channels in one flow                      | `2`       |
 | `fpp`   | Frames per packet as `max,min`                              | `32,32`   |
 
-Other keys are present and must be ignored. A full observed TXT record: `txtvers=2 dbcp1=0x1200 id=1 dbcp=0x1004 rate=48000 en=24 pcm=3 e enc=24 latency_ns=10000000 fpp=32,32 nchan=2 at2`. Note that items without `=` exist.
+Other keys are present and must be ignored. TXT keys are case-insensitive and only the first occurrence of a key is used, including attributes without `=`, as required by [RFC 6763 section 6.4](https://www.rfc-editor.org/rfc/rfc6763.html#section-6.4). A full observed TXT record: `txtvers=2 dbcp1=0x1200 id=1 dbcp=0x1004 rate=48000 en=24 pcm=3 e enc=24 latency_ns=10000000 fpp=32,32 nchan=2 at2`. Note that items without `=` exist.
 
 Discovery requirements:
 
 - Use RFC 6762 section 5.1 one-shot queries: send a standard DNS query (questions for SRV and TXT of the full instance name, class IN) to 224.0.0.251:5353 from an ephemeral UDP port. Responders answer by unicast to that port. Do not bind port 5353 and do not join the multicast group.
 - If an interface is configured, send the query on that interface only. Otherwise send it on every interface that is up, multicast-capable and not loopback.
-- Re-send the query every second; give up after 4 seconds per channel.
+- Re-send the query every second; give up after 4 seconds per channel. The same limit bounds a query write that blocks.
 - Responses frequently contain records for other instances of the same service (observed). Only use SRV and TXT records whose owner name equals the requested full name (case-insensitive). Look in both the answer and the additional sections. SRV and TXT may arrive in different datagrams.
 - The transmitter's IPv4 address is the source address of the response.
 - Accept responses only from UDP source port 5353 and an IPv4 subnet on the receiving interface, which must be one of the queried interfaces. Receive-interface metadata is required; a different selected interface's subnet cannot authorize a reply. RFC 6762 section 11 specifies this subnet check for unicast replies; IP TTL 255 is not required, and TTL receive control is unavailable in `x/net/ipv4` on Windows. Windows obtains the interface via Winsock `IP_PKTINFO`.
 - Validate response, standard opcode, successful rcode, non-truncated message and the query's ID (zero). If questions are included, they must match the requested instance, IN class and SRV/TXT types. Accept only IN resource records, masking the cache-flush bit. Responders that omit the echoed questions remain supported.
 - Hosts with several network interfaces (for example a transmitter on a primary and a secondary network, or a host on both wired and wireless) answer from several source addresses. Observed: without an interface configured, the two channels were sometimes resolved from different addresses of the same transmitter. Therefore resolve the left channel first, then resolve the right channel accepting only responses whose source address equals the left channel's transmitter address.
-- Parse all TXT values defensively. A malformed TXT record for the requested name is ignored (keep waiting; it may come from another host); if the lookup times out, report the last parse error. `id` must fit in 16 bits.
+- Parse all TXT values defensively. A malformed TXT record for the requested name is ignored (keep waiting; it may come from another host); if the lookup times out, report the last rejected reply with its source and reason (wrong source port, receiving interface or subnet, wrong transmitter address, or malformed). `id` must fit in 16 bits.
 
 Validation after resolving both channels:
 
@@ -81,7 +81,7 @@ Validation after resolving both channels:
 
 Local address selection:
 
-- With `interface`: the first non-loopback IPv4 address of that interface; the interface must be up and multicast-capable.
+- With `interface`: a non-loopback IPv4 address of that interface whose subnet contains the transmitter; the interface must be up and multicast-capable. Fail with an explicit subnet error if no address matches.
 - Without: the source address the operating system would use to reach the transmitter (for example via the local address of a connected UDP socket).
 
 ## 4. Flow control protocol (UDP)
@@ -98,7 +98,7 @@ Control messages are exchanged between a UDP socket bound to the local IPv4 addr
 | 6      | 2    | Opcode; echoed in the response                                  |
 | 8      | 2    | Status: `0x0000` in requests. In responses `0x0001` = success, anything else is an error code |
 
-A response belongs to a request when sequence and opcode match. Ignore other datagrams and datagrams shorter than the header or whose length field is smaller than 10 or larger than the datagram. Wait at most 3 seconds (and never past the context deadline) for the response. Observed error code: `0x0314` when the transmitter itself has no usable network.
+A response belongs to a request when sequence and opcode match. Ignore other datagrams and datagrams shorter than the header or whose length field is smaller than 10 or larger than the datagram. Bound the whole exchange, including the write, by its request timeout (3 seconds for the request flow, 1 second for stop-flow, never past the context deadline). Install read/write deadlines and the cancellation interrupt before sending. Observed error code: `0x0314` when the transmitter itself has no usable network.
 
 ### 4.2 Request flow (opcode `0x0100`)
 
@@ -154,11 +154,11 @@ Open the media socket (UDP, bound to the local IPv4 address, ephemeral port) bef
 
 The stream position (in frames) of the first frame of the payload is `seconds * 48000 + sample offset`. The payload is a whole number of frames; each frame has N samples in the requested channel order; each sample is bits/8 bytes, signed, big-endian and left-justified (the first byte is the most significant). Conversion to 16-bit output takes the first two bytes of each sample (then write them little-endian).
 
-A datagram shorter than 9 bytes or whose payload is not a whole number of frames is malformed. Malformed datagrams and datagrams whose source IP differs from the discovered transmitter must be dropped, never fatal (any host can send datagrams to the port).
+A datagram of 9 bytes or shorter, whose sample offset is 48000 or more, or whose payload is not a whole number of frames is malformed. Malformed datagrams and datagrams whose source IP differs from the discovered transmitter must be dropped, never fatal (any host can send datagrams to the port).
 
 ### 5.2 Keepalive
 
-At least every 250 ms, once media has been received, send a 2-byte UDP datagram `0x13 0x37` from the media socket to the source address of the most recent accepted media datagram. Without keepalives the transmitter stops the flow.
+At least every 250 ms, once media has been received, send a 2-byte UDP datagram `0x13 0x37` from the media socket to the source address of the most recent accepted media datagram. Without keepalives the transmitter stops the flow. Bound each write to the 200 ms keepalive interval. A write that times out ends reception. Other send errors are tolerated, because the transmitter tolerates missed keepalives; if the flow then stops, the 5-second media timeout reports the last of them.
 
 ### 5.3 Ordering, loss and timeouts
 

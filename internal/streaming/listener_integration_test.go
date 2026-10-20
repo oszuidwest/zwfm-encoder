@@ -2,6 +2,7 @@ package streaming
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	srt "github.com/datarhei/gosrt"
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
@@ -60,9 +61,9 @@ func TestListenerPipeFanoutLateSubscriberReceivesMPEGTSBytes(t *testing.T) {
 				Port:  port,
 				Codec: tt.codec,
 			}
-			result, err := ffmpegproc.StartProcessWithStdout(ffmpegPath, BuildListenerPipeArgs(stream))
+			result, err := ffmpegproc.StartProcessWithStdoutContext(context.Background(), ffmpegPath, BuildListenerPipeArgs(stream))
 			if err != nil {
-				t.Fatalf("StartProcessWithStdout() error = %v", err)
+				t.Fatalf("StartProcessWithStdoutContext() error = %v", err)
 			}
 			stdoutDone := make(chan struct{})
 			go func() {

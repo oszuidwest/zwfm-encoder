@@ -1,7 +1,9 @@
 package recording
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -84,7 +86,10 @@ func TestStoppedManagerDoesNotRetryHourlyRecorder(t *testing.T) {
 	}
 }
 
-func TestRunningManagerRetriesFailedHourlyRecorder(t *testing.T) {
+// runningManagerWithFailedHourlyRecorder returns a started manager whose
+// enabled hourly recorder is in error, so the hourly retry starts it.
+func runningManagerWithFailedHourlyRecorder(t *testing.T) (*Manager, *GenericRecorder) {
+	t.Helper()
 	neverRotate(t)
 	// os.Executable, not os.Args: gosec taints the args into the spool paths.
 	executable, err := os.Executable()
@@ -108,6 +113,51 @@ func TestRunningManagerRetriesFailedHourlyRecorder(t *testing.T) {
 	r.mu.Lock()
 	r.config.Enabled, r.state = true, types.ProcessError
 	r.mu.Unlock()
+	return m, r
+}
+
+// pauseHandler blocks the log record with message until release closes.
+type pauseHandler struct {
+	slog.Handler
+	message          string
+	entered, release chan struct{}
+}
+
+func (pauseHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h pauseHandler) Handle(_ context.Context, record slog.Record) error { //nolint:gocritic // slog.Handler takes the Record by value.
+	if record.Message == h.message {
+		close(h.entered)
+		<-h.release
+	}
+	return nil
+}
+
+func TestStopWaitsForAnHourlyRetryInFlight(t *testing.T) {
+	m, r := runningManagerWithFailedHourlyRecorder(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	previous := slog.Default()
+	slog.SetDefault(slog.New(pauseHandler{slog.DiscardHandler, "retrying failed hourly recorder at hour boundary", entered, release}))
+	t.Cleanup(func() { unblock(); slog.SetDefault(previous) })
+	retried, stopped := make(chan struct{}), make(chan error, 1)
+	go func() { m.retryFailedHourlyRecorders(); close(retried) }()
+	<-entered // The retry passed its running check and is about to start the recorder.
+	go func() { stopped <- m.Stop() }()
+	select {
+	case err := <-stopped:
+		t.Fatalf("Stop returned while the retry was between its check and Start: %v", err)
+	case <-time.After(30 * time.Millisecond):
+	}
+	unblock()
+	<-retried
+	if err := <-stopped; err != nil || r.Status().State != types.ProcessStopped {
+		t.Fatalf("after retry and Stop: %v, state %s; want stopped", err, r.Status().State)
+	}
+}
+
+func TestRunningManagerRetriesFailedHourlyRecorder(t *testing.T) {
+	m, r := runningManagerWithFailedHourlyRecorder(t)
 	m.retryFailedHourlyRecorders()
 	if got := r.Status().State; got == types.ProcessError {
 		t.Fatal("retry did not start the recorder before returning")

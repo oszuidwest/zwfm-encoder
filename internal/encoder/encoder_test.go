@@ -670,6 +670,11 @@ func TestEncoderCaptureHelperProcess(t *testing.T) {
 	switch mode {
 	case "exit":
 		os.Exit(1)
+	case "ignore-stop":
+		signal.Ignore(util.ShutdownSignals()...)
+		_, _ = os.Stdout.Write(make([]byte, 4)) // Readiness proves the handler is installed.
+		time.Sleep(time.Minute)
+		os.Exit(0)
 	case "sleep":
 		signals := make(chan os.Signal, 1)
 		signal.Notify(signals, util.ShutdownSignals()...)

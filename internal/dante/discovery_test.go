@@ -3,6 +3,7 @@ package dante
 import (
 	"net"
 	"reflect"
+	"strings"
 	"testing"
 
 	"golang.org/x/net/dns/dnsmessage"
@@ -33,6 +34,17 @@ func TestParseTXT(t *testing.T) {
 				id: 9, rate: 48000, bits: 16, nchan: 4, fppMax: 64, fppMin: 8,
 			},
 		},
+		{
+			name:  "case insensitive keys and first duplicate wins",
+			items: []string{"ID=9", "id=1", "RATE=48000", "rate=44100", "ENC=24", "enc=16", "NCHAN=2", "FPP=32,16"},
+			want:  channelInfo{id: 9, rate: 48000, bits: 24, nchan: 2, fppMax: 32, fppMin: 16},
+		},
+		{
+			name:  "non-ASCII key is not a recognized attribute",
+			items: []string{"İD=9", "id=1", "rate=48000", "enc=24", "nchan=2", "fpp=32,32"},
+			want:  channelInfo{id: 1, rate: 48000, bits: 24, nchan: 2, fppMax: 32, fppMin: 32},
+		},
+		{name: "boolean first occurrence cannot be replaced", items: []string{"id", "id=1", "rate=48000", "enc=24", "nchan=2", "fpp=32,32"}, wantError: true},
 		{name: "missing ID", items: []string{"rate=48000", "enc=24", "nchan=2", "fpp=32,32"}, wantError: true},
 		{name: "ID overflow", items: []string{"id=65536", "rate=48000", "enc=24", "nchan=2", "fpp=32,32"}, wantError: true},
 		{name: "malformed rate", items: []string{"id=1", "rate=x", "enc=24", "nchan=2", "fpp=32,32"}, wantError: true},
@@ -89,11 +101,16 @@ func TestMergeDiscoveryResponseAcceptsOnlyRequiredSource(t *testing.T) {
 	var info channelInfo
 
 	complete, err := mergeDiscoveryResponse(&info, packet, foreignSource, requested, requiredSource)
-	if err != nil {
-		t.Fatalf("foreign response: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "does not match required") {
+		t.Fatalf("foreign response = %v, want transmitter address rejection", err)
 	}
 	if complete || info.address != nil {
 		t.Fatalf("foreign response was accepted: %#v", info)
+	}
+
+	unrelated := buildMixedDNSResponse(t, "Other@tx"+serviceSuffix, "Another@tx"+serviceSuffix)
+	if _, err := mergeDiscoveryResponse(&info, unrelated, foreignSource, requested, requiredSource); err != nil {
+		t.Fatalf("unrelated response = %v, want it ignored without a diagnostic", err)
 	}
 
 	complete, err = mergeDiscoveryResponse(&info, packet, requiredSource, requested, requiredSource)
@@ -105,6 +122,12 @@ func TestMergeDiscoveryResponseAcceptsOnlyRequiredSource(t *testing.T) {
 	}
 	if !info.address.Equal(requiredSource) {
 		t.Fatalf("source = %v, want %v", info.address, requiredSource)
+	}
+
+	// Without a required source, later records must still come from the first responder.
+	_, err = mergeDiscoveryResponse(&info, packet, foreignSource, requested, nil)
+	if err == nil || !strings.Contains(err.Error(), "does not match earlier response") || !info.address.Equal(requiredSource) {
+		t.Fatalf("second responder = %v, address %v; want rejection keeping %v", err, info.address, requiredSource)
 	}
 }
 
