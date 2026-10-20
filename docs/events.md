@@ -536,7 +536,7 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
 
 - **Severity:** `error`
 - **UI Label:** Error
-- **Triggered:** When a recorder encounters an error (path not writable, output reservation failure, FFmpeg write or finalize failure, failure to start the next hourly file, etc.). File-specific failures include `filename` and FFmpeg's error. A failed hourly finalize reports an error even while the next file keeps recording; partial audio is preserved. Output names are reserved exclusively before FFmpeg starts; an unrelated replacement detected at finalization is left untouched and is not uploaded.
+- **Triggered:** When a recorder encounters an error (path not writable, output reservation/marker failure, FFmpeg write or finalize failure, writer-drain timeout, failure to start the next hourly file, etc.). Each failed finalization emits exactly one event, including when FFmpeg is killed to release a blocked writer. File-specific failures include `filename` and the error. Failed outputs and their `.unfinalized` markers are retained for inspection, never automatically uploaded; local retention still applies. A failed hourly finalize can leave the next file `running`: `status.error` then carries the last warning until the next successful rotation, Stop or successful start. The UI state indicator and `/ready` recorder check follow the process state, not this warning. Output names are reserved exclusively before FFmpeg starts; an unrelated replacement detected at finalization is left untouched and is not uploaded.
 
 ```json
 {

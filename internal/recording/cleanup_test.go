@@ -145,6 +145,10 @@ func TestCleanupLocalFilesDeletesOnlyExpiredOwnedFiles(t *testing.T) {
 	old := time.Now().AddDate(0, 0, -2)
 	for _, file := range files {
 		writeCleanupFile(t, directory, file.name)
+		writeCleanupFile(t, directory, file.name+unfinalizedRecordingSuffix)
+		if err := os.Chmod(filepath.Join(directory, file.name+unfinalizedRecordingSuffix), 0o400); err != nil {
+			t.Fatal(err)
+		}
 		if file.name != "Studio-2000-01-01-00-05.mp3" {
 			if err := os.Chtimes(filepath.Join(directory, file.name), old, old); err != nil {
 				t.Fatal(err)
@@ -167,6 +171,10 @@ func TestCleanupLocalFilesDeletesOnlyExpiredOwnedFiles(t *testing.T) {
 			t.Errorf("expected %q to survive cleanup: %v", file.name, err)
 		case !file.wantExists && !os.IsNotExist(err):
 			t.Errorf("expected %q to be deleted, stat error = %v", file.name, err)
+		}
+		_, markerErr := os.Stat(path + unfinalizedRecordingSuffix)
+		if file.wantExists && markerErr != nil || !file.wantExists && !os.IsNotExist(markerErr) {
+			t.Errorf("marker cleanup did not follow owned recording %q: %v", file.name, markerErr)
 		}
 	}
 }

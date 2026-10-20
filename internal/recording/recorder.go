@@ -35,6 +35,15 @@ var reserveRecordingFile = func(path string) (*os.File, error) {
 // checkRecordingPath lets lifecycle tests hold directory validation on a slow mount.
 var checkRecordingPath = util.CheckPathWritable
 
+// removeEmptyRecording lets tests reproduce a failed unlink without relying on mount permissions.
+var removeEmptyRecording = os.Remove
+
+// writeRecordingFailure lets tests simulate a full disk after marker truncation.
+var writeRecordingFailure = os.WriteFile
+
+// writerDrainTimeout bounds graceful writer drain; tests shorten it.
+var writerDrainTimeout = 5 * time.Second
+
 // clockSynced and clockSyncPoll gate the first file on a synchronized clock;
 // tests replace them.
 var (
@@ -52,8 +61,6 @@ const (
 	// minute-based name only recurs within its minute or in the repeated hour
 	// of a DST fall-back.
 	usedFilenameWindow = 2 * time.Hour
-	// writerDrainTimeout bounds graceful writer drain before cancelling FFmpeg.
-	writerDrainTimeout = 5 * time.Second
 	// processStopTimeout bounds waiting before escalating to SIGTERM.
 	processStopTimeout = 10 * time.Second
 	// processKillTimeout bounds waiting after SIGTERM before SIGKILL.
@@ -513,7 +520,7 @@ func (r *GenericRecorder) handleWriteError(result *ffmpeg.StartResult, writeErr 
 	go r.cleanupAfterWriteError(run, writeErr)
 }
 
-// cleanupAfterWriteError closes a broken FFmpeg process and preserves its partial file for upload.
+// cleanupAfterWriteError preserves failed outputs in quarantine for inspection.
 // The failing write has released stdinMu, so CloseStdin cannot deadlock.
 func (r *GenericRecorder) cleanupAfterWriteError(run encoderRun, writeErr error) {
 	defer r.retiring.Done()
@@ -526,24 +533,23 @@ func (r *GenericRecorder) cleanupAfterWriteError(run encoderRun, writeErr error)
 	if err := r.drainProcess(run.result); err != nil {
 		writeErr = err
 	}
-	r.reportError(run.file, writeErr)
+	r.failOutput(run, writeErr)
+}
 
-	// Persist recovery before releasing Stop; network retries run independently.
-	// The owned file's size decides, not accepted stdin bytes: a failed Windows
-	// pipe write can report zero after FFmpeg consumed PCM.
-	size, err := run.output.release()
-	if err != nil {
-		r.reportError(run.file, err)
-		return
+// failOutput releases a failed output and reports it once. The output keeps its
+// marker for inspection; an untouched placeholder holds nothing to inspect.
+func (r *GenericRecorder) failOutput(run encoderRun, cause error) {
+	size, ownErr := run.output.release()
+	err := errors.Join(cause, ownErr)
+	if ownErr == nil && size == 0 {
+		if discardErr := r.discardEmpty(run); discardErr != nil {
+			err = errors.Join(err, discardErr)
+			run.output.recordFailure(err)
+		}
+	} else {
+		run.output.recordFailure(err)
 	}
-	if size == 0 {
-		r.discardEmpty(run)
-		return
-	}
-	if req, ok := r.prepareUploadRequest(run.file); ok {
-		r.addToRetryQueue(req, writeErr.Error())
-		go r.processRetryQueue()
-	}
+	r.reportError(run.file, err)
 }
 
 // drainProcess waits for FFmpeg, escalating through SIGTERM and SIGKILL.
@@ -642,20 +648,13 @@ func (r *GenericRecorder) prepareFilenameLocked(fileTime time.Time) (*recordingO
 		var output *recordingOutput
 		err := prepareRecordingDir(cfg.StorageMode, outputDir)
 		if err == nil {
-			var file *os.File
 			nextRecordingFilename(base, func(name string) bool {
 				if _, exists := used[name]; exists {
 					return true
 				}
-				file, err = reserveRecordingFile(filepath.Join(outputDir, name))
-				if err != nil {
-					err = fmt.Errorf("reserve recording file: %w", err)
-				}
+				output, err = reserveRecordingOutput(filepath.Join(outputDir, name))
 				return errors.Is(err, os.ErrExist)
 			})
-			if err == nil {
-				output = &recordingOutput{file: file}
-			}
 		}
 		lock.Unlock()
 		r.mu.Lock()
@@ -680,7 +679,103 @@ func (r *GenericRecorder) prepareFilenameLocked(fileTime time.Time) (*recordingO
 // Recording directories must be writable only by trusted operators: FFmpeg
 // reopens the reserved path, so arbitrary hostile directory mutation is unsupported.
 type recordingOutput struct {
-	file *os.File
+	file        *os.File
+	unfinalized bool
+}
+
+const unfinalizedRecordingSuffix = ".unfinalized"
+
+// reserveRecordingOutput exclusively creates path and its persisted marker.
+func reserveRecordingOutput(path string) (*recordingOutput, error) {
+	file, err := reserveRecordingFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reserve recording file: %w", err)
+	}
+	output := &recordingOutput{file: file}
+	if err := output.markUnfinalized(); err != nil {
+		output.discard()
+		return nil, err
+	}
+	return output, nil
+}
+
+func (o *recordingOutput) markUnfinalized() error {
+	path := o.file.Name() + unfinalizedRecordingSuffix
+	marker, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec // Marker path derives from the validated reservation.
+	if err != nil {
+		return fmt.Errorf("create unfinalized recording marker: %w", err)
+	}
+	o.unfinalized = true
+	if err := errors.Join(marker.Sync(), marker.Close()); err != nil {
+		return fmt.Errorf("persist unfinalized recording marker: %w", err)
+	}
+	return nil
+}
+
+func (o *recordingOutput) clearUnfinalized() error {
+	if !o.unfinalized {
+		return nil
+	}
+	return removeUnfinalizedMarker(o.file.Name())
+}
+
+func removeUnfinalizedMarker(recording string) error {
+	marker := recording + unfinalizedRecordingSuffix
+	if info, err := os.Lstat(marker); err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o200 == 0 { // #nosec G703 -- Marker derives from a validated reservation or recorder-owned directory entry.
+		if err := os.Chmod(marker, 0o600); err != nil { // #nosec G703 -- Same recorder-owned regular marker checked above.
+			return fmt.Errorf("make unfinalized recording marker writable: %w", err)
+		}
+	}
+	if err := os.Remove(marker); err != nil && !errors.Is(err, os.ErrNotExist) { // #nosec G703 -- Path comes from a validated reservation or a recorder-owned spool/retention entry.
+		return fmt.Errorf("clear unfinalized recording marker: %w", err)
+	}
+	return nil
+}
+
+// recordFailure stores the reason and marks failure using read-only metadata,
+// independently of whether the reason write succeeds.
+func (o *recordingOutput) recordFailure(cause error) {
+	if !o.unfinalized {
+		return
+	}
+	marker := o.file.Name() + unfinalizedRecordingSuffix
+	if err := writeRecordingFailure(marker, []byte(cause.Error()+"\n"), 0o600); err != nil {
+		slog.Warn("cannot record why a recording failed", "file", o.file.Name(), "error", err)
+	}
+	info, err := os.Lstat(marker) // #nosec G703 -- Marker belongs to the validated recording reservation.
+	if err == nil && info.Mode().IsRegular() {
+		err = os.Chmod(marker, 0o400) // #nosec G703 -- Same validated reservation marker, checked as a regular file above.
+	}
+	if err != nil {
+		slog.Warn("cannot persist recording failure flag", "file", o.file.Name(), "error", err)
+	}
+}
+
+// recordingFailed recognizes a failure reason or read-only failure flag;
+// a marker that is not a plain file also counts as failed.
+func recordingFailed(path string) (bool, error) {
+	info, err := os.Lstat(path + unfinalizedRecordingSuffix)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check unfinalized recording marker: %w", err)
+	}
+	return !info.Mode().IsRegular() || info.Size() > 0 || info.Mode().Perm()&0o200 == 0, nil
+}
+
+// finalizedRecording stats a recording for upload without following links. ok
+// is false for a marked, empty or non-regular file, which is never uploaded
+// automatically.
+func finalizedRecording(path string) (info os.FileInfo, ok bool, err error) {
+	if failed, err := recordingFailed(path); err != nil || failed {
+		return nil, false, err
+	}
+	info, err = os.Lstat(path)
+	if err != nil {
+		return nil, false, err
+	}
+	return info, info.Mode().IsRegular() && info.Size() > 0, nil
 }
 
 // release closes the reservation, once, before any upload or removal (Windows
@@ -709,21 +804,22 @@ func (o *recordingOutput) release() (int64, error) {
 	return info.Size(), nil
 }
 
-// remove deletes a released output; one that is already gone counts as removed.
+// remove deletes a released output, then its marker; one that is already gone
+// counts as removed. When the removal fails, the marker keeps the file out of uploads.
 func (o *recordingOutput) remove() error {
-	if err := os.Remove(o.file.Name()); err != nil && !errors.Is(err, os.ErrNotExist) { // #nosec G703 -- Reserved path is validated at creation; release verifies ownership before removal.
-		return err
+	if err := removeEmptyRecording(o.file.Name()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove empty recording: %w", err)
 	}
-	return nil
+	return o.clearUnfinalized()
 }
 
 // discardEmpty removes a released output without audio.
-func (r *GenericRecorder) discardEmpty(run encoderRun) {
+func (r *GenericRecorder) discardEmpty(run encoderRun) error {
 	if err := run.output.remove(); err != nil {
-		r.reportError(run.file, fmt.Errorf("remove empty recording: %w", err))
-		return
+		return err
 	}
 	slog.Info("discarded recording without audio", "id", r.id, "file", filepath.Base(run.file))
+	return nil
 }
 
 // discard is for unstarted reservations; never remove an unrelated replacement.
@@ -733,11 +829,13 @@ func (o *recordingOutput) discard() {
 	}
 	if _, err := o.release(); err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
+			o.recordFailure(err) // A replacement must not pass for a crash leftover.
 			slog.Warn("cannot discard recording reservation", "file", o.file.Name(), "error", err)
 		}
 		return
 	}
 	if err := o.remove(); err != nil {
+		o.recordFailure(err)
 		slog.Warn("failed to discard recording reservation", "file", o.file.Name(), "error", err)
 	}
 }
@@ -878,11 +976,8 @@ func (r *GenericRecorder) finishEncoder(run encoderRun) {
 		// WriteStdin holds stdinMu; cancel FFmpeg to unblock it.
 		slog.Warn("recorder writer stuck, cancelling ffmpeg to break the pipe", "id", r.id, "file", filepath.Base(run.file))
 		run.result.Cancel(errRecorderStopped)
-		finalizeErr = r.drainProcess(run.result)
+		finalizeErr = errors.Join(fmt.Errorf("recording writer timed out after %s", writerDrainTimeout), r.drainProcess(run.result))
 		<-run.writerDone
-	}
-	if finalizeErr != nil && !errors.Is(context.Cause(run.result.Context()), errRecorderStopped) {
-		r.reportError(run.file, finalizeErr)
 	}
 
 	// writerDone has fired; remaining buffered chunks are teardown loss.
@@ -892,17 +987,24 @@ func (r *GenericRecorder) finishEncoder(run encoderRun) {
 			"id", r.id, "file", filepath.Base(run.file), "chunks", abandoned, "total_drops", drops)
 	}
 
-	size, err := run.output.release()
-	if err != nil {
+	if finalizeErr != nil {
+		r.failOutput(run, finalizeErr)
+		return
+	}
+	if _, err := run.output.release(); err != nil {
+		run.output.recordFailure(err)
 		r.reportError(run.file, err)
 		return
 	}
 	if run.result.BytesWritten() == 0 {
-		// A failed output FFmpeg wrote to is retained for inspection; an
-		// untouched placeholder holds nothing to inspect.
-		if finalizeErr == nil || size == 0 {
-			r.discardEmpty(run)
+		if err := r.discardEmpty(run); err != nil {
+			run.output.recordFailure(err)
+			r.reportError(run.file, err)
 		}
+		return
+	}
+	if err := run.output.clearUnfinalized(); err != nil {
+		r.reportError(run.file, err)
 		return
 	}
 	// queueForUpload handles local-only and missing S3 config.
