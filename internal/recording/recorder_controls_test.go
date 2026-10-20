@@ -176,7 +176,7 @@ func TestHungFilenameCheckDoesNotMultiplyAcrossRestarts(t *testing.T) {
 		}
 		return originalReserve(path)
 	}
-	// Five starts, each superseded by a Stop while the first check hangs.
+	// Five concurrent filename preparations share one blocked filesystem check.
 	var starts sync.WaitGroup
 	t.Cleanup(func() { release(); starts.Wait(); reserveRecordingFile = originalReserve })
 	for range 5 {
@@ -186,6 +186,10 @@ func TestHungFilenameCheckDoesNotMultiplyAcrossRestarts(t *testing.T) {
 			r.mu.Unlock()
 			output.discard()
 		})
+	}
+	// Directory preparation runs first; wait for the first check to block.
+	for entered := time.Now().Add(5 * time.Second); time.Now().Before(entered) && peak.Load() < 1; {
+		time.Sleep(5 * time.Millisecond)
 	}
 	deadline := time.Now().Add(300 * time.Millisecond)
 	for time.Now().Before(deadline) && peak.Load() < 2 {

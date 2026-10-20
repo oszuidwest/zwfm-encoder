@@ -59,6 +59,8 @@ func TestMediaDecoding(t *testing.T) {
 
 func TestMalformedMediaIsDropped(t *testing.T) {
 	t.Parallel()
+	invalidOffset := mediaDatagram(0, []byte{1, 2, 3, 4})
+	binary.BigEndian.PutUint32(invalidOffset[5:9], sampleRate)
 	tests := []struct {
 		name     string
 		bits     uint16
@@ -68,6 +70,7 @@ func TestMalformedMediaIsDropped(t *testing.T) {
 		{name: "header only", bits: 16, datagram: make([]byte, 9)},
 		{name: "partial frame", bits: 16, datagram: append(make([]byte, 9), 1, 2, 3)},
 		{name: "partial 24-bit frame", bits: 24, datagram: append(make([]byte, 9), 1, 2, 3, 4)},
+		{name: "sample offset outside second", bits: 16, datagram: invalidOffset},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -270,7 +273,8 @@ func TestReceiveMediaDropsOtherSources(t *testing.T) {
 
 func mediaDatagram(position uint32, payload []byte) []byte {
 	datagram := make([]byte, mediaHeaderSize+len(payload))
-	binary.BigEndian.PutUint32(datagram[5:9], position)
+	binary.BigEndian.PutUint32(datagram[1:5], position/sampleRate)
+	binary.BigEndian.PutUint32(datagram[5:9], position%sampleRate)
 	copy(datagram[mediaHeaderSize:], payload)
 	return datagram
 }
