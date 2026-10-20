@@ -3,6 +3,7 @@ package dante
 import (
 	"cmp"
 	"net"
+	"strings"
 	"testing"
 
 	"golang.org/x/net/dns/dnsmessage"
@@ -19,10 +20,10 @@ func TestDiscoveryRequiresLocalMDNSSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tt := range []struct {
-		name, ip string
-		port     int
-		ifIndex  int
-		want     bool
+		name, ip, reason string
+		port             int
+		ifIndex          int
+		want             bool
 	}{
 		{name: "local mDNS", ip: "192.0.2.11", port: 5353, ifIndex: 1, want: true},
 		{name: "wrong port", ip: "192.0.2.11", port: 4455, ifIndex: 1},
@@ -31,13 +32,17 @@ func TestDiscoveryRequiresLocalMDNSSource(t *testing.T) {
 		{name: "other selected interface subnet", ip: "198.51.100.11", port: 5353, ifIndex: 1},
 		{name: "other selected interface local", ip: "198.51.100.11", port: 5353, ifIndex: 2, want: true},
 		{name: "missing receive interface", ip: "192.0.2.11", port: 5353},
-		{name: "unselected receive interface", ip: "192.0.2.11", port: 5353, ifIndex: 3},
+		{name: "unselected receive interface", ip: "192.0.2.11", port: 5353, ifIndex: 3, reason: "was not selected"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			// Index 0 is listed too, so missing metadata must be rejected by itself.
-			if got := validDiscoverySource(&net.UDPAddr{IP: net.ParseIP(tt.ip), Port: tt.port}, tt.ifIndex, map[int][]*net.IPNet{0: {network}, 1: {network}, 2: {other}}); got != tt.want {
-				t.Fatalf("validDiscoverySource = %t, want %t", got, tt.want)
+			err := validateDiscoverySource(&net.UDPAddr{IP: net.ParseIP(tt.ip), Port: tt.port}, tt.ifIndex, map[int][]*net.IPNet{0: {network}, 1: {network}, 2: {other}})
+			if got := err == nil; got != tt.want {
+				t.Fatalf("validateDiscoverySource accepted = %t, want %t", got, tt.want)
+			}
+			if tt.reason != "" && !strings.Contains(err.Error(), tt.reason) {
+				t.Fatalf("validateDiscoverySource = %v, want reason %q", err, tt.reason)
 			}
 		})
 	}

@@ -20,7 +20,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// afterFunc schedules hourly rotations; tests replace it to rotate by hand.
+// afterFunc schedules recorder timers; tests replace it to fire callbacks by hand.
 var afterFunc = time.AfterFunc
 
 // recordingStat lets tests hold a filename check like an unresponsive network share.
@@ -109,7 +109,8 @@ type GenericRecorder struct {
 	retiringFiles map[string]struct{} // Files rotations are finalizing; protected from cleanup until queued.
 
 	// Max duration timer (on-demand mode)
-	durationTimer *time.Timer
+	durationTimer      *time.Timer
+	durationGeneration uint64
 }
 
 // GenericRecorderConfig holds the parameters for creating a GenericRecorder.
@@ -205,7 +206,9 @@ func (r *GenericRecorder) Start() error {
 		return ErrRecorderStopping
 	}
 
-	// Clear any previous error and set starting state
+	// Clear any previous error and set starting state. A stale start can still
+	// move a run to Error without cancelling its limit, so cancel it here too.
+	r.cancelDurationLimitLocked()
 	r.lastError = ""
 	r.audioDrops.Store(0)
 	r.state = types.ProcessStarting
@@ -379,7 +382,12 @@ func (r *GenericRecorder) logEvent(eventType eventlog.EventType, p *eventlog.Rec
 // Stop stops the recorder.
 func (r *GenericRecorder) Stop() error {
 	r.mu.Lock()
+	return r.stopLocked()
+}
 
+// stopLocked must be called with r.mu held; it unlocks r.mu before waiting
+// for cleanup.
+func (r *GenericRecorder) stopLocked() error {
 	// Already stopped or stopping
 	if r.state == types.ProcessStopped || r.state == types.ProcessStopping {
 		r.mu.Unlock()
@@ -395,10 +403,7 @@ func (r *GenericRecorder) Stop() error {
 		r.rotationTimer = nil
 	}
 	r.rotationGeneration++
-	if r.durationTimer != nil {
-		r.durationTimer.Stop()
-		r.durationTimer = nil
-	}
+	r.cancelDurationLimitLocked()
 	r.mu.Unlock()
 
 	// Queue the final file, and any file a rotation is still finalizing,
@@ -498,6 +503,8 @@ func (r *GenericRecorder) handleWriteError(result *ffmpeg.StartResult, writeErr 
 	if r.state != types.ProcessStopping {
 		r.state = types.ProcessError
 	}
+	// The run is over; its duration limit must not later stop or clear anything.
+	r.cancelDurationLimitLocked()
 	r.recording.Store(false)
 	r.lastError = writeErr.Error()
 	capturedFile := r.currentFile
@@ -837,13 +844,29 @@ func (r *GenericRecorder) rotateFile(generation uint64) {
 
 // Must be called with r.mu held.
 func (r *GenericRecorder) scheduleDurationLimitLocked() {
+	r.cancelDurationLimitLocked()
+	generation := r.durationGeneration
 	duration := time.Duration(r.maxDurationMinutes) * time.Minute
-	r.durationTimer = time.AfterFunc(duration, func() {
+	r.durationTimer = afterFunc(duration, func() {
+		r.mu.Lock()
+		if generation != r.durationGeneration {
+			r.mu.Unlock()
+			return
+		}
 		slog.Info("recorder max duration reached", "id", r.id, "duration", duration)
-		if err := r.Stop(); err != nil {
+		if err := r.stopLocked(); err != nil {
 			slog.Error("failed to stop recorder after max duration", "id", r.id, "error", err)
 		}
 	})
+}
+
+// Must be called with r.mu held.
+func (r *GenericRecorder) cancelDurationLimitLocked() {
+	if r.durationTimer != nil {
+		r.durationTimer.Stop()
+		r.durationTimer = nil
+	}
+	r.durationGeneration++
 }
 
 func (r *GenericRecorder) generateFilename(t time.Time) string {

@@ -124,7 +124,16 @@ func validateChannels(left, right channelInfo) error {
 
 func selectLocalAddress(interfaceID string, interfaces []net.Interface, transmitter *net.UDPAddr) (net.IP, error) {
 	if interfaceID != "" {
-		return firstIPv4Address(&interfaces[0])
+		networks, err := discoveryNetworks(interfaces[:1])
+		if err != nil {
+			return nil, err
+		}
+		for _, network := range networks[interfaces[0].Index] {
+			if network.Contains(transmitter.IP) {
+				return network.IP.To4(), nil
+			}
+		}
+		return nil, fmt.Errorf("network interface %q has no IPv4 address on transmitter %s subnet", interfaceID, transmitter.IP)
 	}
 	conn, err := dialDanteUDP(nil, transmitter)
 	if err != nil {

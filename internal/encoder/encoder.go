@@ -86,6 +86,8 @@ type Encoder struct {
 	sourceLoopDone      chan struct{}
 	state               types.EncoderState
 	stopChan            chan struct{}
+	// Never call a running stream, recording or dump manager while holding mu:
+	// they evaluate consumerStartAllowed under their own locks.
 	mu                  sync.RWMutex
 	closeOnce           sync.Once
 	closeErr            error
@@ -94,10 +96,11 @@ type Encoder struct {
 	retryCount          int
 	backoff             *util.Backoff
 	inputLostAt         time.Time                         // start of the open outage; zero when no input_lost awaits its input_restored
-	audioMu             sync.Mutex                        // guards audioRunID, steadyAudioSince and lastAudioAt
+	audioMu             sync.Mutex                        // guards audioRunID, steadyAudioSince, lastAudioAt and audioEnded
 	audioRunID          uint64                            // source run the audio times belong to
 	steadyAudioSince    time.Time                         // start of audioRunID's PCM without pauses over inputAudioGap
 	lastAudioAt         time.Time                         // latest PCM of audioRunID
+	audioEnded          bool                              // audioRunID's distributor has stopped reading
 	audioLevels         atomic.Pointer[audio.AudioLevels] // published lock-free; see AudioLevels
 	silenceDetect       *audio.SilenceDetector
 	imbalanceDetect     *audio.ImbalanceDetector
@@ -371,7 +374,7 @@ func (e *Encoder) AudioLevels() audio.AudioLevels {
 func (e *Encoder) Status() types.EncoderStatus {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	_, lastAudio := e.audioTimes(e.sourceRunID)
+	lastAudio := e.liveAudioAt(e.sourceRunID)
 
 	var uptime string
 	var uptimeSeconds int64
@@ -587,10 +590,7 @@ func (e *Encoder) RestartStream(streamID string) {
 		case <-stopChan:
 			return
 		}
-		if !e.sourceRunActive(runID) {
-			return
-		}
-		if err := e.startStream(streamID, runID); err != nil {
+		if err := e.startStream(streamID, runID); err != nil && !errors.Is(err, ErrNotRunning) {
 			slog.Warn("failed to restart stream", "stream_id", streamID, "error", err)
 		}
 	}()
@@ -947,8 +947,31 @@ func (e *Encoder) noteAudio(runID uint64) {
 	if e.audioRunID != runID || now.Sub(e.lastAudioAt) > inputAudioGap {
 		e.audioRunID = runID
 		e.steadyAudioSince = now
+		e.audioEnded = false
 	}
 	e.lastAudioAt = now
+}
+
+// endAudio marks runID's PCM as ended once its distributor stops reading, so
+// readiness drops with the last PCM instead of after source teardown. The
+// audio times stay, so supervision can still tell a teardown from a stall.
+func (e *Encoder) endAudio(runID uint64) {
+	e.audioMu.Lock()
+	defer e.audioMu.Unlock()
+	if e.audioRunID == runID {
+		e.audioEnded = true
+	}
+}
+
+// liveAudioAt returns when runID last delivered PCM, or zero once its PCM has
+// ended or before it started.
+func (e *Encoder) liveAudioAt(runID uint64) time.Time {
+	e.audioMu.Lock()
+	defer e.audioMu.Unlock()
+	if e.audioRunID != runID || e.audioEnded {
+		return time.Time{}
+	}
+	return e.lastAudioAt
 }
 
 // audioTimes returns since when runID has delivered PCM without long pauses
@@ -960,12 +983,6 @@ func (e *Encoder) audioTimes(runID uint64) (steadySince, last time.Time) {
 		return time.Time{}, time.Time{}
 	}
 	return e.steadyAudioSince, e.lastAudioAt
-}
-
-func (e *Encoder) sourceRunActive(runID uint64) bool {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.sourceRunID == runID && e.state == types.StateRunning && e.sourceStdout != nil
 }
 
 func (e *Encoder) consumerStartAllowed(runID uint64, stopChan <-chan struct{}) bool {
@@ -988,13 +1005,10 @@ func (e *Encoder) startEnabledStreams(runID uint64) {
 		e.silenceDumpManager.StartIfActive(active)
 	}
 
-	if !e.sourceRunActive(runID) {
-		return
-	}
-
 	streams := e.config.ConfiguredStreams()
 	for i := range streams {
-		if !e.sourceRunActive(runID) {
+		// Also stops the loop from logging start failures for an ended run.
+		if !active() {
 			return
 		}
 		stream := &streams[i]
@@ -1005,10 +1019,6 @@ func (e *Encoder) startEnabledStreams(runID uint64) {
 		if err := e.startStream(stream.ID, runID); err != nil {
 			slog.Error("failed to start stream", "stream_id", stream.ID, "error", err)
 		}
-	}
-
-	if !e.sourceRunActive(runID) {
-		return
 	}
 
 	if e.recordingManager != nil {
@@ -1034,6 +1044,7 @@ func (e *Encoder) runDistributor(runID uint64) {
 
 	// Publish silence from this goroutine so it wins after the last live level.
 	defer e.resetAudioLevels()
+	defer e.endAudio(runID)
 
 	for {
 		e.mu.RLock()

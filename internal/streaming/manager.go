@@ -211,7 +211,8 @@ func (m *Manager) Start(stream *types.Stream) (bool, error) {
 }
 
 // StartIfActive checks source ownership under the same map lock used by Stop.
-// The predicate must not call this manager.
+// The predicate runs under that lock, so it must not take a lock that is held
+// while calling into this manager.
 func (m *Manager) StartIfActive(stream *types.Stream, active func() bool) (bool, error) {
 	started, err := m.start(stream, nil, active)
 	return started != nil, err
@@ -220,24 +221,26 @@ func (m *Manager) StartIfActive(stream *types.Stream, active func() bool) (bool,
 // start launches stream and returns the running entry, or nil when it did not
 // create one. A non-nil expected restricts the launch to replacing that exact
 // entry, so a retry monitor cannot revive a stream that Stop already removed.
-func (m *Manager) start(stream *types.Stream, expected *Stream, active func() bool) (started *Stream, err error) {
+func (m *Manager) start(stream *types.Stream, expected *Stream, active func() bool) (*Stream, error) {
 	placeholder, ctx, err := m.claimStream(stream, stream.ModeOrDefault(), expected, active)
 	if placeholder == nil {
 		return nil, err
 	}
-	defer func() {
-		if started == nil {
-			placeholder.cancel(err)
-		}
-	}()
-	if err := ctx.Err(); err != nil {
-		m.removePlaceholder(stream.ID, placeholder)
-		return nil, err
-	}
+	// Stop may cancel the claim while old resources are released. The caller
+	// exec then refuses to start, and the listener binds only while it owns
+	// the claim.
+	var started *Stream
 	if stream.ModeOrDefault() == types.StreamModeListener {
-		return m.startListenerFanout(ctx, stream, placeholder)
+		started, err = m.startListenerFanout(ctx, stream, placeholder)
+	} else {
+		started, err = m.startCaller(ctx, stream, placeholder)
 	}
-	return m.startCaller(ctx, stream, placeholder)
+	if err != nil && errors.Is(context.Cause(ctx), errStoppedByUser) {
+		// Stop removed the claim mid-startup; as after a successful exec, that
+		// is not a failure.
+		return nil, nil
+	}
+	return started, err
 }
 
 // claimStream validates the stream and inserts a ProcessStarting placeholder
@@ -373,19 +376,22 @@ func (m *Manager) startListenerFanout(ctx context.Context, stream *types.Stream,
 		m.removePlaceholder(stream.ID, placeholder)
 		return nil, err
 	}
-	if err := fanout.Start(); err != nil {
-		m.removePlaceholder(stream.ID, placeholder)
-		return nil, err
-	}
+	// Bind under the lock Stop takes: Stop either removes the claim before the
+	// port is bound, or finds the listener on the placeholder and closes it.
 	m.mu.Lock()
 	owned := m.streams[stream.ID] == placeholder
 	if owned {
-		placeholder.fanout = fanout // Stop can close a listener before FFmpeg startup finishes.
+		if err = fanout.Start(); err == nil {
+			placeholder.fanout = fanout
+		}
 	}
 	m.mu.Unlock()
 	if !owned {
-		fanout.Shutdown()
-		return nil, fanout.Wait()
+		return nil, nil
+	}
+	if err != nil {
+		m.removePlaceholder(stream.ID, placeholder)
+		return nil, err
 	}
 
 	s := &Stream{
@@ -654,9 +660,10 @@ func (m *Manager) Stop(streamID string) error {
 	//    Writer's for-range will exit after draining remaining items.
 	stream.closeAudioCh()
 
-	// 2. Cancel context - marks stop as intentional. For stream processes
-	//    (no cmd.Cancel set), exec.CommandContext sends SIGKILL, breaking
-	//    the pipe and unblocking any writer stuck in stdin.Write().
+	// 2. Cancel the process. The stream's own cancel above already did, as
+	//    the parent of the process context; this keeps the cause explicit.
+	//    For stream processes (no cmd.Cancel set), exec.CommandContext sends
+	//    SIGKILL, breaking the pipe and unblocking a writer in stdin.Write().
 	result.Cancel(errStoppedByUser)
 
 	// 3. Wait for process exit with timeout escalation.
@@ -1100,9 +1107,10 @@ func (m *Manager) MonitorAndRetry(streamID string, ctx StreamContext, stopChan <
 			return
 		}
 		if next == nil {
-			// Stopped during restart, or the new owner already has a monitor.
-			slog.Info("stream stopped or restarted by another path, stopping monitor",
-				"stream_id", streamID)
+			// Stopped during restart, the source ended, or the new owner
+			// already has a monitor; only the first two leave this entry behind.
+			slog.Info("stream not restarting", "stream_id", streamID, "reason", "stopped or restarted by another path")
+			m.removeIfOwned(streamID, owned)
 			return
 		}
 		owned = next
@@ -1183,13 +1191,11 @@ func (m *Manager) monitorListenerEncoder(
 			if !ok {
 				return
 			}
-			retryCtx, cancel := m.reserveListenerEncoderStart(streamID, stream, ctx.IsRunning)
-			if retryCtx == nil {
-				m.removeIfOwned(streamID, stream)
+			ended, err := m.retryListenerEncoder(streamID, stream, cfg, ctx.IsRunning, errMsg)
+			if ended {
 				return
 			}
-			if err := m.startListenerEncoderRun(retryCtx, streamID, stream, cfg); err != nil {
-				cancel(err)
+			if err != nil {
 				errMsg = err.Error()
 				slog.Error("failed to restart listener encoder", "stream_id", streamID, "error", err)
 				m.recordListenerEncoderFailure(streamID, stream, backoff, errMsg, 0)
@@ -1213,6 +1219,26 @@ func (m *Manager) monitorListenerEncoder(
 			break
 		}
 	}
+}
+
+// retryListenerEncoder starts a reserved listener encoder run. ended reports
+// that Stop or the end of the source run took over the stream.
+func (m *Manager) retryListenerEncoder(
+	streamID string, stream *Stream, cfg *types.Stream, active func() bool, errMsg string,
+) (ended bool, err error) {
+	retryCtx, cancel := m.reserveListenerEncoderStart(streamID, stream, active)
+	if retryCtx == nil {
+		m.stopListenerAfterRetryEnd(streamID, stream, "stopped or encoder no longer running", errMsg)
+		return true, nil
+	}
+	if err := m.startListenerEncoderRun(retryCtx, streamID, stream, cfg); err != nil {
+		if errors.Is(context.Cause(retryCtx), errStoppedByUser) {
+			return true, nil // Stop owns the cleanup and the stopped event.
+		}
+		cancel(err)
+		return false, err
+	}
+	return false, nil
 }
 
 // reserveListenerEncoderStart registers cancellation before releasing Stop's lock.

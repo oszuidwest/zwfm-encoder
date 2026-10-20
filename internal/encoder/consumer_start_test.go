@@ -105,6 +105,71 @@ func TestStopCancelsDelayedProductionConsumerStarts(t *testing.T) {
 	}
 }
 
+func TestConsumerStartAllowed(t *testing.T) {
+	t.Parallel()
+	current, previous := make(chan struct{}), make(chan struct{})
+	for _, tc := range []struct {
+		name     string
+		state    types.EncoderState
+		stdout   io.Reader
+		runID    uint64
+		stopChan chan struct{}
+		want     bool
+	}{
+		{"manual in current run", types.StateRunning, nil, 0, current, true},
+		{"manual captured before a restart", types.StateRunning, nil, 0, previous, false},
+		{"automatic for current run", types.StateRunning, strings.NewReader(""), 2, current, true},
+		{"automatic for ended run", types.StateRunning, strings.NewReader(""), 1, current, false},
+		{"automatic without stdout", types.StateRunning, nil, 2, current, false},
+		{"stopping", types.StateStopping, strings.NewReader(""), 0, current, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := &Encoder{state: tc.state, stopChan: current, sourceRunID: 2, sourceStdout: tc.stdout}
+			if got := e.consumerStartAllowed(tc.runID, tc.stopChan); got != tc.want {
+				t.Fatalf("consumerStartAllowed = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
+// A consumer stop that blocks must not keep capture running.
+func TestStopCancelsSourceBeforeStoppingConsumers(t *testing.T) {
+	e := newSourceLifecycleTestEncoder(t, "exit")
+	t.Cleanup(e.alertOrchestrator.Close)
+	e.state, e.sourceRunID = types.StateRunning, 1
+	e.stopChan, e.sourceStdout = make(chan struct{}), strings.NewReader("")
+	if err := e.recordingManager.Start(); err != nil {
+		t.Fatal(err)
+	}
+	canceled := make(chan struct{})
+	e.sourceCancel = func() { close(canceled) }
+	previous := slog.Default()
+	previousOutput, previousFlags := log.Writer(), log.Flags()
+	entered, blocked := make(chan struct{}), make(chan struct{})
+	release := sync.OnceFunc(func() { close(blocked) })
+	slog.SetDefault(slog.New(&delayedStartLog{Handler: slog.NewTextHandler(io.Discard, nil), message: "recording manager stopped", entered: entered, blocked: blocked}))
+	stopped := make(chan error, 1)
+	t.Cleanup(func() {
+		release()
+		<-stopped
+		slog.SetDefault(previous)
+		log.SetOutput(previousOutput)
+		log.SetFlags(previousFlags)
+	})
+	go func() { stopped <- e.Stop() }()
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Stop did not reach the recording manager stop")
+	}
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("source kept running while consumers were being stopped")
+	}
+}
+
 type delayedStartLog struct {
 	slog.Handler
 	message          string

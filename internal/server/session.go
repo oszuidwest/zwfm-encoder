@@ -2,25 +2,35 @@
 package server
 
 import (
+	"context"
 	cryptorand "crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"maps"
 	"math/rand/v2"
 	"net/http"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 const (
 	sessionCookieName = "encoder_session"
 	sessionDuration   = 24 * time.Hour
 	csrfTokenDuration = 10 * time.Minute
+	// maxCSRFTokens bounds the anonymous login-form token pool.
+	maxCSRFTokens = 4096
 )
 
 // A session represents an authenticated user session.
 type session struct {
 	expiresAt time.Time
+	csrf      string
 }
 
 // A csrfToken represents a CSRF token with expiration.
@@ -30,16 +40,18 @@ type csrfToken struct {
 
 // SessionManager manages user authentication sessions and CSRF tokens.
 type SessionManager struct {
-	sessions   map[string]*session
-	csrfTokens map[string]*csrfToken
-	mu         sync.RWMutex
+	sessions      map[string]*session
+	csrfTokens    map[string]*csrfToken
+	loginAttempts map[string]loginAttempt
+	mu            sync.RWMutex
 }
 
 // NewSessionManager creates a new session manager.
 func NewSessionManager() *SessionManager {
 	return &SessionManager{
-		sessions:   make(map[string]*session),
-		csrfTokens: make(map[string]*csrfToken),
+		sessions:      make(map[string]*session),
+		csrfTokens:    make(map[string]*csrfToken),
+		loginAttempts: make(map[string]loginAttempt),
 	}
 }
 
@@ -55,7 +67,8 @@ func generateToken() string {
 // Create creates a new session and returns the token.
 func (sm *SessionManager) Create() string {
 	token := generateToken()
-	if token == "" {
+	csrf := generateToken()
+	if token == "" || csrf == "" {
 		return ""
 	}
 
@@ -65,7 +78,7 @@ func (sm *SessionManager) Create() string {
 	now := time.Now()
 
 	// Sweep expired sessions here: expired tokens are otherwise only removed
-	// when the same token is presented again, so the map would slowly grow on
+	// when presented to the login page again, so the map would slowly grow on
 	// a process that runs for months. Login is rare, making this cheap.
 	maps.DeleteFunc(sm.sessions, func(_ string, s *session) bool {
 		return now.After(s.expiresAt)
@@ -73,13 +86,13 @@ func (sm *SessionManager) Create() string {
 
 	sm.sessions[token] = &session{
 		expiresAt: now.Add(sessionDuration),
+		csrf:      csrf,
 	}
 	return token
 }
 
-// Validate reports whether a session token is valid. The common case (a live
-// session) takes only a read lock, since Validate runs on every authenticated
-// request; the write lock is needed only to delete an expired entry.
+// Validate reports whether a session token is valid. A live session takes
+// only a read lock; the write lock is needed only to delete an expired entry.
 func (sm *SessionManager) Validate(token string) bool {
 	if token == "" {
 		return false
@@ -111,21 +124,56 @@ func (sm *SessionManager) Delete(token string) {
 	sm.mu.Unlock()
 }
 
-// AuthMiddleware returns middleware that requires a valid session cookie.
-// Unauthenticated requests are redirected to /login.
+// AuthMiddleware returns middleware that requires a live session. Requests
+// other than GET, HEAD and OPTIONS must also send the session's X-CSRF-Token.
+// Without a session, page requests are redirected to /login; API requests and
+// other methods get a JSON 401.
 func (sm *SessionManager) AuthMiddleware() func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			if cookie, err := r.Cookie(sessionCookieName); err == nil {
-				if sm.Validate(cookie.Value) {
-					next(w, r)
-					return
+			if csrf := sm.CSRFToken(r); csrf != "" {
+				if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+					if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(csrf)) != 1 {
+						// Usually a tab from an older session.
+						writeJSONError(w, http.StatusForbidden, "Invalid CSRF token; reload this page")
+						return
+					}
 				}
+				w.Header().Set("Cache-Control", "no-store")
+				next(w, r)
+				return
 			}
 
+			if (r.Method != http.MethodGet && r.Method != http.MethodHead) || strings.HasPrefix(r.URL.Path, "/api/") {
+				// fetch would follow a redirect to the login page and report success.
+				writeJSONError(w, http.StatusUnauthorized, "Session expired; reload this page")
+				return
+			}
 			http.Redirect(w, r, "/login", http.StatusFound)
 		}
 	}
+}
+
+// writeJSONError uses the {"error": ...} shape that the page's request helper shows.
+func writeJSONError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+// CSRFToken returns the request's session-bound token, or empty without a live session.
+func (sm *SessionManager) CSRFToken(r *http.Request) string {
+	cookie, err := r.Cookie(sessionCookieName)
+	if err != nil {
+		return ""
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	sess := sm.sessions[cookie.Value]
+	if sess == nil || !time.Now().Before(sess.expiresAt) {
+		return ""
+	}
+	return sess.csrf
 }
 
 // setSessionCookie sets or clears the session cookie.
@@ -142,24 +190,79 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, value string, maxA
 	})
 }
 
-// Login reports whether login succeeded and creates a session if valid.
+// ErrLoginBusy means a password hash could not be verified in time because
+// other logins hold or queue for the verification slot.
+var ErrLoginBusy = errors.New("password verification is busy")
+
+const (
+	// maxHashWaiters bounds queued logins, including the one verifying.
+	maxHashWaiters = 16
+	// hashWaitLimit leaves room for one verification within the server's
+	// 15-second write timeout, so a queued login still receives its response.
+	hashWaitLimit = 10 * time.Second
+)
+
+// hashSlot and hashWaiters bound password-hash verification across all logins.
+var (
+	hashSlot    = make(chan struct{}, 1)
+	hashWaiters atomic.Int32
+)
+
+// verifyPasswordHash runs one verification at a time: PBKDF2 takes about a
+// second of CPU on a Raspberry Pi 4, and logins must not starve the audio
+// pipeline. It returns ErrLoginBusy when too many logins queue or the slot
+// stays taken too long, and the context's error once the request has ended.
+func verifyPasswordHash(ctx context.Context, password, hash string) (bool, error) {
+	if hashWaiters.Add(1) > maxHashWaiters {
+		hashWaiters.Add(-1)
+		return false, ErrLoginBusy
+	}
+	defer hashWaiters.Add(-1)
+	wait := time.NewTimer(hashWaitLimit)
+	defer wait.Stop()
+	select {
+	case hashSlot <- struct{}{}:
+	case <-wait.C:
+		return false, ErrLoginBusy
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
+	defer func() { <-hashSlot }()
+	// select picks at random when the request ended as the slot became free.
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return util.VerifyPasswordHash(password, hash), nil
+}
+
+// Login reports whether login succeeded and creates a session if valid. It
+// returns ErrLoginBusy or the request's context error when a configured
+// password hash could not be verified.
 func (sm *SessionManager) Login(
 	w http.ResponseWriter, r *http.Request,
-	username, password, configUser, configPass string,
-) bool {
+	username, password, configUser, configPass, configHash string,
+) (bool, error) {
 	userMatch := subtle.ConstantTimeCompare([]byte(username), []byte(configUser)) == 1
-	passMatch := subtle.ConstantTimeCompare([]byte(password), []byte(configPass)) == 1
+	var passMatch bool
+	if configHash == "" {
+		passMatch = subtle.ConstantTimeCompare([]byte(password), []byte(configPass)) == 1
+	} else {
+		var err error
+		if passMatch, err = verifyPasswordHash(r.Context(), password, configHash); err != nil {
+			return false, err
+		}
+	}
 	if !userMatch || !passMatch {
-		return false
+		return false, nil
 	}
 
 	token := sm.Create()
 	if token == "" {
-		return false
+		return false, nil
 	}
 
 	setSessionCookie(w, r, token, int(sessionDuration.Seconds()))
-	return true
+	return true, nil
 }
 
 // Logout clears the session cookie and deletes the session.
@@ -182,11 +285,22 @@ func (sm *SessionManager) CreateCSRFToken() string {
 
 	now := time.Now()
 
-	// Periodically clean up expired tokens.
-	if rand.IntN(10) == 0 { //nolint:gosec // Non-security random for cleanup timing
+	// Clean up expired tokens periodically, and always when the pool is full.
+	if len(sm.csrfTokens) >= maxCSRFTokens || rand.IntN(10) == 0 { //nolint:gosec // Non-security random for cleanup timing
 		maps.DeleteFunc(sm.csrfTokens, func(_ string, v *csrfToken) bool {
-			return now.After(v.expiresAt)
+			return !now.Before(v.expiresAt)
 		})
+	}
+	if len(sm.csrfTokens) >= maxCSRFTokens {
+		// Anonymous GETs must not prevent every new user from obtaining a login form.
+		var oldestToken string
+		var oldestExpiry time.Time
+		for key, value := range sm.csrfTokens {
+			if oldestToken == "" || value.expiresAt.Before(oldestExpiry) {
+				oldestToken, oldestExpiry = key, value.expiresAt
+			}
+		}
+		delete(sm.csrfTokens, oldestToken)
 	}
 
 	sm.csrfTokens[token] = &csrfToken{

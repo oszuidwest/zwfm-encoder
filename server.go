@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"html/template"
 	"log/slog"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +34,7 @@ type loginData struct {
 }
 
 type indexData struct {
+	CSRFToken   string
 	Version     string
 	Year        int
 	StationName string
@@ -242,9 +245,11 @@ func (s *Server) SetupRoutes() http.Handler {
 
 	// Public routes (no auth required)
 	mux.HandleFunc("/login", s.handleLogin)
-	mux.HandleFunc("/logout", s.handleLogout)
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /ready", s.handleReady)
+
+	// Logout needs the session and its CSRF token like any other mutation.
+	mux.HandleFunc("POST /logout", auth(s.handleLogout))
 
 	// Public static assets (needed for login page styling)
 	mux.HandleFunc("/style.css", s.handlePublicStatic)
@@ -291,7 +296,7 @@ func (s *Server) SetupRoutes() http.Handler {
 	mux.HandleFunc("/ws", auth(s.handleWebSocket))
 	mux.HandleFunc("/", auth(s.handleStatic))
 
-	return securityHeaders(mux)
+	return securityHeaders(http.NewCrossOriginProtection().Handler(mux))
 }
 
 // securityHeaders wraps a handler to add security headers to responses.
@@ -354,6 +359,12 @@ func serveStaticFile(w http.ResponseWriter, r *http.Request, path string) bool {
 
 // handleLogin serves the login page and processes form submissions.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.Header().Set("Allow", "GET, POST")
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
 	if cookie, err := r.Cookie("encoder_session"); err == nil {
 		if s.sessions.Validate(cookie.Value) {
 			http.Redirect(w, r, "/", http.StatusFound)
@@ -365,30 +376,51 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	data := loginData{
 		Version:     Version,
 		Year:        time.Now().Year(),
-		CSRFToken:   s.sessions.CreateCSRFToken(),
 		StationName: cfg.StationName,
 		//nolint:gosec // CSS from validated hex colors
 		PrimaryCSS: template.CSS(generateBrandCSS(cfg.StationColorLight, cfg.StationColorDark)),
 	}
 
 	if r.Method == http.MethodPost {
-		r.Body = http.MaxBytesReader(w, r.Body, 4096)
-		csrfToken := r.FormValue("csrf_token")
-		if !s.sessions.ValidateCSRFToken(csrfToken) {
+		// Room for a 4096-byte password URL-encoded (up to 3x) plus the other fields.
+		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+		if err := r.ParseForm(); err != nil {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
 			return
 		}
-
-		username := r.FormValue("username")
-		password := r.FormValue("password")
-
-		if s.sessions.Login(w, r, username, password, cfg.WebUser, cfg.WebPassword) {
-			http.Redirect(w, r, "/", http.StatusFound)
+		username := r.PostForm.Get("username")
+		csrfToken := r.PostForm.Get("csrf_token")
+		if !s.sessions.ValidateCSRFToken(csrfToken) {
+			slog.Warn("login rejected: invalid form token", "remote", r.RemoteAddr)
+			http.Error(w, "Invalid request", http.StatusBadRequest)
+			return
+		}
+		if !s.sessions.AllowLogin(r, username, cfg.TrustedProxies) {
+			slog.Warn("login rate limited", "remote", r.RemoteAddr)
+			w.Header().Set("Retry-After", "60")
+			http.Error(w, "Too many login attempts. Try again later.", http.StatusTooManyRequests)
 			return
 		}
 
+		password := r.PostForm.Get("password")
+
+		ok, err := s.sessions.Login(w, r, username, password, cfg.WebUser, cfg.WebPassword, cfg.WebPasswordHash)
+		if err != nil {
+			rejectUnverifiedLogin(w, r, err)
+			return
+		}
+		if ok {
+			http.Redirect(w, r, "/", http.StatusFound)
+			return
+		}
+		slog.Warn("login failed", "remote", r.RemoteAddr)
+
 		data.Error = true
-		data.CSRFToken = s.sessions.CreateCSRFToken() // New token for retry
+	}
+	data.CSRFToken = s.sessions.CreateCSRFToken()
+	if data.CSRFToken == "" {
+		http.Error(w, "Login temporarily unavailable", http.StatusServiceUnavailable)
+		return
 	}
 
 	w.Header().Set("Content-Type", "text/html")
@@ -397,9 +429,20 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// rejectUnverifiedLogin answers a login whose password hash was not checked.
+func rejectUnverifiedLogin(w http.ResponseWriter, r *http.Request, err error) {
+	if !errors.Is(err, server.ErrLoginBusy) {
+		slog.Info("login abandoned while waiting for password verification", "remote", r.RemoteAddr)
+		return
+	}
+	slog.Warn("login rejected: password verification is busy", "remote", r.RemoteAddr)
+	w.Header().Set("Retry-After", "1")
+	http.Error(w, "Sign-in is busy. Open the sign-in page again in a moment.", http.StatusServiceUnavailable)
+}
+
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	s.sessions.Logout(w, r)
-	http.Redirect(w, r, "/login", http.StatusFound)
+	s.writeNoContent(w)
 }
 
 // staticFile holds an embedded static file with its content type and data.
@@ -430,6 +473,7 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		cfg := s.config.Snapshot()
 		w.Header().Set("Content-Type", "text/html")
 		if err := indexTmpl.Execute(w, indexData{
+			CSRFToken:   s.sessions.CSRFToken(r),
 			Version:     Version,
 			Year:        time.Now().Year(),
 			StationName: cfg.StationName,
@@ -491,10 +535,11 @@ func (s *Server) handleExternalRecordingAction(w http.ResponseWriter, r *http.Re
 	})
 }
 
-// Start launches the HTTP server on the configured port in a background
-// goroutine. Call Stop for graceful shutdown.
+// Start launches the HTTP server on the configured address and port in a
+// background goroutine. Call Stop for graceful shutdown.
 func (s *Server) Start() {
-	addr := fmt.Sprintf(":%d", s.config.Snapshot().WebPort)
+	cfg := s.config.Snapshot()
+	addr := net.JoinHostPort(cfg.WebBindAddress, strconv.Itoa(cfg.WebPort))
 	slog.Info("starting web server", "addr", addr)
 
 	s.httpServer = &http.Server{
