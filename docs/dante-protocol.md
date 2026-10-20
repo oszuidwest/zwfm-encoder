@@ -60,7 +60,7 @@ Each transmitter channel is advertised as its own DNS-SD service instance:
 | `nchan` | Maximum number of channels in one flow                      | `2`       |
 | `fpp`   | Frames per packet as `max,min`                              | `32,32`   |
 
-Other keys are present and must be ignored. A full observed TXT record: `txtvers=2 dbcp1=0x1200 id=1 dbcp=0x1004 rate=48000 en=24 pcm=3 e enc=24 latency_ns=10000000 fpp=32,32 nchan=2 at2`. Note that items without `=` exist.
+Other keys are present and must be ignored. TXT keys are case-insensitive and only the first occurrence of a key is used, including attributes without `=`, as required by [RFC 6763 section 6.4](https://www.rfc-editor.org/rfc/rfc6763.html#section-6.4). A full observed TXT record: `txtvers=2 dbcp1=0x1200 id=1 dbcp=0x1004 rate=48000 en=24 pcm=3 e enc=24 latency_ns=10000000 fpp=32,32 nchan=2 at2`. Note that items without `=` exist.
 
 Discovery requirements:
 
@@ -154,11 +154,11 @@ Open the media socket (UDP, bound to the local IPv4 address, ephemeral port) bef
 
 The stream position (in frames) of the first frame of the payload is `seconds * 48000 + sample offset`. The payload is a whole number of frames; each frame has N samples in the requested channel order; each sample is bits/8 bytes, signed, big-endian and left-justified (the first byte is the most significant). Conversion to 16-bit output takes the first two bytes of each sample (then write them little-endian).
 
-A datagram shorter than 9 bytes or whose payload is not a whole number of frames is malformed. Malformed datagrams and datagrams whose source IP differs from the discovered transmitter must be dropped, never fatal (any host can send datagrams to the port).
+A datagram of 9 bytes or shorter, whose sample offset is 48000 or more, or whose payload is not a whole number of frames is malformed. Malformed datagrams and datagrams whose source IP differs from the discovered transmitter must be dropped, never fatal (any host can send datagrams to the port).
 
 ### 5.2 Keepalive
 
-At least every 250 ms, once media has been received, send a 2-byte UDP datagram `0x13 0x37` from the media socket to the source address of the most recent accepted media datagram. Without keepalives the transmitter stops the flow.
+At least every 250 ms, once media has been received, send a 2-byte UDP datagram `0x13 0x37` from the media socket to the source address of the most recent accepted media datagram. Without keepalives the transmitter stops the flow. Bound each write to the 200 ms keepalive interval. A write that times out ends reception. Other send errors are tolerated, because the transmitter tolerates missed keepalives; if the flow then stops, the 5-second media timeout reports the last of them.
 
 ### 5.3 Ordering, loss and timeouts
 

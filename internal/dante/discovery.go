@@ -32,7 +32,14 @@ type channelInfo struct {
 func parseTXT(items []string) (channelInfo, error) {
 	values := make(map[string]string)
 	for _, item := range items {
-		if key, value, found := strings.Cut(item, "="); found {
+		key, value, _ := strings.Cut(item, "=")
+		// Keys are printable ASCII; Unicode case folding could turn a
+		// malformed key such as "İD" into a recognized one.
+		if strings.ContainsFunc(key, func(r rune) bool { return r < 0x20 || r > 0x7e }) {
+			continue
+		}
+		key = strings.ToLower(key)
+		if _, exists := values[key]; !exists {
 			values[key] = value
 		}
 	}
