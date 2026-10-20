@@ -1259,10 +1259,15 @@ func (e *Encoder) AddRecorder(cfg *types.Recorder) error {
 	if e.recordingManager == nil {
 		return ErrRecordingNotAvailable
 	}
-	if err := e.config.AddRecorder(cfg); err != nil {
+	// A change in the file but not confirmed by storage is still a change.
+	err := e.config.AddRecorder(cfg)
+	if err != nil && !errors.Is(err, config.ErrSaveCommitted) {
 		return err
 	}
-	return e.recordingManager.AddRecorder(cfg)
+	if addErr := e.recordingManager.AddRecorder(cfg); addErr != nil {
+		return errors.Join(err, fmt.Errorf("%w: create recorder %s: %w", config.ErrSaveCommitted, cfg.ID, addErr))
+	}
+	return err
 }
 
 // RemoveRecorder deletes a recorder.
@@ -1270,10 +1275,17 @@ func (e *Encoder) RemoveRecorder(id string) error {
 	if e.recordingManager == nil {
 		return ErrRecordingNotAvailable
 	}
-	if err := e.recordingManager.RemoveRecorder(id); err != nil {
-		slog.Warn("error removing recorder from manager", "id", id, "error", err)
+	// A deletion in the file but not confirmed by storage is still a deletion:
+	// the recorder must stop, or it keeps recording with no way to reach it.
+	err := e.config.RemoveRecorder(id)
+	if err != nil && !errors.Is(err, config.ErrSaveCommitted) {
+		return err
 	}
-	return e.config.RemoveRecorder(id)
+	// Only fails for a recorder the runtime never had, which is the wanted state.
+	if rmErr := e.recordingManager.RemoveRecorder(id); rmErr != nil {
+		slog.Warn("error removing recorder from manager", "id", id, "error", rmErr)
+	}
+	return err
 }
 
 // UpdateRecorder modifies a recorder configuration.
@@ -1281,10 +1293,14 @@ func (e *Encoder) UpdateRecorder(cfg *types.Recorder) error {
 	if e.recordingManager == nil {
 		return ErrRecordingNotAvailable
 	}
-	if err := e.config.UpdateRecorder(cfg); err != nil {
+	err := e.config.UpdateRecorder(cfg)
+	if err != nil && !errors.Is(err, config.ErrSaveCommitted) {
 		return err
 	}
-	return e.recordingManager.UpdateRecorder(cfg)
+	if updateErr := e.recordingManager.UpdateRecorder(cfg); updateErr != nil {
+		return errors.Join(err, fmt.Errorf("%w: update recorder %s: %w", config.ErrSaveCommitted, cfg.ID, updateErr))
+	}
+	return err
 }
 
 // StartRecorder initiates a recorder.

@@ -35,7 +35,15 @@ var (
 
 	// ErrRecorderNotFound is returned when a recorder ID does not exist in config.
 	ErrRecorderNotFound = errors.New("recorder not found")
+
+	// ErrSaveCommitted means the change is in the saved file, but storage did
+	// not confirm the write or the runtime could not apply it. The change must
+	// not be rolled back in memory.
+	ErrSaveCommitted = errors.New("configuration was saved, but the change was not fully applied")
 )
+
+// Variable so persistence tests can exercise a failure after the atomic rename.
+var syncConfigDir = syncDirPath
 
 const (
 	// DefaultWebPort is the default HTTP server port (8080).
@@ -749,11 +757,28 @@ func (c *Config) saveLocked() (retErr error) {
 	if err := os.Rename(tmpName, c.filePath); err != nil {
 		return util.WrapError("rename config", err)
 	}
-	if err := syncDirPath(dir); err != nil {
-		return err
+	if err := syncConfigDir(dir); err != nil {
+		return fmt.Errorf("%w: storage did not confirm the write: %w", ErrSaveCommitted, err)
 	}
 
 	return nil
+}
+
+// cloneDataLocked returns the persisted fields without sharing slice storage.
+func (c *Config) cloneDataLocked() *ConfigData {
+	data := c.ConfigData
+	data.Streaming.Streams = slices.Clone(data.Streaming.Streams)
+	data.Recording.Recorders = slices.Clone(data.Recording.Recorders)
+	return &data
+}
+
+// restoreUnlessCommitted restores previous when *err means the save never replaced the file.
+//
+//nolint:gocritic // err points at the caller's named result, read when its defer runs.
+func (c *Config) restoreUnlessCommitted(err *error, previous *ConfigData) {
+	if *err != nil && !errors.Is(*err, ErrSaveCommitted) {
+		c.ConfigData = *previous
+	}
 }
 
 // Stream management.
@@ -785,13 +810,14 @@ func (c *Config) findStreamIndex(id string) int {
 }
 
 // AddStream adds a stream to the configuration and persists the change.
-func (c *Config) AddStream(stream *types.Stream) error {
+func (c *Config) AddStream(stream *types.Stream) (err error) {
 	if err := stream.Validate(); err != nil {
 		return err
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	defer c.restoreUnlessCommitted(&err, c.cloneDataLocked())
 
 	// Generate unique ID
 	shortID, err := generateShortID()
@@ -806,14 +832,13 @@ func (c *Config) AddStream(stream *types.Stream) error {
 
 	c.Streaming.Streams = append(c.Streaming.Streams, *stream)
 	if err := c.validateStreams(); err != nil {
-		c.Streaming.Streams = c.Streaming.Streams[:len(c.Streaming.Streams)-1]
 		return fmt.Errorf("%w: %w", ErrInvalidStreamConfig, err)
 	}
 	return c.saveLocked()
 }
 
 // RemoveStream removes a stream from the configuration and persists the change.
-func (c *Config) RemoveStream(id string) error {
+func (c *Config) RemoveStream(id string) (err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -821,13 +846,14 @@ func (c *Config) RemoveStream(id string) error {
 	if i == -1 {
 		return fmt.Errorf("%w: %s", ErrStreamNotFound, id)
 	}
+	defer c.restoreUnlessCommitted(&err, c.cloneDataLocked())
 
 	c.Streaming.Streams = slices.Delete(c.Streaming.Streams, i, i+1)
 	return c.saveLocked()
 }
 
 // UpdateStream updates a stream in the configuration and persists the change.
-func (c *Config) UpdateStream(stream *types.Stream) error {
+func (c *Config) UpdateStream(stream *types.Stream) (err error) {
 	if err := stream.Validate(); err != nil {
 		return err
 	}
@@ -840,10 +866,9 @@ func (c *Config) UpdateStream(stream *types.Stream) error {
 		return fmt.Errorf("%w: %s", ErrStreamNotFound, stream.ID)
 	}
 
-	old := c.Streaming.Streams[i]
+	defer c.restoreUnlessCommitted(&err, c.cloneDataLocked())
 	c.Streaming.Streams[i] = *stream
 	if err := c.validateStreams(); err != nil {
-		c.Streaming.Streams[i] = old
 		return fmt.Errorf("%w: %w", ErrInvalidStreamConfig, err)
 	}
 	return c.saveLocked()
@@ -871,13 +896,14 @@ func (c *Config) findRecorderIndex(id string) int {
 }
 
 // AddRecorder adds a recorder to the configuration and persists the change.
-func (c *Config) AddRecorder(recorder *types.Recorder) error {
+func (c *Config) AddRecorder(recorder *types.Recorder) (err error) {
 	if err := recorder.Validate(); err != nil {
 		return err
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	defer c.restoreUnlessCommitted(&err, c.cloneDataLocked())
 
 	// Generate unique ID
 	shortID, err := generateShortID()
@@ -894,14 +920,13 @@ func (c *Config) AddRecorder(recorder *types.Recorder) error {
 
 	c.Recording.Recorders = append(c.Recording.Recorders, *recorder)
 	if err := c.validateRecorders(); err != nil {
-		c.Recording.Recorders = c.Recording.Recorders[:len(c.Recording.Recorders)-1]
 		return fmt.Errorf("%w: %w", ErrInvalidRecorderConfig, err)
 	}
 	return c.saveLocked()
 }
 
 // RemoveRecorder removes a recorder from the configuration and persists the change.
-func (c *Config) RemoveRecorder(id string) error {
+func (c *Config) RemoveRecorder(id string) (err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -909,13 +934,14 @@ func (c *Config) RemoveRecorder(id string) error {
 	if i == -1 {
 		return fmt.Errorf("%w: %s", ErrRecorderNotFound, id)
 	}
+	defer c.restoreUnlessCommitted(&err, c.cloneDataLocked())
 
 	c.Recording.Recorders = slices.Delete(c.Recording.Recorders, i, i+1)
 	return c.saveLocked()
 }
 
 // UpdateRecorder updates a recorder in the configuration and persists the change.
-func (c *Config) UpdateRecorder(recorder *types.Recorder) error {
+func (c *Config) UpdateRecorder(recorder *types.Recorder) (err error) {
 	if err := recorder.Validate(); err != nil {
 		return err
 	}
@@ -927,10 +953,9 @@ func (c *Config) UpdateRecorder(recorder *types.Recorder) error {
 	if i == -1 {
 		return fmt.Errorf("%w: %s", ErrRecorderNotFound, recorder.ID)
 	}
-	old := c.Recording.Recorders[i]
+	defer c.restoreUnlessCommitted(&err, c.cloneDataLocked())
 	c.Recording.Recorders[i] = *recorder
 	if err := c.validateRecorders(); err != nil {
-		c.Recording.Recorders[i] = old
 		return fmt.Errorf("%w: %w", ErrInvalidRecorderConfig, err)
 	}
 	return c.saveLocked()
@@ -975,9 +1000,10 @@ func (c *Config) RecordingAPIKey() string {
 // Individual setters.
 
 // SetRecordingAPIKey updates the recording API key and persists the change.
-func (c *Config) SetRecordingAPIKey(key string) error {
+func (c *Config) SetRecordingAPIKey(key string) (err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	defer c.restoreUnlessCommitted(&err, c.cloneDataLocked())
 	c.Recording.APIKey = key
 	return c.saveLocked()
 }
@@ -1318,13 +1344,14 @@ func (s *SettingsUpdate) Validate() []string {
 }
 
 // ApplySettings validates and updates all settings atomically with a single file write.
-func (c *Config) ApplySettings(s *SettingsUpdate) error {
+func (c *Config) ApplySettings(s *SettingsUpdate) (err error) {
 	if errs := s.Validate(); len(errs) > 0 {
 		return fmt.Errorf("invalid settings: %s", strings.Join(errs, "; "))
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	defer c.restoreUnlessCommitted(&err, c.cloneDataLocked())
 
 	// Audio
 	c.Audio.Input = s.AudioInput
