@@ -111,16 +111,29 @@ func exchangeControl(ctx context.Context, conn net.Conn, request []byte, timeout
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if _, err := conn.Write(request); err != nil {
-		return nil, fmt.Errorf("send control request: %w", err)
-	}
-	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+	// An earlier context deadline is left to the interrupt, so the exchange
+	// reports context.DeadlineExceeded rather than a socket timeout.
+	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
 		return nil, fmt.Errorf("set control deadline: %w", err)
 	}
+	interrupted := make(chan struct{})
 	stopInterrupt := context.AfterFunc(ctx, func() {
-		_ = conn.SetReadDeadline(time.Now())
+		_ = conn.SetDeadline(time.Now())
+		close(interrupted)
 	})
-	defer stopInterrupt()
+	// The socket is reused for stop-flow: a started interrupt must finish
+	// before the next exchange installs its own deadline.
+	defer func() {
+		if !stopInterrupt() {
+			<-interrupted
+		}
+	}()
+	if _, err := conn.Write(request); err != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return nil, contextErr
+		}
+		return nil, fmt.Errorf("send control request: %w", err)
+	}
 
 	buffer := make([]byte, 65535)
 	for {
