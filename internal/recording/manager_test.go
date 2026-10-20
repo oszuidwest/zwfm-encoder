@@ -138,7 +138,7 @@ func TestReconcilePendingUploadsRecoversS3OnlySpoolFilesWithoutMetadata(t *testi
 	t.Parallel()
 	spoolDir := t.TempDir()
 	cfg := testS3Recorder()
-	filePath := writeSpoolFile(t, spoolDir, cfg.ID, "orphan.mp3", "audio")
+	filePath := writeSpoolFile(t, spoolDir, cfg.ID, "Test-2026-09-28-14-37.mp3", "audio")
 	m, err := NewManager("", spoolDir, 60, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -153,7 +153,7 @@ func TestReconcilePendingUploadsRecoversS3OnlySpoolFilesWithoutMetadata(t *testi
 	if got[0].request.localPath != filePath {
 		t.Fatalf("localPath = %q, want %q", got[0].request.localPath, filePath)
 	}
-	if got[0].request.s3Key != "recordings/Test/orphan.mp3" {
+	if got[0].request.s3Key != "recordings/"+cfg.RecordingFilePrefix()+"/Test-2026-09-28-14-37.mp3" {
 		t.Fatalf("s3Key = %q, want recovered object key", got[0].request.s3Key)
 	}
 	if _, err := os.Stat(got[0].metadataPath); err != nil {

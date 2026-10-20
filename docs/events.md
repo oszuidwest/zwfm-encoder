@@ -467,10 +467,10 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
 ```json
 {
   "recorder_name": "Archive",
-  "filename": "Archive-2024-01-15-14-00.mp3",
+  "filename": "@recorder-1a2b3c4d-2024-01-15-14-00.mp3",
   "codec": "mp3",
   "storage_mode": "both",
-  "s3_key": "recordings/Archive/Archive-2024-01-15-14-00.mp3",
+  "s3_key": "recordings/@recorder-1a2b3c4d/@recorder-1a2b3c4d-2024-01-15-14-00.mp3",
   "error": "",
   "retry": 0,
   "files_deleted": 5,
@@ -565,7 +565,7 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
   "type": "recorder_file",
   "details": {
     "recorder_name": "Archive",
-    "filename": "Archive-2024-01-15-14-00.mp3",
+    "filename": "@recorder-1a2b3c4d-2024-01-15-14-00.mp3",
     "codec": "mp3",
     "storage_mode": "both"
   }
@@ -586,10 +586,10 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
   "type": "upload_queued",
   "details": {
     "recorder_name": "Archive",
-    "filename": "Archive-2024-01-15-14-00.mp3",
+    "filename": "@recorder-1a2b3c4d-2024-01-15-14-00.mp3",
     "codec": "mp3",
     "storage_mode": "both",
-    "s3_key": "recordings/Archive/Archive-2024-01-15-14-00.mp3"
+    "s3_key": "recordings/@recorder-1a2b3c4d/@recorder-1a2b3c4d-2024-01-15-14-00.mp3"
   }
 }
 ```
@@ -608,10 +608,10 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
   "type": "upload_completed",
   "details": {
     "recorder_name": "Archive",
-    "filename": "Archive-2024-01-15-14-00.mp3",
+    "filename": "@recorder-1a2b3c4d-2024-01-15-14-00.mp3",
     "codec": "mp3",
     "storage_mode": "both",
-    "s3_key": "recordings/Archive/Archive-2024-01-15-14-00.mp3"
+    "s3_key": "recordings/@recorder-1a2b3c4d/@recorder-1a2b3c4d-2024-01-15-14-00.mp3"
   }
 }
 ```
@@ -630,10 +630,10 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
   "type": "upload_failed",
   "details": {
     "recorder_name": "Archive",
-    "filename": "Archive-2024-01-15-14-00.mp3",
+    "filename": "@recorder-1a2b3c4d-2024-01-15-14-00.mp3",
     "codec": "mp3",
     "storage_mode": "s3",
-    "s3_key": "recordings/Archive/Archive-2024-01-15-14-00.mp3",
+    "s3_key": "recordings/@recorder-1a2b3c4d/@recorder-1a2b3c4d-2024-01-15-14-00.mp3",
     "error": "AccessDenied: Access Denied",
     "retry": 0
   }
@@ -654,10 +654,10 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
   "type": "upload_retry",
   "details": {
     "recorder_name": "Archive",
-    "filename": "Archive-2024-01-15-14-00.mp3",
+    "filename": "@recorder-1a2b3c4d-2024-01-15-14-00.mp3",
     "codec": "mp3",
     "storage_mode": "s3",
-    "s3_key": "recordings/Archive/Archive-2024-01-15-14-00.mp3",
+    "s3_key": "recordings/@recorder-1a2b3c4d/@recorder-1a2b3c4d-2024-01-15-14-00.mp3",
     "retry": 1
   }
 }
@@ -677,15 +677,32 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
   "type": "upload_abandoned",
   "details": {
     "recorder_name": "Archive",
-    "filename": "Archive-2024-01-15-14-00.mp3",
+    "filename": "@recorder-1a2b3c4d-2024-01-15-14-00.mp3",
     "codec": "mp3",
     "storage_mode": "s3",
-    "s3_key": "recordings/Archive/Archive-2024-01-15-14-00.mp3",
+    "s3_key": "recordings/@recorder-1a2b3c4d/@recorder-1a2b3c4d-2024-01-15-14-00.mp3",
     "error": "RequestTimeout: request timed out",
     "retry": 24
   }
 }
 ```
+
+---
+
+### `recording_storage_low` / `recording_storage_restored`
+
+Recording storage warnings have category `recorder`, severity `warning`, reason `problem`;
+recovery has severity `success`, reason `recovery`. Incidents are grouped by path, independently
+of recorder names and upload incidents. Checks run on manager start and every minute, outside
+capture/status locks. Warnings fire below 1 GiB or 5% available, or on a probe/metadata-scan error;
+only transitions produce events. These checks never delete recordings.
+
+Details: `path`, `available_bytes` (including zero), `total_bytes`, `threshold_bytes`, `low`,
+`error` (when a check failed), and `checked_at`. A failed probe is not a recovery.
+Webhook events use the same two event names and carry the aggregate snapshot in `storage_paths`;
+email and the separate Zabbix `<upload key>.storage` item also report aggregate recovery only
+when no monitored path remains unhealthy. `/ready` exposes the cached observations and rejects
+observations older than three minutes.
 
 ---
 
@@ -828,4 +845,6 @@ under `attention` with status `Ongoing` until it ends:
 | `upload_failed` | recorder | error | problem | Upload Failed | S3 upload failed |
 | `upload_retry` | recorder | warning | problem | Retry | Failed upload being retried |
 | `upload_abandoned` | recorder | error | problem | Abandoned | Upload abandoned after 24h |
+| `recording_storage_low` | recorder | warning | problem | Storage Low | Recording path low or unavailable |
+| `recording_storage_restored` | recorder | success | recovery | Storage Restored | Recording path recovered |
 | `cleanup_completed` | recorder | success | routine | Cleanup | Retention cleanup completed |

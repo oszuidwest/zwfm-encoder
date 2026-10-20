@@ -72,6 +72,7 @@ type historicalIncident struct {
 }
 
 var eventCloses = map[EventType]EventType{
+	RecordingStorageLow:   RecordingStorageRestored,
 	SilenceStart:          SilenceEnd,
 	ChannelImbalanceStart: ChannelImbalanceEnd,
 	InputLost:             InputRestored,
@@ -82,28 +83,30 @@ var eventCloses = map[EventType]EventType{
 }
 
 var eventLabels = map[EventType]string{
-	StreamStarted:         "Started",
-	StreamStable:          "Connected",
-	StreamError:           "Error",
-	StreamRetry:           "Retry",
-	StreamStopped:         "Stopped",
-	SilenceStart:          "Silence",
-	SilenceEnd:            "Recovered",
-	AudioDumpReady:        "Audio Dump",
-	ChannelImbalanceStart: "Imbalance",
-	ChannelImbalanceEnd:   "Balanced",
-	InputLost:             "Input Lost",
-	InputRestored:         "Input Restored",
-	RecorderStarted:       "Started",
-	RecorderStopped:       "Stopped",
-	RecorderError:         "Error",
-	RecorderFile:          "New File",
-	UploadQueued:          "Upload Queued",
-	UploadCompleted:       "Uploaded",
-	UploadFailed:          "Upload Failed",
-	UploadRetry:           "Retry",
-	UploadAbandoned:       "Abandoned",
-	CleanupCompleted:      "Cleanup",
+	RecordingStorageLow:      "Storage Low",
+	RecordingStorageRestored: "Storage Restored",
+	StreamStarted:            "Started",
+	StreamStable:             "Connected",
+	StreamError:              "Error",
+	StreamRetry:              "Retry",
+	StreamStopped:            "Stopped",
+	SilenceStart:             "Silence",
+	SilenceEnd:               "Recovered",
+	AudioDumpReady:           "Audio Dump",
+	ChannelImbalanceStart:    "Imbalance",
+	ChannelImbalanceEnd:      "Balanced",
+	InputLost:                "Input Lost",
+	InputRestored:            "Input Restored",
+	RecorderStarted:          "Started",
+	RecorderStopped:          "Stopped",
+	RecorderError:            "Error",
+	RecorderFile:             "New File",
+	UploadQueued:             "Upload Queued",
+	UploadCompleted:          "Uploaded",
+	UploadFailed:             "Upload Failed",
+	UploadRetry:              "Retry",
+	UploadAbandoned:          "Abandoned",
+	CleanupCompleted:         "Cleanup",
 }
 
 // EmptyEventGroups returns empty groups with non-nil slices.
@@ -499,6 +502,9 @@ func eventSourceKey(event groupedEvent) string {
 			return "audio:silence"
 		}
 	case CategoryRecorder:
+		if event.view.Type == RecordingStorageLow || event.view.Type == RecordingStorageRestored {
+			return "recorder-storage:" + detailString(event.details, "path")
+		}
 		name := detailString(event.details, "recorder_name")
 		if isUploadEvent(event.view.Type) {
 			file := cmp.Or(
@@ -524,6 +530,9 @@ func eventSource(event groupedEvent) string {
 	case CategoryAudio:
 		return "Audio"
 	case CategoryRecorder:
+		if path := detailString(event.details, "path"); path != "" {
+			return path
+		}
 		if name := detailString(event.details, "recorder_name"); name != "" {
 			return name
 		}
@@ -557,6 +566,8 @@ func incidentTitle(t EventType) string {
 		return "Upload abandoned"
 	case RecorderError:
 		return "Recorder error"
+	case RecordingStorageLow:
+		return "Recording storage low or unavailable"
 	default:
 		return eventLabel(t)
 	}
@@ -642,8 +653,24 @@ func eventDetail(event groupedEvent) string {
 	return eventDetailFor(event.view.Type, event.details)
 }
 
+// storageDetail describes a recording storage observation.
+func storageDetail(t EventType, details map[string]any) string {
+	if errMsg := detailString(details, "error"); errMsg != "" {
+		return errMsg
+	}
+	// Every probe sets a threshold; a recovery without one closes a path that
+	// left monitoring.
+	if t == RecordingStorageRestored && detailInt64(details, "threshold_bytes") == 0 {
+		return "Path no longer monitored"
+	}
+	return fmt.Sprintf("%d bytes available (warning below %d bytes)",
+		detailInt64(details, "available_bytes"), detailInt64(details, "threshold_bytes"))
+}
+
 func eventDetailFor(t EventType, details map[string]any) string {
 	switch t {
+	case RecordingStorageLow, RecordingStorageRestored:
+		return storageDetail(t, details)
 	case StreamError:
 		return cmp.Or(detailString(details, "error"), "Unknown error")
 	case StreamRetry:
@@ -666,10 +693,7 @@ func eventDetailFor(t EventType, details map[string]any) string {
 			return fmt.Sprintf("L: %.1fdB  R: %.1fdB (%.1fdB diff)", left, right, diff)
 		}
 	case AudioDumpReady:
-		if dumpErr := detailString(details, "dump_error"); dumpErr != "" {
-			return "Error: " + dumpErr
-		}
-		return detailString(details, "dump_filename")
+		return audioDumpDetail(details)
 	case InputLost, RecorderError, UploadFailed:
 		return cmp.Or(detailString(details, "error"), "Unknown error")
 	case UploadRetry, UploadAbandoned:
@@ -687,6 +711,13 @@ func eventDetailFor(t EventType, details map[string]any) string {
 		return joinNonEmpty(" - ", codec, mode)
 	}
 	return detailString(details, "stream_name")
+}
+
+func audioDumpDetail(details map[string]any) string {
+	if dumpErr := detailString(details, "dump_error"); dumpErr != "" {
+		return "Error: " + dumpErr
+	}
+	return detailString(details, "dump_filename")
 }
 
 func firstEventError(events []groupedEvent) string {

@@ -38,6 +38,9 @@ var checkRecordingPath = util.CheckPathWritable
 // removeEmptyRecording lets tests reproduce a failed unlink without relying on mount permissions.
 var removeEmptyRecording = os.Remove
 
+// openRecordingMarker lets tests reproduce marker persistence failures on every OS.
+var openRecordingMarker = os.OpenFile
+
 // writeRecordingFailure lets tests simulate a full disk after marker truncation.
 var writeRecordingFailure = os.WriteFile
 
@@ -146,9 +149,11 @@ type GenericRecorderConfig struct {
 
 // NewGenericRecorder creates a new recorder instance.
 func NewGenericRecorder(cfg GenericRecorderConfig) *GenericRecorder {
+	recorder := *cfg.Recorder
+	recorder.InitializeFileIdentity()
 	return &GenericRecorder{
 		id:                 cfg.Recorder.ID,
-		config:             *cfg.Recorder,
+		config:             recorder,
 		ffmpegPath:         cfg.FFmpegPath,
 		maxDurationMinutes: cfg.MaxDurationMinutes,
 		eventLogger:        cfg.EventLogger,
@@ -596,6 +601,9 @@ func (r *GenericRecorder) IsRecording() bool {
 func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if cfg.ID != r.id {
+		return fmt.Errorf("recorder ID cannot change")
+	}
 
 	// Clear error state on config update (user may have fixed the issue)
 	if r.state == types.ProcessError {
@@ -619,7 +627,9 @@ func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 		r.cancelDurationLimitLocked()
 		r.scheduleRotationLocked(time.Now())
 	}
-	r.config = *cfg
+	updated := *cfg
+	updated.IDBasedFiles, updated.LegacyFilePrefix = true, r.config.LegacyFilePrefix
+	r.config = updated
 	// Note: S3 client will be recreated on next use if config changed
 	// (same pattern as Graph client in notifications)
 
@@ -701,7 +711,7 @@ func reserveRecordingOutput(path string) (*recordingOutput, error) {
 
 func (o *recordingOutput) markUnfinalized() error {
 	path := o.file.Name() + unfinalizedRecordingSuffix
-	marker, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec // Marker path derives from the validated reservation.
+	marker, err := openRecordingMarker(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("create unfinalized recording marker: %w", err)
 	}
@@ -1118,8 +1128,7 @@ func (r *GenericRecorder) cancelDurationLimitLocked() {
 }
 
 func (r *GenericRecorder) generateFilename(t time.Time) string {
-	safeName := util.SanitizeFilename(r.config.Name)
-	return fmt.Sprintf("%s-%s.%s", safeName, t.Format(recordingTimestampLayout), r.config.Codec.FileExtension())
+	return fmt.Sprintf("%s-%s.%s", r.config.RecordingFilePrefix(), t.Format(recordingTimestampLayout), r.config.Codec.FileExtension())
 }
 
 // nextRecordingFilename returns name, or the first of name-2, name-3, ...
@@ -1148,10 +1157,13 @@ func (r *GenericRecorder) rememberFilenameLocked(filename string) {
 	r.usedFilenames[filename] = now
 }
 
-func s3ObjectKey(recorderName, filename string) string {
-	// Prefix: recordings/{sanitized-recorder-name}/filename
-	safeName := util.SanitizeFilename(recorderName)
-	return fmt.Sprintf("recordings/%s/%s", safeName, filename)
+// s3Namespace is the object-key prefix for files under one filename prefix.
+func s3Namespace(filePrefix string) string {
+	return "recordings/" + filePrefix + "/"
+}
+
+func s3ObjectKey(recorder *types.Recorder, filename string) string {
+	return s3Namespace(recorder.RecordingFilePrefix()) + filename
 }
 
 // isS3Configured reports whether S3 is configured for this recorder.

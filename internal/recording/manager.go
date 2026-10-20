@@ -19,6 +19,7 @@ import (
 // UploadAbandonedEvent contains details about an upload that was abandoned after exhausting retries.
 type UploadAbandonedEvent struct {
 	RecorderName string
+	LocalPath    string
 	Filename     string
 	S3Key        string
 	LastError    string
@@ -45,6 +46,13 @@ type Manager struct {
 
 	cleanupStopCh     chan struct{} // Stop signal for cleanup scheduler; created per run in Start, closed in Stop
 	hourlyRetryStopCh chan struct{} // Stop signal for hourly retry scheduler; created per run in Start, closed in Stop
+
+	storageProbeMu  sync.Mutex // Bounds non-cancellable filesystem probes across Stop/Start.
+	storagePaths    []types.RecordingStorageStatus
+	abandoned       map[string]struct{}
+	restoreGen      uint64 // Advanced when restored uploads leave abandoned; stale scans skip merging.
+	onStorageChange func([]types.RecordingStorageStatus)
+	diskSpace       func(string) (uint64, uint64, error)
 }
 
 // NewManager creates a new recording manager.
@@ -58,6 +66,25 @@ func NewManager(ffmpegPath, spoolDir string, maxDurationMinutes int, eventLogger
 		return nil, fmt.Errorf("create recording spool directory: %w", err)
 	}
 
+	// A restart must still close storage incidents the previous run left open.
+	var storagePaths []types.RecordingStorageStatus
+	if eventLogger != nil {
+		events, _, err := eventlog.ReadLast(eventLogger.Path(), eventlog.MaxReadLimit, 0, eventlog.FilterStorage)
+		if err != nil {
+			slog.Warn("could not restore recording storage incidents", "error", err)
+		}
+		seen := make(map[string]bool)
+		for _, e := range events { // Newest first: the latest event per path decides.
+			details, _ := e.Details.(map[string]any)
+			if path, _ := details["path"].(string); path != "" && !seen[path] {
+				seen[path] = true
+				if e.Type == eventlog.RecordingStorageLow {
+					storagePaths = append(storagePaths, types.RecordingStorageStatus{Path: path, Low: true})
+				}
+			}
+		}
+	}
+
 	return &Manager{
 		recorders:          make(map[string]*GenericRecorder),
 		removing:           make(map[string]struct{}),
@@ -65,6 +92,9 @@ func NewManager(ffmpegPath, spoolDir string, maxDurationMinutes int, eventLogger
 		ffmpegPath:         ffmpegPath,
 		maxDurationMinutes: maxDurationMinutes,
 		eventLogger:        eventLogger,
+		storagePaths:       storagePaths,
+		abandoned:          make(map[string]struct{}),
+		diskSpace:          diskSpace,
 	}, nil
 }
 
@@ -112,13 +142,25 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 		SpoolDir:           m.spoolDir,
 		MaxDurationMinutes: m.maxDurationMinutes,
 		EventLogger:        m.eventLogger,
-		OnUploadAbandoned:  m.onUploadAbandoned,
+		OnUploadAbandoned:  func(event UploadAbandonedEvent) { m.handleUploadAbandoned(&event) },
 	})
 	if err := recorder.reconcilePendingUploads(); err != nil {
 		return fmt.Errorf("reconcile pending uploads: %w", err)
 	}
-
 	m.recorders[cfg.ID] = recorder
+	// A process restart gives restored uploads a fresh retry window.
+	for i := range recorder.retryQueue {
+		p := &recorder.retryQueue[i]
+		if p.abandoned {
+			p.abandoned = false
+			if err := recorder.savePendingUpload(p); err != nil {
+				slog.Warn("failed to persist restored upload", "id", recorder.id, "path", p.metadataPath, "error", err)
+			}
+		}
+		delete(m.abandoned, p.request.localPath)
+		m.restoreGen++
+	}
+
 	m.publishAudioRecordersLocked()
 
 	// Auto-start hourly recorders if encoder is running (ondemand never auto-starts)
@@ -261,6 +303,7 @@ func (m *Manager) StartIfActive(active func() bool) error {
 	// Start hourly retry scheduler for failed recorders
 	m.startHourlyRetryScheduler(m.hourlyRetryStopCh)
 	go m.processUploadRetryQueues()
+	go m.monitorStorage(m.cleanupStopCh)
 
 	count := len(m.recorders)
 	m.mu.Unlock()

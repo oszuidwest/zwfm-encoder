@@ -149,7 +149,7 @@ func TestFilenamePreparationRevalidatesConfigAndRun(t *testing.T) {
 			}
 			r.mu.RLock()
 			defer r.mu.RUnlock()
-			if r.state != types.ProcessRunning || !strings.HasPrefix(r.currentFile, filepath.Join(updated.LocalPath, "Updated-")) {
+			if r.state != types.ProcessRunning || !strings.HasPrefix(r.currentFile, filepath.Join(updated.LocalPath, updated.RecordingFilePrefix()+"-")) || r.config.Name != updated.Name {
 				t.Fatalf("prepared output used stale state: state=%s, file=%s", r.state, r.currentFile)
 			}
 			if restart && r.result != newResult {

@@ -78,6 +78,10 @@ const (
 	UploadAbandoned EventType = "upload_abandoned"
 	// CleanupCompleted indicates a cleanup completed event.
 	CleanupCompleted EventType = "cleanup_completed"
+	// RecordingStorageLow indicates low free space or an unavailable recording path.
+	RecordingStorageLow EventType = "recording_storage_low"
+	// RecordingStorageRestored indicates a recording path has recovered.
+	RecordingStorageRestored EventType = "recording_storage_restored"
 )
 
 // Event is a single log entry with type-specific details.
@@ -406,6 +410,8 @@ const (
 	FilterInput TypeFilter = "input"
 	// FilterRecorder selects recorder events.
 	FilterRecorder TypeFilter = "recorder"
+	// FilterStorage selects recording storage warnings and recoveries.
+	FilterStorage TypeFilter = "storage"
 )
 
 // MaxReadLimit caps the number of events returned by [ReadLast].
@@ -544,6 +550,8 @@ func matchesFilter(t EventType, filter TypeFilter) bool {
 		return t.Category() == CategoryAudio
 	case FilterRecorder:
 		return t.Category() == CategoryRecorder
+	case FilterStorage:
+		return t == RecordingStorageLow || t == RecordingStorageRestored
 	default: // FilterAll and unknown filters match everything
 		return true
 	}

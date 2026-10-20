@@ -92,7 +92,7 @@ func (r *GenericRecorder) prepareUploadRequest(filePath string) (uploadRequest, 
 
 	r.mu.RLock()
 	storageMode := r.config.StorageMode
-	recorderName := r.config.Name
+	objectKey := s3ObjectKey(&r.config, filepath.Base(filePath))
 	s3Configured := r.config.HasS3Credentials()
 	r.mu.RUnlock()
 
@@ -110,7 +110,7 @@ func (r *GenericRecorder) prepareUploadRequest(filePath string) (uploadRequest, 
 
 	return uploadRequest{
 		localPath:         filePath,
-		s3Key:             s3ObjectKey(recorderName, filepath.Base(filePath)),
+		s3Key:             objectKey,
 		fileSize:          info.Size(),
 		deleteAfterUpload: storageMode == types.StorageS3,
 	}, true
@@ -449,6 +449,7 @@ func (r *GenericRecorder) processRetryQueue() {
 				r.mu.RUnlock()
 				r.onUploadAbandoned(UploadAbandonedEvent{
 					RecorderName: recorderName,
+					LocalPath:    p.request.localPath,
 					Filename:     filepath.Base(p.request.localPath),
 					S3Key:        p.request.s3Key,
 					LastError:    p.lastError,

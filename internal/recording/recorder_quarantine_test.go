@@ -190,7 +190,7 @@ func TestRunningFinalizeWarningClearsOnNextSuccessfulRotation(t *testing.T) {
 func TestMissingMarkerCannotMakeLegacyEmptySpoolFileUploadable(t *testing.T) {
 	cfg := testS3Recorder()
 	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
-	file := writeSpoolFile(t, r.spoolDir, cfg.ID, "empty.mp3", "")
+	file := writeSpoolFile(t, r.spoolDir, cfg.ID, "Test-2026-09-28-14-37.mp3", "")
 	if err := r.reconcilePendingUploads(); err != nil {
 		t.Fatal(err)
 	}
@@ -249,9 +249,14 @@ func TestExistingMarkerReservesNameWithoutAnAudioFile(t *testing.T) {
 }
 
 func TestMarkerCreationFailureDoesNotStartEncoder(t *testing.T) {
-	// The audio filename fits a filesystem's 255-byte component limit, but
-	// appending the marker suffix does not: a real create failure on every OS.
-	cfg := localOnDemandRecorder(t, strings.Repeat("r", 230))
+	// Output names now depend on IDs, not display-name length. Inject the
+	// filesystem failure rather than depending on the old filename format.
+	cfg := localOnDemandRecorder(t, "marker-create-failure")
+	originalOpen := openRecordingMarker
+	openRecordingMarker = func(path string, _ int, _ os.FileMode) (*os.File, error) {
+		return nil, &os.PathError{Op: "create", Path: path, Err: os.ErrPermission}
+	}
+	t.Cleanup(func() { openRecordingMarker = originalOpen })
 	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0]})
 	r.state, r.startGen = types.ProcessStarting, 1
 	r.startAsync(1)

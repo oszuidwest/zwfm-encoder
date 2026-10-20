@@ -310,6 +310,7 @@ func (e *Encoder) InitRecording() error {
 			RetryCount:   event.RetryCount,
 		})
 	})
+	mgr.SetStorageChangeCallback(e.alertOrchestrator.HandleRecordingStorage)
 
 	for i := range snap.Recorders {
 		if err := mgr.AddRecorder(&snap.Recorders[i]); err != nil {
@@ -340,6 +341,22 @@ func (e *Encoder) PendingUploadCount() int {
 		return 0
 	}
 	return e.recordingManager.PendingUploadCount()
+}
+
+// AbandonedUploadCount reports retained recordings no longer being retried.
+func (e *Encoder) AbandonedUploadCount() int {
+	if e.recordingManager == nil {
+		return 0
+	}
+	return e.recordingManager.AbandonedUploadCount()
+}
+
+// RecordingStorageStatuses returns cached disk observations, without filesystem I/O.
+func (e *Encoder) RecordingStorageStatuses() []types.RecordingStorageStatus {
+	if e.recordingManager == nil {
+		return nil
+	}
+	return e.recordingManager.StorageStatuses()
 }
 
 // State returns the current encoder state.

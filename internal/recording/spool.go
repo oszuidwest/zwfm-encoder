@@ -126,7 +126,7 @@ func (r *GenericRecorder) loadPendingUpload(metadataPath string) (pendingUpload,
 		meta.BaseKey = path.Join(path.Dir(meta.S3Key), filepath.Base(meta.LocalPath))
 	}
 
-	return pendingUpload{
+	pending := pendingUpload{
 		request: uploadRequest{
 			localPath:         meta.LocalPath,
 			s3Key:             meta.S3Key,
@@ -139,7 +139,9 @@ func (r *GenericRecorder) loadPendingUpload(metadataPath string) (pendingUpload,
 		retryCount:   meta.RetryCount,
 		lastError:    meta.LastError,
 		metadataPath: metadataPath,
-	}, true, nil
+		abandoned:    meta.Abandoned,
+	}
+	return pending, true, nil
 }
 
 // recoverableSpoolFile reports whether an orphan spool file may be uploaded and
@@ -198,6 +200,11 @@ func (r *GenericRecorder) recoverOrphanSpoolFiles(existing []pendingUpload) ([]p
 		if _, ok := known[filePath]; ok {
 			continue
 		}
+		if _, owned := recorderFileTime(&cfg, entry.Name()); !owned {
+			// A shared/case-aliased spool directory does not prove ownership.
+			slog.Warn("spool file is not named for this recorder; not uploaded", "id", r.id, "file", filePath)
+			continue
+		}
 
 		info, interrupted, ok, err := recoverableSpoolFile(filePath)
 		if err != nil {
@@ -209,7 +216,7 @@ func (r *GenericRecorder) recoverOrphanSpoolFiles(existing []pendingUpload) ([]p
 		pending := pendingUpload{
 			request: uploadRequest{
 				localPath:         filePath,
-				s3Key:             s3ObjectKey(cfg.Name, entry.Name()),
+				s3Key:             s3ObjectKey(&cfg, entry.Name()),
 				fileSize:          info.Size(),
 				deleteAfterUpload: true,
 			},
