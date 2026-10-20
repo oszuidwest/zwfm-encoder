@@ -2,7 +2,6 @@ package main
 
 import (
 	"cmp"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,7 +10,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
@@ -229,26 +227,8 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	// Side effects after successful save
 	s.encoder.ApplySettingsEffects()
 
-	// Restart encoder if audio input changed
-	if audioInputChanged && s.encoder.State() == types.StateRunning {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-
-			done := make(chan error, 1)
-			go func() {
-				done <- s.encoder.Restart()
-			}()
-
-			select {
-			case err := <-done:
-				if err != nil {
-					slog.Error("failed to restart encoder after audio input change", "error", err)
-				}
-			case <-ctx.Done():
-				slog.Error("encoder restart timed out after audio input change")
-			}
-		}()
+	if audioInputChanged {
+		s.encoder.RestartInBackground()
 	}
 
 	s.broadcastConfigChanged()
