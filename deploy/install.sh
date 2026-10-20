@@ -379,9 +379,13 @@ fi
 if [ "$ENABLE_HEARTBEAT" == "y" ]; then
   echo -e "${BLUE}►► Setting up heartbeat monitoring...${NC}"
   HEARTBEAT_CRONJOB="* * * * * curl -fsS --max-time 10 -o /dev/null '$HEARTBEAT_URL' > /dev/null 2>&1"
-  # crontab -l exits 1 when root has no crontab yet (fresh install)
-  EXISTING_CRONTAB=$(crontab -l 2>/dev/null || true)
-  if ! grep -qF -- "$HEARTBEAT_URL" <<< "$EXISTING_CRONTAB"; then
+  # crontab -l also exits 1 when root has no crontab yet (fresh install). On any
+  # other read error, skip the update: rewriting would drop root's existing jobs.
+  if ! EXISTING_CRONTAB=$(crontab -l 2>/dev/null) && [[ "$(crontab -l 2>&1)" != "no crontab for "* ]]; then
+    echo -e "${YELLOW}Warning: could not read root's crontab, heartbeat monitoring not configured${NC}"
+    echo -e "Add this line with ${BOLD}crontab -e${NC}:"
+    echo "  $HEARTBEAT_CRONJOB"
+  elif ! grep -qF -- "$HEARTBEAT_URL" <<< "$EXISTING_CRONTAB"; then
     { [ -z "$EXISTING_CRONTAB" ] || echo "$EXISTING_CRONTAB"; echo "$HEARTBEAT_CRONJOB"; } | crontab -
     echo -e "${GREEN}✓ Heartbeat monitoring configured${NC}"
   else

@@ -144,17 +144,17 @@ prompt_user() {
 
 func TestInstallerHeartbeatCron(t *testing.T) {
 	t.Parallel()
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq is needed for the installer completion summary")
+	}
 	script, err := os.ReadFile("deploy/install.sh")
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Run heartbeat setup through the completion summary, which follows it.
 	_, fragment, found := strings.Cut(string(script), "# Set up heartbeat monitoring if enabled")
 	if !found {
 		t.Fatal("installer heartbeat block missing")
-	}
-	fragment, _, found = strings.Cut(fragment, "# COMPLETION")
-	if !found {
-		t.Fatal("installer heartbeat block end missing")
 	}
 	stub, err := os.ReadFile("tests/fixtures/crontab.sh")
 	if err != nil {
@@ -162,14 +162,17 @@ func TestInstallerHeartbeatCron(t *testing.T) {
 	}
 	const url = "https://heartbeat.example/abc"
 	cronjob := "* * * * * curl -fsS --max-time 10 -o /dev/null '" + url + "' > /dev/null 2>&1\n"
+	jobs := "# m h dom mon dow command\n0 3 * * * /usr/local/bin/backup\n"
 	for _, tc := range []struct {
-		name, existing string
-		missing        bool
+		name, existing, want string
+		missing, readError   bool
 	}{
 		// Fresh Raspberry Pi OS: root has no crontab and `crontab -l` exits 1.
-		{name: "no crontab", missing: true},
-		{name: "empty crontab"},
-		{name: "unrelated jobs kept", existing: "# m h dom mon dow command\n0 3 * * * /usr/local/bin/backup\n"},
+		{name: "no crontab", missing: true, want: cronjob},
+		{name: "empty crontab", want: cronjob},
+		{name: "unrelated jobs kept", existing: jobs, want: jobs + cronjob},
+		// Any other read failure must leave the crontab alone and still finish the install.
+		{name: "read error", existing: jobs, readError: true, want: jobs},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -183,21 +186,32 @@ func TestInstallerHeartbeatCron(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			configPath := filepath.Join(dir, "config.json")
+			if err := os.WriteFile(configPath, []byte(`{"system":{"port":8080,"bind_address":"0.0.0.0"}}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			readError, messages := "", []string{"Heartbeat monitoring configured", "Heartbeat monitoring already configured"}
+			if tc.readError {
+				readError, messages = "1", []string{"Warning: could not read root's crontab", "Warning: could not read root's crontab"}
+			}
 			// A re-run must find the job instead of adding it twice.
-			for run, want := range []string{"Heartbeat monitoring configured", "Heartbeat monitoring already configured"} {
-				cmd := util.CommandContext(t.Context(), "bash", "-c", "set -euo pipefail\n"+fragment+"echo SUMMARY")
-				cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "CRONTAB_TEST_FILE="+path, "ENABLE_HEARTBEAT=y", "HEARTBEAT_URL="+url, "BLUE=", "GREEN=", "YELLOW=", "NC=")
+			for run, want := range messages {
+				cmd := util.CommandContext(t.Context(), "bash", "-c", "set -euo pipefail\n"+fragment)
+				cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "CRONTAB_TEST_FILE="+path, "CRONTAB_TEST_READ_ERROR="+readError, "ENABLE_HEARTBEAT=y", "HEARTBEAT_URL="+url, "KEEP_CONFIG=n", "CONFIG_FILE="+configPath, "INSTALL_DIR="+dir, "FIRST_IP=192.0.2.1", "WEB_USERNAME=admin", "BLUE=", "GREEN=", "YELLOW=", "BOLD=", "NC=")
 				out, err := cmd.CombinedOutput()
-				if err != nil || !strings.Contains(string(out), want) || !strings.HasSuffix(string(out), "SUMMARY\n") {
+				if err != nil || !strings.Contains(string(out), want) || !strings.Contains(string(out), "Installation complete!") || !strings.Contains(string(out), "Username: admin") {
 					t.Fatalf("run %d: %v\n%s", run+1, err, out)
+				}
+				if tc.readError && !strings.Contains(string(out), strings.TrimSuffix(cronjob, "\n")) {
+					t.Fatalf("run %d: warning lacks the cron line\n%s", run+1, out)
 				}
 			}
 			data, err := os.ReadFile(path) //nolint:gosec // G304: isolated crontab fixture under t.TempDir.
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := string(data); got != tc.existing+cronjob {
-				t.Fatalf("crontab = %q, want %q", got, tc.existing+cronjob)
+			if got := string(data); got != tc.want {
+				t.Fatalf("crontab = %q, want %q", got, tc.want)
 			}
 		})
 	}
