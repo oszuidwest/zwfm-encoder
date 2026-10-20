@@ -21,7 +21,7 @@ import (
 
 const recordingTimestampLayout = "2006-01-02-15-04"
 
-// recordingNameTail matches what follows the recorder name in a recording
+// recordingNameTail matches what follows the ownership prefix in a recording
 // filename: the start minute, an optional collision suffix and the extension of
 // a current (mp3, ts) or removed (ogg, mkv, mp2) codec. Keep it in sync with
 // types.codecPresets, or files of a new codec never expire.
@@ -48,12 +48,10 @@ func (m *Manager) runCleanup() {
 			continue
 		}
 
-		// Cleanup local files if applicable
 		if cfg.StorageMode == types.StorageLocal || cfg.StorageMode == types.StorageBoth {
 			m.cleanupLocalFiles(recorder)
 		}
 
-		// Cleanup S3 files if applicable
 		if cfg.StorageMode == types.StorageS3 || cfg.StorageMode == types.StorageBoth {
 			m.cleanupS3Files(recorder)
 		}
@@ -91,11 +89,9 @@ func (m *Manager) cleanupLocalFiles(recorder *GenericRecorder) {
 			continue
 		}
 
-		// Delete if older than retention
 		if fileDate.Before(cutoff) {
 			filePath := filepath.Join(cfg.LocalPath, name)
 
-			// Skip if file is currently being recorded
 			if recorder.IsCurrentFile(filePath) {
 				continue
 			}
@@ -132,7 +128,6 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 		return
 	}
 
-	// Get S3 client (recreates if config changed - same pattern as Graph client)
 	client := recorder.getOrCreateS3Client()
 	if client == nil {
 		slog.Warn("cleanup: no S3 client available", "id", cfg.ID)
@@ -215,10 +210,8 @@ func recorderFileTime(cfg *types.Recorder, filename string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// recordingFileTime reports the start time encoded in a recording filename
-// ("<safeName>-YYYY-MM-DD-HH-MM[-N].<ext>") and whether the file belongs to
-// the recorder at all, so local cleanup never deletes files of another
-// recorder sharing the directory.
+// recordingFileTime parses "<safeName>-YYYY-MM-DD-HH-MM[-N].<ext>" only when
+// safeName matches the complete ownership prefix (ID-based or legacy).
 func recordingFileTime(safeName, filename string) (time.Time, bool) {
 	tail, ok := strings.CutPrefix(filename, safeName)
 	if !ok {

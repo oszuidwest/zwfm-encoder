@@ -19,7 +19,7 @@ func buildDarwinArgs(device string) []string {
 
 var darwinDevicePattern = regexp.MustCompile(`\[AVFoundation[^\]]*\]\s*\[(\d+)\]\s*(.+)`)
 
-// Devices returns the available audio input devices.
+// Devices lists AVFoundation audio inputs without using the device cache.
 func (cfg *CaptureConfig) Devices() []Device {
 	return parseDeviceList(DeviceListConfig{
 		Command:          []string{"ffmpeg", "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""},

@@ -23,7 +23,6 @@ import (
 var ErrStdinClosed = errors.New("stdin closed")
 
 // StartResult contains a started FFmpeg subprocess with thread-safe access.
-// All fields are private - use methods for controlled access.
 type StartResult struct {
 	cmd    *exec.Cmd
 	ctx    context.Context
@@ -204,7 +203,7 @@ func (r *StartResult) Signal() error {
 	return util.GracefulSignal(r.cmd.Process)
 }
 
-// Kill forcefully terminates the process with SIGKILL.
+// Kill forcefully terminates the process.
 func (r *StartResult) Kill() error {
 	if r.cmd.Process == nil {
 		return nil

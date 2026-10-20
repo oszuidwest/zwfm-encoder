@@ -90,7 +90,6 @@ type GenericRecorder struct {
 	lastError string
 	startGen  uint64 // Identifies the latest Start; an older start must not launch.
 
-	// FFmpeg process (encapsulates cmd, stdin, stderr with thread-safe access)
 	result *ffmpeg.StartResult
 
 	// Per-process writer state; reset with each FFmpeg process.
@@ -100,16 +99,13 @@ type GenericRecorder struct {
 	recording  atomic.Bool  // Capture must not take mu behind filesystem/process startup.
 	audioDrops atomic.Int64 // Lost chunks from overflow or teardown.
 
-	// Current recording
 	currentFile   string
 	currentOutput *recordingOutput     // Exclusively created file owned by the current encoder.
 	usedFilenames map[string]time.Time // Names started within usedFilenameWindow by this process; S3-only mode deletes the file itself after upload.
 
-	// S3 client (cached, recreated when config changes)
 	s3Client    *s3.Client
 	s3ConfigKey string // Config key used to create cached client
 
-	// Upload queue
 	uploadQueue         chan uploadRequest
 	uploadWg            sync.WaitGroup
 	uploadStopCh        chan struct{}
@@ -220,7 +216,7 @@ func (r *GenericRecorder) IsCurrentFile(path string) bool {
 	return path != "" && (path == r.currentFile || retiring)
 }
 
-// Start starts the recorder.
+// Start launches asynchronous clock validation and encoder startup.
 func (r *GenericRecorder) Start() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -232,23 +228,20 @@ func (r *GenericRecorder) Start() error {
 		return ErrRecorderStopping
 	}
 
-	// Clear any previous error and set starting state. A stale start can still
-	// move a run to Error without cancelling its limit, so cancel it here too.
+	// An earlier failed run may still have a duration timer armed.
 	r.cancelDurationLimitLocked()
 	r.lastError = ""
 	r.audioDrops.Store(0)
 	r.state = types.ProcessStarting
 
-	// Start async validation and startup
 	r.startGen++
 	go r.startAsync(r.startGen)
 
 	return nil
 }
 
-// waitForClockSync holds the first file until the system clock is synchronized:
-// file names and retention dates come from it, and a Raspberry Pi has no
-// real-time clock. It reports false when Stop or a newer Start took over.
+// waitForClockSync delays startup to keep boot-time clock errors out of filenames
+// and retention dates. Callers must recheck run ownership after it returns.
 func (r *GenericRecorder) waitForClockSync(gen uint64) bool {
 	if clockSynced() {
 		return true
@@ -281,16 +274,13 @@ func (r *GenericRecorder) startAsync(gen uint64) {
 		return
 	}
 
-	// Now lock and start the encoder
 	r.mu.Lock()
 
-	// Re-check state in case Stop() or a newer Start() took over during validation
 	if r.state != types.ProcessStarting || r.startGen != gen {
 		r.mu.Unlock()
 		return
 	}
 
-	// Start FFmpeg encoder
 	output, current, err := r.prepareFilenameLocked(time.Now())
 	if !current {
 		r.mu.Unlock()
@@ -320,7 +310,6 @@ func (r *GenericRecorder) startAsync(gen uint64) {
 		go r.uploadWorker()
 	}
 
-	// Schedule based on recording mode
 	if r.config.RecordingMode == types.RecordingHourly {
 		r.scheduleRotationLocked(time.Now())
 	} else if r.maxDurationMinutes > 0 {
@@ -330,7 +319,6 @@ func (r *GenericRecorder) startAsync(gen uint64) {
 	r.state = types.ProcessRunning
 	r.recording.Store(true)
 
-	// Capture log params while holding lock
 	logParams := r.captureLogParamsLocked()
 	name := r.config.Name
 	mode := r.config.RecordingMode
@@ -347,9 +335,8 @@ func (r *GenericRecorder) reportError(file string, err error) {
 	r.emitError(p, err)
 }
 
-// recordErrorLocked sets the status error and returns its event details, so a
-// caller that has just checked ownership under r.mu cannot be overtaken by a
-// newer run before the status changes. Must be called with r.mu held.
+// recordErrorLocked updates the status error before a newer run can take over.
+// The caller must hold r.mu; emit the returned event after unlocking.
 func (r *GenericRecorder) recordErrorLocked(file string, err error) *eventlog.RecorderDetails {
 	r.lastError = err.Error()
 	p := r.captureLogParamsLocked()
@@ -384,7 +371,8 @@ func (r *GenericRecorder) logEvent(eventType eventlog.EventType, p *eventlog.Rec
 	}
 }
 
-// Stop stops the recorder.
+// Stop finalizes recordings and drains the upload worker.
+// Calls made while already stopping return immediately.
 func (r *GenericRecorder) Stop() error {
 	r.mu.Lock()
 	return r.stopLocked()
@@ -393,7 +381,6 @@ func (r *GenericRecorder) Stop() error {
 // stopLocked must be called with r.mu held; it unlocks r.mu before waiting
 // for cleanup.
 func (r *GenericRecorder) stopLocked() error {
-	// Already stopped or stopping
 	if r.state == types.ProcessStopped || r.state == types.ProcessStopping {
 		r.mu.Unlock()
 		return nil
@@ -436,7 +423,6 @@ func (r *GenericRecorder) stopLocked() error {
 	r.stopOnce = sync.Once{}      // Allow the next Stop to close uploadStopCh.
 	r.uploadWorkerRunning = false // Allow the next Start to launch a worker.
 
-	// Capture log params while holding lock
 	logParams := r.captureLogParamsLocked()
 	name := r.config.Name
 	r.mu.Unlock()
@@ -630,16 +616,13 @@ func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 	updated := *cfg
 	updated.IDBasedFiles, updated.LegacyFilePrefix = true, r.config.LegacyFilePrefix
 	r.config = updated
-	// Note: S3 client will be recreated on next use if config changed
-	// (same pattern as Graph client in notifications)
 
 	return nil
 }
 
-// prepareFilenameLocked reserves the next output file with mu released, then
-// revalidates ownership and configuration. Stop need not join a blocked check,
-// and a stale result cannot start an encoder: it returns false once the run is
-// no longer current. Called and returned with mu held.
+// prepareFilenameLocked reserves an output with mu released so Stop stays responsive.
+// It rechecks run ownership and config before returning; false means the run ended.
+// Called and returned with mu held.
 func (r *GenericRecorder) prepareFilenameLocked(fileTime time.Time) (*recordingOutput, bool, error) {
 	gen, state := r.startGen, r.state
 	for r.startGen == gen && r.state == state {
@@ -884,11 +867,9 @@ func prepareRecordingDir(storageMode types.StorageMode, dir string) error {
 // startEncoderLocked starts FFmpeg on the prepared output path.
 // Must be called with r.mu held, after revalidating file preparation.
 func (r *GenericRecorder) startEncoderLocked(output *recordingOutput) error {
-	// Get codec configuration
 	codecArgs := types.BuildCodecArgs(r.config.Codec, r.config.Bitrate)
 	format := r.config.Codec.Format()
 
-	// Build FFmpeg command args
 	args := ffmpeg.BaseInputArgs()
 	args = append(args, "-c:a")
 	args = append(args, codecArgs...)
@@ -900,7 +881,6 @@ func (r *GenericRecorder) startEncoderLocked(output *recordingOutput) error {
 		output.file.Name(),
 	)
 
-	// Start FFmpeg process
 	result, err := ffmpeg.StartProcess(r.ffmpegPath, args)
 	if err != nil {
 		return err
@@ -919,7 +899,6 @@ func (r *GenericRecorder) startEncoderLocked(output *recordingOutput) error {
 
 	slog.Info("recorder encoding started", "id", r.id, "file", filepath.Base(r.currentFile), "codec", r.config.Codec)
 
-	// Log new file event (already holding lock)
 	p := r.captureLogParamsLocked()
 	p.Filename = filepath.Base(r.currentFile)
 	r.logEvent(eventlog.RecorderFile, p)
@@ -1033,9 +1012,8 @@ func (r *GenericRecorder) scheduleRotationLocked(from time.Time) {
 	r.rotationTimer = afterFunc(time.Until(next), func() { r.rotateFile(generation) })
 }
 
-// rotateFile hands the recording over to a new file at the hour boundary.
-// The next FFmpeg process starts and takes over the audio before the current
-// one is closed, so no audio is lost between the two files.
+// rotateFile starts the next encoder before draining the previous one at an hour
+// boundary. Bounded queues can still drop audio; AudioDrops counts lost chunks.
 func (r *GenericRecorder) rotateFile(generation uint64) {
 	r.mu.Lock()
 	if r.state != types.ProcessRunning || generation != r.rotationGeneration {
@@ -1093,10 +1071,7 @@ func (r *GenericRecorder) rotateFile(generation uint64) {
 	delete(r.retiringFiles, previous.file)
 	r.mu.Unlock()
 
-	// Process the retry queue off the rotation path: a slow or unreachable S3
-	// endpoint may block for many minutes per pending file, and Stop waits for
-	// this rotation through retiring. Safe concurrently: an overlapping run
-	// returns at once while a batch owns its paths.
+	// Keep slow S3 retries outside retiring: Stop waits for this rotation.
 	go r.processRetryQueue()
 }
 

@@ -22,13 +22,12 @@ var (
 	EmailPattern = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
 )
 
-// ValidatePath validates a file path for security.
+// ValidatePath rejects empty paths and paths containing ".."; it does not confine paths.
 func ValidatePath(field, path string) error {
 	if path == "" {
 		return fmt.Errorf("%s: is required", field)
 	}
 
-	// Reject path traversal attempts
 	if strings.Contains(path, "..") {
 		return fmt.Errorf("%s: path cannot contain '..'", field)
 	}
@@ -36,15 +35,14 @@ func ValidatePath(field, path string) error {
 	return nil
 }
 
-// CheckPathWritable verifies that a directory path exists and is writable.
+// CheckPathWritable creates the directory if needed and probes file creation,
+// writing, closing and removal. Failures are logged and returned as a generic error.
 func CheckPathWritable(path string) error {
-	// Create directory if it doesn't exist
 	if err := os.MkdirAll(path, 0o755); err != nil { //nolint:gosec // Recording directory needs to be readable
 		slog.Error("path writability check failed", "path", path, "error", err, "step", "mkdir")
 		return fmt.Errorf("path is not writable")
 	}
 
-	// Create test file with unique name using nanosecond timestamp
 	testFile := filepath.Join(path, fmt.Sprintf(".encoder-write-test-%d", time.Now().UnixNano()))
 
 	f, err := os.Create(testFile) //nolint:gosec // testFile path is constructed internally

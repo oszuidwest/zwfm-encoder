@@ -1,32 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
-<!--
-  ZuidWest FM Encoder - Web Interface
-
-  Single-page application for real-time audio monitoring and encoder control.
-  Built with Alpine.js for reactive state management.
-
-  Views:
-    - Dashboard: Live VU meter, encoder status, stream/recorder management
-    - Settings: Audio input, silence detection, notifications, about info
-    - Stream Form: Add/edit streams
-    - Recorder Form: Add/edit audio recorders
-
-  State Management:
-    - Alpine.js component: encoderApp() defined in app.js
-    - View switching via 'view' property
-    - WebSocket at /ws for real-time updates
-
-  File Dependencies:
-    - style.css: All styling and animations
-    - icons.js: SVG icon definitions (window.icons)
-    - app.js: Alpine.js application logic
-    - alpine.js: Alpine.js framework
-
-  @see app.js for state management and WebSocket handling
-  @see style.css for component styling
-  @see icons.js for SVG icon reference
--->
+<!-- encoderApp in app.js owns Alpine state; REST updates config and /ws supplies live data. -->
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -103,13 +77,7 @@
             <p class="noscript-message">This application requires JavaScript to function.</p>
         </noscript>
 
-        <!-- === Dashboard View ===
-             Main monitoring interface showing:
-             - Header with settings and logout buttons
-             - Audio input device selector
-             - VU meter with real-time levels
-             - Source status alerts
-             - Stream list with individual status indicators -->
+        <!-- Dashboard -->
         <div id="dashboard-view" x-show="view === 'dashboard'" x-cloak>
             <header class="app-header">
                 <div class="brand">
@@ -159,20 +127,10 @@
                     </div>
                 </div>
 
-                <!-- === VU Meter Component ===
-                     Real-time audio level visualization with:
-                     - Mode toggle: Peak (default) vs RMS display
-                     - Silence indicator: Activates when audio below threshold for configured duration
-                     - Clip indicator: Flashes when levels exceed 0dB, held for 1.5s
-                     - Two channels (L/R): Gradient bar with peak hold marker
-                     - Scale: Reference marks at -60, -48, -24, -12, -6, 0 dB
-                     Updates ~4 times per second -->
+                <!-- VU meter -->
                 <div class="vu">
                     <div class="meter-header">
                         <button class="mode-btn" type="button" tabindex="0" @click="toggleVuMode()" x-text="vuMode === 'peak' ? 'Peak' : 'RMS'"></button>
-                        <!-- Status indicators - visual feedback for audio state
-                             Silence: Yellow dot when audio below threshold
-                             Clip: Red flash when audio exceeds 0dB -->
                         <div class="indicators">
                             <span class="indicator" aria-label="Silence indicator"><span class="dot" :class="getSilenceStateClass()"></span>Silence</span>
                             <span class="indicator" aria-label="Channel imbalance indicator"><span class="dot" :class="getChannelImbalanceStateClass()"></span>Imbalance</span>
@@ -202,12 +160,6 @@
                     </div>
                 </div>
 
-                <!-- Source status alert - shows when audio capture has issues
-                     Conditions:
-                     - No audio input device selected
-                     - Source process not running
-                     - Last error from source capture
-                     Displays retry counter when encoder is attempting recovery -->
                 <div class="alert" role="alert" x-show="hasSourceIssue" x-cloak>
                     <span class="icon-container" x-html="icons.warning"></span>
                     <div>
@@ -218,21 +170,7 @@
             </div>
         </section>
 
-        <!-- === Streams List ===
-             Displays configured streams with real-time status.
-
-             Each stream shows:
-             - Status dot (color-coded by state)
-             - Host:port and stream ID
-             - Status text (Connected, Ready, Connecting, Retry N/M, Failed)
-             - Error message when in failed state
-             - Delete button (disabled while deletion in progress)
-
-             Status states:
-             - Green: Connected and streaming
-             - Yellow: Connecting or retrying
-             - Red: Failed (shows error)
-             - Gray: Encoder not running -->
+        <!-- Streams -->
         <section class="card">
             <div class="header" data-theme="slate">
                 <h2>Streams</h2>
@@ -280,13 +218,7 @@
             </div>
         </section>
 
-        <!-- === Recorders List ===
-             Displays configured recorders with real-time status.
-             Each recorder shows:
-             - Status dot (color-coded by state)
-             - Name and recording mode
-             - Status text (Recording, Idle, Disabled)
-             Click to edit, + button to add new -->
+        <!-- Recorders -->
         <section class="card">
             <div class="header" data-theme="slate">
                 <h2>Recorders</h2>
@@ -331,15 +263,7 @@
 
         </div>
 
-        <!-- === Settings View ===
-             Configuration interface with tabbed navigation.
-
-             Tabs: Audio | Notifications | Events | About
-
-             Cancel/Save workflow:
-             - Cancel restores original values, Save persists all changes
-             - Test buttons disabled when unsaved changes exist
-             - Settings not overwritten by status updates while editing -->
+        <!-- Settings -->
         <div id="settings-view" class="settings" x-show="view === 'settings'" x-cloak>
             <header class="nav">
                 <button class="nav-btn" type="button" tabindex="0" @click="cancelSettings()" :disabled="saving">Cancel</button>
@@ -347,9 +271,6 @@
                 <button class="nav-btn" data-variant="save" type="button" tabindex="0" @click="saveSettings()" :disabled="!settingsDirty || saving" x-text="saving ? 'Saving...' : 'Save'">Save</button>
             </header>
 
-            <!-- Settings tab navigation - segmented control style
-                 Tab switching is UI-only (no persistence)
-                 Sliding indicator animates between tabs -->
             <div class="tabs" role="tablist">
                 <template x-for="tab in settingsTabs" :key="tab.id">
                     <button class="tab" type="button" role="tab" :id="'tab-' + tab.id" :aria-selected="settingsTab === tab.id" :aria-controls="'panel-' + tab.id" :tabindex="settingsTab === tab.id ? 0 : -1" :title="tab.label" @click="showTab(tab.id)">
@@ -564,11 +485,7 @@
                     </div>
                 </div>
 
-                <!-- Notifications Panel - Notification configuration for audio events
-                     Three notification methods (can use multiple):
-                     - Webhook: HTTP POST to URL on audio events
-                     - File Log: Append JSON lines to local file
-                     - Email: Microsoft Graph notifications -->
+                <!-- Notifications -->
                 <div class="panel" role="tabpanel" id="panel-notifications" aria-labelledby="tab-notifications" x-show="settingsTab === 'notifications'">
                     <div class="channel" :class="{ 'channel--open': cardsOpen.webhook }">
                         <button type="button" class="channel-head" @click="toggleCard('webhook')" :aria-expanded="cardsOpen.webhook" aria-controls="channel-webhook">
@@ -913,9 +830,7 @@
                     </div>
                 </div>
 
-                <!-- About Panel - Version info and attribution
-                     Shows: Version, commit hash, build date, update availability
-                     Includes: MIT license text, audio plug logo SVG -->
+                <!-- About and attribution -->
                 <div class="panel" role="tabpanel" id="panel-about" aria-labelledby="tab-about" x-show="settingsTab === 'about'">
                     <div class="about">
                         <div class="section">
@@ -985,9 +900,7 @@
             </div>
         </div>
 
-        <!-- === Stream Form View ===
-             Unified form for creating and editing streams.
-             Mode detection: isEditMode checks if streamForm.id is set -->
+        <!-- Stream form -->
         <div id="stream-form-view" class="settings" x-show="view === 'stream-form'" x-cloak>
             <header class="nav">
                 <button class="nav-btn" type="button" tabindex="0" @click="showDashboard()">Cancel</button>
@@ -1158,9 +1071,7 @@
             </div>
         </div>
 
-        <!-- === Recorder Form View ===
-             Unified form for creating and editing recorders.
-             Mode detection: isRecorderEditMode checks if recorderForm.id is set -->
+        <!-- Recorder form -->
         <div id="recorder-form-view" class="settings" x-show="view === 'recorder-form'" x-cloak>
             <header class="nav">
                 <button class="nav-btn" type="button" tabindex="0" @click="showDashboard()">Cancel</button>

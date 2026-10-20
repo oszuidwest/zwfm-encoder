@@ -32,7 +32,7 @@ var upgrader = websocket.Upgrader{
 // checkOrigin reports whether the WebSocket connection origin is allowed.
 func checkOrigin(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
-	// Same-origin requests omit the Origin header
+	// Allow clients that omit Origin, including non-browser clients.
 	if origin == "" {
 		return true
 	}
@@ -46,14 +46,12 @@ func checkOrigin(r *http.Request) bool {
 
 	host := u.Hostname()
 
-	// Exact localhost matches
 	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
 		return true
 	}
 
-	// Same-origin check (compare with request host)
+	// Match hostnames without requiring the origin's scheme or port to match.
 	requestHost := r.Host
-	// Strip port from request host for comparison
 	if h, _, err := net.SplitHostPort(requestHost); err == nil {
 		requestHost = h
 	}
@@ -61,7 +59,6 @@ func checkOrigin(r *http.Request) bool {
 		return true
 	}
 
-	// Check private IP ranges using net/netip (Go 1.18+, more efficient)
 	if addr, err := netip.ParseAddr(host); err == nil {
 		if addr.IsLoopback() || addr.IsPrivate() {
 			return true

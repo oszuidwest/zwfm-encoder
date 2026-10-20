@@ -26,7 +26,7 @@ func buildLinuxArgs(device string) []string {
 
 var linuxDevicePattern = regexp.MustCompile(`card\s+(\d+):\s+(\w+)\s+\[([^\]]+)\]`)
 
-// Devices returns the available audio input devices.
+// Devices lists ALSA capture devices without using the device cache.
 func (cfg *CaptureConfig) Devices() []Device {
 	return parseDeviceList(DeviceListConfig{
 		Command:          []string{"arecord", "-l"},

@@ -12,7 +12,7 @@ import (
 // AudioLevelCallback is a function that receives audio level updates.
 type AudioLevelCallback func(levels *audio.AudioLevels)
 
-// Distributor distributes PCM audio to multiple streams.
+// Distributor meters PCM audio and drives incident detection and dumps.
 type Distributor struct {
 	levelData          *audio.LevelData
 	silenceDetect      *audio.SilenceDetector
@@ -49,7 +49,7 @@ func NewDistributor(cfg DistributorConfig) *Distributor {
 	}
 }
 
-// ProcessSamples processes a buffer of PCM audio samples.
+// ProcessSamples consumes S16LE stereo PCM; callers must serialize calls.
 func (d *Distributor) ProcessSamples(buf []byte) {
 	// Buffer samples before processing detector transitions for the same block.
 	if d.silenceDumpManager != nil {
@@ -58,19 +58,16 @@ func (d *Distributor) ProcessSamples(buf []byte) {
 
 	audio.ProcessSamples(buf, d.levelData)
 
-	// Update levels periodically
 	if d.levelData.SampleCount >= LevelUpdateSamples {
 		levels := audio.CalculateLevels(d.levelData)
 
 		now := time.Now()
 
-		// Update detector settings from config (allows dynamic updates).
 		cfg := d.config.DetectorSettings()
 		d.peakHolder.SetHoldDuration(time.Duration(cfg.PeakHoldMs) * time.Millisecond)
 
 		heldPeakL, heldPeakR := d.peakHolder.Update(levels.PeakLeft, levels.PeakRight, now)
 
-		// Silence detection (fresh config snapshot for dynamic updates)
 		silenceCfg := audio.SilenceConfig{
 			Threshold:  cfg.SilenceThreshold,
 			DurationMs: cfg.SilenceDurationMs,
@@ -88,7 +85,6 @@ func (d *Distributor) ProcessSamples(buf []byte) {
 		}
 		imbalanceEvent := d.imbalanceDetect.Update(levels.RMSLeft, levels.RMSRight, imbalanceCfg, now)
 
-		// Delegate notification handling to the alert orchestrator (separation of concerns)
 		d.alertOrchestrator.HandleSilenceEvent(silenceEvent)
 		d.alertOrchestrator.HandleChannelImbalanceEvent(&imbalanceEvent)
 

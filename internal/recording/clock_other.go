@@ -2,6 +2,5 @@
 
 package recording
 
-// clockSynchronized reports true: the encoder ships on Linux, where a Raspberry
-// Pi without a real-time clock needs the check.
+// clockSynchronized skips kernel clock checks outside Linux.
 func clockSynchronized() bool { return true }

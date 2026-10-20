@@ -86,7 +86,7 @@ func (d *debouncer) update(conditionActive bool, durationMs, recoveryMs int64, n
 	return r
 }
 
-// reset clears all debounce state.
+// reset clears detection state while preserving the incident sequence.
 func (d *debouncer) reset() {
 	d.start = time.Time{}
 	d.recoveryStart = time.Time{}

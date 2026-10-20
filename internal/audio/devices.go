@@ -10,9 +10,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// devicesCacheTTL bounds how often a device listing execs a subprocess: the
-// list is fetched by /api/config on every page load and virtually never
-// changes on the target hardware.
+// devicesCacheTTL avoids a device-listing subprocess on every config fetch.
 const devicesCacheTTL = 30 * time.Second
 
 var (
@@ -21,9 +19,7 @@ var (
 	devicesCachedAt time.Time
 )
 
-// Devices returns available audio input devices for the current platform,
-// served from a short-lived cache so routine config fetches do not fork a
-// device-listing subprocess per request.
+// Devices returns available audio inputs, cached for devicesCacheTTL.
 func Devices() []Device {
 	devicesMu.Lock()
 	defer devicesMu.Unlock()
@@ -33,8 +29,7 @@ func Devices() []Device {
 	return refreshDevicesLocked()
 }
 
-// RefreshDevices bypasses the cache and refills it. Used by the explicit
-// device-refresh endpoint so a just-connected device shows up immediately.
+// RefreshDevices bypasses and refills the device cache.
 func RefreshDevices() []Device {
 	devicesMu.Lock()
 	defer devicesMu.Unlock()
@@ -88,7 +83,6 @@ func parseDeviceList(cfg DeviceListConfig) []Device {
 	inAudioSection := cfg.AudioStartMarker == "" // If no marker, always in section
 
 	for line := range strings.SplitSeq(string(output), "\n") {
-		// Check for section markers.
 		if cfg.AudioStartMarker != "" && strings.Contains(line, cfg.AudioStartMarker) {
 			inAudioSection = true
 			continue

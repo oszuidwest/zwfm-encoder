@@ -64,8 +64,7 @@ func (m *Manager) monitorStorage(stop <-chan struct{}) {
 }
 
 func (m *Manager) checkStorage(stop <-chan struct{}) {
-	// shortcut: OS disk probes cannot be cancelled. Keep at most one in flight,
-	// even across restarts; isolate in a helper process if bounded probe exit is required.
+	// OS disk probes cannot be cancelled; allow only one in flight across restarts.
 	if !m.storageProbeMu.TryLock() {
 		return
 	}

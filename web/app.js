@@ -57,8 +57,7 @@ const API = {
 
 const EVENT_HELPERS = window.eventUIHelpers;
 
-// Status sections the event dashboard groups into, used for the filter pills.
-// The key matches the keys produced by eventGroups(); label/dot drive the pill rendering.
+// Keys must match eventGroups() and the status filter pills.
 const EVENT_GROUP_FILTERS = [
     { key: 'attention', label: 'Needs attention' },
     { key: 'resolved', label: 'Resolved' },
@@ -219,11 +218,8 @@ const recorderHasS3Secret = (form) => Boolean(
 );
 
 /**
- * Stages removal of a saved secret: snapshots the current input so undo can
- * restore it, blanks the field, and sets the clear flag. The template
- * disables the input while the flag is set so a typed value cannot conflict
- * with the flag and 400 at the backend. Returns false when already cleared
- * or the user cancels the confirm dialog.
+ * Stages an undoable secret removal. The template disables the input while
+ * cleared to prevent a value/clear-flag conflict at the backend.
  */
 const clearSecretField = (form, field, flag, message) => {
     if (form[flag] || !confirm(message)) return false;
@@ -489,11 +485,6 @@ document.addEventListener('alpine:init', () => {
         ws: null,
         _bannerTimeout: null,
 
-        // Computed properties
-        /**
-         * Checks if audio source has issues (no device or capture error).
-         * @returns {boolean} True if source needs attention
-         */
         get hasSourceIssue() {
             // The encoder clears lastError once a reopened input is confirmed.
             return (this.encoder.sourceRetryCount > 0 && this.encoder.state !== 'stopped') ||
@@ -512,11 +503,6 @@ document.addEventListener('alpine:init', () => {
             return this.recorderForm.id !== '';
         },
 
-        /**
-         * Validates recorder form and returns true if form can be saved.
-         * Checks required fields based on storage mode.
-         * @returns {boolean} True if form is valid and can be submitted
-         */
         get canSaveRecorder() {
             if (!this.recorderForm.name?.trim()) return false;
             if (this.isRecorderEditMode && !this.recorderFormDirty) return false;
@@ -547,17 +533,12 @@ document.addEventListener('alpine:init', () => {
             document.addEventListener('keydown', (e) => this.handleGlobalKeydown(e));
         },
 
-        /**
-         * Fetches configuration from REST API.
-         * Called on init and when config_changed event is received.
-         */
         async loadConfig() {
             try {
                 const data = await requestJSON(API.CONFIG);
                 this.config = data;
                 this.configLoaded = true;
 
-                // Update derived state from config
                 this.streams = data.streams || [];
                 this.recorders = data.recorders || [];
                 this.devices = data.devices || [];
@@ -567,22 +548,17 @@ document.addEventListener('alpine:init', () => {
             }
         },
 
-        /**
-         * Refreshes the devices list from the server.
-         * Called when the audio input dropdown is focused.
-         */
         async refreshDevices() {
             try {
                 const data = await requestJSON(API.DEVICES);
                 this.devices = data.devices || [];
             } catch {
-                // Silently fail - devices will show stale data
+                // Keep the last known devices when refresh fails.
             }
         },
 
         /** Global keyboard: Escape closes views, Enter saves, arrows navigate tabs. */
         handleGlobalKeydown(event) {
-            // Don't handle if user is typing in an input field
             const isInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName);
 
             // Escape: close secondary views.
@@ -655,8 +631,7 @@ document.addEventListener('alpine:init', () => {
                 } else if (msg.type === 'status') {
                     this.handleStatus(msg);
                 } else if (msg.type === 'config_changed') {
-                    // Config was changed (by this or another client), refetch
-                    // Skip if we're currently editing (form open)
+                    // Preserve unsaved form edits.
                     if (this.view !== 'settings' && this.view !== 'stream-form' && this.view !== 'recorder-form') {
                         this.loadConfig();
                     }
@@ -674,58 +649,42 @@ document.addEventListener('alpine:init', () => {
                 setTimeout(() => this.connectWebSocket(), WS_RECONNECT_MS);
             };
 
-            // Note: Don't call close() here - it triggers onclose which causes reconnect.
-            // The socket will close naturally on error, triggering onclose once.
+            // onclose owns reconnection, including after errors.
             this.ws.onerror = () => {};
         },
 
-        /**
-         * Processes incoming audio level data with PPM ballistics.
-         * PPM meters have instant attack and slow decay (~20dB in 1.7s).
-         * Clip indicator activates when levels exceed threshold and holds
-         * for CLIP_TIMEOUT_MS before auto-clearing.
-         *
-         * @param {Object} levels - Audio levels (left, right, peak_left, peak_right, silence_level)
-         */
+        // Apply PPM ballistics; server clip counts retrigger the clip indicator.
         handleLevels(levels) {
             levels = { ...DEFAULT_LEVELS, ...(levels || {}) };
             const prevSilenceState = this.getSilenceState();
 
-            // Apply PPM ballistics to peak values: instant attack, slow decay
-            // This creates the characteristic PPM "slow fallback" behavior
+            // Instant attack, fixed decay per expected server update interval.
             const applyPPM = (newPeak, displayLevel) => {
                 if (newPeak >= displayLevel) {
-                    return newPeak; // Instant attack - jump up to new peak
+                    return newPeak;
                 }
-                // Slow decay: reduce by PPM_DECAY_PER_FRAME, but not below new peak
                 return Math.max(newPeak, displayLevel - PPM_DECAY_PER_FRAME);
             };
 
             const now = Date.now();
-            // Must read from config, not a hardcoded constant - the user sets this via Settings.
             const peakHoldMs = this.config.peak_hold_ms ?? 3000;
 
             levels.display_left = applyPPM(levels.peak_left, this.levels.display_left ?? -60);
             levels.display_right = applyPPM(levels.peak_right, this.levels.display_right ?? -60);
 
-            // Frontend peak hold: track highest display level, hold for configured duration
-            // After hold expires, smoothly decay (faster than PPM bar decay)
             const HOLD_DECAY_PER_FRAME = PPM_DECAY_PER_FRAME * 2; // 2x faster decay for peak marker
 
             const updateHold = (display, prevHold, prevTime, key) => {
                 if (display >= prevHold) {
-                    // New peak - update hold and reset timer
                     levels[`hold_${key}`] = display;
                     levels[`hold_${key}_time`] = now;
                 } else if (now - prevTime < peakHoldMs) {
-                    // Within hold time - keep previous hold
                     levels[`hold_${key}`] = prevHold;
                     levels[`hold_${key}_time`] = prevTime;
                 } else {
-                    // Hold expired - smooth decay towards display level
                     const decayed = prevHold - HOLD_DECAY_PER_FRAME;
                     levels[`hold_${key}`] = Math.max(display, decayed);
-                    levels[`hold_${key}_time`] = prevTime; // Keep original time
+                    levels[`hold_${key}_time`] = prevTime;
                 }
             };
 
@@ -757,11 +716,6 @@ document.addEventListener('alpine:init', () => {
             }
         },
 
-        /**
-         * Handles silence state transitions and shows appropriate banners.
-         * @param {string} prev - Previous silence state
-         * @param {string} next - New silence state
-         */
         handleSilenceTransition(prev, next) {
             const duration = EVENT_HELPERS.formatSmartDuration(this.levels.silence_duration_ms || 0);
             if (next === 'warning' && prev === 'active') {
@@ -769,19 +723,11 @@ document.addEventListener('alpine:init', () => {
             } else if (next === 'critical') {
                 this.showBanner(`Critical silence: ${duration}`, 'danger', true);
             } else if (next === '' && prev !== '') {
-                // Silence recovered
                 this.hideBanner();
             }
         },
 
-        /**
-         * Returns silence state for data-state attribute.
-         * Thresholds are based on configured silenceDuration:
-         * - active: silenceDuration (alert triggered)
-         * - warning: silenceDuration * 2
-         * - critical: silenceDuration * 4
-         * @returns {string} Silence state: '' | 'active' | 'warning' | 'critical'
-         */
+        // The server confirms silence; the UI escalates at 2x and 4x its duration threshold.
         getSilenceState() {
             if (!this.levels.silence_level) return '';
             const durationMs = this.levels.silence_duration_ms || 0;
@@ -791,10 +737,6 @@ document.addEventListener('alpine:init', () => {
             return 'active';
         },
 
-        /**
-         * Returns CSS class for silence indicator dot.
-         * @returns {string} State class for dot styling
-         */
         getSilenceStateClass() {
             const state = this.getSilenceState();
             if (state === 'critical') return 'state-danger';
@@ -802,35 +744,19 @@ document.addEventListener('alpine:init', () => {
             return '';
         },
 
-        /**
-         * Returns CSS class for the channel imbalance indicator dot.
-         * @returns {string} State class for dot styling
-         */
         getChannelImbalanceStateClass() {
             return this.levels.channel_imbalance_level === 'active' ? 'state-warning' : '';
         },
 
-        /**
-         * Returns CSS class for clip indicator dot.
-         * @returns {string} State class for dot styling
-         */
         getClipStateClass() {
             return this.clipActive ? 'state-danger' : '';
         },
 
-        /**
-         * Processes encoder status updates from backend.
-         * Only handles runtime data (encoder state, stream/recorder statuses).
-         * Configuration is handled by loadConfig() via REST API.
-         *
-         * @param {Object} msg - Status message with encoder state and statuses
-         */
+        // Runtime updates arrive here; loadConfig() owns saved configuration.
         handleStatus(msg) {
-            // Feature availability
             this.ffmpegAvailable = msg.ffmpeg_available ?? true;
             this.recordingAvailable = msg.recording_available ?? true;
 
-            // Encoder state
             this.encoder.state = msg.encoder.state;
             this.encoder.uptime = msg.encoder.uptime || '';
             this.encoder.sourceRetryCount = msg.encoder.source_retry_count || 0;
@@ -840,7 +766,6 @@ document.addEventListener('alpine:init', () => {
                 this.resetVuMeter();
             }
 
-            // Stream statuses (not config, just runtime state)
             const newStreamStatuses = msg.stream_status || {};
 
             // Detect status transitions to "connected" and trigger animation
@@ -859,24 +784,17 @@ document.addEventListener('alpine:init', () => {
             this.previousStreamStatuses = deepClone(newStreamStatuses);
             this.streamStatuses = newStreamStatuses;
 
-            // Recorder statuses
             this.recorderStatuses = msg.recorder_statuses || {};
 
-            // Live-refresh the events list only while it is on screen and only
-            // when a new event has actually been logged. The server bumps
-            // event_seq on every write, so an unchanged counter means there is
-            // nothing new to fetch — a healthy station then polls /api/events
-            // never instead of every status tick.
+            // Refresh visible history only when event_seq signals a new logged event.
             this.eventSeq = msg.event_seq ?? 0;
             if (this.view === 'settings' && this.settingsTab === 'events' &&
                 this.eventSeq !== this.lastEventSeq && !this.eventsLoading) {
                 void this.loadEvents(false);
             }
 
-            // Graph secret expiry (runtime info, not config)
             this.graphSecretExpiry = msg.graph_secret_expiry ?? { expires_soon: false, days_left: 0 };
 
-            // Version info
             if (msg.version) {
                 const wasUpdateAvail = this.version.update_available;
                 this.version = msg.version;
@@ -981,10 +899,6 @@ document.addEventListener('alpine:init', () => {
             this.view = 'settings';
         },
 
-        /**
-         * Marks settings as modified, enabling Save button.
-         * Called on any settings input change.
-         */
         markSettingsDirty() {
             this.settingsDirty = true;
         },
@@ -1007,9 +921,6 @@ document.addEventListener('alpine:init', () => {
             if (undoClearSecretField(this.settingsForm.graph, 'clientSecret', 'clearSecret')) this.markSettingsDirty();
         },
 
-        /**
-         * Discards form changes and returns to dashboard.
-         */
         cancelSettings() {
             this.showDashboard();
         },
@@ -1216,12 +1127,7 @@ document.addEventListener('alpine:init', () => {
             writeStorage(STORAGE_KEYS.SETTINGS_CARDS, JSON.stringify(this.cardsOpen));
         },
 
-        // Derives the header digest for a notification channel from the current
-        // form + saved-config flags. Returns { summary, pill } where summary is
-        // the always-shown one-liner and pill is null for the normal case or
-        // { cls, label } to flag an off/attention state. Following the rest of
-        // the app, only the exceptional case gets a chip (cls is a global
-        // .state-* class); a configured channel stays chip-free.
+        // Return { summary, pill }; only off/warning states get a { cls, label } pill.
         notifChannelStatus(name) {
             const f = this.settingsForm;
             const off = { cls: 'state-stopped', label: 'Off' };
@@ -1249,11 +1155,7 @@ document.addEventListener('alpine:init', () => {
             return { summary: '', pill: null };
         },
 
-        // Derives the header digest for an Audio settings card. Returns
-        // { summary, pill } (see notifChannelStatus). Always-on monitors
-        // (detection, imbalance, metering) carry no chip - their summary is the
-        // tuned value. Only the genuinely toggleable cards surface a chip, and
-        // only when off: audio incident dumps disabled, or the recording API has no key.
+        // Use the same { summary, pill } shape; only disabled features get a pill.
         audioCardStatus(name) {
             const f = this.settingsForm;
             if (name === 'silence') {
@@ -1282,9 +1184,6 @@ document.addEventListener('alpine:init', () => {
 
         // Stream management (REST API)
 
-        /**
-         * Submits stream form via REST API.
-         */
         async submitStreamForm() {
             if (!this.canSaveStreamForm()) return;
             const mode = streamMode(this.streamForm);
@@ -1416,9 +1315,6 @@ document.addEventListener('alpine:init', () => {
             if (undoClearSecretField(this.recorderForm, 's3_secret_access_key', 'clear_s3_secret')) this.markRecorderFormDirty();
         },
 
-        /**
-         * Submits recorder form via REST API.
-         */
         async submitRecorderForm() {
             const name = this.recorderForm.name?.trim();
             const storageMode = this.recorderForm.storage_mode;
@@ -1544,9 +1440,6 @@ document.addEventListener('alpine:init', () => {
             }
         },
 
-        /**
-         * Tests S3 connection via REST API.
-         */
         async testRecorderS3() {
             this.startTestState('recorderS3');
 
@@ -1569,11 +1462,6 @@ document.addEventListener('alpine:init', () => {
             }
         },
 
-        /**
-         * Computes all display data for a recorder in a single call.
-         * @param {Object} recorder - Recorder object
-         * @returns {Object} Display data with stateClass, statusText, duration
-         */
         getRecorderDisplayData(recorder) {
             const status = this.recorderStatuses[recorder.id] || {};
             const isDeleting = this.deletingRecorders[recorder.id] === recorder.created_at;
@@ -1619,13 +1507,6 @@ document.addEventListener('alpine:init', () => {
             };
         },
 
-        /**
-         * Computes all display data for a stream in a single call.
-         * Use this method to avoid multiple getStreamStatus() calls per render.
-         *
-         * @param {Object} stream - Stream object with id and created_at
-         * @returns {Object} Object with stateClass, statusText, showError, and lastError
-         */
         getStreamDisplayData(stream) {
             const status = this.streamStatuses[stream.id] || {};
             const isDeleting = this.deletingStreams[stream.id] === stream.created_at;
@@ -1757,9 +1638,6 @@ document.addEventListener('alpine:init', () => {
             }
         },
 
-        /**
-         * Loads more events (pagination).
-         */
         async loadMoreEvents() {
             const previousWindowSize = this.eventsWindowSize;
             if (previousWindowSize >= EVENT_HELPERS.EVENT_MAX_READ_LIMIT) {
@@ -1916,17 +1794,11 @@ document.addEventListener('alpine:init', () => {
             return Boolean(this.eventOpenRows[key]);
         },
 
-        /**
-         * Triggers a notification test via REST API.
-         * Uses form values (unsaved) for testing.
-         *
-         * @param {string} type - Test type: 'webhook', 'email', or 'zabbix'
-         */
+        // Test unsaved form values; empty secrets fall back to saved values server-side.
         async sendTest(type) {
             if (!this.testStates[type]) return;
             this.startTestState(type);
 
-            // Build payload with current form values
             const payload = {};
             if (this.settingsForm) {
                 if (type === 'webhook') {
@@ -1961,10 +1833,6 @@ document.addEventListener('alpine:init', () => {
             }
         },
 
-
-        /**
-         * Regenerates the API key for recording endpoints via REST API.
-         */
         async regenerateApiKey() {
             if (!confirm('Regenerate API key? Existing integrations will stop working.')) return;
 
@@ -1984,9 +1852,6 @@ document.addEventListener('alpine:init', () => {
             }
         },
 
-        /**
-         * Copies the API key to clipboard.
-         */
         async copyApiKey() {
             const key = this.settingsForm?.recordingApiKey;
             if (!key) return;
@@ -2000,13 +1865,7 @@ document.addEventListener('alpine:init', () => {
             }
         },
 
-        /**
-         * Shows an alert banner notification.
-         * Clears any existing auto-hide timeout to prevent race conditions.
-         * @param {string} message - Message to display
-         * @param {string} type - Banner type: 'info', 'warning', 'danger'
-         * @param {boolean} persistent - If true, banner stays until dismissed
-         */
+        /** @param {boolean} persistent - Keep visible until dismissed or replaced. */
         showBanner(message, type = 'info', persistent = false) {
             // Clear existing timeout to prevent premature hiding of new banner
             if (this._bannerTimeout) {
@@ -2055,13 +1914,6 @@ document.addEventListener('alpine:init', () => {
             }, TEST_FEEDBACK_MS);
         },
 
-        /**
-         * Shows a toast notification for transient feedback.
-         * Toasts auto-dismiss based on type: success=3s, error=5s.
-         * Maximum 3 toasts visible; oldest removed when exceeded.
-         * @param {string} message - Message to display
-         * @param {string} type - Toast type: 'success', 'error', 'info'
-         */
         showToast(message, type = 'success') {
             const id = ++this._toastIdCounter;
             const duration = type === 'error' ? TOAST_DURATION_ERROR : TOAST_DURATION_SUCCESS;
@@ -2073,20 +1925,14 @@ document.addEventListener('alpine:init', () => {
                 timeoutId: setTimeout(() => this.removeToast(id), duration)
             };
 
-            // Add to front (new on top due to column-reverse CSS)
             this.toasts.unshift(toast);
 
-            // Remove oldest if exceeding max
             while (this.toasts.length > MAX_TOASTS) {
                 const oldest = this.toasts.pop();
                 if (oldest.timeoutId) clearTimeout(oldest.timeoutId);
             }
         },
 
-        /**
-         * Removes a specific toast by ID.
-         * @param {number} id - Toast ID to remove
-         */
         removeToast(id) {
             const index = this.toasts.findIndex(t => t.id === id);
             if (index !== -1) {
@@ -2110,10 +1956,6 @@ document.addEventListener('alpine:init', () => {
             }
         },
 
-        /**
-         * Clears all toasts and their timeouts.
-         * Called on view navigation and WebSocket reconnect.
-         */
         clearToasts() {
             for (const toast of this.toasts) {
                 if (toast.timeoutId) clearTimeout(toast.timeoutId);

@@ -49,9 +49,8 @@ type AlertChannel interface {
 	SendChannelImbalanceStart(ctx context.Context, cfg *config.Snapshot, data ChannelImbalanceData) error
 	// SendChannelImbalanceEnd delivers a channel-balance recovery alert.
 	SendChannelImbalanceEnd(ctx context.Context, cfg *config.Snapshot, data ChannelImbalanceData) error
-	// SendAudioDump delivers an audio dump notification, or returns an error if
-	// the backend cannot carry attachments. The data is passed by pointer to
-	// satisfy hugeParam; implementations must treat it as read-only.
+	// SendAudioDump delivers a dump or errors if attachments are unsupported.
+	// Implementations must treat data as read-only.
 	SendAudioDump(ctx context.Context, cfg *config.Snapshot, data *AudioDumpData) error
 	// SendUploadAbandoned delivers an alert for a recording that exhausted upload retries.
 	SendUploadAbandoned(ctx context.Context, cfg *config.Snapshot, params UploadAbandonedData) error
@@ -127,10 +126,8 @@ func (d *Dispatcher) Channels() []AlertChannel {
 	return d.channels
 }
 
-// dispatch fans one event kind out to every channel in list that passes the
-// subscribes predicate, delivering via send on a per-channel goroutine. Each
-// goroutine receives its own Snapshot copy so channels can never observe each
-// other's mutations.
+// dispatch sends to subscribed channels in separate goroutines. Each receives a
+// shallow Snapshot copy; channels must not mutate its shared slice contents.
 //
 //nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
 func dispatch(

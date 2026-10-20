@@ -34,4 +34,3 @@ jobs:
         with:
           check_together: "yes"
           severity: warning
-          # scandir: './scripts'

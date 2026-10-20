@@ -669,8 +669,7 @@ type EventSubscriptions struct {
 }
 
 // ZabbixEventSubscriptions controls which audio events trigger Zabbix notifications.
-// Zabbix trapper items carry only numeric values and do not support file attachments,
-// so AudioDump is not available for this channel.
+// AudioDump is omitted because trapper items cannot carry file attachments.
 type ZabbixEventSubscriptions struct {
 	// SilenceStart enables notifications when silence is first detected.
 	SilenceStart bool `json:"silence_start"`

@@ -249,8 +249,7 @@ func TestExistingMarkerReservesNameWithoutAnAudioFile(t *testing.T) {
 }
 
 func TestMarkerCreationFailureDoesNotStartEncoder(t *testing.T) {
-	// Output names now depend on IDs, not display-name length. Inject the
-	// filesystem failure rather than depending on the old filename format.
+	// Inject marker-creation failure without relying on platform filename limits.
 	cfg := localOnDemandRecorder(t, "marker-create-failure")
 	originalOpen := openRecordingMarker
 	openRecordingMarker = func(path string, _ int, _ os.FileMode) (*os.File, error) {

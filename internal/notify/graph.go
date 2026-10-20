@@ -35,10 +35,7 @@ const (
 	httpTimeout = 30 * time.Second
 )
 
-// formatGraphRuntimeError converts validation issues into the legacy error
-// strings used by NewGraphClient, ValidateConfig, and TokenSourceContext.
-// Returns the first issue's message (callers historically stopped at the
-// first failing rule).
+// formatGraphRuntimeError maps the first issue to the runtime error wording.
 func formatGraphRuntimeError(issues validation.Issues) error {
 	if len(issues) == 0 {
 		return nil
@@ -268,12 +265,9 @@ func (c *GraphClient) SendMailWithAttachment(
 	return c.doWithRetry(ctx, jsonData)
 }
 
-// ValidateAuth verifies that the email credentials are valid.
+// ValidateAuth checks token acquisition and mailbox lookup, accepting HTTP 403.
+// It does not verify mail-send permission.
 func (c *GraphClient) ValidateAuth() error {
-	// The httpClient already has a token source configured.
-	// Making any request will trigger token acquisition.
-	// We use a lightweight request to /me endpoint which will fail with 403
-	// for app-only auth, but the token acquisition itself validates credentials.
 	apiURL := fmt.Sprintf("%s/users/%s", graphBaseURL, url.PathEscape(c.fromAddress))
 	req, err := http.NewRequest(http.MethodGet, apiURL, http.NoBody)
 	if err != nil {
@@ -291,9 +285,6 @@ func (c *GraphClient) ValidateAuth() error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// 200 = user exists and accessible
-	// 403 = token valid but no User.Read permission (acceptable for Mail.Send only)
-	// 404 = user/mailbox not found
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusForbidden:
 		return nil

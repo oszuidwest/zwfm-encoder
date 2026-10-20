@@ -96,13 +96,11 @@ func (r *GenericRecorder) prepareUploadRequest(filePath string) (uploadRequest, 
 	s3Configured := r.config.HasS3Credentials()
 	r.mu.RUnlock()
 
-	// Local-only mode: no upload needed
 	if storageMode == types.StorageLocal {
 		slog.Info("local storage mode, file saved", "id", r.id, "path", filePath)
 		return uploadRequest{}, false
 	}
 
-	// S3 or Both mode: need S3 config
 	if !s3Configured {
 		slog.Warn("S3 not configured but storage mode requires it", "id", r.id, "mode", storageMode)
 		return uploadRequest{}, false
@@ -355,7 +353,6 @@ func (r *GenericRecorder) enqueuePendingUpload(pending *pendingUpload) {
 	defer r.retryEnqueueMu.Unlock()
 	r.mu.RLock()
 
-	// Prevent duplicates
 	if _, exists := r.retryInFlight[pending.request.localPath]; exists {
 		r.mu.RUnlock()
 		return
@@ -378,11 +375,8 @@ func (r *GenericRecorder) enqueuePendingUpload(pending *pendingUpload) {
 	slog.Info("upload queued for retry", "id", r.id, "file", filepath.Base(pending.request.localPath))
 }
 
-// processRetryQueue attempts to upload all pending files. It runs at hour
-// boundaries, at manager startup and after write-error recovery. A call while
-// another batch runs returns at once, because a second batch could upload a
-// path the first one still owns; files queued meanwhile stay persisted in the
-// spool for a later batch.
+// processRetryQueue gives one batch exclusive ownership of pending paths.
+// An overlapping call requests a follow-up pass and returns immediately.
 func (r *GenericRecorder) processRetryQueue() {
 	r.mu.Lock()
 	if !r.retryProcessMu.TryLock() {
@@ -406,7 +400,6 @@ func (r *GenericRecorder) processRetryQueue() {
 		return
 	}
 
-	// Copy and clear queue
 	pending := slices.Clone(r.retryQueue)
 	r.retryQueue = nil
 	if r.retryInFlight == nil {
@@ -429,7 +422,6 @@ func (r *GenericRecorder) processRetryQueue() {
 	for i := range pending {
 		p := &pending[i]
 
-		// Check 24-hour limit
 		if now.Sub(p.firstAttempt) > MaxUploadRetryAge {
 			slog.Warn("upload abandoned after 24h",
 				"id", r.id,
@@ -464,7 +456,6 @@ func (r *GenericRecorder) processRetryQueue() {
 			continue
 		}
 
-		// Attempt retry
 		p.retryCount++
 		slog.Info("retrying upload",
 			"id", r.id,
@@ -473,7 +464,6 @@ func (r *GenericRecorder) processRetryQueue() {
 		r.logUploadEvent(eventlog.UploadRetry, filepath.Base(p.request.localPath), p.request.s3Key, "", p.retryCount)
 
 		if !r.uploadPending(p) {
-			// Failed - re-add to queue
 			if err := r.savePendingUpload(p); err != nil {
 				slog.Error("failed to persist pending upload", "id", r.id, "file", filepath.Base(p.request.localPath), "error", err)
 			}

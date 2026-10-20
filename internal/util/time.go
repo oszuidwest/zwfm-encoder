@@ -20,10 +20,7 @@ var timestampPatterns = []struct {
 	{regexp.MustCompile(`(\d{4}-\d{2}-\d{2})`), "2006-01-02"},
 }
 
-// OldestToKeep returns the oldest timestamp to retain during cleanup.
-// Files older than this should be deleted.
-//
-// Uses rolling retention: now - (days * 24 hours).
+// OldestToKeep returns now minus days * 24 hours, rather than calendar days.
 func OldestToKeep(days int, now time.Time) time.Time {
 	return now.Add(-time.Duration(days) * 24 * time.Hour)
 }

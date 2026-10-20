@@ -23,13 +23,11 @@ func buildWindowsArgs(device string) []string {
 // windowsDevicePattern matches lines like: [dshow @ addr] "Device Name" (audio).
 var windowsDevicePattern = regexp.MustCompile(`\[dshow[^\]]*\]\s*"([^"]+)"\s*\(audio\)`)
 
-// Devices returns the available audio input devices.
+// Devices lists DirectShow audio inputs without using the device cache.
 func (cfg *CaptureConfig) Devices() []Device {
 	return parseDeviceList(DeviceListConfig{
 		Command: []string{"ffmpeg", "-hide_banner", "-f", "dshow", "-list_devices", "true", "-i", "dummy"},
-		// No section markers - FFmpeg versions vary in output format.
-		// Some show "DirectShow audio devices" header, others don't.
-		// Instead, we filter by lines ending with "(audio)".
+		// Match "(audio)" lines: FFmpeg's section headers vary by version.
 		AudioStartMarker: "",
 		AudioStopMarker:  "",
 		DevicePattern:    windowsDevicePattern,

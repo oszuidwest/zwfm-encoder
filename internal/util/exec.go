@@ -10,7 +10,7 @@ import (
 // All subprocess spawns in this codebase must go through Command or
 // CommandContext.
 //
-//nolint:gosec // G204: callers pass internal platform/config commands, never user input
+//nolint:gosec // G204: configured executables and arguments run directly, without a shell.
 func Command(name string, args ...string) *exec.Cmd {
 	cmd := exec.Command(name, args...)
 	hideConsole(cmd)
@@ -20,7 +20,7 @@ func Command(name string, args ...string) *exec.Cmd {
 // CommandContext is exec.CommandContext with console-hiding applied on
 // Windows. See Command.
 //
-//nolint:gosec // G204: callers pass internal platform/config commands, never user input
+//nolint:gosec // G204: configured executables and arguments run directly, without a shell.
 func CommandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, name, args...)
 	hideConsole(cmd)
