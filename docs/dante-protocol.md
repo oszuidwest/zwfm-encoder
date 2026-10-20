@@ -66,7 +66,7 @@ Discovery requirements:
 
 - Use RFC 6762 section 5.1 one-shot queries: send a standard DNS query (questions for SRV and TXT of the full instance name, class IN) to 224.0.0.251:5353 from an ephemeral UDP port. Responders answer by unicast to that port. Do not bind port 5353 and do not join the multicast group.
 - If an interface is configured, send the query on that interface only. Otherwise send it on every interface that is up, multicast-capable and not loopback.
-- Re-send the query every second; give up after 4 seconds per channel.
+- Re-send the query every second; give up after 4 seconds per channel. The same limit bounds a query write that blocks.
 - Responses frequently contain records for other instances of the same service (observed). Only use SRV and TXT records whose owner name equals the requested full name (case-insensitive). Look in both the answer and the additional sections. SRV and TXT may arrive in different datagrams.
 - The transmitter's IPv4 address is the source address of the response.
 - Accept responses only from UDP source port 5353 and an IPv4 subnet on the receiving interface, which must be one of the queried interfaces. Receive-interface metadata is required; a different selected interface's subnet cannot authorize a reply. RFC 6762 section 11 specifies this subnet check for unicast replies; IP TTL 255 is not required, and TTL receive control is unavailable in `x/net/ipv4` on Windows. Windows obtains the interface via Winsock `IP_PKTINFO`.
@@ -98,7 +98,7 @@ Control messages are exchanged between a UDP socket bound to the local IPv4 addr
 | 6      | 2    | Opcode; echoed in the response                                  |
 | 8      | 2    | Status: `0x0000` in requests. In responses `0x0001` = success, anything else is an error code |
 
-A response belongs to a request when sequence and opcode match. Ignore other datagrams and datagrams shorter than the header or whose length field is smaller than 10 or larger than the datagram. Wait at most 3 seconds (and never past the context deadline) for the response. Observed error code: `0x0314` when the transmitter itself has no usable network.
+A response belongs to a request when sequence and opcode match. Ignore other datagrams and datagrams shorter than the header or whose length field is smaller than 10 or larger than the datagram. Bound the whole exchange, including the write, by its request timeout (3 seconds for the request flow, 1 second for stop-flow, never past the context deadline). Install read/write deadlines and the cancellation interrupt before sending. Observed error code: `0x0314` when the transmitter itself has no usable network.
 
 ### 4.2 Request flow (opcode `0x0100`)
 

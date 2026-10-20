@@ -155,7 +155,7 @@ func (c *memoryPacketConn) SetReadDeadline(deadline time.Time) error {
 	return nil
 }
 
-// shortcut: Dante never sets write deadlines, implement them if its transport starts using them.
+// Writes are nonblocking in this in-memory UDP network.
 func (c *memoryPacketConn) SetWriteDeadline(time.Time) error     { return nil }
 func (c *memoryPacketConn) SetDeadline(deadline time.Time) error { return c.SetReadDeadline(deadline) }
 

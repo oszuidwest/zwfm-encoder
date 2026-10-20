@@ -320,6 +320,8 @@ func FuzzGroupEvents(f *testing.F) {
 				},
 			})
 		}
+		// GroupEvents takes ReadLast's newest-first order.
+		slices.Reverse(events)
 		views := DecorateEvents(events)
 		groups := GroupEvents(views, nil)
 		assertPartition(t, views, &groups)
@@ -823,4 +825,66 @@ func TestGroupEventsInputLossOngoingThenResolved(t *testing.T) {
 		t.Fatalf("attention = %+v, want only the open silence incident", groups.Attention)
 	}
 	assertPartition(t, resolved, &groups)
+}
+
+func TestGroupEventsPairsInputByAppendOrderAfterClockRollback(t *testing.T) {
+	t.Parallel()
+	base := time.Date(2026, 10, 16, 3, 0, 0, 0, time.UTC)
+	for _, restoredSecond := range []int{-3600, 0, 10} {
+		t.Run(fmt.Sprint(restoredSecond), func(t *testing.T) {
+			// ReadLast supplies reverse append order, independent of the clock.
+			events := decorateNewestFirst(
+				testEvent(base, -7200, InputLost, map[string]any{"error": "latest outage"}),
+				testEvent(base, restoredSecond, InputRestored, nil),
+				testEvent(base, 20, SilenceStart, map[string]any{"incident_id": 7}),
+				testEvent(base, 0, InputLost, map[string]any{"error": "first outage"}),
+			)
+			groups := GroupEvents(events, nil)
+			if len(groups.Resolved) != 1 || len(groups.Attention) != 2 {
+				t.Fatalf("groups = %+v, want one resolved input outage and two open incidents", groups)
+			}
+			resolved := groups.Resolved[0]
+			if resolved.Title != "Audio input lost" || resolved.StatusText != "Resolved" || len(resolved.Events) != 2 || resolved.Detail != "first outage" {
+				t.Fatalf("resolved = %+v, want first input outage resolved", resolved)
+			}
+			var latestOpen bool
+			for _, item := range groups.Attention {
+				if item.Title == "Audio input lost" {
+					latestOpen = item.Detail == "latest outage" && len(item.Events) == 1
+				}
+			}
+			if !latestOpen {
+				t.Fatalf("attention = %+v, want latest input outage open", groups.Attention)
+			}
+			assertPartition(t, events, &groups)
+		})
+	}
+}
+
+func TestGroupEventsPairsStreamAndSilenceByAppendOrderAfterClockRollback(t *testing.T) {
+	t.Parallel()
+	base := time.Date(2026, 10, 16, 3, 0, 0, 0, time.UTC)
+	// Each recovery is appended after its problem but stamped an hour earlier.
+	events := decorateNewestFirst(
+		testEvent(base, -3600, StreamStarted, map[string]any{"stream_name": "Listener", "mode": "listener"}),
+		testEvent(base, -3600, SilenceEnd, map[string]any{"incident_id": 7}),
+		testEvent(base, 0, SilenceStart, map[string]any{"incident_id": 7}),
+		testEvent(base, 0, StreamError, map[string]any{"stream_name": "Listener", "mode": "listener", "error": "encoder exited"}),
+	)
+	for i := range events {
+		if matchesFilter(events[i].Type, FilterStream) {
+			events[i].StreamID = "listener"
+		}
+	}
+	groups := GroupEvents(events, nil)
+	if len(groups.Attention) != 0 || len(groups.Resolved) != 2 {
+		t.Fatalf("groups = %+v, want both incidents resolved", groups)
+	}
+	recovery := map[string]EventType{"Stream disconnected": StreamStarted, "Silence on input": SilenceEnd}
+	for _, item := range groups.Resolved {
+		if last := item.Events[len(item.Events)-1].Type; last != recovery[item.Title] {
+			t.Fatalf("%s lists %q last, want %q", item.Title, last, recovery[item.Title])
+		}
+	}
+	assertPartition(t, events, &groups)
 }
