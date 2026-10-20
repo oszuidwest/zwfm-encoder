@@ -26,6 +26,9 @@ var afterFunc = time.AfterFunc
 // recordingStat lets tests hold a filename check like an unresponsive network share.
 var recordingStat = os.Stat
 
+// checkRecordingPath lets lifecycle tests hold directory validation on a slow mount.
+var checkRecordingPath = util.CheckPathWritable
+
 // clockSynced and clockSyncPoll gate the first file on a synchronized clock;
 // tests replace them.
 var (
@@ -265,7 +268,7 @@ func (r *GenericRecorder) startAsync(gen uint64) {
 		// S3-only: create spool directory (should always be writable)
 		//nolint:gosec // Spool directory needs to be readable
 		if err := os.MkdirAll(filepath.Join(spoolDir, "recorders", id), 0o755); err != nil {
-			r.setError(fmt.Sprintf("failed to create spool directory: %v", err))
+			r.setStartError(gen, fmt.Sprintf("failed to create spool directory: %v", err))
 			return
 		}
 	}
@@ -274,11 +277,11 @@ func (r *GenericRecorder) startAsync(gen uint64) {
 		// Local or Both: validate path and check writability
 		// CheckPathWritable also creates the directory if needed
 		if err := util.ValidatePath("local_path", localPath); err != nil {
-			r.setError(fmt.Sprintf("invalid local_path: %v", err))
+			r.setStartError(gen, fmt.Sprintf("invalid local_path: %v", err))
 			return
 		}
-		if err := util.CheckPathWritable(localPath); err != nil {
-			r.setError("local path is not writable")
+		if err := checkRecordingPath(localPath); err != nil {
+			r.setStartError(gen, "local path is not writable")
 			return
 		}
 	}
@@ -329,9 +332,12 @@ func (r *GenericRecorder) startAsync(gen uint64) {
 	r.logEvent(eventlog.RecorderStarted, logParams)
 }
 
-func (r *GenericRecorder) setError(msg string) {
+func (r *GenericRecorder) setStartError(gen uint64, msg string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.startGen != gen || r.state != types.ProcessStarting {
+		return
+	}
 	r.state = types.ProcessError
 	r.recording.Store(false)
 	r.lastError = msg

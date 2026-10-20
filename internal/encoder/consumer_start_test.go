@@ -20,6 +20,7 @@ func TestStopCancelsDelayedProductionConsumerStarts(t *testing.T) {
 		name, message    string
 		manual, listener bool
 	}{
+		{name: "manual reserved stream", message: "starting stream", manual: true},
 		{name: "automatic reserved stream", message: "starting stream"},
 		{name: "automatic before reservation", message: "skipping disabled stream"},
 		{name: "manual reserved listener", message: "starting listener encoder", manual: true, listener: true},
@@ -43,7 +44,8 @@ func TestStopCancelsDelayedProductionConsumerStarts(t *testing.T) {
 				e.config.Streaming.Streams[1].Host = "127.0.0.1"
 				e.config.Streaming.Streams[1].Port = freeUDPPort(t)
 			}
-			e.sourceCancel = func() {}
+			canceled := make(chan struct{})
+			e.sourceCancel = func() { close(canceled) }
 			previous := slog.Default()
 			previousOutput, previousFlags := log.Writer(), log.Flags()
 			entered, blocked, started := make(chan struct{}), make(chan struct{}), make(chan struct{})
@@ -80,6 +82,11 @@ func TestStopCancelsDelayedProductionConsumerStarts(t *testing.T) {
 				release()
 				<-stopped
 				t.Fatal("Stop waited for a delayed consumer operation instead of canceling it")
+			}
+			select {
+			case <-canceled:
+			default:
+				t.Fatal("consumer startup prevented source cancellation")
 			}
 			if tc.listener {
 				port := e.config.Streaming.Streams[1].Port
