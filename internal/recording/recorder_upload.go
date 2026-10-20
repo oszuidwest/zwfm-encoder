@@ -356,6 +356,10 @@ func (r *GenericRecorder) enqueuePendingUpload(pending *pendingUpload) {
 	r.mu.RLock()
 
 	// Prevent duplicates
+	if _, exists := r.retryInFlight[pending.request.localPath]; exists {
+		r.mu.RUnlock()
+		return
+	}
 	for i := range r.retryQueue {
 		if r.retryQueue[i].request.localPath == pending.request.localPath {
 			r.mu.RUnlock()
@@ -374,10 +378,29 @@ func (r *GenericRecorder) enqueuePendingUpload(pending *pendingUpload) {
 	slog.Info("upload queued for retry", "id", r.id, "file", filepath.Base(pending.request.localPath))
 }
 
-// processRetryQueue attempts to upload all pending files.
-// Called from rotateFile() at hour boundaries.
+// processRetryQueue attempts to upload all pending files. It runs at hour
+// boundaries, at manager startup and after write-error recovery. A call while
+// another batch runs returns at once, because a second batch could upload a
+// path the first one still owns; files queued meanwhile stay persisted in the
+// spool for a later batch.
 func (r *GenericRecorder) processRetryQueue() {
 	r.mu.Lock()
+	if !r.retryProcessMu.TryLock() {
+		// Another batch owns this recorder's uploads; it runs once more afterwards.
+		r.retryRequested = true
+		r.mu.Unlock()
+		return
+	}
+	defer func() {
+		r.mu.Lock()
+		again := r.retryRequested
+		r.retryRequested = false
+		r.retryProcessMu.Unlock()
+		r.mu.Unlock()
+		if again {
+			go r.processRetryQueue()
+		}
+	}()
 	if len(r.retryQueue) == 0 {
 		r.mu.Unlock()
 		return
@@ -386,7 +409,20 @@ func (r *GenericRecorder) processRetryQueue() {
 	// Copy and clear queue
 	pending := slices.Clone(r.retryQueue)
 	r.retryQueue = nil
+	if r.retryInFlight == nil {
+		r.retryInFlight = make(map[string]struct{})
+	}
+	for i := range pending {
+		r.retryInFlight[pending[i].request.localPath] = struct{}{}
+	}
 	r.mu.Unlock()
+	defer func() {
+		r.mu.Lock()
+		for i := range pending {
+			delete(r.retryInFlight, pending[i].request.localPath)
+		}
+		r.mu.Unlock()
+	}()
 
 	now := time.Now()
 

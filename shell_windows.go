@@ -4,7 +4,9 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"net"
+	"net/netip"
+	"strconv"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/tray"
@@ -16,10 +18,15 @@ import (
 func runShell(ctx context.Context, a *app) {
 	cfg := a.cfg.Snapshot()
 	logDir := eventlog.DefaultLogDir(cfg.WebPort)
+	// A specific bind address is not reachable through localhost.
+	host := "localhost"
+	if addr, err := netip.ParseAddr(cfg.WebBindAddress); err == nil && !addr.IsUnspecified() {
+		host = addr.String()
+	}
 
 	trayCfg := tray.Config{
 		AppName:      cfg.StationName,
-		URL:          fmt.Sprintf("http://localhost:%d", cfg.WebPort),
+		URL:          "http://" + net.JoinHostPort(host, strconv.Itoa(cfg.WebPort)),
 		LogDir:       logDir,
 		StartEncoder: a.encoder.Start,
 		StopEncoder:  a.encoder.Stop,

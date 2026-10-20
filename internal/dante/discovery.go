@@ -1,6 +1,7 @@
 package dante
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -31,7 +32,14 @@ type channelInfo struct {
 func parseTXT(items []string) (channelInfo, error) {
 	values := make(map[string]string)
 	for _, item := range items {
-		if key, value, found := strings.Cut(item, "="); found {
+		key, value, _ := strings.Cut(item, "=")
+		// Keys are printable ASCII; Unicode case folding could turn a
+		// malformed key such as "İD" into a recognized one.
+		if strings.ContainsFunc(key, func(r rune) bool { return r < 0x20 || r > 0x7e }) {
+			continue
+		}
+		key = strings.ToLower(key)
+		if _, exists := values[key]; !exists {
 			values[key] = value
 		}
 	}
@@ -237,8 +245,14 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 	}
 	lookupCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
+	// The deadline also rejects a query written before the asynchronous
+	// interrupt has closed the socket.
+	lookupDeadline, _ := lookupCtx.Deadline()
+	if err := conn.SetDeadline(lookupDeadline); err != nil {
+		return channelInfo{}, fmt.Errorf("set discovery deadline: %w", err)
+	}
 	stopInterrupt := context.AfterFunc(lookupCtx, func() {
-		_ = conn.SetReadDeadline(time.Now())
+		_ = conn.Close()
 	})
 	defer stopInterrupt()
 
@@ -246,13 +260,13 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 	buffer := make([]byte, 65535)
 	nextQuery := time.Time{}
 	var info channelInfo
-	var lastParseErr error
+	lookup := discoveryLookup{parent: ctx, ctx: lookupCtx, deadline: lookupDeadline, channel: channel}
 
 	for {
 		now := time.Now()
 		if !now.Before(nextQuery) {
 			if err := queryDante(conn, interfaces, query, destination); err != nil {
-				return channelInfo{}, fmt.Errorf("send discovery query for %q: %w", channel, err)
+				return channelInfo{}, cmp.Or(lookup.ended(err, lookupDeadline), fmt.Errorf("send discovery query for %q: %w", channel, err))
 			}
 			nextQuery = now.Add(time.Second)
 		}
@@ -261,41 +275,66 @@ func discoverChannel(ctx context.Context, interfaces []net.Interface, transmitte
 			deadline = earlierTime(deadline, contextDeadline)
 		}
 		if err := conn.SetReadDeadline(deadline); err != nil {
-			return channelInfo{}, fmt.Errorf("set discovery deadline: %w", err)
+			return channelInfo{}, cmp.Or(lookup.ended(err, time.Time{}), fmt.Errorf("set discovery deadline: %w", err))
 		}
 		n, source, ifIndex, err := readPacket(buffer)
 		if err != nil {
-			if lookupErr := lookupCtx.Err(); lookupErr != nil {
-				if contextErr := ctx.Err(); contextErr != nil {
-					return channelInfo{}, fmt.Errorf("discover channel %q: %w", channel, contextErr)
-				}
-				if lastParseErr != nil {
-					return channelInfo{}, fmt.Errorf(
-						"discover channel %q timed out after malformed response: %w",
-						channel,
-						lastParseErr,
-					)
-				}
-				return channelInfo{}, fmt.Errorf("discover channel %q: %w", channel, lookupErr)
+			if ended := lookup.ended(err, deadline); ended != nil {
+				return channelInfo{}, ended
 			}
 			if errors.Is(err, os.ErrDeadlineExceeded) {
-				continue
+				continue // The next query is due before the lookup deadline.
 			}
 			return channelInfo{}, fmt.Errorf("receive discovery response for %q: %w", channel, err)
 		}
 
-		if !validDiscoverySource(source, ifIndex, networks) {
+		if err := validateDiscoverySource(source, ifIndex, networks); err != nil {
+			// Only a reply carrying the requested records may replace the diagnostic.
+			if port, txt, _ := parseDNSResponse(buffer[:n], instance); port != 0 || txt != nil {
+				lookup.lastResponseErr = fmt.Errorf("from %v: %w", source, err)
+			}
 			continue
 		}
 		complete, parseErr := mergeDiscoveryResponse(&info, buffer[:n], source.IP, instance, requiredSource)
 		if parseErr != nil {
-			lastParseErr = parseErr
+			lookup.lastResponseErr = fmt.Errorf("from %v: %w", source, parseErr)
 			continue
 		}
 		if complete {
 			return info, nil
 		}
 	}
+}
+
+// discoveryLookup tells why a channel lookup ended.
+type discoveryLookup struct {
+	parent, ctx     context.Context
+	deadline        time.Time
+	channel         string
+	lastResponseErr error
+}
+
+// ended returns nil for a plain transport error, else the caller's
+// cancellation or the lookup's own timeout, including the last rejected reply.
+func (l *discoveryLookup) ended(err error, operationDeadline time.Time) error {
+	var lookupErr error
+	switch {
+	case l.parent.Err() != nil:
+		lookupErr = l.parent.Err()
+	case errors.Is(err, os.ErrDeadlineExceeded) && operationDeadline.Equal(l.deadline) || errors.Is(err, net.ErrClosed) && l.ctx.Err() != nil:
+		lookupErr = context.DeadlineExceeded
+	default:
+		return nil
+	}
+	if l.lastResponseErr != nil {
+		return fmt.Errorf(
+			"discover channel %q: %w; last rejected reply: %w",
+			l.channel,
+			lookupErr,
+			l.lastResponseErr,
+		)
+	}
+	return fmt.Errorf("discover channel %q: %w", l.channel, lookupErr)
 }
 
 func discoveryNetworks(interfaces []net.Interface) (map[int][]*net.IPNet, error) {
@@ -314,15 +353,27 @@ func discoveryNetworks(interfaces []net.Interface) (map[int][]*net.IPNet, error)
 	return networks, nil
 }
 
-func validDiscoverySource(source *net.UDPAddr, ifIndex int, networks map[int][]*net.IPNet) bool {
+func validateDiscoverySource(source *net.UDPAddr, ifIndex int, networks map[int][]*net.IPNet) error {
 	// A packet without receive-interface metadata (index 0) is never trusted.
-	if source == nil || source.Port != 5353 || ifIndex <= 0 {
-		return false
+	if source == nil {
+		return errors.New("missing UDP source")
+	}
+	if source.Port != 5353 {
+		return errors.New("not from mDNS port 5353")
+	}
+	if ifIndex <= 0 {
+		return errors.New("missing receiving interface")
+	}
+	if _, ok := networks[ifIndex]; !ok {
+		return fmt.Errorf("receiving interface %d was not selected", ifIndex)
 	}
 	// RFC 6762 section 11 checks legacy unicast replies against local subnets.
-	return slices.ContainsFunc(networks[ifIndex], func(network *net.IPNet) bool {
+	if !slices.ContainsFunc(networks[ifIndex], func(network *net.IPNet) bool {
 		return network.Contains(source.IP)
-	})
+	}) {
+		return fmt.Errorf("outside the IPv4 subnets of receiving interface %d", ifIndex)
+	}
+	return nil
 }
 
 // sendDiscoveryQuery succeeds when any interface accepts the query.
@@ -349,19 +400,20 @@ func mergeDiscoveryResponse(info *channelInfo, packet []byte, source net.IP, req
 	if source == nil {
 		return false, nil
 	}
-	if requiredSource != nil && !source.Equal(requiredSource) {
-		return false, nil
-	}
-	if info.address != nil && !source.Equal(info.address) {
-		return false, nil
-	}
-
 	port, txt, err := parseDNSResponse(packet, requested)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("malformed response: %w", err)
 	}
+	// Other devices answer other names; only answers to this request are
+	// worth reporting as a mismatch.
 	if port == 0 && txt == nil {
 		return false, nil
+	}
+	if requiredSource != nil && !source.Equal(requiredSource) {
+		return false, fmt.Errorf("does not match required transmitter %s", requiredSource)
+	}
+	if info.address != nil && !source.Equal(info.address) {
+		return false, fmt.Errorf("does not match earlier response from %s", info.address)
 	}
 	if info.address == nil {
 		info.address = source

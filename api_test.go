@@ -9,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,6 +29,46 @@ func TestWriteConfigErrorRecorderNameConflict(t *testing.T) {
 	(&Server{}).writeConfigError(rec, err)
 	assertStatus(t, rec, http.StatusBadRequest)
 	assertErrorEqual(t, rec, err.Error())
+}
+
+func TestCommittedSaveReportsSavedState(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX directory permissions as a regular user")
+	}
+	for _, name := range []string{"settings", "regenerate-key"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := config.New(filepath.Join(dir, "config.json"))
+			if err := cfg.Load(); err != nil {
+				t.Fatal(err)
+			}
+			body, err := json.Marshal(validBaselineSettings(cfg))
+			if err != nil {
+				t.Fatal(err)
+			}
+			updates := make(chan any, 1)
+			s := &Server{config: cfg, wsClients: map[chan any]struct{}{updates: {}}}
+			handler := s.handleAPISettings
+			if name == "regenerate-key" {
+				handler = s.handleAPIRegenerateKey
+			}
+			// The rename into dir works; opening dir to sync it does not.
+			if err := os.Chmod(dir, 0o300); err != nil { //nolint:gosec // An unreadable test directory is the point.
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(dir, 0o700) }) //nolint:gosec // Restore for cleanup.
+			rec := runJSONHandler(t, handler, http.MethodPost, "/api/"+name, string(body))
+			assertStatus(t, rec, http.StatusInternalServerError)
+			if !strings.Contains(rec.Body.String(), "was saved") || !strings.Contains(rec.Body.String(), "restart") {
+				t.Fatalf("committed save response = %s, want saved state and recovery guidance", rec.Body.String())
+			}
+			select {
+			case <-updates:
+			default:
+				t.Fatal("committed configuration did not notify dashboard clients to reload")
+			}
+		})
+	}
 }
 
 func TestValidateRecorderLocalPathCreatesWritableDirectory(t *testing.T) {
@@ -502,9 +544,32 @@ func TestBuildHealthResponseUnhealthyConditions(t *testing.T) {
 	}
 }
 
+// defaultConfigFile is a config created by Load once, so tests do not pay a
+// password hash each.
+var defaultConfigFile = sync.OnceValues(func() ([]byte, error) {
+	dir, err := os.MkdirTemp("", "encoder-default-config")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	path := filepath.Join(dir, "config.json")
+	if err := config.New(path).Load(); err != nil {
+		return nil, err
+	}
+	return os.ReadFile(path) //nolint:gosec // Test-controlled temporary path.
+})
+
 func freshServer(t *testing.T) *Server {
 	t.Helper()
-	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
+	data, err := defaultConfigFile()
+	if err != nil {
+		t.Fatalf("create default config: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.New(path)
 	if err := cfg.Load(); err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}

@@ -20,7 +20,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// afterFunc schedules hourly rotations; tests replace it to rotate by hand.
+// afterFunc schedules recorder timers; tests replace it to fire callbacks by hand.
 var afterFunc = time.AfterFunc
 
 // reserveRecordingFile exclusively creates path; tests replace it to hold a
@@ -40,6 +40,9 @@ var removeEmptyRecording = os.Remove
 
 // openRecordingMarker lets tests reproduce marker persistence failures on every OS.
 var openRecordingMarker = os.OpenFile
+
+// writeRecordingFailure lets tests simulate a full disk after marker truncation.
+var writeRecordingFailure = os.WriteFile
 
 // writerDrainTimeout bounds graceful writer drain; tests shorten it.
 var writerDrainTimeout = 5 * time.Second
@@ -115,8 +118,11 @@ type GenericRecorder struct {
 	uploadClosed        bool      // Routes late uploads to retry after Stop.
 
 	// Retry queue for failed uploads (protected by mu)
+	retryProcessMu sync.Mutex // Only one retry batch may own paths at a time.
 	retryQueue     []pendingUpload
-	retryEnqueueMu sync.Mutex // Serializes persistence/publication without holding the state lock over disk I/O.
+	retryInFlight  map[string]struct{} // Paths remain owned while temporarily absent from retryQueue; protected by mu.
+	retryRequested bool                // A pass asked for during a batch runs after it; protected by mu.
+	retryEnqueueMu sync.Mutex          // Serializes persistence/publication without holding the state lock over disk I/O.
 
 	// Rotation timer (hourly mode)
 	rotationTimer      *time.Timer
@@ -127,7 +133,8 @@ type GenericRecorder struct {
 	retiringFiles map[string]struct{} // Files rotations are finalizing; protected from cleanup until queued.
 
 	// Max duration timer (on-demand mode)
-	durationTimer *time.Timer
+	durationTimer      *time.Timer
+	durationGeneration uint64
 }
 
 // GenericRecorderConfig holds the parameters for creating a GenericRecorder.
@@ -225,7 +232,9 @@ func (r *GenericRecorder) Start() error {
 		return ErrRecorderStopping
 	}
 
-	// Clear any previous error and set starting state
+	// Clear any previous error and set starting state. A stale start can still
+	// move a run to Error without cancelling its limit, so cancel it here too.
+	r.cancelDurationLimitLocked()
 	r.lastError = ""
 	r.audioDrops.Store(0)
 	r.state = types.ProcessStarting
@@ -378,7 +387,12 @@ func (r *GenericRecorder) logEvent(eventType eventlog.EventType, p *eventlog.Rec
 // Stop stops the recorder.
 func (r *GenericRecorder) Stop() error {
 	r.mu.Lock()
+	return r.stopLocked()
+}
 
+// stopLocked must be called with r.mu held; it unlocks r.mu before waiting
+// for cleanup.
+func (r *GenericRecorder) stopLocked() error {
 	// Already stopped or stopping
 	if r.state == types.ProcessStopped || r.state == types.ProcessStopping {
 		r.mu.Unlock()
@@ -394,10 +408,7 @@ func (r *GenericRecorder) Stop() error {
 		r.rotationTimer = nil
 	}
 	r.rotationGeneration++
-	if r.durationTimer != nil {
-		r.durationTimer.Stop()
-		r.durationTimer = nil
-	}
+	r.cancelDurationLimitLocked()
 	r.mu.Unlock()
 
 	// Queue the final file, and any file a rotation is still finalizing,
@@ -497,6 +508,8 @@ func (r *GenericRecorder) handleWriteError(result *ffmpeg.StartResult, writeErr 
 	if r.state != types.ProcessStopping {
 		r.state = types.ProcessError
 	}
+	// The run is over; its duration limit must not later stop or clear anything.
+	r.cancelDurationLimitLocked()
 	r.recording.Store(false)
 	r.lastError = writeErr.Error()
 	run := r.claimEncoderLocked() // audioWriter closes writerDone on return.
@@ -606,6 +619,13 @@ func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 			r.rotationTimer = nil
 		}
 		r.rotationGeneration++
+		if r.state == types.ProcessRunning && r.maxDurationMinutes > 0 {
+			r.scheduleDurationLimitLocked()
+		}
+	} else if cfg.RecordingMode == types.RecordingHourly && r.config.RecordingMode != types.RecordingHourly &&
+		r.state == types.ProcessRunning {
+		r.cancelDurationLimitLocked()
+		r.scheduleRotationLocked(time.Now())
 	}
 	updated := *cfg
 	updated.IDBasedFiles, updated.LegacyFilePrefix = true, r.config.LegacyFilePrefix
@@ -710,25 +730,38 @@ func (o *recordingOutput) clearUnfinalized() error {
 }
 
 func removeUnfinalizedMarker(recording string) error {
-	if err := os.Remove(recording + unfinalizedRecordingSuffix); err != nil && !errors.Is(err, os.ErrNotExist) {
+	marker := recording + unfinalizedRecordingSuffix
+	if info, err := os.Lstat(marker); err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o200 == 0 { // #nosec G703 -- Marker derives from a validated reservation or recorder-owned directory entry.
+		if err := os.Chmod(marker, 0o600); err != nil { // #nosec G703 -- Same recorder-owned regular marker checked above.
+			return fmt.Errorf("make unfinalized recording marker writable: %w", err)
+		}
+	}
+	if err := os.Remove(marker); err != nil && !errors.Is(err, os.ErrNotExist) { // #nosec G703 -- Path comes from a validated reservation or a recorder-owned spool/retention entry.
 		return fmt.Errorf("clear unfinalized recording marker: %w", err)
 	}
 	return nil
 }
 
-// recordFailure writes why the output failed into its marker. A marker without
-// a reason only means the run was interrupted (a crash or power loss), and
-// spool recovery uploads such a file as before quarantine existed.
+// recordFailure stores the reason and marks failure using read-only metadata,
+// independently of whether the reason write succeeds.
 func (o *recordingOutput) recordFailure(cause error) {
 	if !o.unfinalized {
 		return
 	}
-	if err := os.WriteFile(o.file.Name()+unfinalizedRecordingSuffix, []byte(cause.Error()+"\n"), 0o600); err != nil { //nolint:gosec // G703: our own marker next to the validated reservation.
-		slog.Warn("cannot record why a recording failed; it will be treated as interrupted", "file", o.file.Name(), "error", err)
+	marker := o.file.Name() + unfinalizedRecordingSuffix
+	if err := writeRecordingFailure(marker, []byte(cause.Error()+"\n"), 0o600); err != nil {
+		slog.Warn("cannot record why a recording failed", "file", o.file.Name(), "error", err)
+	}
+	info, err := os.Lstat(marker) // #nosec G703 -- Marker belongs to the validated recording reservation.
+	if err == nil && info.Mode().IsRegular() {
+		err = os.Chmod(marker, 0o400) // #nosec G703 -- Same validated reservation marker, checked as a regular file above.
+	}
+	if err != nil {
+		slog.Warn("cannot persist recording failure flag", "file", o.file.Name(), "error", err)
 	}
 }
 
-// recordingFailed reports whether path has a marker holding a failure reason;
+// recordingFailed recognizes a failure reason or read-only failure flag;
 // a marker that is not a plain file also counts as failed.
 func recordingFailed(path string) (bool, error) {
 	info, err := os.Lstat(path + unfinalizedRecordingSuffix)
@@ -738,7 +771,7 @@ func recordingFailed(path string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("check unfinalized recording marker: %w", err)
 	}
-	return !info.Mode().IsRegular() || info.Size() > 0, nil
+	return !info.Mode().IsRegular() || info.Size() > 0 || info.Mode().Perm()&0o200 == 0, nil
 }
 
 // finalizedRecording stats a recording for upload without following links. ok
@@ -1062,21 +1095,36 @@ func (r *GenericRecorder) rotateFile(generation uint64) {
 
 	// Process the retry queue off the rotation path: a slow or unreachable S3
 	// endpoint may block for many minutes per pending file, and Stop waits for
-	// this rotation through retiring. Safe concurrently:
-	// the queue is snapshotted and cleared under r.mu, so an overlapping run
-	// sees it empty.
+	// this rotation through retiring. Safe concurrently: an overlapping run
+	// returns at once while a batch owns its paths.
 	go r.processRetryQueue()
 }
 
 // Must be called with r.mu held.
 func (r *GenericRecorder) scheduleDurationLimitLocked() {
+	r.cancelDurationLimitLocked()
+	generation := r.durationGeneration
 	duration := time.Duration(r.maxDurationMinutes) * time.Minute
-	r.durationTimer = time.AfterFunc(duration, func() {
+	r.durationTimer = afterFunc(duration, func() {
+		r.mu.Lock()
+		if generation != r.durationGeneration {
+			r.mu.Unlock()
+			return
+		}
 		slog.Info("recorder max duration reached", "id", r.id, "duration", duration)
-		if err := r.Stop(); err != nil {
+		if err := r.stopLocked(); err != nil {
 			slog.Error("failed to stop recorder after max duration", "id", r.id, "error", err)
 		}
 	})
+}
+
+// Must be called with r.mu held.
+func (r *GenericRecorder) cancelDurationLimitLocked() {
+	if r.durationTimer != nil {
+		r.durationTimer.Stop()
+		r.durationTimer = nil
+	}
+	r.durationGeneration++
 }
 
 func (r *GenericRecorder) generateFilename(t time.Time) string {
