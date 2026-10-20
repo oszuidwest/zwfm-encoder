@@ -141,3 +141,64 @@ prompt_user() {
 		})
 	}
 }
+
+func TestInstallerHeartbeatCron(t *testing.T) {
+	t.Parallel()
+	script, err := os.ReadFile("deploy/install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, fragment, found := strings.Cut(string(script), "# Set up heartbeat monitoring if enabled")
+	if !found {
+		t.Fatal("installer heartbeat block missing")
+	}
+	fragment, _, found = strings.Cut(fragment, "# COMPLETION")
+	if !found {
+		t.Fatal("installer heartbeat block end missing")
+	}
+	stub, err := os.ReadFile("tests/fixtures/crontab.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const url = "https://heartbeat.example/abc"
+	cronjob := "* * * * * curl -fsS --max-time 10 -o /dev/null '" + url + "' > /dev/null 2>&1\n"
+	for _, tc := range []struct {
+		name, existing string
+		missing        bool
+	}{
+		// Fresh Raspberry Pi OS: root has no crontab and `crontab -l` exits 1.
+		{name: "no crontab", missing: true},
+		{name: "empty crontab"},
+		{name: "unrelated jobs kept", existing: "# m h dom mon dow command\n0 3 * * * /usr/local/bin/backup\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			//nolint:gosec // G306: executable fake binary in an isolated test directory.
+			if err := os.WriteFile(filepath.Join(dir, "crontab"), stub, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, "crontab.txt")
+			if !tc.missing {
+				if err := os.WriteFile(path, []byte(tc.existing), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// A re-run must find the job instead of adding it twice.
+			for run, want := range []string{"Heartbeat monitoring configured", "Heartbeat monitoring already configured"} {
+				cmd := util.CommandContext(t.Context(), "bash", "-c", "set -euo pipefail\n"+fragment+"echo SUMMARY")
+				cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "CRONTAB_TEST_FILE="+path, "ENABLE_HEARTBEAT=y", "HEARTBEAT_URL="+url, "BLUE=", "GREEN=", "YELLOW=", "NC=")
+				out, err := cmd.CombinedOutput()
+				if err != nil || !strings.Contains(string(out), want) || !strings.HasSuffix(string(out), "SUMMARY\n") {
+					t.Fatalf("run %d: %v\n%s", run+1, err, out)
+				}
+			}
+			data, err := os.ReadFile(path) //nolint:gosec // G304: isolated crontab fixture under t.TempDir.
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := string(data); got != tc.existing+cronjob {
+				t.Fatalf("crontab = %q, want %q", got, tc.existing+cronjob)
+			}
+		})
+	}
+}

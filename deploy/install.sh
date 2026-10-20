@@ -379,8 +379,10 @@ fi
 if [ "$ENABLE_HEARTBEAT" == "y" ]; then
   echo -e "${BLUE}►► Setting up heartbeat monitoring...${NC}"
   HEARTBEAT_CRONJOB="* * * * * curl -fsS --max-time 10 -o /dev/null '$HEARTBEAT_URL' > /dev/null 2>&1"
-  if ! crontab -l 2>/dev/null | grep -F -- "$HEARTBEAT_URL" > /dev/null; then
-    (crontab -l 2>/dev/null; echo "$HEARTBEAT_CRONJOB") | crontab -
+  # crontab -l exits 1 when root has no crontab yet (fresh install)
+  EXISTING_CRONTAB=$(crontab -l 2>/dev/null || true)
+  if ! grep -qF -- "$HEARTBEAT_URL" <<< "$EXISTING_CRONTAB"; then
+    { [ -z "$EXISTING_CRONTAB" ] || echo "$EXISTING_CRONTAB"; echo "$HEARTBEAT_CRONJOB"; } | crontab -
     echo -e "${GREEN}✓ Heartbeat monitoring configured${NC}"
   else
     echo -e "${YELLOW}Heartbeat monitoring already configured${NC}"
