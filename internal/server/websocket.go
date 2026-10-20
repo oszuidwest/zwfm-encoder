@@ -3,10 +3,7 @@ package server
 import (
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
-	"net/netip"
-	"net/url"
 
 	"github.com/gorilla/websocket"
 )
@@ -25,52 +22,22 @@ type WebSocketConn interface {
 	ReadMessage() (messageType int, p []byte, err error)
 }
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: checkOrigin,
-}
+var (
+	sameOrigin = http.NewCrossOriginProtection()
+	upgrader   = websocket.Upgrader{CheckOrigin: checkOrigin}
+)
 
-// checkOrigin reports whether the WebSocket connection origin is allowed.
+// checkOrigin applies the cross-origin policy that already guards every unsafe
+// request to the handshake, which CrossOriginProtection exempts as a GET.
 func checkOrigin(r *http.Request) bool {
-	origin := r.Header.Get("Origin")
-	// Same-origin requests omit the Origin header
-	if origin == "" {
-		return true
-	}
-
-	u, err := url.Parse(origin)
-	if err != nil {
-		//nolint:gosec // G706: origin is logged as a structured slog value for security auditing
-		slog.Warn("rejected WebSocket connection: invalid origin URL", "origin", origin)
+	handshake := *r
+	handshake.Method = http.MethodPost
+	if err := sameOrigin.Check(&handshake); err != nil {
+		//nolint:gosec // G706: origin/host are logged as structured slog values for security auditing
+		slog.Warn("rejected WebSocket connection", "origin", r.Header.Get("Origin"), "host", r.Host, "error", err)
 		return false
 	}
-
-	host := u.Hostname()
-
-	// Exact localhost matches
-	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-		return true
-	}
-
-	// Same-origin check (compare with request host)
-	requestHost := r.Host
-	// Strip port from request host for comparison
-	if h, _, err := net.SplitHostPort(requestHost); err == nil {
-		requestHost = h
-	}
-	if host == requestHost {
-		return true
-	}
-
-	// Check private IP ranges using net/netip (Go 1.18+, more efficient)
-	if addr, err := netip.ParseAddr(host); err == nil {
-		if addr.IsLoopback() || addr.IsPrivate() {
-			return true
-		}
-	}
-
-	//nolint:gosec // G706: origin/host are logged as structured slog values for security auditing
-	slog.Warn("rejected WebSocket connection", "origin", origin, "host", host)
-	return false
+	return true
 }
 
 // UpgradeConnection upgrades an HTTP connection to WebSocket.

@@ -10,6 +10,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -19,7 +20,10 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
+
+	"golang.org/x/term"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
@@ -40,10 +44,14 @@ func main() {
 
 	configPath := flag.String("config", "", "Path to config file (default: config.json next to binary)")
 	showVersion := flag.Bool("version", false, "Print version information and exit")
-	hashPassword := flag.Bool("hash-password", false, "Read a password line from stdin, print its hash and exit")
+	hashPassword := flag.Bool("hash-password", false, "Read a password (hidden prompt on a terminal, else one stdin line), print its hash and exit")
 	flag.Parse()
 	if *hashPassword {
-		if err := printPasswordHash(os.Stdin, os.Stdout); err != nil {
+		input, err := passwordInput(os.Stdin, os.Stderr)
+		if err == nil {
+			err = printPasswordHash(input, os.Stdout)
+		}
+		if err != nil {
 			slog.Error("cannot hash password", "error", err)
 			os.Exit(1)
 		}
@@ -81,6 +89,44 @@ func main() {
 	slog.Info("shutting down")
 	shutdown(a)
 	slog.Info("shutdown complete")
+}
+
+// passwordInput prompts without echo when stdin is a terminal; a pipe keeps
+// the scripted one-line behaviour.
+func passwordInput(stdin *os.File, prompt io.Writer) (io.Reader, error) {
+	fd := int(stdin.Fd()) //nolint:gosec // G115: file descriptors fit in an int.
+	if !term.IsTerminal(fd) {
+		return stdin, nil
+	}
+	// A signal skips ReadPassword's own restore and would leave echo off.
+	state, err := term.GetState(fd)
+	if err != nil {
+		return nil, fmt.Errorf("read terminal state: %w", err)
+	}
+	interrupted, done := make(chan os.Signal, 1), make(chan struct{})
+	signal.Notify(interrupted, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
+	go func() {
+		select {
+		case <-interrupted:
+			_ = term.Restore(fd, state)
+			_, _ = fmt.Fprintln(prompt)
+			os.Exit(130)
+		case <-done:
+		}
+	}()
+	defer func() { signal.Stop(interrupted); close(done) }()
+
+	_, _ = fmt.Fprint(prompt, "Password (Ctrl+C cancels): ")
+	password, err := term.ReadPassword(fd)
+	_, _ = fmt.Fprintln(prompt)
+	if err != nil {
+		return nil, fmt.Errorf("read password: %w", err)
+	}
+	// Canonical terminal input stops at 4095 bytes without telling us.
+	if len(password) >= 4095 {
+		return nil, fmt.Errorf("password too long for terminal input; pipe it on stdin instead")
+	}
+	return bytes.NewReader(password), nil
 }
 
 func printPasswordHash(input io.Reader, output io.Writer) error {

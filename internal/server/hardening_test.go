@@ -132,35 +132,35 @@ func TestLoginRateLimitsByIPAndUsername(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/login", http.NoBody)
 			req.RemoteAddr = fmt.Sprintf("192.0.2.1:%d", 1000+i)
 			req.Header.Set("X-Forwarded-For", fmt.Sprintf("203.0.113.%d", i))
-			if !sm.AllowLogin(req, fmt.Sprintf("user%d", i), nil) {
+			if sm.AllowLogin(req, fmt.Sprintf("user%d", i), nil) != nil {
 				t.Fatal("early IP throttle")
 			}
 		}
 		req := httptest.NewRequest(http.MethodPost, "/login", http.NoBody)
 		req.RemoteAddr = "[::ffff:192.0.2.1]:9999"
-		if sm.AllowLogin(req, "another", nil) {
-			t.Fatal("port, forwarded header or IPv4-mapped address bypassed IP limit")
+		if err := sm.AllowLogin(req, "another", nil); !errors.Is(err, ErrLoginRateLimited) {
+			t.Fatalf("port, forwarded header or IPv4-mapped address bypassed IP limit: %v", err)
 		}
 		time.Sleep(time.Minute)
-		if !sm.AllowLogin(req, "another", nil) {
+		if sm.AllowLogin(req, "another", nil) != nil {
 			t.Fatal("IP limit did not expire")
 		}
 		sm = NewSessionManager()
 		for i := range 10 {
 			req.RemoteAddr = fmt.Sprintf("192.0.2.%d:1234", i+1)
-			if !sm.AllowLogin(req, "admin", nil) {
+			if sm.AllowLogin(req, "admin", nil) != nil {
 				t.Fatal("early username throttle")
 			}
 		}
 		req.RemoteAddr = "198.51.100.1:1234"
-		if sm.AllowLogin(req, "admin", nil) {
-			t.Fatal("changing IP bypassed username limit")
+		if err := sm.AllowLogin(req, "admin", nil); !errors.Is(err, ErrLoginRateLimited) {
+			t.Fatalf("changing IP bypassed username limit: %v", err)
 		}
-		if !sm.AllowLogin(req, "other", nil) {
+		if sm.AllowLogin(req, "other", nil) != nil {
 			t.Fatal("one username blocked every account")
 		}
 		time.Sleep(time.Minute)
-		if !sm.AllowLogin(req, "admin", nil) {
+		if sm.AllowLogin(req, "admin", nil) != nil {
 			t.Fatal("username limit did not expire")
 		}
 	})
@@ -175,7 +175,7 @@ func TestConcurrentLoginReservationsAreBounded(t *testing.T) {
 		wg.Go(func() {
 			req := httptest.NewRequest(http.MethodPost, "/login", http.NoBody)
 			req.RemoteAddr = "192.0.2.1:1234"
-			if sm.AllowLogin(req, "admin", nil) {
+			if sm.AllowLogin(req, "admin", nil) == nil {
 				allowed.Add(1)
 			}
 		})
@@ -194,11 +194,11 @@ func TestLoginRateStateIsBoundedAndRecovers(t *testing.T) {
 			sm.loginAttempts[fmt.Sprint(i)] = loginAttempt{count: 1, expiresAt: time.Now().Add(time.Minute)}
 		}
 		req := httptest.NewRequest(http.MethodPost, "/login", http.NoBody)
-		if !sm.AllowLogin(req, strings.Repeat("u", 100), nil) || len(sm.loginAttempts) != maxLoginBuckets {
+		if sm.AllowLogin(req, strings.Repeat("u", 100), nil) != nil || len(sm.loginAttempts) != maxLoginBuckets {
 			t.Fatal("full limiter must reclaim unrelated buckets without blocking every new client")
 		}
 		time.Sleep(time.Minute)
-		if !sm.AllowLogin(req, "admin", nil) || len(sm.loginAttempts) != 2 {
+		if sm.AllowLogin(req, "admin", nil) != nil || len(sm.loginAttempts) != 2 {
 			t.Fatal("expired limiter state was not reclaimed")
 		}
 	})
@@ -210,13 +210,13 @@ func TestLoginIPv6RotationDoesNotBypassLimit(t *testing.T) {
 	for i := range 6 {
 		req := httptest.NewRequest(http.MethodPost, "/login", http.NoBody)
 		req.RemoteAddr = fmt.Sprintf("[2001:db8:1234:1::%x]:1234", i+1)
-		if got := sm.AllowLogin(req, fmt.Sprintf("user%d", i), nil); got != (i < 5) {
+		if got := sm.AllowLogin(req, fmt.Sprintf("user%d", i), nil) == nil; got != (i < 5) {
 			t.Fatalf("IPv6 rotation attempt %d allowed=%t", i, got)
 		}
 	}
 	req := httptest.NewRequest(http.MethodPost, "/login", http.NoBody)
 	req.RemoteAddr = "[2001:db8:1234:2::1]:1234"
-	if !sm.AllowLogin(req, "different", nil) {
+	if sm.AllowLogin(req, "different", nil) != nil {
 		t.Fatal("unrelated IPv6 network was blocked")
 	}
 }

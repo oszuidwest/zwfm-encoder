@@ -1,6 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Keep inherited non-interactive credentials out of every child process.
+export -n WEB_PASSWORD
+ENCODER_STOPPED=false
+
+# An EXIT trap also covers explicit `exit 1` paths and library exits, which ERR misses.
+installer_exit() {
+  local status=$?
+  rm -f "${FUNCTIONS_LIB_PATH:-}" "${ENCODER_CANDIDATE:-}" || true
+  [ "$status" -eq 0 ] && return
+  printf 'Installation failed (exit %s).\n' "$status" >&2
+  if [ "$ENCODER_STOPPED" = true ]; then
+    printf 'The encoder may still be stopped. Check: systemctl status encoder; journalctl -u encoder -n 50. Repair the failed step before starting it again.\n' >&2
+  fi
+}
+trap installer_exit EXIT
+
 # Configuration
 GITHUB_REPO="oszuidwest/zwfm-encoder"
 ENCODER_SERVICE_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/deploy/encoder.service"
@@ -13,8 +29,6 @@ SERVICE_PATH="/etc/systemd/system/encoder.service"
 BASH_FUNCTIONS_REF="main"
 FUNCTIONS_LIB_PATH=$(mktemp)
 FUNCTIONS_LIB_URL="https://raw.githubusercontent.com/oszuidwest/bash-functions/${BASH_FUNCTIONS_REF}/common-functions.sh"
-
-trap 'rm -f "$FUNCTIONS_LIB_PATH"' EXIT
 
 # General Raspberry Pi configuration
 CONFIG_TXT_PATHS=("/boot/firmware/config.txt" "/boot/config.txt")
@@ -115,7 +129,7 @@ if [ "$KEEP_CONFIG" != "y" ]; then
   prompt_user "WEB_USERNAME" "admin" "Enter the web interface username" "str"
 
   # Web password
-  prompt_user "WEB_PASSWORD" "encoder" "Enter the web interface password" "str"
+  prompt_secret "WEB_PASSWORD" "Enter the web interface password"
 
   # Web port
   prompt_user "WEB_PORT" "8080" "Enter the web interface port" "num"
@@ -212,17 +226,6 @@ fi
 echo -e "${BLUE}►► Installing FFmpeg, alsa-utils, and jq...${NC}"
 apt_install --silent ffmpeg alsa-utils jq
 
-# Stop existing service if running
-if systemctl is-active --quiet encoder 2>/dev/null; then
-  echo -e "${BLUE}►► Stopping existing encoder service...${NC}"
-  systemctl stop encoder
-fi
-
-# Kill any rogue encoder processes not managed by systemd
-if pkill -x encoder 2>/dev/null; then
-  echo -e "${YELLOW}Killed orphaned encoder process(es)${NC}"
-fi
-
 # Create dedicated service user
 if ! id -u encoder &>/dev/null; then
   echo -e "${BLUE}►► Creating encoder service user...${NC}"
@@ -292,8 +295,36 @@ if [ -z "$ENCODER_ASSET_INFO" ]; then
 fi
 IFS=$'\t' read -r ENCODER_ASSET_NAME ENCODER_BINARY_URL <<< "$ENCODER_ASSET_INFO"
 echo -e "${GREEN}✓ Asset: ${ENCODER_ASSET_NAME}${NC}"
-file_download "$ENCODER_BINARY_URL" "${INSTALL_DIR}/encoder" "encoder binary"
-chmod +x "${INSTALL_DIR}/encoder"
+# Download next to the current binary and check it before stopping anything.
+ENCODER_CANDIDATE=$(mktemp "${INSTALL_DIR}/encoder.new.XXXXXX")
+file_download "$ENCODER_BINARY_URL" "$ENCODER_CANDIDATE" "encoder binary"
+chmod 0755 "$ENCODER_CANDIDATE" # mktemp creates 0600, whatever the umask.
+ENCODER_HELP=$("$ENCODER_CANDIDATE" -help 2>&1)
+
+# Refuse a release that cannot read the kept configuration
+KEPT_CONFIG="$CONFIG_FILE"
+[ -f "$KEPT_CONFIG" ] || KEPT_CONFIG="${INSTALL_DIR}/config.json" # Migrated below.
+if [ "$KEEP_CONFIG" == "y" ] && [[ $ENCODER_HELP != *-hash-password* ]] &&
+  jq -e '.system.password_hash // empty' "$KEPT_CONFIG" > /dev/null 2>&1; then
+  echo -e "${RED}Release ${LATEST_RELEASE} cannot read the hashed web password in ${KEPT_CONFIG}. The running encoder was left untouched; install a newer release, or restore a plaintext system.password first.${NC}" >&2
+  exit 1
+fi
+
+# Stop existing service if running
+if systemctl is-active --quiet encoder 2>/dev/null; then
+  echo -e "${BLUE}►► Stopping existing encoder service...${NC}"
+  ENCODER_STOPPED=true # Also when the stop itself fails.
+  systemctl stop encoder
+fi
+
+# Kill any rogue encoder processes not managed by systemd
+if pkill -x encoder 2>/dev/null; then
+  ENCODER_STOPPED=true
+  echo -e "${YELLOW}Killed orphaned encoder process(es)${NC}"
+fi
+
+mv -f "$ENCODER_CANDIDATE" "${INSTALL_DIR}/encoder"
+ENCODER_CANDIDATE=
 
 # Create config directory with proper ownership
 echo -e "${BLUE}►► Setting up configuration directory...${NC}"
@@ -324,8 +355,7 @@ else
   # Generate configuration file using jq (minimal config, app fills defaults)
   echo -e "${BLUE}►► Generating configuration file...${NC}"
   WEB_CREDENTIAL_FIELD="password_hash"
-  ENCODER_HELP=$("${INSTALL_DIR}/encoder" -help 2>&1)
-  if printf '%s' "$ENCODER_HELP" | grep -F -- '-hash-password' > /dev/null; then
+  if [[ $ENCODER_HELP == *-hash-password* ]]; then
     WEB_CREDENTIAL=$(printf '%s' "$WEB_PASSWORD" | "${INSTALL_DIR}/encoder" -hash-password)
   else
     # shortcut: older releases lack hashing/bind support, remove after enforcing a newer minimum version.
@@ -348,7 +378,7 @@ else
   # Set proper ownership and permissions
   chown encoder:encoder "$CONFIG_FILE"
   chmod 600 "$CONFIG_FILE"
-  unset WEB_CREDENTIAL WEB_CREDENTIAL_FIELD ENCODER_HELP
+  unset WEB_CREDENTIAL WEB_CREDENTIAL_FIELD
   echo -e "${GREEN}✓ Configuration saved to ${CONFIG_FILE}${NC}"
 fi
 
@@ -372,6 +402,7 @@ if ! systemctl is-active --quiet encoder; then
   echo -e "Check logs with: ${BOLD}journalctl -u encoder -n 50${NC}"
   exit 1
 else
+  ENCODER_STOPPED=false
   echo -e "${GREEN}✓ Encoder service is running${NC}"
 fi
 
@@ -403,13 +434,18 @@ echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━
 DISPLAY_PORT=$(jq -r '.system.port // 8080' "$CONFIG_FILE" 2>/dev/null || echo "8080")
 
 echo -e "\n${BOLD}Web Interface${NC}"
-DISPLAY_BIND=$(jq -r '.system.bind_address // "0.0.0.0"' "$CONFIG_FILE")
-if [ "$DISPLAY_BIND" == "127.0.0.1" ] && "${INSTALL_DIR}/encoder" -help 2>&1 | grep -F -- '-hash-password' > /dev/null; then
+DISPLAY_BIND=$(jq -r '.system.bind_address // "0.0.0.0"' "$CONFIG_FILE" 2>/dev/null || echo "0.0.0.0")
+if [ "$DISPLAY_BIND" == "127.0.0.1" ] && [[ $ENCODER_HELP == *-hash-password* ]]; then
   echo -e "  URL:      ${BOLD}http://127.0.0.1:${DISPLAY_PORT}${NC} (local only)"
   echo -e "  Remote access with this local-only bind: use a reverse proxy, or tunnel with:"
   echo -e "  ${BOLD}ssh -L ${DISPLAY_PORT}:127.0.0.1:${DISPLAY_PORT} <user>@${FIRST_IP}${NC}"
 else
-  echo -e "  URL:      ${BOLD}http://${FIRST_IP}:${DISPLAY_PORT}${NC} (check configured bind address)"
+  BIND_HINT=""
+  case "$DISPLAY_BIND" in
+    0.0.0.0|::|"") ;;
+    *) BIND_HINT=" (check configured bind address)" ;;
+  esac
+  echo -e "  URL:      ${BOLD}http://${FIRST_IP}:${DISPLAY_PORT}${NC}${BIND_HINT}"
 fi
 if [ "$KEEP_CONFIG" == "y" ]; then
   echo -e "  Credentials: ${BOLD}(as previously configured)${NC}"

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -57,19 +58,19 @@ func TestUsernameLimitExpiresDuringRejectedTraffic(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost, "/login", http.NoBody)
 		for i := range 10 {
 			r.RemoteAddr = fmt.Sprintf("192.0.2.%d:1234", i+1)
-			if !sm.AllowLogin(r, "admin", nil) {
+			if sm.AllowLogin(r, "admin", nil) != nil {
 				t.Fatal("early username throttle")
 			}
 		}
 		r.RemoteAddr = "198.51.100.1:1234"
 		for range 5 {
 			time.Sleep(10 * time.Second)
-			if sm.AllowLogin(r, "admin", nil) {
-				t.Fatal("username budget bypassed")
+			if err := sm.AllowLogin(r, "admin", nil); !errors.Is(err, ErrLoginRateLimited) {
+				t.Fatalf("username budget bypassed: %v", err)
 			}
 		}
 		time.Sleep(10 * time.Second)
-		if !sm.AllowLogin(r, "admin", nil) {
+		if sm.AllowLogin(r, "admin", nil) != nil {
 			t.Fatal("rejected traffic prolonged the username throttle")
 		}
 	})
@@ -94,15 +95,15 @@ func TestMalformedForwardingCannotExhaustProxyBudget(t *testing.T) {
 	trusted := []string{"127.0.0.1/32"}
 	for range 20 {
 		r.Header.Set("X-Forwarded-For", "unparseable")
-		if sm.AllowLogin(r, "admin", trusted) {
-			t.Fatal("malformed forwarding was accepted")
+		if err := sm.AllowLogin(r, "admin", trusted); !errors.Is(err, ErrInvalidLoginAddress) {
+			t.Fatalf("malformed forwarding = %v, want ErrInvalidLoginAddress", err)
 		}
 	}
 	if len(sm.loginAttempts) != 0 {
 		t.Fatal("malformed forwarding consumed shared proxy or username budget")
 	}
 	r.Header.Set("X-Forwarded-For", "198.51.100.1")
-	if !sm.AllowLogin(r, "admin", trusted) {
+	if sm.AllowLogin(r, "admin", trusted) != nil {
 		t.Fatal("malformed clients blocked a legitimate proxy client")
 	}
 }
@@ -117,11 +118,11 @@ func TestFullLoginCacheKeepsCurrentLimits(t *testing.T) {
 	}
 	// The oldest entry is the current IP: eviction must not reset its four attempts.
 	sm.loginAttempts["ip:192.0.2.1"] = loginAttempt{count: 4, expiresAt: time.Now().Add(30 * time.Second)}
-	if !sm.AllowLogin(r, "admin", nil) || len(sm.loginAttempts) != maxLoginBuckets {
+	if sm.AllowLogin(r, "admin", nil) != nil || len(sm.loginAttempts) != maxLoginBuckets {
 		t.Fatal("new username was globally denied by a full cache")
 	}
-	if sm.AllowLogin(r, "different", nil) {
-		t.Fatal("cache pressure reset the current IP limit")
+	if err := sm.AllowLogin(r, "different", nil); !errors.Is(err, ErrLoginRateLimited) {
+		t.Fatalf("cache pressure reset the current IP limit: %v", err)
 	}
 	if sm.loginAttempts["ip:192.0.2.1"].count != 5 {
 		t.Fatal("eviction lost the active counter")
@@ -139,7 +140,7 @@ func TestLoginEvictionKeepsExhaustedBuckets(t *testing.T) {
 	}
 	r := httptest.NewRequest(http.MethodPost, "/login", http.NoBody)
 	r.RemoteAddr = "192.0.2.9:1234"
-	if !sm.AllowLogin(r, "guess", nil) {
+	if sm.AllowLogin(r, "guess", nil) != nil {
 		t.Fatal("new client refused although unexhausted buckets can be evicted")
 	}
 	if sm.loginAttempts["user:admin"].count != 10 {
