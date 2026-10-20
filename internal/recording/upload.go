@@ -71,11 +71,20 @@ func TestS3Connection(cfg *S3Config) error {
 	if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NotImplemented" {
 		return fmt.Errorf("storage does not support conditional writes (If-None-Match), which recordings need to never overwrite each other: %w", err)
 	}
-	if err != nil {
+	// A committed PUT can lose its response and retry as 412, so read the
+	// probe's identity either way: only our unique ID makes it ours to accept
+	// and delete. The PUT may have used up the probe's deadline.
+	headCtx, cancelHead := context.WithTimeout(context.Background(), 10*time.Second)
+	head, headErr := client.HeadObject(headCtx, &s3.HeadObjectInput{
+		Bucket: aws.String(cfg.Bucket), Key: aws.String(testKey),
+	})
+	cancelHead()
+	owned := headErr == nil && head.Metadata["zwfm-upload-id"] == uploadID
+	if err != nil && !owned {
 		return fmt.Errorf("upload test file: %w", err)
 	}
 	defer func() {
-		// HeadObject may have used up the probe's deadline; clean up with a fresh one.
+		// The PUT may have used up the probe's deadline; clean up with a fresh one.
 		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancelCleanup()
 		if _, err := client.DeleteObject(cleanupCtx, &s3.DeleteObjectInput{
@@ -85,13 +94,10 @@ func TestS3Connection(cfg *S3Config) error {
 			slog.Warn("failed to delete test file", "key", testKey, "error", err)
 		}
 	}()
-	head, headErr := client.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(cfg.Bucket), Key: aws.String(testKey),
-	})
 	if headErr != nil {
 		return fmt.Errorf("read test object metadata (HeadObject permission is required for idempotent uploads): %w", headErr)
 	}
-	if head.Metadata["zwfm-upload-id"] != uploadID {
+	if !owned {
 		return errors.New("storage does not preserve upload identity metadata, which recordings need to avoid duplicate uploads")
 	}
 

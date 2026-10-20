@@ -97,8 +97,11 @@ type GenericRecorder struct {
 	uploadClosed        bool      // Routes late uploads to retry after Stop.
 
 	// Retry queue for failed uploads (protected by mu)
+	retryProcessMu sync.Mutex // Only one retry batch may own paths at a time.
 	retryQueue     []pendingUpload
-	retryEnqueueMu sync.Mutex // Serializes persistence/publication without holding the state lock over disk I/O.
+	retryInFlight  map[string]struct{} // Paths remain owned while temporarily absent from retryQueue; protected by mu.
+	retryRequested bool                // A pass asked for during a batch runs after it; protected by mu.
+	retryEnqueueMu sync.Mutex          // Serializes persistence/publication without holding the state lock over disk I/O.
 
 	// Rotation timer (hourly mode)
 	rotationTimer      *time.Timer
@@ -836,9 +839,8 @@ func (r *GenericRecorder) rotateFile(generation uint64) {
 
 	// Process the retry queue off the rotation path: a slow or unreachable S3
 	// endpoint may block for many minutes per pending file, and Stop waits for
-	// this rotation through retiring. Safe concurrently:
-	// the queue is snapshotted and cleared under r.mu, so an overlapping run
-	// sees it empty.
+	// this rotation through retiring. Safe concurrently: an overlapping run
+	// returns at once while a batch owns its paths.
 	go r.processRetryQueue()
 }
 
