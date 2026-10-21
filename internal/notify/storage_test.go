@@ -35,7 +35,7 @@ func TestRecordingStorageWebhookAndEmail(t *testing.T) {
 				payloads <- payload
 			}))
 			defer server.Close()
-			paths := []types.RecordingStorageStatus{{Path: "/spool", Low: tt.low, Error: tt.problem, ThresholdBytes: 1 << 30}}
+			paths := []types.RecordingStorageStatus{{Path: "/spool", Low: tt.low, Error: tt.problem, ThresholdBytes: 1 << 30, RecoveryBytes: 2 << 30}}
 			if err := (&WebhookChannel{}).SendRecordingStorage(t.Context(), &config.Snapshot{WebhookURL: server.URL}, paths); err != nil {
 				t.Fatal(err)
 			}
@@ -44,7 +44,8 @@ func TestRecordingStorageWebhookAndEmail(t *testing.T) {
 				t.Fatalf("payload=%+v", payload)
 			}
 			subject, body := recordingStorageEmail("Station", paths)
-			if strings.HasPrefix(subject, "[ALERT]") != (tt.event == "recording_storage_low") || !strings.Contains(body, "/spool: 0 bytes available") || !strings.Contains(body, "No recordings have been automatically evicted") {
+			if strings.HasPrefix(subject, "[ALERT]") != (tt.event == "recording_storage_low") || !strings.Contains(body, "/spool: 0 bytes available") || !strings.Contains(body, "No recordings have been automatically evicted") ||
+				strings.Contains(body, "recovers at 2147483648 bytes") != tt.low {
 				t.Fatalf("email=%q %q", subject, body)
 			}
 		})

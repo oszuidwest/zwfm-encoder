@@ -695,10 +695,20 @@ Recording storage warnings have category `recorder`, severity `warning`, reason 
 recovery has severity `success`, reason `recovery`. Incidents are grouped by path, independently
 of recorder names and upload incidents. Checks run on manager start and every minute, outside
 capture/status locks. Warnings fire below 1 GiB or 5% available, or on a probe/metadata-scan error;
-only transitions produce events. These checks never delete recordings.
+only transitions produce alerts. A path that switches between low and unavailable logs another
+`recording_storage_low` in the same incident, without alerting, so a restart knows which applies.
+A low path recovers only once it has the threshold plus max(1 GiB, 2.5%) available; on volumes
+under 3 GiB the margin is capped at half the space above the threshold, and a volume smaller
+than the threshold stays low. Hourly retention and S3-only deletion after upload make free space
+swing by about an hour of audio; from 3 GiB up the margin absorbs that for one PCM recorder or
+several MP3 recorders, larger swings can still alert hourly. A path that could not be checked,
+also before a restart, recovers on its first good check above the threshold. These checks never
+delete recordings.
 
-Details: `path`, `available_bytes` (including zero), `total_bytes`, `threshold_bytes`, `low`,
-`error` (when a check failed), and `checked_at`. A failed probe is not a recovery.
+Details: `path`, `available_bytes` (including zero), `total_bytes` (used plus available to the
+process, leaving out free blocks reserved for root), `threshold_bytes`,
+`recovery_bytes`, `low`, `error` (when a check failed), and `checked_at`. A failed probe is not
+a recovery.
 Webhook events use the same two event names and carry the aggregate snapshot in `storage_paths`;
 email and the separate Zabbix `<upload key>.storage` item also report aggregate recovery only
 when no monitored path remains unhealthy. `/ready` exposes the cached observations and rejects

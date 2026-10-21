@@ -6,14 +6,15 @@ import "time"
 type RecordingStorageStatus struct {
 	Path           string    `json:"path"`
 	AvailableBytes uint64    `json:"available_bytes"`
-	TotalBytes     uint64    `json:"total_bytes"`
+	TotalBytes     uint64    `json:"total_bytes"` // Used plus available to the process; leaves out free root-reserved blocks.
 	ThresholdBytes uint64    `json:"threshold_bytes"`
+	RecoveryBytes  uint64    `json:"recovery_bytes"` // A low path stays low until this much is free.
 	Low            bool      `json:"low"`
 	Error          string    `json:"error,omitempty"`
 	CheckedAt      time.Time `json:"checked_at"`
 }
 
-// Unhealthy reports whether the path is below its threshold or could not be checked.
+// Unhealthy reports whether the path is low or could not be checked.
 func (s *RecordingStorageStatus) Unhealthy() bool {
 	return s.Low || s.Error != ""
 }

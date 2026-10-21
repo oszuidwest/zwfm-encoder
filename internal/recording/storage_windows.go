@@ -7,6 +7,7 @@ func diskSpace(path string) (available, total uint64, err error) {
 	if err != nil {
 		return 0, 0, err
 	}
+	// Both counts are what the caller may use, quotas included.
 	err = windows.GetDiskFreeSpaceEx(name, &available, &total, nil)
 	return available, total, err
 }

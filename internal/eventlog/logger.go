@@ -557,6 +557,35 @@ func matchesFilter(t EventType, filter TypeFilter) bool {
 	}
 }
 
+// LatestStorageEvents returns the newest recording storage event of each path in
+// the retained logs, newest first. It reads all history once: any number of
+// events for other paths can follow a path's newest event.
+func (l *Logger) LatestStorageEvents() ([]Event, error) {
+	var latest []Event
+	seen := make(map[string]bool)
+	for _, path := range []string{l.filePath, util.RotatedPath(l.filePath)} {
+		err := readLinesReverse(path, func(line []byte) (bool, error) {
+			// Most lines are not storage events; skip decoding them.
+			if !bytes.Contains(line, []byte(`"recording_storage_`)) {
+				return true, nil
+			}
+			event, ok := parseEventLine(line)
+			if !ok || !matchesFilter(event.Type, FilterStorage) {
+				return true, nil
+			}
+			if p := detailString(eventDetails(event.Details), "path"); p != "" && !seen[p] {
+				seen[p] = true
+				latest = append(latest, event)
+			}
+			return true, nil
+		})
+		if err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	return latest, nil
+}
+
 // InputLostAt returns the start of an open input outage in the retained logs.
 func (l *Logger) InputLostAt() (time.Time, error) {
 	var last Event
