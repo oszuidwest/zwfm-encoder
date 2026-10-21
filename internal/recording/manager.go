@@ -16,12 +16,12 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
-// lockReconcile takes a recorder's reconcile lock; tests replace it to see an
-// update wait for an earlier one.
+// lockReconcile takes a recorder's reconcile lock; tests replace it to see a
+// call wait while another update or StopRecorder holds it.
 var lockReconcile = (*sync.Mutex).Lock
 
-// startHourlyRecorder starts an enabled hourly recorder automatically; tests
-// replace it to hold such a start.
+// startHourlyRecorder is UpdateRecorder's start; tests replace it to hold that
+// start.
 var startHourlyRecorder = (*GenericRecorder).startHourly
 
 // UploadAbandonedEvent contains details about an upload that was abandoned after exhausting retries.
@@ -172,8 +172,8 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 	m.publishAudioRecordersLocked()
 
 	// Auto-start hourly recorders if encoder is running (ondemand never auto-starts)
-	if m.running && cfg.RecordingMode == types.RecordingHourly && cfg.Enabled {
-		if err := recorder.Start(); err != nil {
+	if m.running {
+		if err := recorder.startHourly(); err != nil {
 			slog.Warn("failed to auto-start recorder", "id", cfg.ID, "error", err)
 		}
 	}
@@ -212,6 +212,8 @@ func (m *Manager) RemoveRecorder(id string) error {
 // UpdateRecorder updates an existing recorder configuration and applies its
 // enabled state: a disabled recorder stops, and an enabled hourly recorder
 // starts while the manager runs, also after an error the update may have fixed.
+// A failed on-demand run is torn down. It blocks until a Stop in progress, and
+// an earlier update or StopRecorder of this recorder, has finished.
 func (m *Manager) UpdateRecorder(cfg *types.Recorder) error {
 	m.mu.RLock()
 	recorder, exists := m.recorders[cfg.ID]
@@ -228,10 +230,9 @@ func (m *Manager) UpdateRecorder(cfg *types.Recorder) error {
 		return err
 	}
 
-	// Stop and join outside the manager lock, like RemoveRecorder. Stop also
-	// tears down a failed run; both join a Stop started elsewhere (such as the
-	// duration limit), which would otherwise refuse the start below or outlast
-	// this disable. A failed hourly run is restarted from ProcessError.
+	// Stop runs outside the manager lock, like RemoveRecorder. It also tears
+	// down a failed run and waits for a Stop already in progress, so this
+	// disable does not return early.
 	if !cfg.Enabled {
 		if err := recorder.Stop(); err != nil {
 			slog.Warn("error stopping disabled recorder", "id", cfg.ID, "error", err)
@@ -240,14 +241,18 @@ func (m *Manager) UpdateRecorder(cfg *types.Recorder) error {
 	}
 	if cfg.RecordingMode != types.RecordingHourly {
 		// Saving clears a failed on-demand run, which only a start would reuse.
-		if err := recorder.stopIfFailed(); err != nil {
+		if err := recorder.stopIn(types.ProcessError); err != nil {
 			slog.Warn("error stopping failed recorder", "id", cfg.ID, "error", err)
 		}
 		return nil
 	}
-	recorder.waitForStop()
+	// Wait for a Stop already in progress (such as the duration limit): it
+	// would refuse the start below. A failed run is not stopped: startHourly
+	// restarts it from ProcessError and reuses its upload worker.
+	_ = recorder.stopIn(types.ProcessStopping)
 
-	// Like AddRecorder: Stop and RemoveRecorder must not miss the start.
+	// m.mu is held across the check and the start, so Manager.Stop and
+	// RemoveRecorder either fail the check or see the recorder starting.
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if !m.running || m.recorders[cfg.ID] != recorder {
@@ -261,7 +266,7 @@ func (m *Manager) UpdateRecorder(cfg *types.Recorder) error {
 
 // StartRecorder starts an enabled on-demand recorder by ID.
 func (m *Manager) StartRecorder(id string) error {
-	// Held until Start returns, so Stop cannot pass between the running check and Start.
+	// Held until the start returns, so Stop cannot pass between the running check and Start.
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -269,20 +274,9 @@ func (m *Manager) StartRecorder(id string) error {
 	if !exists {
 		return fmt.Errorf("recorder not found: %s", id)
 	}
-
-	// Only on-demand recorders can be started via API
-	if recorder.Config().RecordingMode == types.RecordingHourly {
-		return ErrHourlyRecorderNotControllable
-	}
 	if !m.running {
 		return ErrManagerNotRunning
 	}
-
-	// Check if already recording
-	if recorder.IsRecording() {
-		return ErrAlreadyRecording
-	}
-
 	return recorder.startOnDemand()
 }
 
@@ -345,7 +339,7 @@ func (m *Manager) StartIfActive(active func() bool) error {
 	// check is part of the start, as an update may change a recorder meanwhile.
 	startErrors := make(map[string]error)
 	for id, recorder := range m.recorders {
-		if err := startHourlyRecorder(recorder); err != nil {
+		if err := recorder.startHourly(); err != nil {
 			startErrors[id] = err
 		}
 	}
@@ -494,7 +488,7 @@ func (m *Manager) retryFailedHourlyRecorders() {
 			if status.State == types.ProcessError {
 				slog.Info("retrying failed hourly recorder at hour boundary", "id", cfg.ID, "name", cfg.Name)
 				// An update may have changed it since the check above.
-				if err := startHourlyRecorder(recorder); err != nil {
+				if err := recorder.startHourly(); err != nil {
 					slog.Warn("failed to retry hourly recorder", "id", recorder.ID(), "error", err)
 				}
 			}

@@ -81,7 +81,8 @@ type GenericRecorder struct {
 	// reconcileMu serializes Manager.UpdateRecorder's runtime reconciliation
 	// and Manager.StopRecorder for this recorder, including a blocking Stop,
 	// so updates change the config and stop or start the recorder in the same
-	// order. Persisting the config happens before, outside this lock.
+	// order. Encoder.UpdateRecorder persists the config before this lock, so two
+	// simultaneous saves may be stored and applied in different orders.
 	// Lock order: reconcileMu, then Manager.mu, then mu.
 	reconcileMu sync.Mutex
 
@@ -248,7 +249,8 @@ func (r *GenericRecorder) startHourly() error {
 }
 
 // startOnDemand starts the recorder if its config is still enabled and
-// on-demand, checked like startHourly.
+// on-demand, checked under mu like startHourly; otherwise it returns
+// ErrHourlyRecorderNotControllable or ErrRecorderDisabled.
 func (r *GenericRecorder) startOnDemand() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -487,25 +489,16 @@ func (r *GenericRecorder) stopLocked() error {
 	return nil
 }
 
-// stopIfFailed tears down a failed run, including its upload worker, and
-// leaves any other state alone.
-func (r *GenericRecorder) stopIfFailed() error {
+// stopIn calls Stop only in state: for ProcessError it tears down the failed
+// run, for ProcessStopping it waits for the Stop in progress. Any other state
+// is left alone.
+func (r *GenericRecorder) stopIn(state types.ProcessState) error {
 	r.mu.Lock()
-	if r.state != types.ProcessError {
+	if r.state != state {
 		r.mu.Unlock()
 		return nil
 	}
 	return r.stopLocked()
-}
-
-// waitForStop waits for a Stop in progress, if any, without starting one.
-func (r *GenericRecorder) waitForStop() {
-	r.mu.RLock()
-	stopping, done := r.state == types.ProcessStopping, r.stopDone
-	r.mu.RUnlock()
-	if stopping {
-		awaitStop(done)
-	}
 }
 
 // WriteAudio queues pcm for non-blocking FFmpeg stdin writes.
@@ -659,16 +652,14 @@ func (r *GenericRecorder) IsRecording() bool {
 	return r.recording.Load()
 }
 
-// UpdateConfig updates the recorder configuration.
+// UpdateConfig updates the recorder configuration. It leaves the run state,
+// including ProcessError, to Manager.UpdateRecorder.
 func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if cfg.ID != r.id {
 		return fmt.Errorf("recorder ID cannot change")
 	}
-
-	// A failed run keeps ProcessError, so the Stop or Start that
-	// Manager.UpdateRecorder follows up with still tears it down or reuses it.
 
 	// Leaving hourly mode cancels the pending rotation, including one already
 	// preparing its next file.
