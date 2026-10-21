@@ -3,6 +3,7 @@ package eventlog
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -94,6 +95,9 @@ func TestLatestStorageEventsReadsAllRetainedHistory(t *testing.T) {
 
 func TestLatestStorageEventsKeepsEventsReadBeforeAnError(t *testing.T) {
 	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("a directory reads as an empty file on Windows")
+	}
 	path := filepath.Join(t.TempDir(), "encoder.jsonl")
 	writeEvents(t, path, []Event{{Type: RecordingStorageLow, Message: "a-open", Details: map[string]any{"path": "/a", "low": true}}})
 	// A directory in place of the rotated file fails the read after the current file.

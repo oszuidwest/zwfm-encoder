@@ -181,9 +181,13 @@ func TestStorageOscillatingAroundThresholdAlertsOnce(t *testing.T) {
 func TestStorageRelativeRecoveryMarginRecovers(t *testing.T) {
 	t.Parallel()
 	// 100 GiB: a 5 GiB threshold plus a 2.5 GiB margin.
-	callbacks, low, restored := runStorageSamples(t, 100<<30, []uint64{0, 15<<29 - 1, 15 << 29})
-	if callbacks != 2 || low != 1 || restored != 1 {
-		t.Fatalf("callbacks=%d low=%d restored=%d, want recovery at exactly 7.5 GiB", callbacks, low, restored)
+	for _, tt := range []struct {
+		available uint64
+		restored  int
+	}{{15<<29 - 1, 0}, {15 << 29, 1}} {
+		if callbacks, low, restored := runStorageSamples(t, 100<<30, []uint64{0, tt.available}); callbacks != 1+tt.restored || low != 1 || restored != tt.restored {
+			t.Fatalf("at %d bytes: callbacks=%d low=%d restored=%d, want recovery at exactly 7.5 GiB", tt.available, callbacks, low, restored)
+		}
 	}
 }
 
