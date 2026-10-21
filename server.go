@@ -47,6 +47,7 @@ type Server struct {
 	encoder    *encoder.Encoder
 	sessions   *server.SessionManager
 	version    *VersionChecker
+	heartbeat  *Heartbeat
 	httpServer *http.Server
 
 	// WebSocket broadcast channels
@@ -66,6 +67,7 @@ func NewServer(cfg *config.Config, enc *encoder.Encoder) *Server {
 		encoder:   enc,
 		sessions:  server.NewSessionManager(),
 		version:   NewVersionChecker(),
+		heartbeat: NewHeartbeat(cfg.Snapshot().HeartbeatURL, time.Minute),
 		wsClients: make(map[chan any]struct{}),
 	}
 }
@@ -558,8 +560,9 @@ func (s *Server) Start() {
 	}()
 }
 
-// Stop halts the version checker and gracefully shuts down the HTTP server.
+// Stop halts the version checker and heartbeat and gracefully shuts down the HTTP server.
 func (s *Server) Stop(ctx context.Context) error {
 	s.version.Stop()
+	s.heartbeat.Stop()
 	return s.httpServer.Shutdown(ctx)
 }

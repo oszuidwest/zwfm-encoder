@@ -339,10 +339,12 @@ else
     --arg username "$WEB_USERNAME" \
     --arg credential_field "$WEB_CREDENTIAL_FIELD" \
     --arg bind_address "$WEB_BIND_ADDRESS" \
+    --arg heartbeat_url "$HEARTBEAT_URL" \
     --argjson port "$WEB_PORT" \
     '{
       system: ({ port: $port, bind_address: $bind_address, username: $username } + {($credential_field): .}),
-      web: { station_name: $station_name }
+      web: { station_name: $station_name },
+      notifications: { heartbeat: { url: $heartbeat_url } }
     }' > "$CONFIG_FILE"
 
   # Set proper ownership and permissions
@@ -373,38 +375,6 @@ if ! systemctl is-active --quiet encoder; then
   exit 1
 else
   echo -e "${GREEN}✓ Encoder service is running${NC}"
-fi
-
-# Set up heartbeat monitoring if enabled
-if [ "$ENABLE_HEARTBEAT" == "y" ]; then
-  echo -e "${BLUE}►► Setting up heartbeat monitoring...${NC}"
-  HEARTBEAT_CRONJOB="* * * * * curl -fsS --max-time 10 -o /dev/null '$HEARTBEAT_URL' > /dev/null 2>&1"
-  # crontab -l also exits 1 when root has no crontab yet (fresh OS). On any
-  # other read error, skip the update: rewriting would drop root's existing jobs.
-  # The encoder already runs, so a crontab failure warns instead of failing the install.
-  CRONTAB_ERR_FILE=$(mktemp)
-  CRONTAB_READ_OK=y
-  EXISTING_CRONTAB=$(crontab -l 2>"$CRONTAB_ERR_FILE") || CRONTAB_READ_OK=n
-  CRONTAB_ERR=$(<"$CRONTAB_ERR_FILE")
-  rm -f "$CRONTAB_ERR_FILE"
-  HEARTBEAT_FAILURE=""
-  if [ "$CRONTAB_READ_OK" == "n" ] && [[ "$CRONTAB_ERR" != "no crontab for "* ]]; then
-    printf '%s\n' "$CRONTAB_ERR" >&2
-    HEARTBEAT_FAILURE="could not read root's crontab"
-  elif [[ "$EXISTING_CRONTAB" != *"$HEARTBEAT_URL"* ]]; then
-    if { [ -z "$EXISTING_CRONTAB" ] || echo "$EXISTING_CRONTAB"; echo "$HEARTBEAT_CRONJOB"; } | crontab -; then
-      echo -e "${GREEN}✓ Heartbeat monitoring configured${NC}"
-    else
-      HEARTBEAT_FAILURE="could not update root's crontab"
-    fi
-  else
-    echo -e "${YELLOW}Heartbeat monitoring already configured${NC}"
-  fi
-  if [ -n "$HEARTBEAT_FAILURE" ]; then
-    echo -e "${YELLOW}Warning: ${HEARTBEAT_FAILURE}, heartbeat monitoring not configured${NC}"
-    echo -e "Add this line with ${BOLD}crontab -e${NC}:"
-    echo "  $HEARTBEAT_CRONJOB"
-  fi
 fi
 
 # =============================================================================
