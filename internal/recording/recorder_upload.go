@@ -482,17 +482,18 @@ func (r *GenericRecorder) processRetryQueue() {
 			continue
 		}
 
-		p.retryCount++
+		// A stop deferred this upload: its first attempt is neither a retry
+		// nor a failure to warn about.
+		event := eventlog.UploadQueued
+		if p.lastError != uploadStoppedReason {
+			p.retryCount++
+			event = eventlog.UploadRetry
+		}
 		slog.Info("retrying upload",
 			"id", r.id,
 			"file", filepath.Base(p.request.localPath),
 			"attempt", p.retryCount)
-		// A stop deferred this upload; that is not a failure to warn about.
-		event, retry := eventlog.UploadRetry, p.retryCount
-		if p.lastError == uploadStoppedReason {
-			event, retry = eventlog.UploadQueued, 0
-		}
-		r.logUploadEvent(event, filepath.Base(p.request.localPath), p.request.s3Key, "", retry)
+		r.logUploadEvent(event, filepath.Base(p.request.localPath), p.request.s3Key, "", p.retryCount)
 
 		if !r.uploadPending(context.Background(), p) {
 			if err := r.savePendingUpload(p); err != nil {

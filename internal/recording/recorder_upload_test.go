@@ -434,18 +434,24 @@ func TestDeferredUploadThatFailsCountsAsFailed(t *testing.T) {
 		return logged
 	}
 
-	logged := pass(eventlog.UploadQueued, eventlog.UploadFailed)
-	if details, _ := logged[0].Details.(map[string]any); details["retry"] != nil {
-		t.Errorf("upload_queued details = %v, want no retry count", details)
+	// Like a worker upload, the first attempt is retry 0 and the next is 1.
+	wantRetries := func(logged []eventlog.Event, want ...any) {
+		t.Helper()
+		for i, event := range logged {
+			if details, _ := event.Details.(map[string]any); details["retry"] != want[i] {
+				t.Errorf("%s details = %v, want retry %v", event.Type, details, want[i])
+			}
+		}
 	}
+	wantRetries(pass(eventlog.UploadQueued, eventlog.UploadFailed), nil, nil)
 	if r.retryQueue[0].lastError == uploadStoppedReason || r.PendingUploadCount() != 1 {
 		t.Fatalf("after a failed attempt: last error %q, pending %d; want the S3 error, 1", r.retryQueue[0].lastError, r.PendingUploadCount())
 	}
-	pass(eventlog.UploadRetry, eventlog.UploadFailed)
+	wantRetries(pass(eventlog.UploadRetry, eventlog.UploadFailed), 1.0, 1.0)
 	r.retryQueue[0].firstAttempt = time.Now().Add(-MaxUploadRetryAge - time.Hour)
-	pass(eventlog.UploadAbandoned)
-	if len(alerts) != 1 || alerts[0].LastError == uploadStoppedReason || attempts.Load() != 2 {
-		t.Fatalf("abandonment alerts %+v after %d attempts; want one with the S3 error after 2", alerts, attempts.Load())
+	wantRetries(pass(eventlog.UploadAbandoned), 1.0)
+	if len(alerts) != 1 || alerts[0].LastError == uploadStoppedReason || alerts[0].RetryCount != 1 || attempts.Load() != 2 {
+		t.Fatalf("abandonment alerts %+v after %d attempts; want one with the S3 error and retry count 1 after 2", alerts, attempts.Load())
 	}
 }
 
