@@ -1,8 +1,15 @@
 package eventlog
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 func TestStorageIncidentsGroupedByPathAndIndependentOfUploads(t *testing.T) {
@@ -32,5 +39,78 @@ func TestStorageRecoveryOfUnmonitoredPathSaysSo(t *testing.T) {
 	events := decorateNewestFirst(testEvent(base, 1, RecordingStorageRestored, map[string]any{"path": "/old"}))
 	if events[0].Detail != "Path no longer monitored" {
 		t.Fatalf("recovery of a path that left monitoring reads %q", events[0].Detail)
+	}
+}
+
+func TestStorageKindChangeStaysOneIncident(t *testing.T) {
+	t.Parallel()
+	base := time.Date(2026, 10, 18, 10, 0, 0, 0, time.UTC)
+	events := decorateNewestFirst(
+		testEvent(base, 3, RecordingStorageRestored, map[string]any{"path": "/spool", "available_bytes": int64(3 << 30), "threshold_bytes": 1073741824}),
+		testEvent(base, 2, RecordingStorageLow, map[string]any{"path": "/spool", "error": "offline"}),
+		testEvent(base, 1, RecordingStorageLow, map[string]any{"path": "/spool", "available_bytes": 0, "threshold_bytes": 1073741824, "low": true}),
+	)
+	groups := GroupEvents(events, nil)
+	if len(groups.Attention) != 0 || len(groups.Resolved) != 1 {
+		t.Fatalf("a change from low to unavailable split the incident: %+v", groups)
+	}
+	if chips := groups.Resolved[0].Chips; slices.ContainsFunc(chips, func(c string) bool { return strings.HasSuffix(c, "tries") }) {
+		t.Fatalf("storage incident counts a change of kind as a retry: %v", chips)
+	}
+	assertPartition(t, events, &groups)
+}
+
+func TestLatestStorageEventsReadsAllRetainedHistory(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "encoder.jsonl")
+	writeEvents(t, util.RotatedPath(path), []Event{
+		{Type: RecordingStorageLow, Message: "a-open", Details: map[string]any{"path": "/a", "low": true}},
+		{Type: RecordingStorageLow, Message: "b-old", Details: map[string]any{"path": "/b", "low": true}},
+	})
+	current := []Event{
+		{Type: RecordingStorageRestored, Message: "b-new", Details: map[string]any{"path": "/b"}},
+		{Type: StreamStarted, Message: "unrelated"},
+	}
+	for range MaxReadLimit + 1 { // More than one ReadLast page of another path.
+		current = append(current, Event{Type: RecordingStorageLow, Message: "c", Details: map[string]any{"path": "/c", "error": "offline"}})
+	}
+	writeEvents(t, path, current)
+	logger, err := NewLogger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = logger.Close() })
+	latest, err := logger.LatestStorageEvents()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range latest {
+		got = append(got, e.Message)
+	}
+	if !slices.Equal(got, []string{"c", "b-new", "a-open"}) {
+		t.Fatalf("latest storage events = %v, want c, b-new, a-open", got)
+	}
+}
+
+func TestLatestStorageEventsKeepsEventsReadBeforeAnError(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("a directory reads as an empty file on Windows")
+	}
+	path := filepath.Join(t.TempDir(), "encoder.jsonl")
+	writeEvents(t, path, []Event{{Type: RecordingStorageLow, Message: "a-open", Details: map[string]any{"path": "/a", "low": true}}})
+	// A directory in place of the rotated file fails the read after the current file.
+	if err := os.Mkdir(util.RotatedPath(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	logger, err := NewLogger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = logger.Close() })
+	latest, err := logger.LatestStorageEvents()
+	if err == nil || len(latest) != 1 || latest[0].Message != "a-open" {
+		t.Fatalf("latest = %+v, err = %v; want a-open and the read error", latest, err)
 	}
 }

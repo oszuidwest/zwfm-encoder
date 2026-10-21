@@ -2,6 +2,7 @@ package recording
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -69,19 +70,23 @@ func NewManager(ffmpegPath, spoolDir string, maxDurationMinutes int, eventLogger
 	// A restart must still close storage incidents the previous run left open.
 	var storagePaths []types.RecordingStorageStatus
 	if eventLogger != nil {
-		events, _, err := eventlog.ReadLast(eventLogger.Path(), eventlog.MaxReadLimit, 0, eventlog.FilterStorage)
+		events, err := eventLogger.LatestStorageEvents()
 		if err != nil {
 			slog.Warn("could not restore recording storage incidents", "error", err)
 		}
-		seen := make(map[string]bool)
-		for _, e := range events { // Newest first: the latest event per path decides.
-			details, _ := e.Details.(map[string]any)
-			if path, _ := details["path"].(string); path != "" && !seen[path] {
-				seen[path] = true
-				if e.Type == eventlog.RecordingStorageLow {
-					storagePaths = append(storagePaths, types.RecordingStorageStatus{Path: path, Low: true})
-				}
+		for _, e := range events { // The latest event per path decides.
+			if e.Type != eventlog.RecordingStorageLow {
+				continue
 			}
+			details, _ := e.Details.(map[string]any)
+			path, _ := details["path"].(string)
+			// An unavailable path was not low; it recovers at the normal threshold.
+			status := types.RecordingStorageStatus{Path: path, Low: true}
+			if low, _ := details["low"].(bool); !low {
+				errMsg, _ := details["error"].(string)
+				status.Low, status.Error = false, cmp.Or(errMsg, "unavailable before restart")
+			}
+			storagePaths = append(storagePaths, status)
 		}
 	}
 

@@ -14,15 +14,22 @@ func diskSpace(path string) (available, total uint64, err error) {
 	if err := unix.Statfs(path, &stat); err != nil {
 		return 0, 0, err
 	}
-	// f_bavail excludes blocks reserved for privileged users.
-	blockSize := storageBlockSize(&stat)
-	if blockSize == 0 || stat.Blocks == 0 || stat.Blocks > math.MaxUint64/blockSize {
+	return statfsSpace(stat.Blocks, stat.Bfree, stat.Bavail, storageBlockSize(&stat))
+}
+
+// statfsSpace returns the space available to unprivileged users and, as total, used
+// plus available blocks. Like the caller-available counts on Windows, that
+// total leaves out free blocks reserved for privileged users, so freeing space
+// can bring available up to the total (less what the filesystem itself keeps
+// allocated).
+func statfsSpace(blocks, bfree, bavail, blockSize uint64) (available, total uint64, err error) {
+	if blockSize == 0 || blocks == 0 || blocks > math.MaxUint64/blockSize {
 		return 0, 0, fmt.Errorf("invalid filesystem block counts")
 	}
-	blocks := stat.Blocks
-	free := stat.Bavail
+	free := bavail
 	if free > blocks {
 		free = 0 // Some filesystems report negative availability in this unsigned field.
 	}
-	return free * blockSize, blocks * blockSize, nil
+	used := blocks - min(bfree, blocks)
+	return free * blockSize, (used + free) * blockSize, nil
 }
