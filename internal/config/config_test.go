@@ -117,6 +117,7 @@ func TestLoadPreservesConfigDataAndSnapshotEntities(t *testing.T) {
 	t.Parallel()
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	want := fullyPopulatedConfigData(t)
+	want.Notifications.Heartbeat.URL = "https://heartbeat.example/m1-token"
 	data, err := json.MarshalIndent(want, "", "  ")
 	if err != nil {
 		t.Fatalf("MarshalIndent() error = %v", err)
@@ -135,6 +136,7 @@ func TestLoadPreservesConfigDataAndSnapshotEntities(t *testing.T) {
 		t.Fatalf("ConfigData after Load() mismatch:\n got  %+v\n want %+v", cfg.ConfigData, want)
 	}
 	snap := cfg.Snapshot()
+	assertEqual(t, "HeartbeatURL", snap.HeartbeatURL, want.Notifications.Heartbeat.URL)
 	if !reflect.DeepEqual(snap.Streams, want.Streaming.Streams) {
 		t.Fatalf("Snapshot().Streams = %+v, want %+v", snap.Streams, want.Streaming.Streams)
 	}
@@ -622,12 +624,5 @@ func TestSettingsUpdateValidate_ClearHiddenValueConflict(t *testing.T) {
 				}
 			})
 		})
-	}
-}
-
-func TestHeartbeatURLReachesSnapshot(t *testing.T) {
-	snap := loadSnapshot(t, validConfigJSON(`"notifications":{"heartbeat":{"url":"https://heartbeat.example/m1-token"}}`))
-	if snap.HeartbeatURL != "https://heartbeat.example/m1-token" {
-		t.Fatalf("HeartbeatURL = %q, want the configured URL", snap.HeartbeatURL)
 	}
 }

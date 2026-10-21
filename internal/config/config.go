@@ -159,18 +159,14 @@ type EmailConfig struct {
 	Events types.EventSubscriptions `json:"events"`
 }
 
-// HeartbeatConfig holds push heartbeat settings for an external uptime monitor.
-type HeartbeatConfig struct {
-	// URL receives a GET request every minute while the encoder runs.
-	URL string `json:"url"`
-}
-
 // NotificationsConfig holds notification settings.
 type NotificationsConfig struct {
+	// Heartbeat holds the push monitor URL pinged every minute while the encoder runs.
+	Heartbeat struct {
+		URL string `json:"url"`
+	} `json:"heartbeat"`
 	// Webhook contains webhook notification settings.
 	Webhook WebhookConfig `json:"webhook"`
-	// Heartbeat contains push heartbeat settings.
-	Heartbeat HeartbeatConfig `json:"heartbeat"`
 	// Email contains Microsoft Graph email settings.
 	Email EmailConfig `json:"email"`
 	// Zabbix contains Zabbix notification settings.

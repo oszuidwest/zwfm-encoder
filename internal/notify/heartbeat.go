@@ -2,26 +2,36 @@ package notify
 
 import (
 	"context"
-	"errors"
-	"fmt"
+	"log/slog"
 	"net/http"
+	"time"
 )
 
-// SendHeartbeat sends one GET to a push monitor such as an UptimeRobot heartbeat.
-// Errors never contain the URL: its path carries the monitor's secret token.
-func SendHeartbeat(ctx context.Context, heartbeatURL string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, heartbeatURL, http.NoBody)
-	if err != nil {
-		return errors.New("invalid heartbeat URL")
+// RunHeartbeat pings url each interval until ctx is cancelled; empty disables it.
+func RunHeartbeat(ctx context.Context, url string, interval time.Duration) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+	if url == "" || err != nil {
+		return
 	}
-	resp, err := webhookClient.Do(req)
-	if err != nil {
-		return errors.New("heartbeat request failed")
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	failing := false
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		resp, err := webhookClient.Do(req)
+		failed := err != nil
+		if err == nil {
+			failed = resp.StatusCode < 200 || resp.StatusCode >= 300
+			_ = resp.Body.Close()
+		}
+		if failed && !failing && ctx.Err() == nil {
+			// HTTP errors can contain the secret URL, including redirect targets.
+			slog.Warn("heartbeat ping failed")
+		}
+		failing = failed
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("heartbeat returned status %d", resp.StatusCode)
-	}
-	return nil
 }
