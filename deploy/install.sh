@@ -390,7 +390,7 @@ if [ "$ENABLE_HEARTBEAT" == "y" ]; then
     echo -e "${YELLOW}Warning: could not read root's crontab, heartbeat monitoring not configured${NC}"
     echo -e "Add this line with ${BOLD}crontab -e${NC}:"
     echo "  $HEARTBEAT_CRONJOB"
-  elif ! grep -qF -- "$HEARTBEAT_URL" <<< "$EXISTING_CRONTAB"; then
+  elif [[ "$EXISTING_CRONTAB" != *"$HEARTBEAT_URL"* ]]; then
     { [ -z "$EXISTING_CRONTAB" ] || echo "$EXISTING_CRONTAB"; echo "$HEARTBEAT_CRONJOB"; } | crontab -
     echo -e "${GREEN}✓ Heartbeat monitoring configured${NC}"
   else

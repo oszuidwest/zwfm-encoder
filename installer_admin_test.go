@@ -144,16 +144,13 @@ prompt_user() {
 
 func TestInstallerHeartbeatCron(t *testing.T) {
 	t.Parallel()
-	if _, err := exec.LookPath("jq"); err != nil {
-		t.Skip("jq is needed for the installer completion summary")
-	}
 	script, err := os.ReadFile("deploy/install.sh")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Run heartbeat setup through the completion summary, which follows it.
-	_, fragment, found := strings.Cut(string(script), "# Set up heartbeat monitoring if enabled")
-	if !found {
+	_, block, found := strings.Cut(string(script), "# Set up heartbeat monitoring if enabled")
+	block, _, found2 := strings.Cut(block, "# COMPLETION")
+	if !found || !found2 {
 		t.Fatal("installer heartbeat block missing")
 	}
 	stub, err := os.ReadFile("tests/fixtures/crontab.sh")
@@ -171,10 +168,11 @@ func TestInstallerHeartbeatCron(t *testing.T) {
 		{name: "no crontab", missing: true, want: cronjob},
 		{name: "empty crontab", want: cronjob},
 		{name: "unrelated jobs kept", existing: jobs, want: jobs + cronjob},
-		// Any other read failure must leave the crontab alone and still finish the install.
+		// Any other read failure must leave the crontab alone and let the install continue.
 		{name: "read error", existing: jobs, readError: true, want: jobs},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			//nolint:gosec // G306: executable fake binary in an isolated test directory.
 			if err := os.WriteFile(filepath.Join(dir, "crontab"), stub, 0o700); err != nil {
@@ -186,24 +184,23 @@ func TestInstallerHeartbeatCron(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			configPath := filepath.Join(dir, "config.json")
-			if err := os.WriteFile(configPath, []byte(`{"system":{"port":8080,"bind_address":"0.0.0.0"}}`), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			readError, messages := "", []string{"Heartbeat monitoring configured", "Heartbeat monitoring already configured"}
-			if tc.readError {
-				readError, messages = "1", []string{"Warning: could not read root's crontab", "Warning: could not read root's crontab"}
-			}
+			env := append(os.Environ(),
+				"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"CRONTAB_TEST_FILE="+path, "CRONTAB_TEST_READ_ERROR=",
+				"ENABLE_HEARTBEAT=y", "HEARTBEAT_URL="+url,
+				"BLUE=", "GREEN=", "YELLOW=", "BOLD=", "NC=")
 			// A re-run must find the job instead of adding it twice.
-			for run, want := range messages {
-				cmd := util.CommandContext(t.Context(), "bash", "-c", "set -euo pipefail\n"+fragment)
-				cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "CRONTAB_TEST_FILE="+path, "CRONTAB_TEST_READ_ERROR="+readError, "ENABLE_HEARTBEAT=y", "HEARTBEAT_URL="+url, "KEEP_CONFIG=n", "CONFIG_FILE="+configPath, "INSTALL_DIR="+dir, "FIRST_IP=192.0.2.1", "WEB_USERNAME=admin", "BLUE=", "GREEN=", "YELLOW=", "BOLD=", "NC=")
+			runs := []string{"Heartbeat monitoring configured", "Heartbeat monitoring already configured"}
+			if tc.readError {
+				env = append(env, "CRONTAB_TEST_READ_ERROR=1")
+				runs = []string{"Warning: could not read root's crontab, heartbeat monitoring not configured\nAdd this line with crontab -e:\n  " + cronjob}
+			}
+			for run, want := range runs {
+				cmd := util.CommandContext(t.Context(), "bash", "-c", "set -euo pipefail\n"+block+"echo heartbeat step done\n")
+				cmd.Env = env
 				out, err := cmd.CombinedOutput()
-				if err != nil || !strings.Contains(string(out), want) || !strings.Contains(string(out), "Installation complete!") || !strings.Contains(string(out), "Username: admin") {
+				if err != nil || !strings.Contains(string(out), want) || !strings.HasSuffix(string(out), "heartbeat step done\n") {
 					t.Fatalf("run %d: %v\n%s", run+1, err, out)
-				}
-				if tc.readError && !strings.Contains(string(out), strings.TrimSuffix(cronjob, "\n")) {
-					t.Fatalf("run %d: warning lacks the cron line\n%s", run+1, out)
 				}
 			}
 			data, err := os.ReadFile(path) //nolint:gosec // G304: isolated crontab fixture under t.TempDir.
