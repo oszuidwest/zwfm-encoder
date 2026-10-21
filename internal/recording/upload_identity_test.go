@@ -228,24 +228,14 @@ func TestCommittedUploadWithLostResponseCreatesOneObject(t *testing.T) {
 // nor duplicate the recording: the retry recognizes the committed identity.
 func TestUploadInterruptedAfterCommitIsNotDuplicated(t *testing.T) {
 	t.Parallel()
-	store := &identityStore{objects: make(map[string]storedTestUpload), multipart: make(map[string]*multipartTestUpload)}
+	store, cfg := newIdentityStore(t)
 	ctx, stop := context.WithCancel(t.Context())
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if req.Method == http.MethodPut && ctx.Err() == nil {
-			store.serveHTTP(httptest.NewRecorder(), req) // Committed; the response is lost.
-			stop()
-			<-req.Context().Done()
-			return
-		}
-		store.serveHTTP(w, req)
-	}))
-	t.Cleanup(server.Close)
-	cfg := testS3Recorder()
-	cfg.S3Endpoint = server.URL
+	store.loseResponse = true                   // Committed; the response is lost.
+	store.beforeWrite = func(string) { stop() } // The stop arrives meanwhile.
 	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
 	file := writeSpoolFile(t, r.spoolDir, r.id, filepath.Base(uploadTestKey), "audio")
 	r.uploadFile(ctx, uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: 5, deleteAfterUpload: true})
-	if r.PendingUploadCount() != 1 || r.retryQueue[0].lastError != uploadStoppedReason {
+	if len(r.retryQueue) != 1 || r.retryQueue[0].lastError != uploadStoppedReason {
 		t.Fatalf("interrupted upload was not left for retry: %+v", r.retryQueue)
 	}
 	if _, err := os.Stat(file); err != nil {

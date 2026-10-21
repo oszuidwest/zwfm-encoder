@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -208,7 +209,8 @@ func TestS3ConnectionRejectsStoreWithoutConditionalWrites(t *testing.T) {
 
 // newHangingStore returns an identityStore whose PUTs stall until heal is
 // called, like a blackholed S3 endpoint; a PUT whose client gives up fails.
-// entered receives once per stalled PUT. Cleanup heals the store.
+// entered receives once per stalled PUT, up to its buffer. Cleanup heals the
+// store.
 func newHangingStore(t *testing.T) (store *identityStore, cfg *types.Recorder, heal func(), entered <-chan struct{}) {
 	t.Helper()
 	store = &identityStore{objects: make(map[string]storedTestUpload), multipart: make(map[string]*multipartTestUpload)}
@@ -220,7 +222,10 @@ func newHangingStore(t *testing.T) (store *identityStore, cfg *types.Recorder, h
 			select {
 			case <-healed:
 			default:
-				stalled <- struct{}{}
+				select {
+				case stalled <- struct{}{}:
+				default: // Nobody counts this many stalls.
+				}
 				select {
 				case <-req.Context().Done():
 					return
@@ -262,8 +267,18 @@ func testEventLogger(t *testing.T) (logger *eventlog.Logger, logged func() []eve
 
 func TestStopDefersHangingUploadsToRetryQueue(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []types.StorageMode{types.StorageS3, types.StorageBoth} {
-		t.Run(string(mode), func(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		mode     types.StorageMode
+		uploaded string // The upload the stop interrupts.
+	}{
+		{name: "s3", mode: types.StorageS3, uploaded: "previous-hour"},
+		{name: "both", mode: types.StorageBoth, uploaded: "previous-hour"},
+		// Over the multipart threshold: the stop must abort the multipart upload.
+		{name: "multipart", mode: types.StorageS3, uploaded: strings.Repeat("a", 17<<20)},
+	} {
+		mode := tc.mode
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			store, cfg, heal, entered := newHangingStore(t)
 			cfg.StorageMode = mode
@@ -289,7 +304,7 @@ func TestStopDefersHangingUploadsToRetryQueue(t *testing.T) {
 			r.mu.Unlock()
 
 			// The previous hour is uploading; the final file of this run is queued behind it.
-			uploading := recording("Test-2026-10-21-10-00.mp3", "previous-hour")
+			uploading := recording("Test-2026-10-21-10-00.mp3", tc.uploaded)
 			r.queueForUpload(uploading)
 			select {
 			case <-entered:
@@ -299,49 +314,138 @@ func TestStopDefersHangingUploadsToRetryQueue(t *testing.T) {
 			queued := recording("Test-2026-10-21-11-00.mp3", "final-file")
 			r.queueForUpload(queued)
 
-			stopped := make(chan error, 1)
-			go func() { stopped <- r.Stop() }()
-			select {
-			case err := <-stopped:
-				if err != nil {
-					t.Fatal(err)
-				}
-			case <-time.After(3 * time.Second):
-				t.Fatal("Stop waited for a hanging S3 upload")
+			// Hold off the retry pass Stop starts, so what the stop left is
+			// seen before any attempt.
+			r.retryProcessMu.Lock()
+			within(t, "Stop", r.Stop)
+			store.mu.Lock()
+			incomplete := len(store.multipart)
+			store.mu.Unlock()
+			if incomplete != 0 {
+				t.Errorf("stop left %d incomplete multipart uploads on S3", incomplete)
 			}
-			// Neither upload failed: the stop must not count as an attempt.
-			if r.PendingUploadCount() != 2 {
-				t.Fatalf("pending uploads = %d, want both files", r.PendingUploadCount())
+			// Neither upload failed: both are persisted for retry, so a
+			// restarted process finds them too, without a counted attempt.
+			pending, err := r.loadPendingUploads()
+			if err != nil || len(pending) != 2 {
+				t.Fatalf("persisted uploads = %d, %v; want both files", len(pending), err)
 			}
-			for _, p := range r.retryQueue {
+			for _, p := range pending {
 				if p.retryCount != 0 || p.lastError != uploadStoppedReason {
 					t.Errorf("deferred upload %s: retries %d, last error %q", filepath.Base(p.request.localPath), p.retryCount, p.lastError)
 				}
 			}
+			if got := r.PendingUploadCount(); got != 0 {
+				t.Errorf("pending uploads = %d, want 0: a deferred upload has not failed", got)
+			}
+			r.retryProcessMu.Unlock()
+
+			// The held-off pass uploads both once S3 answers.
+			heal()
+			r.processRetryQueue()
+			waitForUploadCleanup(t, store, r, uploading)
+			waitForUploadCleanup(t, store, r, queued)
 			if logged := loggedEvents(); slices.Contains(logged, eventlog.UploadFailed) {
 				t.Errorf("stop logged an upload failure: %v", logged)
 			}
-
-			// A restarted process finds both files and uploads them once S3 answers.
-			heal()
-			restarted := restartManager(t, spoolDir, cfg)
-			restarted.processUploadRetryQueues() // As Manager.Start does.
-			store.mu.Lock()
-			objects := len(store.objects)
-			store.mu.Unlock()
-			if objects != 2 {
-				t.Fatalf("uploaded objects = %d, want 2", objects)
-			}
-			for _, file := range []string{uploading, queued} {
-				_, err := os.Stat(file)
-				if kept := err == nil; kept != (mode == types.StorageBoth) {
-					t.Errorf("%s kept = %t after upload in %s mode (%v)", filepath.Base(file), kept, mode, err)
-				}
-			}
-			if entries, err := os.ReadDir(restarted.recorders[cfg.ID].pendingUploadDir()); err != nil || len(entries) != 0 {
-				t.Fatalf("upload metadata after retry = %v, %v; want none", entries, err)
-			}
 		})
+	}
+}
+
+// TestUploadWorkerDefersBacklogOnceStopBegins covers a file queued behind the
+// current upload while a stop is still finalizing: the worker must not start
+// an upload that the stop is about to interrupt.
+func TestUploadWorkerDefersBacklogOnceStopBegins(t *testing.T) {
+	t.Parallel()
+	_, cfg, _, entered := newHangingStore(t)
+	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
+	r.mu.Lock()
+	r.startUploadWorkerLocked()
+	r.uploadClosed = true // As Stop does before finalizing.
+	cancel := r.cancelUploads
+	r.mu.Unlock()
+	t.Cleanup(func() { cancel(); r.uploadWg.Wait() }) // Before the spool is removed.
+	file := writeSpoolFile(t, r.spoolDir, r.id, filepath.Base(uploadTestKey), "audio")
+	r.uploadQueue <- uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: 5, deleteAfterUpload: true}
+	deferred := func() bool {
+		r.mu.RLock()
+		defer r.mu.RUnlock()
+		return len(r.retryQueue) == 1 && r.retryQueue[0].lastError == uploadStoppedReason
+	}
+	for deadline := time.Now().Add(3 * time.Second); !deferred() && time.Now().Before(deadline); {
+		time.Sleep(time.Millisecond)
+	}
+	select {
+	case <-entered:
+		t.Fatal("the worker started an upload after the stop began")
+	default:
+	}
+	if !deferred() {
+		t.Fatal("the backlogged upload was not left to the retry queue")
+	}
+}
+
+// TestDeferredUploadThatFailsCountsAsFailed covers a deferred upload whose
+// first attempt fails: from then on it is reported, counted and abandoned
+// like any failed upload.
+func TestDeferredUploadThatFailsCountsAsFailed(t *testing.T) {
+	t.Parallel()
+	var fixed atomic.Bool
+	var attempts, uploads atomic.Int32
+	server := httptest.NewServer(abandonedUploadHandler(t, &fixed, &attempts, &uploads))
+	t.Cleanup(server.Close)
+	cfg := testS3Recorder()
+	cfg.S3Endpoint = server.URL
+	eventPath := filepath.Join(t.TempDir(), "events.jsonl")
+	logger, err := eventlog.NewLogger(eventPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = logger.Close() })
+	var alerts []UploadAbandonedEvent
+	r := NewGenericRecorder(GenericRecorderConfig{
+		Recorder: cfg, SpoolDir: t.TempDir(), EventLogger: logger,
+		OnUploadAbandoned: func(event UploadAbandonedEvent) { alerts = append(alerts, event) },
+	})
+	file := writeSpoolFile(t, r.spoolDir, r.id, filepath.Base(uploadTestKey), "audio")
+	r.addToRetryQueue(uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: 5, deleteAfterUpload: true}, uploadStoppedReason)
+	if got := r.PendingUploadCount(); got != 0 {
+		t.Fatalf("pending uploads = %d, want 0: a deferred upload has not failed", got)
+	}
+
+	seen := 0
+	pass := func(want ...eventlog.EventType) []eventlog.Event {
+		t.Helper()
+		r.processRetryQueue()
+		events, _, err := eventlog.ReadLast(eventPath, 100, 0, eventlog.FilterRecorder)
+		if err != nil {
+			t.Fatal(err)
+		}
+		slices.Reverse(events) // Oldest first.
+		logged := events[seen:]
+		seen = len(events)
+		var got []eventlog.EventType
+		for _, event := range logged {
+			got = append(got, event.Type)
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("retry pass logged %v, want %v", got, want)
+		}
+		return logged
+	}
+
+	logged := pass(eventlog.UploadQueued, eventlog.UploadFailed)
+	if details, _ := logged[0].Details.(map[string]any); details["retry"] != nil {
+		t.Errorf("upload_queued details = %v, want no retry count", details)
+	}
+	if r.retryQueue[0].lastError == uploadStoppedReason || r.PendingUploadCount() != 1 {
+		t.Fatalf("after a failed attempt: last error %q, pending %d; want the S3 error, 1", r.retryQueue[0].lastError, r.PendingUploadCount())
+	}
+	pass(eventlog.UploadRetry, eventlog.UploadFailed)
+	r.retryQueue[0].firstAttempt = time.Now().Add(-MaxUploadRetryAge - time.Hour)
+	pass(eventlog.UploadAbandoned)
+	if len(alerts) != 1 || alerts[0].LastError == uploadStoppedReason || attempts.Load() != 2 {
+		t.Fatalf("abandonment alerts %+v after %d attempts; want one with the S3 error after 2", alerts, attempts.Load())
 	}
 }
 
@@ -362,9 +466,9 @@ func recordTestAudio(t *testing.T, r *GenericRecorder) string {
 	return file
 }
 
-// waitForUploadCleanup waits until file is stored and its S3-only spool copy
-// and upload metadata are gone: the last filesystem changes a retry pass
-// makes for it.
+// waitForUploadCleanup waits until file is stored and its upload metadata
+// and, in S3-only mode, its spool copy are gone: the last filesystem changes
+// a retry pass makes for it.
 func waitForUploadCleanup(t *testing.T, store *identityStore, r *GenericRecorder, file string) {
 	t.Helper()
 	cfg := r.Config()
@@ -375,13 +479,32 @@ func waitForUploadCleanup(t *testing.T, store *identityStore, r *GenericRecorder
 		store.mu.Unlock()
 		_, err := os.Stat(file)
 		entries, _ := os.ReadDir(r.pendingUploadDir())
-		return uploaded && os.IsNotExist(err) && len(entries) == 0
+		return uploaded && os.IsNotExist(err) == (cfg.StorageMode == types.StorageS3) && len(entries) == 0
 	}
 	for deadline := time.Now().Add(5 * time.Second); !done() && time.Now().Before(deadline); {
 		time.Sleep(5 * time.Millisecond)
 	}
 	if !done() {
-		t.Fatalf("%s was not uploaded and removed from the spool", filepath.Base(file))
+		t.Fatalf("%s was not uploaded and cleaned up", filepath.Base(file))
+	}
+}
+
+// waitForRetryPass waits until a retry pass, such as the one Stop starts, has
+// uploaded every file of r: none is queued, in flight or persisted for retry.
+func waitForRetryPass(t *testing.T, r *GenericRecorder) {
+	t.Helper()
+	left := func() int {
+		r.mu.RLock()
+		n := len(r.retryQueue) + len(r.retryInFlight)
+		r.mu.RUnlock()
+		entries, _ := os.ReadDir(r.pendingUploadDir())
+		return max(n, len(entries))
+	}
+	for deadline := time.Now().Add(5 * time.Second); left() != 0 && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if n := left(); n != 0 {
+		t.Fatalf("%d uploads still waiting for a retry pass", n)
 	}
 }
 
@@ -400,43 +523,10 @@ func within(t *testing.T, name string, f func() error) {
 	}
 }
 
-// TestManagerStopAndStartDoNotWaitForHangingUpload covers an audio input
-// restart: Encoder.Stop and Restart wait for Manager.Stop.
-func TestManagerStopAndStartDoNotWaitForHangingUpload(t *testing.T) {
-	neverRotate(t)
-	// os.Executable, not os.Args: gosec taints the args into the spool paths.
-	executable, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	m, err := NewManager(executable, t.TempDir(), 60, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = m.Stop() }) // After the store heals stalled PUTs.
-	store, cfg, heal, _ := newHangingStore(t)
-	cfg.Enabled = true
-	if err := m.AddRecorder(cfg); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.Start(); err != nil {
-		t.Fatal(err)
-	}
-	r := m.recorders[cfg.ID]
-	waitForRecorderState(t, r, types.ProcessRunning)
-	file := recordTestAudio(t, r)
-
-	within(t, "Manager.Stop", m.Stop)
-	heal()
-	within(t, "Manager.Start", m.Start)
-	// Start retries the final file that Stop deferred.
-	waitForUploadCleanup(t, store, r, file)
-}
-
-// TestStopWithoutStartRetriesFinalFile covers stops that no Start follows:
-// they retry the final file, which S3 cannot accept before the stop ends,
-// right away instead of at the next hourly retry.
-func TestStopWithoutStartRetriesFinalFile(t *testing.T) {
+// TestStopRetriesFinalFile covers stops that no Start may follow: the stop
+// retries its final file, which S3 cannot accept before the stop returns,
+// by itself instead of at the next hourly retry.
+func TestStopRetriesFinalFile(t *testing.T) {
 	var (
 		mu     sync.Mutex
 		limits []func()
@@ -448,34 +538,38 @@ func TestStopWithoutStartRetriesFinalFile(t *testing.T) {
 		return time.NewTimer(math.MaxInt64)
 	}
 	t.Cleanup(func() { afterFunc = time.AfterFunc })
-	// Each stop releases finalization, which waits for it.
-	type stopFunc func(t *testing.T, m *Manager, r *GenericRecorder, finalize func()) error
+	// Each stop releases FFmpeg finalization, which waits for it.
+	type stopFunc func(m *Manager, r *GenericRecorder, finalize func()) error
+	finalizeThen := func(stop func(m *Manager, id string) error) stopFunc {
+		return func(m *Manager, r *GenericRecorder, finalize func()) error {
+			finalize()
+			return stop(m, r.id)
+		}
+	}
 	for _, tc := range []struct {
 		name string
 		stop stopFunc
 	}{
-		{name: "stop", stop: func(_ *testing.T, m *Manager, r *GenericRecorder, finalize func()) error {
-			finalize()
-			return m.StopRecorder(r.id)
-		}},
-		{name: "remove", stop: func(_ *testing.T, m *Manager, r *GenericRecorder, finalize func()) error {
-			finalize()
-			return m.RemoveRecorder(r.id)
-		}},
-		{name: "max duration", stop: func(_ *testing.T, _ *Manager, _ *GenericRecorder, finalize func()) error {
-			finalize()
+		// An explicit encoder stop.
+		{name: "manager stop", stop: finalizeThen(func(m *Manager, _ string) error { return m.Stop() })},
+		{name: "stop", stop: finalizeThen((*Manager).StopRecorder)},
+		{name: "remove", stop: finalizeThen((*Manager).RemoveRecorder)},
+		// The limit stops the recorder through stopLocked, not Stop.
+		{name: "max duration", stop: finalizeThen(func(*Manager, string) error {
 			mu.Lock()
 			limit := limits[len(limits)-1]
 			mu.Unlock()
 			limit()
 			return nil
-		}},
-		// Removal must not retry before the manager's stop has queued the
-		// files, so the stop finalizes only after the removal returned.
-		{name: "remove during manager stop", stop: func(t *testing.T, m *Manager, r *GenericRecorder, finalize func()) error {
+		})},
+		// The removal returns while the manager's stop has not queued the
+		// final file yet, so that stop must start the pass.
+		{name: "remove during manager stop", stop: func(m *Manager, r *GenericRecorder, finalize func()) error {
 			stopped := make(chan error, 1)
 			go func() { stopped <- m.Stop() }()
-			waitForRecorderState(t, r, types.ProcessStopping)
+			for r.Status().State != types.ProcessStopping {
+				time.Sleep(time.Millisecond)
+			}
 			if err := m.RemoveRecorder(r.id); err != nil {
 				return err
 			}
@@ -493,18 +587,20 @@ func TestStopWithoutStartRetriesFinalFile(t *testing.T) {
 			}
 			store, cfg, heal, _ := newHangingStore(t)
 			cfg.RecordingMode = types.RecordingOnDemand
+			// os.Executable, not os.Args: gosec taints the args into the spool paths.
 			executable, err := os.Executable()
 			if err != nil {
 				t.Fatal(err)
 			}
-			m, err := NewManager(executable, t.TempDir(), 60, nil)
+			logger, loggedEvents := testEventLogger(t)
+			m, err := NewManager(executable, t.TempDir(), 60, logger)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if err := m.AddRecorder(cfg); err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { _ = m.Stop() })
+			t.Cleanup(func() { heal(); _ = m.Stop() })
 			t.Cleanup(finalize) // Never leave a fake FFmpeg waiting.
 			if err := m.Start(); err != nil {
 				t.Fatal(err)
@@ -515,7 +611,7 @@ func TestStopWithoutStartRetriesFinalFile(t *testing.T) {
 			}
 			waitForRecorderState(t, r, types.ProcessRunning)
 			file := recordTestAudio(t, r)
-			within(t, tc.name, func() error { return tc.stop(t, m, r, finalize) })
+			within(t, tc.name, func() error { return tc.stop(m, r, finalize) })
 			waitForRecorderState(t, r, types.ProcessStopped)
 			store.mu.Lock()
 			early := len(store.objects)
@@ -525,6 +621,38 @@ func TestStopWithoutStartRetriesFinalFile(t *testing.T) {
 			}
 			heal()
 			waitForUploadCleanup(t, store, r, file)
+			// The stop sends the final file straight to retry storage instead of
+			// starting an upload it then interrupts, and its deferred upload is
+			// queued once, not reported as a failed upload's retry.
+			logged := loggedEvents()
+			queued := 0
+			for _, e := range logged {
+				if e == eventlog.UploadQueued {
+					queued++
+				}
+			}
+			if queued != 1 || slices.Contains(logged, eventlog.UploadRetry) {
+				t.Errorf("want one upload_queued and no upload_retry for the final file: %v", logged)
+			}
 		})
 	}
+}
+
+// TestRemoveStoppedRecorderRetriesItsUploads covers a recorder whose stop is
+// long over: no later manager pass covers it once removed, so the removal
+// retries what it left queued.
+func TestRemoveStoppedRecorderRetriesItsUploads(t *testing.T) {
+	t.Parallel()
+	store, cfg := newIdentityStore(t)
+	cfg.RecordingMode = types.RecordingOnDemand
+	spoolDir := t.TempDir()
+	m := restartManager(t, spoolDir, cfg)
+	r := m.recorders[cfg.ID]
+	file := writeSpoolFile(t, spoolDir, cfg.ID, "final.mp3", "audio")
+	rc := r.Config()
+	r.addToRetryQueue(uploadRequest{localPath: file, s3Key: s3ObjectKey(&rc, "final.mp3"), fileSize: 5, deleteAfterUpload: true}, "s3 unavailable")
+	if err := m.RemoveRecorder(cfg.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitForUploadCleanup(t, store, r, file)
 }
