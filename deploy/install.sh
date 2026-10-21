@@ -146,9 +146,15 @@ prompt_user "DO_UPDATES" "y" "Do you want to perform all OS updates? (y/n)" "y/n
 HEARTBEAT_URL=""
 if [ "$KEEP_CONFIG" != "y" ]; then
   prompt_user "ENABLE_HEARTBEAT" "n" "Do you want to enable heartbeat monitoring via UptimeRobot? (y/n)" "y/n"
-  if [ "$ENABLE_HEARTBEAT" == "y" ]; then
+  # The encoder refuses to start with an unparseable heartbeat URL.
+  while [ "$ENABLE_HEARTBEAT" == "y" ]; do
     prompt_user "HEARTBEAT_URL" "" "Enter the heartbeat URL to ping every minute" "str"
-  fi
+    if [[ "$HEARTBEAT_URL" =~ ^https?://[^[:space:]\\]+$ ]]; then
+      break
+    fi
+    echo -e "${RED}Invalid heartbeat URL. It must start with http:// or https:// and contain no spaces or backslashes.${NC}"
+    HEARTBEAT_URL=""
+  done
 else
   ENABLE_HEARTBEAT="n"
 fi
