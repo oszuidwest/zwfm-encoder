@@ -74,6 +74,21 @@ func (m *Manager) checkStorage(stop <-chan struct{}) {
 	// Scan retained metadata too: removing a recorder must not hide its abandoned
 	// audio after a process restart. This scan never modifies metadata or audio.
 	abandoned, scanErr := scanAbandonedUploads(m.spoolDir, activeUploads)
+	var missing []string
+	for _, path := range known {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			missing = append(missing, path)
+		}
+	}
+
+	m.mu.Lock()
+	if !m.running || m.cleanupStopCh != stop {
+		m.mu.Unlock()
+		return // An old, blocked run must not publish into a new run.
+	}
+	previous := m.storagePaths
+	// Hold before adding a scan error: the spool's space counts are still valid.
+	holdLowUntilRecovered(previous, observations)
 	if scanErr != nil {
 		i := slices.IndexFunc(observations, func(o types.RecordingStorageStatus) bool {
 			return o.Path == filepath.Clean(m.spoolDir)
@@ -88,19 +103,6 @@ func (m *Manager) checkStorage(stop <-chan struct{}) {
 		}
 		observations[i].Error = msg
 	}
-	var missing []string
-	for _, path := range known {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			missing = append(missing, path)
-		}
-	}
-
-	m.mu.Lock()
-	if !m.running || m.cleanupStopCh != stop {
-		m.mu.Unlock()
-		return // An old, blocked run must not publish into a new run.
-	}
-	previous := m.storagePaths
 	m.storagePaths = observations
 	// Add, never replace: an abandonment the callback reported after the scan
 	// started is not on disk yet. Restored uploads are saved as not abandoned.
@@ -145,9 +147,10 @@ func (m *Manager) probeStorage(ordered []string) []types.RecordingStorageStatus 
 	observations := make([]types.RecordingStorageStatus, 0, len(ordered))
 	for _, path := range ordered {
 		available, total, err := m.diskSpace(path)
+		threshold := max(1<<30, total/20)
 		status := types.RecordingStorageStatus{
 			Path: path, AvailableBytes: available, TotalBytes: total,
-			ThresholdBytes: max(1<<30, total/20), CheckedAt: time.Now(),
+			ThresholdBytes: threshold, RecoveryBytes: threshold + recoveryMargin(threshold, total), CheckedAt: time.Now(),
 		}
 		switch {
 		case err != nil:
@@ -162,27 +165,63 @@ func (m *Manager) probeStorage(ordered []string) []types.RecordingStorageStatus 
 	return observations
 }
 
+// recoveryMargin is the extra free space a low path needs to recover. Near the
+// threshold free space is an hourly sawtooth: recordings use it up and hourly
+// retention (or deletion after upload in S3-only mode) frees about an hour of
+// audio at once. From 3 GiB up, max(1 GiB, 2.5%) absorbs an hour of one PCM
+// recorder (~0.9 GB stored) or several MP3 recorders (~0.15 GB each); larger
+// swings can still alert hourly. Below 3 GiB the margin is capped at half the
+// space between the threshold and the total so a low path can still recover; a
+// volume smaller than the threshold gets no margin and stays low.
+func recoveryMargin(threshold, total uint64) uint64 {
+	if total <= threshold {
+		return 0
+	}
+	return min(max(1<<30, total/40), (total-threshold)/2)
+}
+
+// holdLowUntilRecovered keeps a low path low until it has RecoveryBytes free.
+// A failed probe is not low, so a path that checks cleanly again is judged on
+// the normal threshold.
+func holdLowUntilRecovered(previous, current []types.RecordingStorageStatus) {
+	for i := range current {
+		p := &current[i]
+		if p.Low || p.Error != "" || p.AvailableBytes >= p.RecoveryBytes {
+			continue
+		}
+		p.Low = slices.ContainsFunc(previous, func(old types.RecordingStorageStatus) bool {
+			return old.Path == p.Path && old.Low
+		})
+	}
+}
+
 // logStorageChanges logs per-path health transitions, including paths that left
-// monitoring while unhealthy, and reports whether any transition happened.
+// monitoring while unhealthy, and reports whether any transition happened. A
+// switch between low and unavailable is logged too, without counting as a
+// transition: restart seeding needs the latest kind, which recovers differently.
 func (m *Manager) logStorageChanges(previous, current []types.RecordingStorageStatus) (changed bool) {
 	was := make(map[string]types.RecordingStorageStatus, len(previous))
 	for _, p := range previous {
 		was[p.Path] = p
 	}
-	transitions := make([]types.RecordingStorageStatus, 0)
+	logged := make([]types.RecordingStorageStatus, 0)
 	for _, p := range current {
 		old := was[p.Path]
 		delete(was, p.Path)
 		if p.Unhealthy() != old.Unhealthy() {
-			transitions = append(transitions, p)
+			changed = true
+			logged = append(logged, p)
+		} else if p.Unhealthy() && p.Low != old.Low {
+			logged = append(logged, p)
 		}
 	}
 	for _, old := range was {
 		if old.Unhealthy() {
-			transitions = append(transitions, types.RecordingStorageStatus{Path: old.Path, CheckedAt: time.Now()})
+			changed = true
+			logged = append(logged, types.RecordingStorageStatus{Path: old.Path, CheckedAt: time.Now()})
 		}
 	}
-	for _, p := range transitions {
+	for _, p := range logged {
 		t, message := eventlog.RecordingStorageRestored, "Recording storage recovered"
 		if p.Unhealthy() {
 			t, message = eventlog.RecordingStorageLow, "Recording storage is low or unavailable"
@@ -196,7 +235,7 @@ func (m *Manager) logStorageChanges(previous, current []types.RecordingStorageSt
 			}
 		}
 	}
-	return len(transitions) > 0
+	return changed
 }
 
 func scanAbandonedUploads(spool string, active map[string]struct{}) (map[string]struct{}, error) {

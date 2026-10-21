@@ -19,6 +19,9 @@ func recordingStorageMessage(paths []types.RecordingStorageStatus) (event, messa
 	lines := make([]string, 0, len(paths))
 	for _, p := range paths {
 		line := fmt.Sprintf("%s: %d bytes available; warning below %d bytes", p.Path, p.AvailableBytes, p.ThresholdBytes)
+		if p.Low { // A low path can be above the threshold but not yet recovered.
+			line += fmt.Sprintf("; recovers at %d bytes", p.RecoveryBytes)
+		}
 		if p.Error != "" {
 			line += "; check failed: " + p.Error
 		}

@@ -714,7 +714,7 @@ func TestUpdateTearsDownFailedRecorder(t *testing.T) {
 			m, r := startedTestManager(t, cfg)
 			t.Cleanup(func() {
 				r.mu.Lock()
-				if r.uploadWorkerRunning {
+				if r.cancelUploads != nil {
 					r.state = types.ProcessError // Let Stop tear down what the test left running.
 				}
 				r.mu.Unlock()
@@ -740,7 +740,7 @@ func TestUpdateTearsDownFailedRecorder(t *testing.T) {
 				t.Fatal(err)
 			}
 			r.mu.RLock()
-			workerRunning, state := r.uploadWorkerRunning, r.state
+			workerRunning, state := r.cancelUploads != nil, r.state
 			r.mu.RUnlock()
 			if workerRunning || state != types.ProcessStopped {
 				t.Fatalf("after the save and Manager.Stop: upload worker running %t, state %s; want stopped without worker", workerRunning, state)

@@ -307,7 +307,8 @@ func (i *historicalIncident) add(event groupedEvent) {
 	if duration := detailInt64(event.details, "duration_ms"); duration > 0 {
 		i.durationMs = duration
 	}
-	if event.view.Reason == ReasonProblem {
+	// A storage incident logs again when it switches between low and unavailable; that is not a retry.
+	if event.view.Reason == ReasonProblem && event.view.Type != RecordingStorageLow {
 		i.attempts++
 	}
 	if event.view.Severity == SeverityError {
