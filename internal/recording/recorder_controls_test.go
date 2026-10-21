@@ -29,7 +29,7 @@ func TestBlockedFilenameCheckDoesNotBlockRecorderControls(t *testing.T) {
 				t.Fatal(err)
 			}
 			cfg := localOnDemandRecorder(t, "slow")
-			cfg.RecordingMode = types.RecordingHourly
+			cfg.RecordingMode, cfg.Enabled = types.RecordingHourly, true
 			if err := m.AddRecorder(cfg); err != nil {
 				t.Fatal(err)
 			}

@@ -1,6 +1,7 @@
 package recording
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -568,19 +569,17 @@ func TestStopRetriesFinalFile(t *testing.T) {
 			limit()
 			return nil
 		})},
-		// The removal returns while the manager's stop has not queued the
-		// final file yet, so that stop must start the pass.
+		// The removal arrives while the manager's stop has not queued the final
+		// file yet; it joins that stop, which starts the pass.
 		{name: "remove during manager stop", stop: func(m *Manager, r *GenericRecorder, finalize func()) error {
-			stopped := make(chan error, 1)
+			stopped, removed := make(chan error, 1), make(chan error, 1)
 			go func() { stopped <- m.Stop() }()
 			for r.Status().State != types.ProcessStopping {
 				time.Sleep(time.Millisecond)
 			}
-			if err := m.RemoveRecorder(r.id); err != nil {
-				return err
-			}
+			go func() { removed <- m.RemoveRecorder(r.id) }()
 			finalize()
-			return <-stopped
+			return errors.Join(<-removed, <-stopped)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -592,7 +591,7 @@ func TestStopRetriesFinalFile(t *testing.T) {
 				}
 			}
 			store, cfg, heal, _ := newHangingStore(t)
-			cfg.RecordingMode = types.RecordingOnDemand
+			cfg.RecordingMode, cfg.Enabled = types.RecordingOnDemand, true
 			// os.Executable, not os.Args: gosec taints the args into the spool paths.
 			executable, err := os.Executable()
 			if err != nil {
