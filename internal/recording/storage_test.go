@@ -107,23 +107,49 @@ func TestStorageWarningsThresholdsDedupAndRecovery(t *testing.T) {
 	}
 }
 
-// runStorageSamples feeds available-byte samples for one local recorder path
-// (the spool stays healthy) and counts alert callbacks and logged events.
-func runStorageSamples(t *testing.T, total uint64, samples []uint64) (callbacks, low, restored int) {
+// localStorageManager returns a manager with one enabled local recorder that
+// logs to the returned event log path.
+func localStorageManager(t *testing.T) (m *Manager, cfg *types.Recorder, logPath string) {
 	t.Helper()
-	m := storageTestManager(t, t.TempDir())
-	cfg := localOnDemandRecorder(t, "local")
+	m = storageTestManager(t, t.TempDir())
+	cfg = localOnDemandRecorder(t, "local")
 	cfg.Enabled = true
 	if err := m.AddRecorder(cfg); err != nil {
 		t.Fatal(err)
 	}
-	logPath := filepath.Join(t.TempDir(), "events.jsonl")
+	logPath = filepath.Join(t.TempDir(), "events.jsonl")
 	logger, err := eventlog.NewLogger(logPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = logger.Close() })
 	m.eventLogger = logger
+	return m, cfg, logPath
+}
+
+// countStorageEvents counts the logged storage low and restored events.
+func countStorageEvents(t *testing.T, logPath string) (low, restored int) {
+	t.Helper()
+	events, hasMore, err := eventlog.ReadLast(logPath, eventlog.MaxReadLimit, 0, eventlog.FilterStorage)
+	if err != nil || hasMore {
+		t.Fatalf("read storage events: hasMore=%v err=%v", hasMore, err)
+	}
+	for _, e := range events {
+		switch e.Type {
+		case eventlog.RecordingStorageLow:
+			low++
+		case eventlog.RecordingStorageRestored:
+			restored++
+		}
+	}
+	return low, restored
+}
+
+// runStorageSamples feeds available-byte samples for one local recorder path
+// (the spool stays healthy) and counts alert callbacks and logged events.
+func runStorageSamples(t *testing.T, total uint64, samples []uint64) (callbacks, low, restored int) {
+	t.Helper()
+	m, cfg, logPath := localStorageManager(t)
 	m.SetStorageChangeCallback(func([]types.RecordingStorageStatus) { callbacks++ })
 	local := filepath.Clean(cfg.LocalPath)
 	var available uint64
@@ -136,18 +162,7 @@ func runStorageSamples(t *testing.T, total uint64, samples []uint64) (callbacks,
 	for _, available = range samples {
 		m.checkStorage(m.cleanupStopCh)
 	}
-	events, _, err := eventlog.ReadLast(logPath, eventlog.MaxReadLimit, 0, eventlog.FilterRecorder)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range events {
-		switch e.Type {
-		case eventlog.RecordingStorageLow:
-			low++
-		case eventlog.RecordingStorageRestored:
-			restored++
-		}
-	}
+	low, restored = countStorageEvents(t, logPath)
 	return callbacks, low, restored
 }
 
@@ -163,8 +178,16 @@ func TestStorageOscillatingAroundThresholdAlertsOnce(t *testing.T) {
 	}
 }
 
-// Hourly retention (or deletion after upload in S3-only mode) frees about an
-// hour of audio at once, so free space near the threshold is a sawtooth.
+func TestStorageRelativeRecoveryMarginRecovers(t *testing.T) {
+	t.Parallel()
+	// 100 GiB: a 5 GiB threshold plus a 2.5 GiB margin.
+	callbacks, low, restored := runStorageSamples(t, 100<<30, []uint64{0, 15<<29 - 1, 15 << 29})
+	if callbacks != 2 || low != 1 || restored != 1 {
+		t.Fatalf("callbacks=%d low=%d restored=%d, want recovery at exactly 7.5 GiB", callbacks, low, restored)
+	}
+}
+
+// See recoveryMargin for the hourly sawtooth.
 func TestStorageRetentionSawtoothAlertsOnce(t *testing.T) {
 	t.Parallel()
 	const (
@@ -368,19 +391,7 @@ func TestUnreadableUploadMetadataDoesNotFailStorageCheck(t *testing.T) {
 
 func TestRemovedLowPathClosesIncident(t *testing.T) {
 	t.Parallel()
-	m := storageTestManager(t, t.TempDir())
-	cfg := localOnDemandRecorder(t, "local")
-	cfg.Enabled = true
-	if err := m.AddRecorder(cfg); err != nil {
-		t.Fatal(err)
-	}
-	logPath := filepath.Join(t.TempDir(), "events.jsonl")
-	logger, err := eventlog.NewLogger(logPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = logger.Close() })
-	m.eventLogger = logger
+	m, cfg, logPath := localStorageManager(t)
 	m.diskSpace = func(p string) (uint64, uint64, error) {
 		if p == filepath.Clean(cfg.LocalPath) {
 			return 0, 10 << 30, nil
@@ -392,20 +403,7 @@ func TestRemovedLowPathClosesIncident(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.checkStorage(m.cleanupStopCh)
-	events, _, err := eventlog.ReadLast(logPath, 100, 0, eventlog.FilterRecorder)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var low, restored int
-	for _, e := range events {
-		switch e.Type {
-		case eventlog.RecordingStorageLow:
-			low++
-		case eventlog.RecordingStorageRestored:
-			restored++
-		}
-	}
-	if low != 1 || restored != 1 {
+	if low, restored := countStorageEvents(t, logPath); low != 1 || restored != 1 {
 		t.Fatalf("removed low path incident: low=%d restored=%d, want 1 and 1", low, restored)
 	}
 }
