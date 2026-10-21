@@ -106,14 +106,12 @@ type GenericRecorder struct {
 	s3Client    *s3.Client
 	s3ConfigKey string // Config key used to create cached client
 
-	uploadQueue         chan uploadRequest
-	uploadWg            sync.WaitGroup
-	uploadStopCh        chan struct{}
-	stopOnce            sync.Once // Prevents double-close of uploadStopCh
-	uploadWorkerRunning bool      // Guards against starting multiple upload workers
-	uploadClosed        bool      // Routes late uploads to retry after Stop.
+	uploadQueue   chan uploadRequest
+	uploadWg      sync.WaitGroup
+	cancelUploads context.CancelFunc // Set while the upload worker runs; Stop cancels its uploads.
+	uploadClosed  bool               // Set from the start of Stop until the next Start; sends uploads to the retry queue.
 
-	// Retry queue for failed uploads (protected by mu)
+	// Retry queue for failed or deferred uploads (protected by mu)
 	retryProcessMu sync.Mutex // Only one retry batch may own paths at a time.
 	retryQueue     []pendingUpload
 	retryInFlight  map[string]struct{} // Paths remain owned while temporarily absent from retryQueue; protected by mu.
@@ -124,7 +122,8 @@ type GenericRecorder struct {
 	rotationTimer      *time.Timer
 	rotationGeneration uint64
 	// retiring tracks files being finalized; Stop waits until their uploads
-	// are queued or durably registered for recovery before intake closes.
+	// are queued or durably registered for recovery before the upload worker
+	// stops and the retry pass starts.
 	retiring      sync.WaitGroup
 	retiringFiles map[string]struct{} // Files rotations are finalizing; protected from cleanup until queued.
 
@@ -157,7 +156,6 @@ func NewGenericRecorder(cfg GenericRecorderConfig) *GenericRecorder {
 		spoolDir:           cfg.SpoolDir,
 		state:              types.ProcessStopped,
 		uploadQueue:        make(chan uploadRequest, 100),
-		uploadStopCh:       make(chan struct{}),
 		usedFilenames:      make(map[string]time.Time),
 		retiringFiles:      make(map[string]struct{}),
 	}
@@ -304,12 +302,7 @@ func (r *GenericRecorder) startAsync(gen uint64) {
 	}
 
 	// Start upload worker (after encoder to prevent goroutine leak on failure)
-	if !r.uploadWorkerRunning {
-		r.uploadWorkerRunning = true
-		r.uploadClosed = false // Reopen upload intake.
-		r.uploadWg.Add(1)
-		go r.uploadWorker()
-	}
+	r.startUploadWorkerLocked()
 
 	if r.config.RecordingMode == types.RecordingHourly {
 		r.scheduleRotationLocked(time.Now())
@@ -373,7 +366,9 @@ func (r *GenericRecorder) logEvent(eventType eventlog.EventType, p *eventlog.Rec
 	}
 }
 
-// Stop finalizes recordings and drains the upload worker.
+// Stop finalizes recordings and stops the upload worker without waiting for
+// S3: unfinished uploads move to the persisted retry queue, which a
+// background pass retries once the worker has stopped.
 // Calls made while already stopping return immediately.
 func (r *GenericRecorder) Stop() error {
 	r.mu.Lock()
@@ -390,6 +385,10 @@ func (r *GenericRecorder) stopLocked() error {
 
 	r.state = types.ProcessStopping
 	r.recording.Store(false)
+	// The worker is about to stop: send the final file straight to retry
+	// storage instead of starting an upload that Stop would interrupt.
+	r.uploadClosed = true
+	cancelUploads := r.cancelUploads
 
 	// Always stop timers (may be running even after write error)
 	if r.rotationTimer != nil {
@@ -400,30 +399,23 @@ func (r *GenericRecorder) stopLocked() error {
 	r.cancelDurationLimitLocked()
 	r.mu.Unlock()
 
-	// Queue the final file, and any file a rotation is still finalizing,
-	// before stopping the worker. Stopping state keeps new rotations out.
+	// Route the final file, and any file a rotation is still finalizing, to
+	// the retry queue before the pass starts. Stopping state keeps new
+	// rotations out.
 	r.stopEncoderAndUpload()
 	r.retiring.Wait()
 
-	// Nothing should queue uploads after this point; uploadClosed still sends
-	// a late file to retry storage.
-	r.mu.Lock()
-	r.uploadClosed = true
-	r.mu.Unlock()
-
 	// Stop the upload worker even after write errors.
-	r.stopOnce.Do(func() {
-		close(r.uploadStopCh)
-	})
+	if cancelUploads != nil {
+		cancelUploads()
+	}
 	r.uploadWg.Wait()
 
 	r.mu.Lock()
 	r.state = types.ProcessStopped
 	r.lastError = ""
-	r.uploadStopCh = make(chan struct{}) // Fresh stop channel for next Start.
 	// Keep uploadQueue stable; uploadClosed reroutes late files.
-	r.stopOnce = sync.Once{}      // Allow the next Stop to close uploadStopCh.
-	r.uploadWorkerRunning = false // Allow the next Start to launch a worker.
+	r.cancelUploads = nil // Allow the next Start to launch a worker.
 
 	// Snapshot event fields before releasing mu.
 	logParams := r.captureLogParamsLocked()
@@ -432,6 +424,9 @@ func (r *GenericRecorder) stopLocked() error {
 
 	slog.Info("recorder stopped", "id", r.id, "name", name)
 	r.logEvent(eventlog.RecorderStopped, logParams)
+
+	// Keep slow S3 retries outside Stop, like rotateFile does.
+	go r.processRetryQueue()
 	return nil
 }
 
@@ -574,11 +569,19 @@ func (r *GenericRecorder) Status() types.ProcessStatus {
 	}
 }
 
-// PendingUploadCount returns the number of uploads waiting for retry.
+// PendingUploadCount returns the number of uploads waiting for retry. An
+// upload a stop deferred has not failed, so it counts only once an attempt
+// fails: every routine stop defers its final file.
 func (r *GenericRecorder) PendingUploadCount() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return len(r.retryQueue)
+	count := 0
+	for i := range r.retryQueue {
+		if r.retryQueue[i].lastError != uploadStoppedReason {
+			count++
+		}
+	}
+	return count
 }
 
 // IsRecording reports whether recording is currently in progress.

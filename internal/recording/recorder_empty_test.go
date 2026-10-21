@@ -43,6 +43,7 @@ func TestEmptyRecordingsAreDiscardedButSilentAudioIsKept(t *testing.T) {
 			if err := r.Stop(); err != nil {
 				t.Fatal(err)
 			}
+			waitForRetryPass(t, r) // Stop may leave the rotated file to the retry queue.
 			assertNoRecording(t, emptyStop)
 			wantUploads := 1
 			if mode == types.StorageLocal {

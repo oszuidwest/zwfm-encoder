@@ -198,6 +198,9 @@ func (m *Manager) RemoveRecorder(id string) error {
 	if err := recorder.Stop(); err != nil {
 		slog.Warn("error stopping recorder during removal", "id", id, "error", err)
 	}
+	// No later manager pass covers a removed recorder, so also retry what an
+	// earlier stop left queued; a pass this Stop started absorbs this one.
+	go recorder.processRetryQueue()
 	m.mu.Lock()
 	delete(m.removing, id)
 	m.mu.Unlock()

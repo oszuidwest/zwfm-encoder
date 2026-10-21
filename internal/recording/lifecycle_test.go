@@ -25,10 +25,12 @@ func TestQueueForUploadAfterWorkerStopPersistsToRetryQueue(t *testing.T) {
 	})
 	r.mu.Lock()
 	r.state = types.ProcessRunning
-	r.uploadWorkerRunning = true
+	r.startUploadWorkerLocked()
 	r.mu.Unlock()
-	r.uploadWg.Add(1)
-	go r.uploadWorker()
+	// Hold off the retry pass Stop starts, so the late file stays in
+	// retryQueue. Never unlock: a pass released at return could write
+	// metadata into the spool while TempDir removes it.
+	r.retryProcessMu.Lock()
 	if err := r.Stop(); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
