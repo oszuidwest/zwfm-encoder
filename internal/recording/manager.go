@@ -212,8 +212,9 @@ func (m *Manager) RemoveRecorder(id string) error {
 // UpdateRecorder updates an existing recorder configuration and applies its
 // enabled state: a disabled recorder stops, and an enabled hourly recorder
 // starts while the manager runs, also after an error the update may have fixed.
-// A failed on-demand run is torn down. It blocks until a Stop in progress, and
-// an earlier update or StopRecorder of this recorder, has finished.
+// A failed on-demand run is torn down. It waits for an earlier update or
+// StopRecorder of this recorder, and a disabling or enabled hourly save also
+// waits for a Stop in progress.
 func (m *Manager) UpdateRecorder(cfg *types.Recorder) error {
 	m.mu.RLock()
 	recorder, exists := m.recorders[cfg.ID]
