@@ -151,7 +151,7 @@ func TestInstallerHeartbeatCron(t *testing.T) {
 	_, block, found := strings.Cut(string(script), "# Set up heartbeat monitoring if enabled")
 	block, _, found2 := strings.Cut(block, "# COMPLETION")
 	if !found || !found2 {
-		t.Fatal("installer heartbeat block missing")
+		t.Fatal("installer heartbeat block or completion banner missing")
 	}
 	stub, err := os.ReadFile("tests/fixtures/crontab.sh")
 	if err != nil {
@@ -161,15 +161,16 @@ func TestInstallerHeartbeatCron(t *testing.T) {
 	cronjob := "* * * * * curl -fsS --max-time 10 -o /dev/null '" + url + "' > /dev/null 2>&1\n"
 	jobs := "# m h dom mon dow command\n0 3 * * * /usr/local/bin/backup\n"
 	for _, tc := range []struct {
-		name, existing, want string
-		missing, readError   bool
+		name, existing, want, failEnv, failure, cause string
+		missing                                       bool
 	}{
 		// Fresh Raspberry Pi OS: root has no crontab and `crontab -l` exits 1.
 		{name: "no crontab", missing: true, want: cronjob},
 		{name: "empty crontab", want: cronjob},
 		{name: "unrelated jobs kept", existing: jobs, want: jobs + cronjob},
-		// Any other read failure must leave the crontab alone and let the install continue.
-		{name: "read error", existing: jobs, readError: true, want: jobs},
+		// Any other crontab failure must leave the crontab alone and let the install continue.
+		{name: "read error", existing: jobs, failEnv: "CRONTAB_TEST_READ_ERROR", failure: "read", cause: "crontabs/root/: fopen: Input/output error", want: jobs},
+		{name: "write error", existing: jobs, failEnv: "CRONTAB_TEST_WRITE_ERROR", failure: "update", cause: "errors in crontab file, can't install.", want: jobs},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -186,14 +187,14 @@ func TestInstallerHeartbeatCron(t *testing.T) {
 			}
 			env := append(os.Environ(),
 				"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
-				"CRONTAB_TEST_FILE="+path, "CRONTAB_TEST_READ_ERROR=",
+				"CRONTAB_TEST_FILE="+path, "CRONTAB_TEST_READ_ERROR=", "CRONTAB_TEST_WRITE_ERROR=",
 				"ENABLE_HEARTBEAT=y", "HEARTBEAT_URL="+url,
 				"BLUE=", "GREEN=", "YELLOW=", "BOLD=", "NC=")
 			// A re-run must find the job instead of adding it twice.
 			runs := []string{"Heartbeat monitoring configured", "Heartbeat monitoring already configured"}
-			if tc.readError {
-				env = append(env, "CRONTAB_TEST_READ_ERROR=1")
-				runs = []string{"Warning: could not read root's crontab, heartbeat monitoring not configured\nAdd this line with crontab -e:\n  " + cronjob}
+			if tc.failEnv != "" {
+				env = append(env, tc.failEnv+"=1")
+				runs = []string{tc.cause + "\nWarning: could not " + tc.failure + " root's crontab, heartbeat monitoring not configured\nAdd this line with crontab -e:\n  " + cronjob}
 			}
 			for run, want := range runs {
 				cmd := util.CommandContext(t.Context(), "bash", "-c", "set -euo pipefail\n"+block+"echo heartbeat step done\n")
