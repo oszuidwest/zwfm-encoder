@@ -74,6 +74,21 @@ func (m *Manager) checkStorage(stop <-chan struct{}) {
 	// Scan retained metadata too: removing a recorder must not hide its abandoned
 	// audio after a process restart. This scan never modifies metadata or audio.
 	abandoned, scanErr := scanAbandonedUploads(m.spoolDir, activeUploads)
+	var missing []string
+	for _, path := range known {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			missing = append(missing, path)
+		}
+	}
+
+	m.mu.Lock()
+	if !m.running || m.cleanupStopCh != stop {
+		m.mu.Unlock()
+		return // An old, blocked run must not publish into a new run.
+	}
+	previous := m.storagePaths
+	// Hold before adding a scan error: the spool's space counts are still valid.
+	holdLowUntilRecovered(previous, observations)
 	if scanErr != nil {
 		i := slices.IndexFunc(observations, func(o types.RecordingStorageStatus) bool {
 			return o.Path == filepath.Clean(m.spoolDir)
@@ -88,20 +103,6 @@ func (m *Manager) checkStorage(stop <-chan struct{}) {
 		}
 		observations[i].Error = msg
 	}
-	var missing []string
-	for _, path := range known {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			missing = append(missing, path)
-		}
-	}
-
-	m.mu.Lock()
-	if !m.running || m.cleanupStopCh != stop {
-		m.mu.Unlock()
-		return // An old, blocked run must not publish into a new run.
-	}
-	previous := m.storagePaths
-	holdLowUntilRecovered(previous, observations)
 	m.storagePaths = observations
 	// Add, never replace: an abandonment the callback reported after the scan
 	// started is not on disk yet. Restored uploads are saved as not abandoned.
@@ -170,8 +171,8 @@ func (m *Manager) probeStorage(ordered []string) []types.RecordingStorageStatus 
 // audio at once. From 3 GiB up, max(1 GiB, 2.5%) absorbs an hour of one PCM
 // recorder (~0.9 GB stored) or several MP3 recorders (~0.15 GB each); larger
 // swings can still alert hourly. Below 3 GiB the margin is capped at half the
-// usable space above the threshold so a low path can still recover; a volume
-// smaller than the threshold gets no margin and stays low, as before.
+// space between the threshold and the total so a low path can still recover; a
+// volume smaller than the threshold gets no margin and stays low.
 func recoveryMargin(threshold, total uint64) uint64 {
 	if total <= threshold {
 		return 0
@@ -180,8 +181,8 @@ func recoveryMargin(threshold, total uint64) uint64 {
 }
 
 // holdLowUntilRecovered keeps a low path low until it has RecoveryBytes free.
-// Probe errors are not low, so a path that returns is judged on the normal
-// threshold.
+// A failed probe is not low, so a path that checks cleanly again is judged on
+// the normal threshold.
 func holdLowUntilRecovered(previous, current []types.RecordingStorageStatus) {
 	for i := range current {
 		p := &current[i]

@@ -1,6 +1,7 @@
 package eventlog
 
 import (
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -88,5 +89,24 @@ func TestLatestStorageEventsReadsAllRetainedHistory(t *testing.T) {
 	}
 	if !slices.Equal(got, []string{"c", "b-new", "a-open"}) {
 		t.Fatalf("latest storage events = %v, want c, b-new, a-open", got)
+	}
+}
+
+func TestLatestStorageEventsKeepsEventsReadBeforeAnError(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "encoder.jsonl")
+	writeEvents(t, path, []Event{{Type: RecordingStorageLow, Message: "a-open", Details: map[string]any{"path": "/a", "low": true}}})
+	// A directory in place of the rotated file fails the read after the current file.
+	if err := os.Mkdir(util.RotatedPath(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	logger, err := NewLogger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = logger.Close() })
+	latest, err := logger.LatestStorageEvents()
+	if err == nil || len(latest) != 1 || latest[0].Message != "a-open" {
+		t.Fatalf("latest = %+v, err = %v; want a-open and the read error", latest, err)
 	}
 }

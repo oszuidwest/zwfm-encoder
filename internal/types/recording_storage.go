@@ -6,7 +6,7 @@ import "time"
 type RecordingStorageStatus struct {
 	Path           string    `json:"path"`
 	AvailableBytes uint64    `json:"available_bytes"`
-	TotalBytes     uint64    `json:"total_bytes"` // Used plus available to the process; leaves out free root-reserved blocks.
+	TotalBytes     uint64    `json:"total_bytes"` // Linux/macOS: used plus available, leaving out free root-reserved blocks; Windows: the caller's total.
 	ThresholdBytes uint64    `json:"threshold_bytes"`
 	RecoveryBytes  uint64    `json:"recovery_bytes"` // A low path stays low until this much is free.
 	Low            bool      `json:"low"`

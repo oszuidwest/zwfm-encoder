@@ -559,7 +559,8 @@ func matchesFilter(t EventType, filter TypeFilter) bool {
 
 // LatestStorageEvents returns the newest recording storage event of each path in
 // the retained logs, newest first. It reads all history once: any number of
-// events for other paths can follow a path's newest event.
+// events for other paths can follow a path's newest event. On a read error it
+// also returns the events found before it, which are still the newest.
 func (l *Logger) LatestStorageEvents() ([]Event, error) {
 	var latest []Event
 	seen := make(map[string]bool)
@@ -580,7 +581,7 @@ func (l *Logger) LatestStorageEvents() ([]Event, error) {
 			return true, nil
 		})
 		if err != nil && !os.IsNotExist(err) {
-			return nil, err
+			return latest, err
 		}
 	}
 	return latest, nil

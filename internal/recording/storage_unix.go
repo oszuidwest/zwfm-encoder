@@ -17,7 +17,7 @@ func diskSpace(path string) (available, total uint64, err error) {
 	return statfsSpace(stat.Blocks, stat.Bfree, stat.Bavail, storageBlockSize(&stat))
 }
 
-// statfsSpace returns the space available to the process and, as total, used
+// statfsSpace returns the space available to unprivileged users and, as total, used
 // plus available blocks. Like the caller-available counts on Windows, that
 // total leaves out free blocks reserved for privileged users, so freeing space
 // can bring available up to the total (less what the filesystem itself keeps

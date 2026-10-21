@@ -699,20 +699,19 @@ only transitions produce alerts. A path that switches between low and unavailabl
 `recording_storage_low` in the same incident, without alerting, so a restart knows which applies.
 A low path recovers only once it has the threshold plus max(1 GiB, 2.5%) available; on volumes
 under 3 GiB the margin is capped at half the space above the threshold, and a volume smaller
-than the threshold stays low. Hourly retention and S3-only deletion after upload make free space
-swing by about an hour of audio; from 3 GiB up the margin absorbs that for one PCM recorder or
-several MP3 recorders, larger swings can still alert hourly. A path that could not be checked,
-also before a restart, recovers on its first good check above the threshold. These checks never
-delete recordings.
+than the threshold stays low. Free space that swings by more than the margin can still alert
+repeatedly. A path that could not be checked, also one that was unavailable when the process stopped, recovers on its first good
+check above the threshold. These checks never delete recordings.
 
-Details: `path`, `available_bytes` (including zero), `total_bytes` (used plus available to the
-process, leaving out free blocks reserved for root), `threshold_bytes`,
+Details: `path`, `available_bytes` (including zero), `total_bytes` (on Linux and macOS used plus
+available to the process, leaving out free blocks reserved for root), `threshold_bytes`,
 `recovery_bytes`, `low`, `error` (when a check failed), and `checked_at`. A failed probe is not
 a recovery.
 Webhook events use the same two event names and carry the aggregate snapshot in `storage_paths`;
 email and the separate Zabbix `<upload key>.storage` item also report aggregate recovery only
-when no monitored path remains unhealthy. `/ready` exposes the cached observations and rejects
-observations older than three minutes.
+when no monitored path remains unhealthy. `/ready` exposes the cached observations, rejects
+observations older than three minutes, and keeps a low path not ready until it reaches
+`recovery_bytes`.
 
 ---
 
