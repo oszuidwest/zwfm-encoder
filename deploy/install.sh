@@ -381,7 +381,12 @@ if [ "$ENABLE_HEARTBEAT" == "y" ]; then
   HEARTBEAT_CRONJOB="* * * * * curl -fsS --max-time 10 -o /dev/null '$HEARTBEAT_URL' > /dev/null 2>&1"
   # crontab -l also exits 1 when root has no crontab yet (fresh install). On any
   # other read error, skip the update: rewriting would drop root's existing jobs.
-  if ! EXISTING_CRONTAB=$(crontab -l 2>/dev/null) && [[ "$(crontab -l 2>&1)" != "no crontab for "* ]]; then
+  CRONTAB_ERR_FILE=$(mktemp)
+  CRONTAB_READ_OK=y
+  EXISTING_CRONTAB=$(crontab -l 2>"$CRONTAB_ERR_FILE") || CRONTAB_READ_OK=n
+  CRONTAB_ERR=$(<"$CRONTAB_ERR_FILE")
+  rm -f "$CRONTAB_ERR_FILE"
+  if [ "$CRONTAB_READ_OK" == "n" ] && [[ "$CRONTAB_ERR" != "no crontab for "* ]]; then
     echo -e "${YELLOW}Warning: could not read root's crontab, heartbeat monitoring not configured${NC}"
     echo -e "Add this line with ${BOLD}crontab -e${NC}:"
     echo "  $HEARTBEAT_CRONJOB"
