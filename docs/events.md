@@ -557,7 +557,7 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
 
 - **Severity:** `info`
 - **UI Label:** New File
-- **Triggered:** When a new recording file is created (at start or hourly boundary). At an hourly boundary this is logged when the next file starts, before the previous one is finalized (see the README, Hourly Recording).
+- **Triggered:** When a new recording file is created (at start or hourly boundary). At an hourly boundary this is logged when the next file starts, before the previous one is finalized, so there is no gap between files.
 
 ```json
 {
