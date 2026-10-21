@@ -36,7 +36,7 @@ func TestAbandonedSpoolUploadsAfterConfigFixAndRestart(t *testing.T) {
 	})
 	file := writeSpoolFile(t, spoolDir, cfg.ID, "expired.mp3", "audio")
 	req := uploadRequest{localPath: file, s3Key: "recordings/Original/expired-2.mp3", fileSize: 5, deleteAfterUpload: true}
-	r.uploadFile(req)
+	r.uploadFile(t.Context(), req)
 	if len(r.retryQueue) != 1 {
 		t.Fatal("failed upload was not persisted for retry")
 	}

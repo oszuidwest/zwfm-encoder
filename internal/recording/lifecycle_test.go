@@ -25,10 +25,8 @@ func TestQueueForUploadAfterWorkerStopPersistsToRetryQueue(t *testing.T) {
 	})
 	r.mu.Lock()
 	r.state = types.ProcessRunning
-	r.uploadWorkerRunning = true
+	r.startUploadWorkerLocked()
 	r.mu.Unlock()
-	r.uploadWg.Add(1)
-	go r.uploadWorker()
 	if err := r.Stop(); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}

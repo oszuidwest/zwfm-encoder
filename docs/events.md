@@ -646,7 +646,7 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
 
 - **Severity:** `warning`
 - **UI Label:** Retry
-- **Triggered:** When a failed upload is being retried. Retries occur at hour boundaries. Files are retried for up to 24 hours.
+- **Triggered:** When a failed upload, or one that a stop interrupted or left queued, is being retried. Retries occur at hour boundaries, when the encoder starts, and right after an on-demand recording is stopped or reaches its maximum duration, or a recorder is removed. Files are retried for up to 24 hours.
 
 ```json
 {

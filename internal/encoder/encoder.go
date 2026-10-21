@@ -525,7 +525,7 @@ func (e *Encoder) stop(expectedGeneration *uint64) error {
 	}
 	if e.state == types.StateStopping {
 		// Like the first Stop, wait for streams and recorders before timing the
-		// source, so a shutdown cannot exit during a final upload.
+		// source, so a shutdown cannot exit while a recording is finalized.
 		consumers, done := e.consumersStopped, e.stopDone
 		e.mu.Unlock()
 		<-consumers
@@ -661,7 +661,7 @@ func (e *Encoder) restart(generation uint64) (err error) {
 	}
 	gate := e.restartGate
 	e.mu.Unlock()
-	// Unbounded: a restart ahead of this one may wait minutes for consumers to
+	// Unbounded: a restart ahead of this one may wait long for consumers to
 	// stop, and this one must not report a failure that is not its own. A
 	// channel, unlike sync.Mutex, blocks durably under synctest.
 	gate <- struct{}{}
@@ -676,9 +676,9 @@ func (e *Encoder) restart(generation uint64) (err error) {
 		}
 	}()
 
-	// Not bounded either: consumers can take long to stop (a final upload),
-	// and giving up would leave the encoder stopped for good. Say so if it
-	// takes that long.
+	// Not bounded either: recorders do not wait for S3, but finalizing on a
+	// stalled recording filesystem can take long, and giving up would leave
+	// the encoder stopped for good. Say so if it takes that long.
 	const stallMessage = "audio input restart is still waiting for the previous input, streams and recordings to stop"
 	finished := false // protected by e.mu
 	stalled := time.AfterFunc(restartTimeout, func() {

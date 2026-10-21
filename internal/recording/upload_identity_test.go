@@ -2,6 +2,7 @@ package recording
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
@@ -203,7 +205,7 @@ func TestCommittedUploadWithLostResponseCreatesOneObject(t *testing.T) {
 			}
 			store.beforeWrite = func(id string) { checkPersistedIdentity(t, r, id) }
 			file := writeSpoolFile(t, r.spoolDir, r.id, filepath.Base(uploadTestKey), string(data))
-			r.uploadFile(uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: int64(tc.size), deleteAfterUpload: true})
+			r.uploadFile(t.Context(), uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: int64(tc.size), deleteAfterUpload: true})
 			// A failed CompleteMultipartUpload may need the outer retry after NoSuchUpload.
 			r.processRetryQueue()
 			store.mu.Lock()
@@ -220,6 +222,43 @@ func TestCommittedUploadWithLostResponseCreatesOneObject(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A stop that interrupts an upload after S3 committed it must neither lose
+// nor duplicate the recording: the retry recognizes the committed identity.
+func TestUploadInterruptedAfterCommitIsNotDuplicated(t *testing.T) {
+	t.Parallel()
+	store := &identityStore{objects: make(map[string]storedTestUpload), multipart: make(map[string]*multipartTestUpload)}
+	ctx, stop := context.WithCancel(t.Context())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut && ctx.Err() == nil {
+			store.serveHTTP(httptest.NewRecorder(), req) // Committed; the response is lost.
+			stop()
+			<-req.Context().Done()
+			return
+		}
+		store.serveHTTP(w, req)
+	}))
+	t.Cleanup(server.Close)
+	cfg := testS3Recorder()
+	cfg.S3Endpoint = server.URL
+	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
+	file := writeSpoolFile(t, r.spoolDir, r.id, filepath.Base(uploadTestKey), "audio")
+	r.uploadFile(ctx, uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: 5, deleteAfterUpload: true})
+	if r.PendingUploadCount() != 1 || r.retryQueue[0].lastError != uploadStoppedReason {
+		t.Fatalf("interrupted upload was not left for retry: %+v", r.retryQueue)
+	}
+	if _, err := os.Stat(file); err != nil {
+		t.Fatalf("interrupted upload removed its spool file: %v", err)
+	}
+	r.processRetryQueue()
+	store.mu.Lock()
+	keys := slices.Sorted(maps.Keys(store.objects))
+	store.mu.Unlock()
+	if !slices.Equal(keys, []string{uploadTestKey}) {
+		t.Fatalf("stored keys = %v, want the interrupted upload once", keys)
+	}
+	assertUploadRecoveryRemoved(t, r, file)
 }
 
 func checkPersistedIdentity(t *testing.T, r *GenericRecorder, id string) {
@@ -245,7 +284,7 @@ func TestCommittedUploadIdentitySurvivesRestart(t *testing.T) {
 			store.beforeWrite = func(id string) { checkPersistedIdentity(t, r, id) }
 			data := bytes.Repeat([]byte{1}, size)
 			file := writeSpoolFile(t, r.spoolDir, r.id, filepath.Base(uploadTestKey), string(data))
-			r.uploadFile(uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: int64(size), deleteAfterUpload: true})
+			r.uploadFile(t.Context(), uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: int64(size), deleteAfterUpload: true})
 			if r.PendingUploadCount() != 1 {
 				t.Fatal("unverified commit must remain queued")
 			}
@@ -283,7 +322,7 @@ func TestUploadRetrySuffixesOriginalKey(t *testing.T) {
 			r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
 			store.beforeWrite = func(id string) { checkPersistedIdentity(t, r, id) }
 			file := writeSpoolFile(t, r.spoolDir, r.id, filepath.Base(uploadTestKey), string(data))
-			r.uploadFile(uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: int64(size), deleteAfterUpload: true})
+			r.uploadFile(t.Context(), uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: int64(size), deleteAfterUpload: true})
 			if r.PendingUploadCount() != 1 || r.retryQueue[0].request.s3Key != uploadTestKey2 {
 				t.Fatalf("failed suffixed upload was not queued: %+v", r.retryQueue)
 			}
@@ -325,7 +364,7 @@ func TestUnverifiableConflictKeepsRecordingForRetry(t *testing.T) {
 			store.objects[uploadTestKey] = storedTestUpload{id: "foreign", body: []byte("audio")}
 			r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
 			file := writeSpoolFile(t, r.spoolDir, r.id, filepath.Base(uploadTestKey), "audio")
-			r.uploadFile(uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: 5, deleteAfterUpload: true})
+			r.uploadFile(t.Context(), uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: 5, deleteAfterUpload: true})
 			if r.PendingUploadCount() != 1 {
 				t.Fatal("unverifiable conflict was not queued")
 			}
@@ -356,7 +395,7 @@ func TestUploadRequiresDurableIdentityBeforeNetworkWrite(t *testing.T) {
 	if err := os.WriteFile(file, []byte("audio"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r.uploadFile(uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: 5, deleteAfterUpload: true})
+	r.uploadFile(t.Context(), uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: 5, deleteAfterUpload: true})
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	if len(store.keys) != 0 || r.PendingUploadCount() != 1 {
@@ -580,11 +619,15 @@ func TestS3ConnectionLostPutResponseCleansOnlyOwnedProbe(t *testing.T) {
 
 func TestMissingInitialUploadStillReportsFailure(t *testing.T) {
 	t.Parallel()
-	r := NewGenericRecorder(GenericRecorderConfig{Recorder: testS3Recorder(), SpoolDir: t.TempDir()})
+	logger, loggedEvents := testEventLogger(t)
+	r := NewGenericRecorder(GenericRecorderConfig{Recorder: testS3Recorder(), SpoolDir: t.TempDir(), EventLogger: logger})
 	file := filepath.Join(t.TempDir(), "missing.mp3")
-	r.uploadFile(uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: 5})
+	r.uploadFile(t.Context(), uploadRequest{localPath: file, s3Key: uploadTestKey, fileSize: 5})
 	if r.PendingUploadCount() != 1 || !strings.Contains(r.retryQueue[0].lastError, "open recording for upload") {
 		t.Fatalf("initial upload failure was swallowed: %+v", r.retryQueue)
+	}
+	if logged := loggedEvents(); !slices.Contains(logged, eventlog.UploadFailed) {
+		t.Fatalf("upload failure was not logged: %v", logged)
 	}
 	// A later retry may clean up metadata for a file that really no longer exists.
 	r.processRetryQueue()
@@ -624,7 +667,7 @@ func TestCompletedUploadKeepsIdentityWhileSpoolFileRemains(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) }) //nolint:gosec // Restore the test dir for cleanup.
 	p := pendingUpload{request: uploadRequest{localPath: file, s3Key: "recordings/Test/kept.mp3", fileSize: 5, deleteAfterUpload: true}}
-	if !r.uploadPending(&p) {
+	if !r.uploadPending(t.Context(), &p) {
 		t.Fatal("upload failed")
 	}
 	if _, err := os.Stat(p.metadataPath); err != nil {

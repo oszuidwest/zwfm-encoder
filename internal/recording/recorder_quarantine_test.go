@@ -275,7 +275,7 @@ func TestQueuedUploadSkipsFileMarkedAfterQueueing(t *testing.T) {
 	file := writeSpoolFile(t, r.spoolDir, cfg.ID, "late.mp3", "audio")
 	writeSpoolFile(t, r.spoolDir, cfg.ID, "late.mp3"+unfinalizedRecordingSuffix, "Error writing trailer\n")
 	pending := pendingUpload{request: uploadRequest{localPath: file, s3Key: "recordings/Test/late.mp3", fileSize: 5, deleteAfterUpload: true}}
-	if err := r.doUpload(&pending); !errors.Is(err, errRecordingNotUploadable) {
+	if err := r.doUpload(t.Context(), &pending); !errors.Is(err, errRecordingNotUploadable) {
 		t.Fatalf("upload of a marked file = %v, want errRecordingNotUploadable", err)
 	}
 	if got := len(uploads()); got != 0 {

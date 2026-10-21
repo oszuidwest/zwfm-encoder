@@ -146,6 +146,7 @@ func TestLiveRenameKeepsStableNewObjectKeyAndAudio(t *testing.T) {
 	if err := r.Stop(); err != nil {
 		t.Fatal(err)
 	}
+	r.processRetryQueue() // Stop may leave the final file to the retry queue.
 	key := "recordings/" + cfg.RecordingFilePrefix() + "/" + filepath.Base(file)
 	store.mu.Lock()
 	defer store.mu.Unlock()

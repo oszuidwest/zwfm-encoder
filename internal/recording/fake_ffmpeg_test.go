@@ -19,6 +19,9 @@ const (
 	fakeFFmpegEmptyHeaderEnv  = "ZWFM_RECORDING_FAKE_FFMPEG_EMPTY_HEADER"
 	fakeFFmpegFailWriteEnv    = "ZWFM_RECORDING_FAKE_FFMPEG_FAIL_WRITE"
 	fakeFFmpegBlockWriterEnv  = "ZWFM_RECORDING_FAKE_FFMPEG_BLOCK_WRITER"
+	// fakeFFmpegFinalizeBarrierEnv names a file the fake waits for (up to
+	// 10s) before it finalizes, so a test controls when a stop can finish.
+	fakeFFmpegFinalizeBarrierEnv = "ZWFM_RECORDING_FAKE_FFMPEG_FINALIZE_BARRIER"
 	// fakeFFmpegFinalize is how long the fake takes to exit after stdin closes,
 	// like a real encoder flushing and finalizing its file.
 	fakeFFmpegFinalize = 100 * time.Millisecond
@@ -70,6 +73,13 @@ func runFakeFFmpeg(args []string) int {
 		finalize = d
 	}
 	time.Sleep(finalize)
+	if barrier := os.Getenv(fakeFFmpegFinalizeBarrierEnv); barrier != "" {
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+			if _, err := os.Stat(barrier); err == nil { //nolint:gosec // G703: path comes from the test that started this fake.
+				break
+			}
+		}
+	}
 
 	file, err := os.OpenFile(output, os.O_WRONLY|os.O_TRUNC, 0o600) //nolint:gosec // G304: path comes from the recorder under test.
 	if err != nil {
