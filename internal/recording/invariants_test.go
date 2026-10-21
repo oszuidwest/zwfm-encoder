@@ -57,7 +57,7 @@ func (e expectation) matches(violations []string) bool {
 	return !slices.ContainsFunc(violations, func(v string) bool { return !strings.Contains(v, e.match) })
 }
 
-const interruptedBoth = "unfiled: the interrupted file of a local+S3 recorder is never uploaded"
+const interruptedBoth = "#523"
 
 var knownViolations = map[string]expectation{
 	"HonestPending/UploadInFlight":      {issue: "#488", match: "while a retry upload was in flight"},

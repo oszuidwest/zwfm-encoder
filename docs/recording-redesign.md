@@ -139,7 +139,7 @@ Decisions taken on 2026-10-22:
   - its own stop;
   - an hourly rotation;
   - the process ending;
-  - an operator saving new output settings, if Q4 is accepted.
+  - an operator saving new output settings (D3).
 
   A *lost* input already keeps recorders running (`encoder.go:876`).
 - **R2. Local+S3 mode gives the same S3 guarantee as S3-only mode.** Every
@@ -175,6 +175,7 @@ scenario needs a seam the redesign introduces (section 6).
 | I9 | Nothing deletes an undelivered recording except an explicit operator discard. | gap: needs a clock seam |
 | I10 | An undelivered recording is retried until delivered, and is alerted as overdue after a threshold. | gap: needs a clock seam |
 | I11 | An input change or source restart does not cut a recording (R1). | gap: encoder-level scenario |
+| I12 | During an input outage the file keeps pace with wall-clock time (silence), and a segment with only silence is discarded (D1). | gap: needs a clock seam |
 
 About I9: today, in local+S3 mode, retention (`cleanup.go:92–106`) protects
 only the current and retiring files and files modified within the retention
@@ -238,9 +239,9 @@ outbox.
 - **Config rules:**
   - `enabled` and the recording mode apply immediately (#487; #508 already
     does this).
-  - Output settings (codec, bitrate, path, storage mode) apply at the next
-    segment. If Q4 is accepted, a make-before-break rotation starts that
-    segment immediately (#512).
+  - Saving new output settings (codec, bitrate, path, storage mode) starts a
+    new segment immediately with a make-before-break rotation (#512, D3).
+    "Changes apply on save" then holds.
 - **The capture path stays as it is:** a bounded per-segment channel feeds a
   writer goroutine for FFmpeg stdin, and rotation is make-before-break (#299,
   #418, #441).
@@ -312,8 +313,8 @@ failure classes have different guarantees.
     as they are muxed. That does not bound the encoder's own backlog.
   - MP3 and MPEG-TS stay playable up to the last complete frame.
 - **Power loss.** The page cache is lost.
-  - While recording, a helper fsyncs the output every W seconds; W is Q5,
-    proposed 10 s. On Linux, fsync on any descriptor of the file flushes its
+  - While recording, a helper fsyncs the output every W = 30 seconds (D4).
+    On Linux, fsync on any descriptor of the file flushes its
     data. On Windows, `FlushFileBuffers` on a handle with write access flushes
     data and metadata.
   - The guarantee is a **durability watermark**: the output length taken just
@@ -355,9 +356,9 @@ failure classes have different guarantees.
 - **A small worker pool** (1 or 2 workers) takes `ready` tickets in order of
   next attempt. Backoff goes from 1 minute up to a cap of 1 hour, with no
   abandonment (R3).
-- **Overdue alerting.** Past the overdue threshold (Q2), a single "uploads
-  overdue" alert covers the overdue set. It clears on delivery or on an
-  explicit discard.
+- **Overdue alerting.** A recording becomes overdue two hours after its first
+  attempt (D2). A single "uploads overdue" alert covers the overdue set. It
+  clears on delivery or on an explicit discard.
 - **Shutdown is owned by the manager.**
   - `Manager.Stop` cancels the uploader's context. An interrupted upload
     leaves its ticket in state `ready`. This replaces the
@@ -404,9 +405,21 @@ failure classes have different guarantees.
 - The recording manager starts once, when the encoder first starts. It stops
   only on an operator stop or process exit. Input changes and source restarts
   no longer call `recordingManager.Stop()`.
-- During an input outage, recorders keep running without PCM, so the file
-  pauses and playback time drifts from wall-clock time. Q1: should the gap be
-  filled with silence?
+- **Input outages are filled with silence (D1).** A file's playback position
+  then equals wall-clock time: minute 37 of the 14:00 file is 14:37.
+  - The writer goroutine of a segment tracks the audio it has written against
+    the time since the segment started.
+  - When no PCM has arrived for longer than a gap threshold (proposed 1 s,
+    well above the capture chunk interval), the writer writes silence (zero
+    samples in the capture format) in 100 ms blocks until capture resumes.
+  - Only outages are filled. The writer does not correct drift between the
+    capture clock and the wall clock.
+  - A segment holding nothing but filler is discarded like today's empty
+    file (#440), so an hour in which the input never came back leaves no
+    silent file. The segment therefore counts real and filler bytes
+    separately.
+  - The start and end of a filled gap are logged as recorder events with
+    their duration.
 
 ### 4.8 What stays and what goes
 
@@ -445,12 +458,12 @@ If-None-Match cover name reuse after an S3-only spool file is deleted.
 | #496 S3-only quarantine invisible | 4.2 failed tickets counted and alerted |
 | #502 removed recorder's uploads invisible | 4.2 removed recorders keep delivering and counting |
 | #511 storage probe error and hysteresis | 4.6 storage enum |
-| #512 output settings not applied | 4.1 next segment, or immediate rotation (Q4) |
+| #512 output settings not applied | 4.1 immediate make-before-break rotation (D3) |
 | #514 finalize error cleared on stop | 4.6 sticky errors |
 | #515 exported `Start` bypasses #508's guards | obsolete: commands only, same checks in the loop |
 | #517 queued uploads lost in local+S3 | 4.2 ticket at reservation |
 | #518 retry pass cut off by exit | 4.4 `Manager.Close` joins the uploader |
-| unfiled: interrupted local+S3 file never uploaded | 4.2 recovery of `recording` tickets |
+| #523 interrupted local+S3 file never uploaded | 4.2 recovery of `recording` tickets |
 | #490, #513 | out of scope (event log, frontend); fix independently |
 
 ## 6. Verification
@@ -493,7 +506,7 @@ Results on main `ccb54e1`:
 | ErrorStaysVisible/FinalizeFailure | violated (#514) |
 | Durable/{service,tree}/QueuedFinalized/s3, InterruptedActive/s3 | hold |
 | Durable/{service,tree}/QueuedFinalized/both | violated (#517): exactly hours 2–3 never reach S3 |
-| Durable/{service,tree}/InterruptedActive/both | violated (unfiled): hour 4 never reaches S3 |
+| Durable/{service,tree}/InterruptedActive/both | violated (#523): hour 4 never reaches S3 |
 
 Mutation checks show that the corpus notices both breakage and fixes:
 
@@ -545,24 +558,25 @@ API, plus a new `Close`:
 1. This PR: the design and the corpus.
 2. Outbox, durability protocol and uploader with `Manager.Close`. They replace
    the upload queue, retry, spool recovery and the abandoned scan, and they
-   flip #488, #502, #517, the interrupted local+S3 file and #518.
+   flip #488, #502, #517, #523 and #518.
 3. The recorder loop. It replaces the lifecycle guards, flips #514 and keeps
    I7. Delete the white-box tests the corpus covers, but only after the corpus
    covers them.
 4. Health snapshot and storage enum. `/ready`, status and alerts read it.
-5. Encoder decoupling (R1), and the silence-fill decision (Q1).
+5. Encoder decoupling (R1) and silence fill (D1).
 6. Corpus gaps (6.2, item 1), randomized schedules, then the soak.
 
-## 8. Open questions
+## 8. Decisions
 
-- **Q1.** Fill input outages with silence, so a file's playback time equals
-  wall-clock time?
-- **Q2.** Overdue threshold for undelivered recordings. Proposal: 2 hours,
-  shown in the UI.
-- **Q4.** Should saving output settings rotate immediately (make-before-break)
-  instead of waiting for the next segment? If yes, R1 gains that cut.
-- **Q5.** Sync interval W while recording, which sets how far the durability
-  watermark trails. Proposal: 10 s, to be measured against SD-card write cost
-  on the Pi.
+Taken on 2026-10-22, after the first draft:
 
-(Q3, about removed recorders, is settled by R2: they keep delivering.)
+- **D1.** Input outages are filled with silence, so a file's playback time
+  equals wall-clock time (4.7).
+- **D2.** An undelivered recording is overdue, and alerted, two hours after its
+  first attempt (4.4).
+- **D3.** Saving new output settings starts a new segment immediately, with a
+  make-before-break rotation (4.1). R1 includes this cut.
+- **D4.** While recording, the output is synced every W = 30 seconds (4.3).
+  This is a balance between SD-card wear and the audio at risk on power loss;
+  the soak on the Pi measures what it costs.
+- Removed recorders keep delivering their recordings (R2).
