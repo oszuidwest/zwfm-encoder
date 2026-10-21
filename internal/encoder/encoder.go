@@ -525,7 +525,7 @@ func (e *Encoder) stop(expectedGeneration *uint64) error {
 	}
 	if e.state == types.StateStopping {
 		// Like the first Stop, wait for streams and recorders before timing the
-		// source, so a shutdown cannot exit while a recording is finalized.
+		// source, so a shutdown cannot exit while a recording is still being finalized.
 		consumers, done := e.consumersStopped, e.stopDone
 		e.mu.Unlock()
 		<-consumers

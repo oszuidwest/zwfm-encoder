@@ -44,7 +44,9 @@ type pendingUpload struct {
 // MaxUploadRetryAge is the maximum age for retrying uploads.
 const MaxUploadRetryAge = 24 * time.Hour
 
-// uploadStoppedReason records an upload that Stop left to the retry queue.
+// uploadStoppedReason records an upload that Stop left to the retry queue;
+// processRetryQueue reports these as upload_queued. It is persisted in upload
+// metadata, so keep the value stable.
 const uploadStoppedReason = "upload worker stopped"
 
 func (r *GenericRecorder) queueForUpload(filePath string) {
@@ -72,11 +74,13 @@ func (r *GenericRecorder) queueForUpload(filePath string) {
 		return
 	}
 
-	reason := "upload queue full"
+	// In S3 modes every stop sends its final file this way; only a full queue
+	// is a problem.
+	reason, log := "upload queue full", slog.Warn
 	if closed {
-		reason = uploadStoppedReason
+		reason, log = uploadStoppedReason, slog.Info
 	}
-	slog.Warn("queuing upload via retry queue", "id", r.id, "reason", reason)
+	log("queuing upload via retry queue", "id", r.id, "reason", reason)
 	r.addToRetryQueue(req, reason)
 }
 
@@ -142,21 +146,27 @@ func (r *GenericRecorder) startUploadWorkerLocked() {
 	ctx, cancel := context.WithCancel(context.Background())
 	r.cancelUploads = cancel
 	r.uploadClosed = false // Reopen upload intake.
-	r.uploadWg.Add(1)
-	go r.uploadWorker(ctx)
+	r.uploadWg.Go(func() { r.uploadWorker(ctx) })
 }
 
 // uploadWorker processes the upload queue until Stop cancels ctx. Stop must
 // not wait for S3, so the cancelled upload and the files still queued move to
-// the persisted retry queue, which the next Start or retry pass uploads.
+// the persisted retry queue, and the retry pass Stop starts uploads them.
 func (r *GenericRecorder) uploadWorker(ctx context.Context) {
-	defer r.uploadWg.Done()
-
 	for ctx.Err() == nil {
 		select {
 		case <-ctx.Done():
 		case req := <-r.uploadQueue:
-			r.uploadFile(ctx, req)
+			// Stop cancels only after finalizing: do not start an upload it
+			// would interrupt.
+			r.mu.RLock()
+			closed := r.uploadClosed
+			r.mu.RUnlock()
+			if closed {
+				r.addToRetryQueue(req, uploadStoppedReason)
+			} else {
+				r.uploadFile(ctx, req)
+			}
 		}
 	}
 	// Stop closes intake before it cancels, so the queue can only shrink.
@@ -213,6 +223,9 @@ func (r *GenericRecorder) doUpload(ctx context.Context, p *pendingUpload) error 
 	tm := transfermanager.New(client, func(o *transfermanager.Options) {
 		o.Concurrency = 5
 		o.PartSizeBytes = 8 * 1024 * 1024 // 8 MiB parts
+		// Abort a multipart upload on a fresh context: a stop cancels ctx,
+		// and an unaborted upload keeps its parts stored on S3.
+		o.FailTimeout = 5 * time.Second
 		o.ObjectProgressListeners.Register(&uploadProgressListener{
 			id:       r.id,
 			filename: filepath.Base(req.localPath),
@@ -355,7 +368,7 @@ func (r *GenericRecorder) deleteAfterUpload(req uploadRequest) bool {
 	return true
 }
 
-// addToRetryQueue adds a failed upload to the retry queue.
+// addToRetryQueue adds a failed or deferred upload to the retry queue.
 func (r *GenericRecorder) addToRetryQueue(req uploadRequest, errMsg string) {
 	r.enqueuePendingUpload(&pendingUpload{request: req, lastError: errMsg})
 }
@@ -474,7 +487,12 @@ func (r *GenericRecorder) processRetryQueue() {
 			"id", r.id,
 			"file", filepath.Base(p.request.localPath),
 			"attempt", p.retryCount)
-		r.logUploadEvent(eventlog.UploadRetry, filepath.Base(p.request.localPath), p.request.s3Key, "", p.retryCount)
+		// A stop deferred this upload; that is not a failure to warn about.
+		event, retry := eventlog.UploadRetry, p.retryCount
+		if p.lastError == uploadStoppedReason {
+			event, retry = eventlog.UploadQueued, 0
+		}
+		r.logUploadEvent(event, filepath.Base(p.request.localPath), p.request.s3Key, "", retry)
 
 		if !r.uploadPending(context.Background(), p) {
 			if err := r.savePendingUpload(p); err != nil {
@@ -494,7 +512,7 @@ func (r *GenericRecorder) uploadPending(ctx context.Context, p *pendingUpload) b
 		// Stopped, not failed. The identity saved before the write lets the
 		// retry recognize an upload that was committed anyway.
 		p.lastError = uploadStoppedReason
-		slog.Info("upload interrupted by stop, left for retry", "id", r.id, "file", filepath.Base(p.request.localPath))
+		slog.Info("upload interrupted by stop, left for retry", "id", r.id, "file", filepath.Base(p.request.localPath), "error", err)
 		return false
 	}
 	if err != nil {

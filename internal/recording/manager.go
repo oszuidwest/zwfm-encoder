@@ -189,11 +189,13 @@ func (m *Manager) RemoveRecorder(id string) error {
 		return fmt.Errorf("recorder not found: %s", id)
 	}
 
-	// Delete before teardown so WriteAudio stops seeing this recorder. No
-	// later retry pass covers a removed recorder: retry what the stop deferred.
-	if err := recorder.stopAndRetryUploads(); err != nil {
+	// Delete before teardown so WriteAudio stops seeing this recorder.
+	if err := recorder.Stop(); err != nil {
 		slog.Warn("error stopping recorder during removal", "id", id, "error", err)
 	}
+	// No later manager pass covers a removed recorder, so also retry what an
+	// earlier stop left queued; a pass this Stop started absorbs this one.
+	go recorder.processRetryQueue()
 	m.mu.Lock()
 	delete(m.removing, id)
 	m.mu.Unlock()
@@ -257,8 +259,7 @@ func (m *Manager) StopRecorder(id string) error {
 		return ErrNotRecording
 	}
 
-	// Upload the final file now instead of at the next hourly retry.
-	return recorder.stopAndRetryUploads()
+	return recorder.Stop()
 }
 
 // Start begins recorder management and is idempotent across source retries.
