@@ -134,6 +134,8 @@ if [ "$KEEP_CONFIG" != "y" ]; then
       break
     fi
     echo -e "${RED}Invalid timezone '${TIMEZONE}'. Use 'timedatectl list-timezones' to see valid options.${NC}"
+    # Clear the rejected value so prompt_user asks again.
+    TIMEZONE=""
   done
 
   echo ""
