@@ -1,6 +1,7 @@
 # Recording Subsystem Redesign
 
-Status: proposal, 2026-10-22, against main `ccb54e1` (after #508). Scope:
+Status: proposal, 2026-10-22, against main `ccb54e1` (after #508). Step 2
+(section 7) is implemented in the follow-up PR to this one. Scope:
 `internal/recording` (recorders, spool, S3 upload, retention, storage alerts)
 and its coupling to `internal/encoder`.
 
@@ -172,7 +173,7 @@ scenario needs a seam the redesign introduces (section 6).
 | I6 | Every undelivered recording is counted, including during an upload and after its recorder is removed. All counts derive from one source. | `HonestPending/*` |
 | I7 | After `Manager.Stop` no recorder runs. The saved configuration is what runs. | `ClosedLifecycle/*`, `ConfigApplies/*` |
 | I8 | A failure stays visible until a later success or an operator action clears it. | `ErrorStaysVisible/*` |
-| I9 | Nothing deletes an undelivered recording except an explicit operator discard. | gap: needs a clock seam |
+| I9 | Nothing deletes an undelivered recording except the operator. | gap: needs a clock seam |
 | I10 | An undelivered recording is retried until delivered, and is alerted as overdue after a threshold. | gap: needs a clock seam |
 | I11 | An input change or source restart does not cut a recording (R1). | gap: encoder-level scenario |
 | I12 | During an input outage the file keeps pace with wall-clock time (silence), and a segment with only silence is discarded (D1). | gap: needs a clock seam |
@@ -248,12 +249,14 @@ outbox.
 
 ### 4.2 Outbox: the disk is the queue
 
-- **One ticket per recording** under `<spool>/outbox/<recorder-key>/`.
-  - The recorder key comes from `RecordingFilePrefix()`, not the raw ID
+- **One ticket per recording** in `<spool>/outbox/`, a flat directory; the
+  ticket names its recorder.
+  - S3-only recordings are spooled under `<spool>/recordings/<prefix>/`,
+    with the prefix from `RecordingFilePrefix()` instead of the raw ID
     (#495).
   - A ticket holds the recorder ID, the local path, the destination
     (endpoint, bucket, base key and a destination ID), the upload ID, the
-    state, the attempt count, the first attempt, the next attempt and the
+    state, the attempt count, when it became ready, the next attempt and the
     last error.
   - Credentials live once per destination in
     `<spool>/outbox/destinations/<id>.json` (0600, the same trust boundary as
@@ -273,7 +276,8 @@ outbox.
   - `delivered` → removal of the spool copy (S3-only mode) → removal of the
     ticket.
   - Any state → `failed` when finalization fails. A `failed` ticket stays
-    until an operator discards or retries it.
+    until the operator deletes its file; the next start then removes the
+    ticket. A `lost` ticket is cleared the same way.
 - **Recovery** (one scan at startup) depends on the storage mode:
   - `recording` with audio → `ready` in the S3 modes, and simply removed in
     local-only mode, where the file stays as it is. Either way an
@@ -283,19 +287,25 @@ outbox.
     durable was promised for it.
   - `recording` whose file is missing or empty although the ticket records a
     completed sync → `lost`, with an alert.
-  - `ready` or `delivered` with the local file missing → HEAD by upload ID.
-    If the object is there, finish delivery. If not, keep the ticket as lost,
-    with an alert.
+  - `ready` with the local file missing → the uploader HEADs the key. If
+    the object carries the ticket's identity, delivery is finished. If there
+    is no such object, the ticket becomes lost, with an alert.
+  - `delivered` with the local file gone → only the ticket is removed; S3
+    already confirmed the object.
 
   The scan builds an in-memory index that afterwards changes only together
-  with a ticket write. Pending, overdue, failed and lost counts all come from
+  with a ticket write, or in memory alone when a write fails, so a backoff
+  still holds. A ticket the scan cannot read is left on disk, counted as
+  lost, and pauses retention and destination pruning until a restart reads
+  it. Pending, overdue, failed and lost counts all come from
   that index (I6). The in-memory channel, `retryQueue`, `retryInFlight`, the
   abandoned map and its rescans disappear.
 - **Removed recorders.** Their tickets keep their destination and are still
   delivered. They are counted under the removed recorder until delivered or
   discarded (#502, R2).
 - **Failed tickets** (quarantined recordings) are counted and alerted, and
-  never expire on their own (#496, I9).
+  never expire on their own (#496, I9). The operator handles one by deleting
+  its file and restarting the service.
 
 ### 4.3 Durability boundary
 
@@ -318,16 +328,15 @@ failure classes have different guarantees.
     data. On Windows, `FlushFileBuffers` on a handle with write access flushes
     data and metadata.
   - The guarantee is a **durability watermark**: the output length taken just
-    before a sync starts, recorded once that sync *completes*. It is written
-    to the ticket, as a ticket generation, the first time and then whenever it
-    advances by W or more.
+    before a sync starts, recorded once that sync *completes*. Each sync that
+    finds the file grown writes it to the ticket as a new generation.
   - The bytes up to the watermark, and the audio they encode, survive a power
     cut. Later bytes may be lost.
   - Capture and encoder buffering mean the watermark trails real time by more
-    than W. The health snapshot shows that lag in seconds, derived from the
-    bytes and the bitrate.
-  - A sync that fails or lags more than 2W behind raises a recorder warning,
-    and the watermark does not advance.
+    than W. Showing that lag in seconds belongs to the health snapshot of
+    step 4.
+  - A sync that fails raises a recorder warning, and the watermark does not
+    advance.
 - **Finalization order.** First FFmpeg exits, then the recorder fsyncs and
   closes the output, and only then is the ticket written as `ready` (or
   removed in local-only mode). A recording is never marked deliverable before
@@ -353,17 +362,18 @@ failure classes have different guarantees.
 
 ### 4.4 Uploader: one per manager, owns all upload I/O
 
-- **A small worker pool** (1 or 2 workers) takes `ready` tickets in order of
-  next attempt. Backoff goes from 1 minute up to a cap of 1 hour, with no
-  abandonment (R3).
-- **Overdue alerting.** A recording becomes overdue two hours after its first
-  attempt (D2). A single "uploads overdue" alert covers the overdue set. It
+- **One worker** takes the oldest ticket whose next attempt is due; each
+  transfer already sends up to five multipart parts in parallel. Backoff goes
+  from 1 minute up to a cap of 1 hour, with no abandonment (R3).
+- **Overdue alerting.** A recording becomes overdue two hours after it was
+  finalized and became ready (D2). A single "uploads overdue" alert covers the overdue set. It
   clears on delivery or on an explicit discard.
 - **Shutdown is owned by the manager.**
-  - `Manager.Stop` cancels the uploader's context. An interrupted upload
-    leaves its ticket in state `ready`. This replaces the
-    `uploadStoppedReason` sentinel.
-  - A new process-lifetime `Manager.Close` then joins the workers and the
+  - Uploads run from `Manager.StartUploads` until the process-lifetime
+    `Manager.Close`; `Manager.Stop`, which an input change also calls, leaves
+    them running. An interrupted upload leaves its ticket in state `ready`.
+    This replaces the `uploadStoppedReason` sentinel.
+  - `Manager.Close` cancels the uploader and joins the worker and the
     multipart aborts, bounded by `FailTimeout` (5 s) plus a margin. It runs
     before the event log and the alert orchestrator close (`main.go` shutdown
     order, #518).
@@ -371,8 +381,8 @@ failure classes have different guarantees.
     install docs.
 - **Recorder stop and removal do no upload work.** I5 therefore holds by
   construction.
-- **S3 clients** are cached per destination by the uploader. S3 retention,
-  today a recorder-client path, uses the same cache.
+- **S3 clients** are created per upload from the destination's stored
+  credentials, which is cheap; S3 retention keeps its recorder client.
 
 ### 4.5 Retention
 
@@ -380,7 +390,7 @@ failure classes have different guarantees.
 - S3 retention stays as it is: owned namespaces, name time and
   `LastModified`.
 - Failed and lost tickets wait for the operator. Their disk use shows up in
-  the storage alert.
+  the storage alert, and `/ready` stays red while they exist.
 
 ### 4.6 Health: one derivation
 
@@ -572,8 +582,8 @@ Taken on 2026-10-22, after the first draft:
 
 - **D1.** Input outages are filled with silence, so a file's playback time
   equals wall-clock time (4.7).
-- **D2.** An undelivered recording is overdue, and alerted, two hours after its
-  first attempt (4.4).
+- **D2.** An undelivered recording is overdue, and alerted, two hours after it
+  became ready for upload (4.4).
 - **D3.** Saving new output settings starts a new segment immediately, with a
   make-before-break rotation (4.1). R1 includes this cut.
 - **D4.** While recording, the output is synced every W = 30 seconds (4.3).

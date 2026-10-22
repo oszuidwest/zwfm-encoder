@@ -35,7 +35,7 @@ func TestStaleStartValidationCannotChangeStoppedOrNewRun(t *testing.T) {
 				return original(path)
 			}
 			cfg := localOnDemandRecorder(t, "validation")
-			r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0], SpoolDir: t.TempDir()})
+			r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0], SpoolDir: t.TempDir()})
 			r.state, r.startGen = types.ProcessStarting, 1
 			go func() { r.startAsync(1); close(returned) }()
 			t.Cleanup(func() { _ = r.Stop(); releaseOld(); <-returned; checkRecordingPath = original })
@@ -712,14 +712,7 @@ func TestUpdateTearsDownFailedRecorder(t *testing.T) {
 			cfg := localOnDemandRecorder(t, "failed")
 			cfg.RecordingMode, cfg.Enabled = tc.mode, true
 			m, r := startedTestManager(t, cfg)
-			t.Cleanup(func() {
-				r.mu.Lock()
-				if r.cancelUploads != nil {
-					r.state = types.ProcessError // Let Stop tear down what the test left running.
-				}
-				r.mu.Unlock()
-				_ = r.Stop()
-			})
+			t.Cleanup(func() { _ = r.Stop() })
 			if tc.mode == types.RecordingOnDemand {
 				if err := m.StartRecorder(cfg.ID); err != nil {
 					t.Fatal(err)
@@ -728,7 +721,7 @@ func TestUpdateTearsDownFailedRecorder(t *testing.T) {
 			waitForRecorderState(t, r, types.ProcessRunning)
 			writeUntilRecorderLeavesRunning(t, r)
 			waitForRecorderState(t, r, types.ProcessError)
-			r.retiring.Wait() // The write-error cleanup has finished; its upload worker still runs.
+			r.retiring.Wait() // The write-error cleanup has finished.
 			t.Setenv(fakeFFmpegFailWriteEnv, "")
 			saved := r.Config()
 			tc.save(&saved)
@@ -739,11 +732,8 @@ func TestUpdateTearsDownFailedRecorder(t *testing.T) {
 			if err := m.Stop(); err != nil {
 				t.Fatal(err)
 			}
-			r.mu.RLock()
-			workerRunning, state := r.cancelUploads != nil, r.state
-			r.mu.RUnlock()
-			if workerRunning || state != types.ProcessStopped {
-				t.Fatalf("after the save and Manager.Stop: upload worker running %t, state %s; want stopped without worker", workerRunning, state)
+			if state := r.Status().State; state != types.ProcessStopped {
+				t.Fatalf("after the save and Manager.Stop: state %s, want stopped", state)
 			}
 		})
 	}

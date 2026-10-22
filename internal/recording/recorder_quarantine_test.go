@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -46,29 +46,19 @@ func TestFailedRecordingIsNotRecoveredAfterRestart(t *testing.T) {
 						t.Fatal(err)
 					}
 					assertRecordedCapture(t, file, want)
-					assertRecordingQuarantined(t, file)
+					assertRecordingQuarantined(t, r, file)
 					assertSingleRecorderError(t, events, file, "No space left on device")
-					restarted := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: r.spoolDir})
-					if err := restarted.reconcilePendingUploads(); err != nil {
-						t.Fatal(err)
+					if tk, _ := ticketFor(r.outbox, file); !strings.Contains(tk.LastError, "No space left on device") {
+						t.Fatalf("failed ticket does not hold the reason: %q", tk.LastError)
 					}
-					if got := restarted.PendingUploadCount(); got != 0 {
+					restarted := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, SpoolDir: r.spoolDir})
+					deliverDue(t, restarted)
+					if got := pendingTickets(restarted); got != 0 {
 						t.Fatalf("failed output queued after restart: %d uploads", got)
-					}
-					restarted.queueForUpload(file)
-					if restarted.PendingUploadCount() != 0 || len(restarted.uploadQueue) != 0 {
-						t.Fatal("quarantine bypassed by direct upload queueing")
 					}
 				})
 			}
 		})
-	}
-}
-
-func assertRecordingQuarantined(t *testing.T, file string) {
-	t.Helper()
-	if _, err := os.Stat(file + unfinalizedRecordingSuffix); err != nil {
-		t.Fatalf("unfinalized recording marker missing: %v", err)
 	}
 }
 
@@ -105,13 +95,10 @@ func TestFailedEmptyRemovalStaysQuarantinedAfterRestart(t *testing.T) {
 	if err := r.Stop(); err != nil {
 		t.Fatal(err)
 	}
-	assertRecordingQuarantined(t, file)
+	assertRecordingQuarantined(t, r, file)
 	assertSingleRecorderError(t, events, file, "remove empty recording")
-	restarted := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: r.spoolDir})
-	if err := restarted.reconcilePendingUploads(); err != nil {
-		t.Fatal(err)
-	}
-	if restarted.PendingUploadCount() != 0 {
+	restarted := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, SpoolDir: r.spoolDir})
+	if pendingTickets(restarted) != 0 {
 		t.Fatal("failed empty-file removal became an automatic upload after restart")
 	}
 }
@@ -141,34 +128,8 @@ func TestWriterTimeoutReportsOneErrorAndQuarantinesPartialAudio(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertSingleRecorderError(t, events, file, "writer timed out")
-	assertRecordingQuarantined(t, file)
+	assertRecordingQuarantined(t, r, file)
 	assertRecordedCapture(t, file, bytes.Repeat([]byte{1, 2, 3, 4}, 1024))
-}
-
-func TestFailedMarkerRemovalDoesNotQueueCompletedAudio(t *testing.T) {
-	cfg := testS3Recorder()
-	cfg.RecordingMode, cfg.S3Endpoint = types.RecordingOnDemand, "http://127.0.0.1:1"
-	r, events := errorTestRecorder(t, cfg)
-	file := startCaptureTestRecorder(t, r)
-	r.WriteAudio([]byte{1, 2, 3, 4})
-	marker := file + unfinalizedRecordingSuffix
-	if err := os.Remove(marker); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(marker, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(marker, "hold"), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.Stop(); err != nil {
-		t.Fatal(err)
-	}
-	assertRecordingQuarantined(t, file)
-	assertSingleRecorderError(t, events, file, "clear unfinalized")
-	if r.PendingUploadCount() != 0 {
-		t.Fatal("completed output queued despite failed quarantine release")
-	}
 }
 
 func TestRunningFinalizeWarningClearsOnNextSuccessfulRotation(t *testing.T) {
@@ -187,173 +148,92 @@ func TestRunningFinalizeWarningClearsOnNextSuccessfulRotation(t *testing.T) {
 	}
 }
 
-func TestMissingMarkerCannotMakeLegacyEmptySpoolFileUploadable(t *testing.T) {
-	cfg := testS3Recorder()
-	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
-	file := writeSpoolFile(t, r.spoolDir, cfg.ID, "Test-2026-09-28-14-37.mp3", "")
-	if err := r.reconcilePendingUploads(); err != nil {
-		t.Fatal(err)
-	}
-	if r.PendingUploadCount() != 0 {
-		t.Fatal("zero-byte unmarked legacy output was queued")
-	}
-	if _, ok := r.prepareUploadRequest(file); ok {
-		t.Fatal("zero-byte output passed upload validation")
-	}
-	assertRecordedCapture(t, file, nil) // Retained, not deleted.
-}
-
-func TestQuarantineAlsoBlocksPreviouslyPersistedUploadMetadata(t *testing.T) {
-	cfg := testS3Recorder()
-	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
-	file := writeSpoolFile(t, r.spoolDir, cfg.ID, "failed.mp3", "partial audio")
-	writeSpoolFile(t, r.spoolDir, cfg.ID, "failed.mp3"+unfinalizedRecordingSuffix, "Error writing trailer\n")
-	pending := pendingUpload{request: uploadRequest{localPath: file, s3Key: "recordings/Test/failed.mp3", fileSize: 13}}
-	if err := r.savePendingUpload(&pending); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.reconcilePendingUploads(); err != nil {
-		t.Fatal(err)
-	}
-	if r.PendingUploadCount() != 0 {
-		t.Fatal("upload metadata bypassed the output's quarantine")
-	}
-	assertRecordedCapture(t, file, []byte("partial audio"))
-	if _, err := os.Stat(pending.metadataPath); err != nil {
-		t.Fatalf("recovery removed quarantined upload metadata: %v", err)
-	}
-}
-
-func TestExistingMarkerReservesNameWithoutAnAudioFile(t *testing.T) {
-	cfg := localOnDemandRecorder(t, "marker-collision")
-	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0]})
-	var markers []string
+func TestTicketReservesNameWithoutAnAudioFile(t *testing.T) {
+	cfg := localOnDemandRecorder(t, "ticket-collision")
+	r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0]})
 	for _, at := range []time.Time{time.Now(), time.Now().Add(time.Minute)} {
-		marker := filepath.Join(cfg.LocalPath, r.generateFilename(at)) + unfinalizedRecordingSuffix
-		if err := os.WriteFile(marker, []byte("existing quarantine"), 0o600); err != nil {
+		// A failed recording whose file is gone still owns its name.
+		if err := r.outbox.newTicket(&ticket{Path: filepath.Join(cfg.LocalPath, r.generateFilename(at))}); err != nil {
 			t.Fatal(err)
 		}
-		markers = append(markers, marker)
 	}
 	file := startCaptureTestRecorder(t, r)
 	if !strings.HasSuffix(file, "-2.ts") {
-		t.Fatalf("reused a quarantined filename: %s", file)
+		t.Fatalf("reused a ticket's filename: %s", file)
 	}
 	if err := r.Stop(); err != nil {
 		t.Fatal(err)
 	}
-	for _, marker := range markers {
-		assertRecordedCapture(t, marker, []byte("existing quarantine"))
+	if _, ok := ticketFor(r.outbox, file); ok {
+		t.Fatal("a successful empty run left its ticket")
 	}
-	assertNoRecording(t, file+unfinalizedRecordingSuffix) // A successful empty run clears its own marker.
 }
 
-func TestMarkerCreationFailureDoesNotStartEncoder(t *testing.T) {
-	// Inject marker-creation failure without relying on platform filename limits.
-	cfg := localOnDemandRecorder(t, "marker-create-failure")
-	originalOpen := openRecordingMarker
-	openRecordingMarker = func(path string, _ int, _ os.FileMode) (*os.File, error) {
-		return nil, &os.PathError{Op: "create", Path: path, Err: os.ErrPermission}
+func TestTicketCreationFailureDoesNotStartEncoder(t *testing.T) {
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("directory permissions do not stop root or Windows")
 	}
-	t.Cleanup(func() { openRecordingMarker = originalOpen })
-	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0]})
+	cfg := localOnDemandRecorder(t, "ticket-create-failure")
+	r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0]})
+	if err := os.Chmod(r.outbox.dir, 0o500); err != nil { //nolint:gosec // A test dir must stay traversable.
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(r.outbox.dir, 0o700) }) //nolint:gosec // Restore the test dir for cleanup.
 	r.state, r.startGen = types.ProcessStarting, 1
 	r.startAsync(1)
-	if status := r.Status(); status.State != types.ProcessError || !strings.Contains(status.Error, "marker") || r.result != nil {
-		t.Fatalf("marker failure did not prevent encoding: %+v", status)
+	if status := r.Status(); status.State != types.ProcessError || !strings.Contains(status.Error, "ticket") || r.result != nil {
+		t.Fatalf("ticket failure did not prevent encoding: %+v", status)
 	}
 	if entries, err := os.ReadDir(cfg.LocalPath); err != nil || len(entries) != 0 {
-		t.Fatalf("failed marker creation left an unowned output: %v, %v", entries, err)
+		t.Fatalf("failed ticket creation left an unowned output: %v, %v", entries, err)
 	}
 }
 
-func TestQueuedUploadSkipsFileMarkedAfterQueueing(t *testing.T) {
-	endpoint, uploads := conditionalPutServer(t, "", func(http.ResponseWriter, string) bool { return false })
-	cfg := testS3Recorder()
-	cfg.S3Endpoint = endpoint
-	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
-	file := writeSpoolFile(t, r.spoolDir, cfg.ID, "late.mp3", "audio")
-	writeSpoolFile(t, r.spoolDir, cfg.ID, "late.mp3"+unfinalizedRecordingSuffix, "Error writing trailer\n")
-	pending := pendingUpload{request: uploadRequest{localPath: file, s3Key: "recordings/Test/late.mp3", fileSize: 5, deleteAfterUpload: true}}
-	if err := r.doUpload(t.Context(), &pending); !errors.Is(err, errRecordingNotUploadable) {
-		t.Fatalf("upload of a marked file = %v, want errRecordingNotUploadable", err)
+func TestFailedTicketWriteStillQuarantinesOutput(t *testing.T) {
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("directory permissions do not stop root or Windows")
 	}
-	if got := len(uploads()); got != 0 {
-		t.Fatalf("marked file uploaded %d times", got)
-	}
-	assertRecordedCapture(t, file, []byte("audio"))
-}
-
-func TestInterruptedRecordingIsRecoveredAfterRestart(t *testing.T) {
-	t.Parallel()
-	cfg := testS3Recorder()
-	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
-	// A crash or power loss leaves the marker without a failure reason.
-	file := writeSpoolFile(t, r.spoolDir, cfg.ID, "Test-2026-10-18-14-00.mp3", "partial hour")
-	writeSpoolFile(t, r.spoolDir, cfg.ID, "Test-2026-10-18-14-00.mp3"+unfinalizedRecordingSuffix, "")
-	untouched := writeSpoolFile(t, r.spoolDir, cfg.ID, "Test-2026-10-18-15-00.mp3", "")
-	writeSpoolFile(t, r.spoolDir, cfg.ID, "Test-2026-10-18-15-00.mp3"+unfinalizedRecordingSuffix, "")
-	if err := r.reconcilePendingUploads(); err != nil {
-		t.Fatal(err)
-	}
-	if len(r.retryQueue) != 1 || r.retryQueue[0].request.localPath != file {
-		t.Fatalf("interrupted recording not queued for upload: %+v", r.retryQueue)
-	}
-	assertNoRecording(t, file+unfinalizedRecordingSuffix)
-	assertNoRecording(t, untouched) // An interrupted run without audio leaves nothing behind.
-	assertNoRecording(t, untouched+unfinalizedRecordingSuffix)
-}
-
-func TestFailedOutputMarkerHoldsTheReason(t *testing.T) {
 	t.Setenv(fakeFFmpegFailFinalizeEnv, "1")
-	r, _ := errorTestRecorder(t, localOnDemandRecorder(t, "reason"))
-	file := startCaptureTestRecorder(t, r)
-	r.WriteAudio([]byte{1, 2, 3, 4})
-	if err := r.Stop(); err != nil {
-		t.Fatal(err)
-	}
-	reason, err := os.ReadFile(file + unfinalizedRecordingSuffix) //nolint:gosec // Test temp marker.
-	if err != nil || !strings.Contains(string(reason), "No space left on device") {
-		t.Fatalf("failed output marker = %q, %v; want the failure reason", reason, err)
-	}
-	info, err := os.Stat(file + unfinalizedRecordingSuffix)
-	if err != nil || info.Mode().Perm()&0o200 != 0 {
-		t.Fatalf("failed output marker is not read-only: %v, %v", info, err)
-	}
-}
-
-func TestFailedMarkerWriteStillQuarantinesOutput(t *testing.T) {
-	t.Setenv(fakeFFmpegFailFinalizeEnv, "1")
-	originalWrite := writeRecordingFailure
-	writeRecordingFailure = func(path string, _ []byte, _ os.FileMode) error {
-		if err := os.Truncate(path, 0); err != nil {
-			return err
-		}
-		return &os.PathError{Op: "write", Path: path, Err: syscall.ENOSPC}
-	}
-	t.Cleanup(func() { writeRecordingFailure = originalWrite })
 	cfg := testS3Recorder()
-	cfg.RecordingMode = types.RecordingOnDemand
+	cfg.RecordingMode, cfg.StorageMode, cfg.LocalPath = types.RecordingOnDemand, types.StorageBoth, t.TempDir()
 	r, _ := errorTestRecorder(t, cfg)
 	file := startCaptureTestRecorder(t, r)
 	r.WriteAudio([]byte{1, 2, 3, 4})
+	// The outbox cannot record the failure; the marker beside the file must.
+	if err := os.Chmod(r.outbox.dir, 0o500); err != nil { //nolint:gosec // A test dir must stay traversable.
+		t.Fatal(err)
+	}
 	if err := r.Stop(); err != nil {
 		t.Fatal(err)
 	}
-	marker, err := os.Stat(file + unfinalizedRecordingSuffix)
-	if err != nil || marker.Size() != 0 || marker.Mode().Perm()&0o200 != 0 {
-		t.Fatalf("failed reason write left marker %v, %v; want empty and read-only", marker, err)
-	}
-	restarted := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: r.spoolDir})
-	if err := restarted.reconcilePendingUploads(); err != nil {
+	if err := os.Chmod(r.outbox.dir, 0o700); err != nil { //nolint:gosec // Restore the test dir.
 		t.Fatal(err)
 	}
-	restarted.queueForUpload(file)
-	if restarted.PendingUploadCount() != 0 || len(restarted.uploadQueue) != 0 {
-		t.Fatal("failed output with an empty marker became uploadable")
-	}
 	assertRecordedCapture(t, file, []byte{1, 2, 3, 4})
-	assertRecordingQuarantined(t, file)
+	assertRecordingQuarantined(t, r, file)
+}
+
+func TestDiscardMarksAReplacedReservationAsFailed(t *testing.T) {
+	cfg := localOnDemandRecorder(t, "replaced")
+	r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg})
+	path := filepath.Join(cfg.LocalPath, "reserved.ts")
+	output, err := r.reserveRecordingOutput(path, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		_ = output.file.Close()
+		t.Skipf("the platform protects the open reservation: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output.discard()
+	assertRecordingQuarantined(t, r, path)
+	assertRecordedCapture(t, path, []byte("replacement"))
+	if _, err := output.file.Stat(); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("reservation descriptor not closed: %v", err)
+	}
 }
 
 func TestRecorderIDCannotBeReaddedWhileItsRemovalStops(t *testing.T) {
@@ -383,28 +263,5 @@ func TestRecorderIDCannotBeReaddedWhileItsRemovalStops(t *testing.T) {
 	}
 	if len(m.removing) != 0 {
 		t.Fatalf("finished removal still blocks its ID: %v", m.removing)
-	}
-}
-
-func TestDiscardMarksAReplacedReservationAsFailed(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "reserved.ts")
-	file, err := reserveRecordingFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	output := &recordingOutput{file: file}
-	if err := output.markUnfinalized(); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(path); err != nil {
-		_ = file.Close()
-		t.Skipf("the platform protects the open reservation: %v", err)
-	}
-	if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	output.discard()
-	if failed, err := recordingFailed(path); err != nil || !failed {
-		t.Fatalf("replaced reservation would pass for a crash leftover: failed=%t, %v", failed, err)
 	}
 }

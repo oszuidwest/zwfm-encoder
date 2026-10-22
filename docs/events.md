@@ -536,7 +536,7 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
 
 - **Severity:** `error`
 - **UI Label:** Error
-- **Triggered:** When a recorder encounters an error (path not writable, output reservation/marker failure, FFmpeg write or finalize failure, writer-drain timeout, failure to start the next hourly file, etc.). Each failed finalization emits exactly one event, including when FFmpeg is killed to release a blocked writer. File-specific failures include `filename` and the error. Failed outputs and their `.unfinalized` markers are retained for inspection, never automatically uploaded; local retention still applies. A failed hourly finalize can leave the next file `running`: `status.error` then carries the last warning until the next successful rotation, Stop or successful start. The UI state indicator and `/ready` recorder check follow the process state, not this warning. Output names are reserved exclusively before FFmpeg starts; an unrelated replacement detected at finalization is left untouched and is not uploaded.
+- **Triggered:** When a recorder encounters an error (path not writable, output reservation or upload-queue failure, FFmpeg write or finalize failure, writer-drain timeout, failure to start the next hourly file, a recording recovered after a crash, etc.). Each failed finalization emits exactly one event, including when FFmpeg is killed to release a blocked writer. File-specific failures include `filename` and the error. Failed outputs are retained for inspection and never uploaded; retention does not remove them. Delete the file and restart the service once it has been handled. A failed hourly finalize can leave the next file `running`: `status.error` then carries the last warning until the next successful rotation, Stop or successful start. The UI state indicator and `/ready` recorder check follow the process state, not this warning. Output names are reserved exclusively before FFmpeg starts; an unrelated replacement detected at finalization is left untouched and is not uploaded.
 
 ```json
 {
@@ -578,7 +578,7 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
 
 - **Severity:** `info`
 - **UI Label:** Upload Queued
-- **Triggered:** When a completed recording file is queued for S3 upload, and when the upload of a file that a stop deferred (such as a stopped recorder's final file) starts from the retry queue.
+- **Triggered:** When a finished recording is handed to the upload queue.
 
 ```json
 {
@@ -622,7 +622,7 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
 
 - **Severity:** `error`
 - **UI Label:** Upload Failed
-- **Triggered:** When an S3 upload fails. The file is added to a retry queue for later attempts.
+- **Triggered:** When an S3 upload attempt fails. The recording stays queued; `retry` is the number of earlier failed attempts.
 
 ```json
 {
@@ -646,7 +646,7 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
 
 - **Severity:** `warning`
 - **UI Label:** Retry
-- **Triggered:** When a failed upload is being retried. Retries occur at hour boundaries, when the encoder starts, and right after a recorder stops. Files are retried for up to 24 hours.
+- **Triggered:** When a failed upload is attempted again: a minute after the first failure, doubling up to an hour between attempts. Uploads are retried until they succeed; a stop or restart does not reset the count.
 
 ```json
 {
@@ -665,27 +665,27 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
 
 ---
 
-### `upload_abandoned`
+### `upload_overdue` / `upload_overdue_cleared`
 
-- **Severity:** `error`
-- **UI Label:** Abandoned
-- **Triggered:** When an upload is abandoned after exceeding the 24-hour retry limit. The `error` field contains the last upload error encountered. The recording and upload metadata remain on disk, including in S3-only mode; automatic retries pause for this process. After fixing S3 configuration/connectivity, restart the encoder process to re-queue abandoned uploads with a fresh 24-hour window and their original object keys. This event also triggers alerts to all configured notification channels (webhook, email, Zabbix).
+- **Severity:** `error` / `success`
+- **UI Label:** Uploads Overdue / Uploads Delivered
+- **Triggered:** `upload_overdue` when at least one finished recording has waited two hours for S3; `upload_overdue_cleared` once none is overdue any longer. One incident covers all recorders. Both also alert every configured notification channel (webhook, email, Zabbix) and an open incident survives a restart while its opening event is still in the retained logs, so a later delivery still clears it.
 
 ```json
 {
-  "ts": "2024-01-16T15:00:00.000Z",
-  "type": "upload_abandoned",
+  "ts": "2024-01-15T17:00:00.000Z",
+  "type": "upload_overdue",
+  "msg": "Recording uploads overdue",
   "details": {
-    "recorder_name": "Archive",
-    "filename": "@recorder-1a2b3c4d-2024-01-15-14-00.mp3",
-    "codec": "mp3",
-    "storage_mode": "s3",
-    "s3_key": "recordings/@recorder-1a2b3c4d/@recorder-1a2b3c4d-2024-01-15-14-00.mp3",
-    "error": "RequestTimeout: request timed out",
-    "retry": 24
+    "count": 2,
+    "oldest": "2024-01-15T15:00:00Z",
+    "recorders": ["Archive"],
+    "error": "RequestTimeout: request timed out"
   }
 }
 ```
+
+`upload_abandoned` is no longer emitted: uploads are retried until they succeed. Older event logs may still contain it.
 
 ---
 
@@ -694,7 +694,7 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
 Recording storage warnings have category `recorder`, severity `warning`, reason `problem`;
 recovery has severity `success`, reason `recovery`. Incidents are grouped by path, independently
 of recorder names and upload incidents. Checks run on manager start and every minute, outside
-capture/status locks. Warnings fire below 1 GiB or 5% available, or on a probe/metadata-scan error;
+capture/status locks. Warnings fire below 1 GiB or 5% available, or when a probe fails;
 only transitions produce alerts. A path that switches between low and unavailable logs another
 `recording_storage_low` in the same incident, without alerting, so a restart knows which applies.
 A low path recovers only once it has the threshold plus max(1 GiB, 2.5%) available; on volumes
@@ -853,7 +853,9 @@ under `attention` with status `Ongoing` until it ends:
 | `upload_completed` | recorder | success | routine | Uploaded | S3 upload successful |
 | `upload_failed` | recorder | error | problem | Upload Failed | S3 upload failed |
 | `upload_retry` | recorder | warning | problem | Retry | Failed upload being retried |
-| `upload_abandoned` | recorder | error | problem | Abandoned | Upload abandoned after 24h |
+| `upload_abandoned` | recorder | error | problem | Abandoned | No longer emitted; in older logs only |
+| `upload_overdue` | recorder | error | problem | Uploads Overdue | Recordings waiting two hours for S3 |
+| `upload_overdue_cleared` | recorder | success | recovery | Uploads Delivered | No recording overdue any longer |
 | `recording_storage_low` | recorder | warning | problem | Storage Low | Recording path low or unavailable |
 | `recording_storage_restored` | recorder | success | recovery | Storage Restored | Recording path recovered |
 | `cleanup_completed` | recorder | success | routine | Cleanup | Retention cleanup completed |

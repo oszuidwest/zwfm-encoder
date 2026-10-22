@@ -98,15 +98,17 @@
                     <type>TRAP</type>
                     <key>upload.alert</key>
                     <value_type>TEXT</value_type>
-                    <description>Receives upload alerts from ZWFM encoder. Values contain UPLOAD_ABANDONED messages when S3 uploads fail after 24 hours of retries.</description>
+                    <description>Receives upload alerts from ZWFM encoder. Values contain UPLOAD_OVERDUE when recordings have waited two hours for S3, and UPLOAD_OVERDUE_CLEARED once none is overdue.</description>
                     <triggers>
                         <trigger>
                             <uuid>c4b3a2f1d6e84b7f8a1c2d3e4f5a6b7d</uuid>
-                            <expression>find(/ZWFM Encoder Monitor/upload.alert,,&quot;like&quot;,&quot;UPLOAD_ABANDONED&quot;) = 1</expression>
-                            <name>Upload Abandoned</name>
+                            <expression>find(/ZWFM Encoder Monitor/upload.alert,,&quot;like&quot;,&quot;event=UPLOAD_OVERDUE count=&quot;) = 1</expression>
+                            <recovery_mode>RECOVERY_EXPRESSION</recovery_mode>
+                            <recovery_expression>find(/ZWFM Encoder Monitor/upload.alert,,&quot;like&quot;,&quot;event=UPLOAD_OVERDUE_CLEARED&quot;) = 1</recovery_expression>
+                            <name>Recording Uploads Overdue</name>
                             <opdata>{ITEM.LASTVALUE}</opdata>
                             <priority>HIGH</priority>
-                            <description>An S3 upload was abandoned after 24 hours of retries. The local file remains on disk but will no longer be retried.</description>
+                            <description>Recordings have waited two hours for S3. They stay on disk and are retried until they are uploaded; the trigger recovers when none is overdue.</description>
                         </trigger>
                     </triggers>
                 </item>

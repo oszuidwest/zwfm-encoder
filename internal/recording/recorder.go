@@ -38,11 +38,8 @@ var checkRecordingPath = util.CheckPathWritable
 // removeEmptyRecording lets tests reproduce a failed unlink without relying on mount permissions.
 var removeEmptyRecording = os.Remove
 
-// openRecordingMarker lets tests reproduce marker persistence failures on every OS.
-var openRecordingMarker = os.OpenFile
-
-// writeRecordingFailure lets tests simulate a full disk after marker truncation.
-var writeRecordingFailure = os.WriteFile
+// syncInterval is how often a running recording is synced to disk (D4).
+const syncInterval = 30 * time.Second
 
 // awaitStop waits for a Stop already in progress; tests replace it to see a
 // caller join that teardown.
@@ -95,7 +92,7 @@ type GenericRecorder struct {
 	ffmpegPath         string
 	maxDurationMinutes int // For on-demand mode (from global config)
 	eventLogger        *eventlog.Logger
-	onUploadAbandoned  UploadAbandonedCallback
+	outbox             *outbox
 
 	spoolDir  string
 	state     types.ProcessState
@@ -116,29 +113,17 @@ type GenericRecorder struct {
 	currentOutput *recordingOutput     // Exclusively created file owned by the current encoder.
 	usedFilenames map[string]time.Time // Names started within usedFilenameWindow by this process; S3-only mode deletes the file itself after upload.
 
-	s3Client    *s3.Client
-	s3ConfigKey string // Config key used to create cached client
+	stopSync func() // Stops and joins the current encoder's periodic sync.
 
-	uploadQueue   chan uploadRequest
-	uploadWg      sync.WaitGroup
-	cancelUploads context.CancelFunc // Set while the upload worker runs; Stop cancels its uploads.
-	uploadClosed  bool               // Set from the start of Stop until the next Start; sends uploads to the retry queue.
-
-	// Retry queue for failed or deferred uploads (protected by mu)
-	retryProcessMu sync.Mutex // Only one retry batch may own paths at a time.
-	retryQueue     []pendingUpload
-	retryInFlight  map[string]struct{} // Paths remain owned while temporarily absent from retryQueue; protected by mu.
-	retryRequested bool                // A pass asked for during a batch runs after it; protected by mu.
-	retryEnqueueMu sync.Mutex          // Serializes persistence/publication without holding the state lock over disk I/O.
+	s3Client    *s3.Client // Retention's client; uploads use the outbox destinations.
+	s3ConfigKey string     // Config key used to create cached client
 
 	// Rotation timer (hourly mode)
 	rotationTimer      *time.Timer
 	rotationGeneration uint64
-	// retiring tracks files being finalized; Stop waits until their uploads
-	// are queued or durably registered for recovery before the upload worker
-	// stops and the retry pass starts.
-	retiring      sync.WaitGroup
-	retiringFiles map[string]struct{} // Files rotations are finalizing; protected from cleanup until queued.
+	// retiring tracks files being finalized; Stop waits until their tickets
+	// are ready or failed.
+	retiring sync.WaitGroup
 
 	// Max duration timer (on-demand mode)
 	durationTimer      *time.Timer
@@ -152,7 +137,7 @@ type GenericRecorderConfig struct {
 	SpoolDir           string
 	MaxDurationMinutes int
 	EventLogger        *eventlog.Logger
-	OnUploadAbandoned  UploadAbandonedCallback
+	Outbox             *outbox
 }
 
 // NewGenericRecorder creates a new recorder instance.
@@ -165,12 +150,10 @@ func NewGenericRecorder(cfg GenericRecorderConfig) *GenericRecorder {
 		ffmpegPath:         cfg.FFmpegPath,
 		maxDurationMinutes: cfg.MaxDurationMinutes,
 		eventLogger:        cfg.EventLogger,
-		onUploadAbandoned:  cfg.OnUploadAbandoned,
+		outbox:             cfg.Outbox,
 		spoolDir:           cfg.SpoolDir,
 		state:              types.ProcessStopped,
-		uploadQueue:        make(chan uploadRequest, 100),
 		usedFilenames:      make(map[string]time.Time),
-		retiringFiles:      make(map[string]struct{}),
 	}
 }
 
@@ -218,13 +201,11 @@ func (r *GenericRecorder) getOrCreateS3Client() *s3.Client {
 	return r.s3Client
 }
 
-// IsCurrentFile reports whether the recorder is still writing or finalizing
-// path, so retention cleanup must leave it alone.
+// IsCurrentFile reports whether path is the recorder's current file.
 func (r *GenericRecorder) IsCurrentFile(path string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	_, retiring := r.retiringFiles[path]
-	return path != "" && (path == r.currentFile || retiring)
+	return path != "" && path == r.currentFile
 }
 
 // Start launches asynchronous clock validation and encoder startup.
@@ -345,9 +326,6 @@ func (r *GenericRecorder) startAsync(gen uint64) {
 		return
 	}
 
-	// Start upload worker (after encoder to prevent goroutine leak on failure)
-	r.startUploadWorkerLocked()
-
 	if r.config.RecordingMode == types.RecordingHourly {
 		r.scheduleRotationLocked(time.Now())
 	} else if r.maxDurationMinutes > 0 {
@@ -410,9 +388,8 @@ func (r *GenericRecorder) logEvent(eventType eventlog.EventType, p *eventlog.Rec
 	}
 }
 
-// Stop finalizes recordings and stops the upload worker without waiting for
-// S3: unfinished uploads move to the persisted retry queue, which a
-// background pass retries once the worker has stopped.
+// Stop finalizes recordings; their uploads are the uploader's, so Stop never
+// waits for S3.
 // Calls made while already stopping wait for that Stop to finish (finalizing,
 // not S3).
 func (r *GenericRecorder) Stop() error {
@@ -439,10 +416,6 @@ func (r *GenericRecorder) stopLocked() error {
 	r.state = types.ProcessStopping
 	r.stopDone = make(chan struct{})
 	r.recording.Store(false)
-	// The worker is about to stop: send the final file straight to retry
-	// storage instead of starting an upload that Stop would interrupt.
-	r.uploadClosed = true
-	cancelUploads := r.cancelUploads
 
 	// Always stop timers (may be running even after write error)
 	if r.rotationTimer != nil {
@@ -453,24 +426,15 @@ func (r *GenericRecorder) stopLocked() error {
 	r.cancelDurationLimitLocked()
 	r.mu.Unlock()
 
-	// Route the final file, and any file a rotation is still finalizing, to
-	// the retry queue before the pass starts. Stopping state keeps new
-	// rotations out.
+	// Finalize the final file, and any file a rotation is still finalizing.
+	// Stopping state keeps new rotations out. Uploads are the uploader's.
 	r.stopEncoderAndUpload()
 	r.retiring.Wait()
-
-	// Stop the upload worker even after write errors.
-	if cancelUploads != nil {
-		cancelUploads()
-	}
-	r.uploadWg.Wait()
 
 	r.mu.Lock()
 	r.state = types.ProcessStopped
 	close(r.stopDone)
 	r.lastError = ""
-	// Keep uploadQueue stable; uploadClosed reroutes late files.
-	r.cancelUploads = nil // Allow the next Start to launch a worker.
 
 	// Snapshot event fields before releasing mu.
 	logParams := r.captureLogParamsLocked()
@@ -479,9 +443,6 @@ func (r *GenericRecorder) stopLocked() error {
 
 	slog.Info("recorder stopped", "id", r.id, "name", name)
 	r.logEvent(eventlog.RecorderStopped, logParams)
-
-	// Keep slow S3 retries outside Stop, like rotateFile does.
-	go r.processRetryQueue()
 	return nil
 }
 
@@ -569,7 +530,6 @@ func (r *GenericRecorder) handleWriteError(result *ffmpeg.StartResult, writeErr 
 	r.audioCh = nil
 	r.audioMu.Unlock()
 	r.retiring.Add(1)
-	r.retiringFiles[run.file] = struct{}{}
 	r.mu.Unlock()
 
 	// Let audioWriter return before cleanup waits on FFmpeg.
@@ -580,11 +540,7 @@ func (r *GenericRecorder) handleWriteError(result *ffmpeg.StartResult, writeErr 
 // The failing write has released stdinMu, so CloseStdin cannot deadlock.
 func (r *GenericRecorder) cleanupAfterWriteError(run encoderRun, writeErr error) {
 	defer r.retiring.Done()
-	defer func() {
-		r.mu.Lock()
-		delete(r.retiringFiles, run.file)
-		r.mu.Unlock()
-	}()
+	run.stopSync()
 	run.result.CloseStdin()
 	if err := r.drainProcess(run.result); err != nil {
 		writeErr = err
@@ -636,21 +592,6 @@ func (r *GenericRecorder) Status() types.ProcessStatus {
 	}
 }
 
-// PendingUploadCount returns the number of uploads waiting for retry. An
-// upload a stop deferred has not failed, so it counts only once an attempt
-// fails: every routine stop defers its final file.
-func (r *GenericRecorder) PendingUploadCount() int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	count := 0
-	for i := range r.retryQueue {
-		if r.retryQueue[i].lastError != uploadStoppedReason {
-			count++
-		}
-	}
-	return count
-}
-
 // IsRecording reports whether recording is currently in progress.
 func (r *GenericRecorder) IsRecording() bool {
 	return r.recording.Load()
@@ -698,7 +639,7 @@ func (r *GenericRecorder) prepareFilenameLocked(fileTime time.Time) (*recordingO
 		cfg := r.config
 		outputDir := cfg.LocalPath
 		if cfg.StorageMode == types.StorageS3 {
-			outputDir = filepath.Join(r.spoolDir, "recorders", r.id)
+			outputDir = filepath.Join(r.spoolDir, "recordings", cfg.RecordingFilePrefix())
 		}
 		base := r.generateFilename(fileTime)
 		used := maps.Clone(r.usedFilenames)
@@ -711,10 +652,12 @@ func (r *GenericRecorder) prepareFilenameLocked(fileTime time.Time) (*recordingO
 		err := prepareRecordingDir(cfg.StorageMode, outputDir)
 		if err == nil {
 			nextRecordingFilename(base, func(name string) bool {
-				if _, exists := used[name]; exists {
+				path := filepath.Join(outputDir, name)
+				// A ticket keeps its name, also while its file is missing.
+				if _, exists := used[name]; exists || r.outbox.hasPath(path) {
 					return true
 				}
-				output, err = reserveRecordingOutput(filepath.Join(outputDir, name))
+				output, err = r.reserveRecordingOutput(path, &cfg)
 				return errors.Is(err, os.ErrExist)
 			})
 		}
@@ -740,104 +683,85 @@ func (r *GenericRecorder) prepareFilenameLocked(fileTime time.Time) (*recordingO
 // so a removed/replaced path cannot be mistaken for this encoder's file.
 // Recording directories must be writable only by trusted operators: FFmpeg
 // reopens the reserved path, so arbitrary hostile directory mutation is unsupported.
+// Its ticket belongs to the recorder until the output is committed.
 type recordingOutput struct {
-	file        *os.File
-	unfinalized bool
+	file   *os.File
+	outbox *outbox
+	ticket ticket
 }
 
-const unfinalizedRecordingSuffix = ".unfinalized"
-
-// reserveRecordingOutput exclusively creates path and its persisted marker.
-func reserveRecordingOutput(path string) (*recordingOutput, error) {
+// reserveRecordingOutput exclusively creates path and its ticket, so the
+// recording can be found after a crash from its first byte on.
+func (r *GenericRecorder) reserveRecordingOutput(path string, cfg *types.Recorder) (*recordingOutput, error) {
 	file, err := reserveRecordingFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reserve recording file: %w", err)
 	}
-	output := &recordingOutput{file: file}
-	if err := output.markUnfinalized(); err != nil {
-		output.discard()
-		return nil, err
+	t := ticket{
+		RecorderID:   cfg.ID,
+		RecorderName: cfg.Name,
+		Path:         path,
+		Codec:        string(cfg.Codec),
 	}
-	return output, nil
-}
-
-func (o *recordingOutput) markUnfinalized() error {
-	path := o.file.Name() + unfinalizedRecordingSuffix
-	marker, err := openRecordingMarker(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if cfg.StorageMode != types.StorageLocal && cfg.HasS3Credentials() {
+		t.Dest = destinationID(cfg.ID, cfg.S3Endpoint, cfg.S3Bucket)
+		t.BaseKey = s3ObjectKey(cfg, filepath.Base(path))
+		t.Key = t.BaseKey
+		t.DeleteAfterUpload = cfg.StorageMode == types.StorageS3
+		if err := r.outbox.ensureDestination(t.Dest, destinationOf(cfg)); err != nil {
+			err = errors.Join(fmt.Errorf("save upload destination: %w", err), file.Close(), os.Remove(path)) // #nosec G703 -- The reservation this call created.
+			return nil, err
+		}
+	} else if cfg.StorageMode != types.StorageLocal {
+		slog.Warn("S3 not configured but storage mode requires it", "id", cfg.ID, "mode", cfg.StorageMode)
+	}
+	err = syncDir(filepath.Dir(path))
+	if err == nil {
+		err = r.outbox.newTicket(&t)
+	}
 	if err != nil {
-		return fmt.Errorf("create unfinalized recording marker: %w", err)
+		return nil, errors.Join(fmt.Errorf("create recording ticket: %w", err), file.Close(), os.Remove(path)) // #nosec G703 -- The reservation this call created.
 	}
-	o.unfinalized = true
-	if err := errors.Join(marker.Sync(), marker.Close()); err != nil {
-		return fmt.Errorf("persist unfinalized recording marker: %w", err)
-	}
-	return nil
+	return &recordingOutput{file: file, outbox: r.outbox, ticket: t}, nil
 }
 
-func (o *recordingOutput) clearUnfinalized() error {
-	if !o.unfinalized {
+func destinationOf(cfg *types.Recorder) destination {
+	return destination{
+		Endpoint: cfg.S3Endpoint, Bucket: cfg.S3Bucket,
+		AccessKeyID: cfg.S3AccessKeyID, SecretAccessKey: cfg.S3SecretAccessKey,
+	}
+}
+
+// recordFailure keeps the output for inspection; it is never uploaded.
+func (o *recordingOutput) recordFailure(cause error) {
+	o.outbox.fail(&o.ticket, cause)
+}
+
+// sync makes what the encoder wrote so far durable and records how much that
+// is, so a restart after a power cut can tell lost audio from an empty file.
+func (o *recordingOutput) sync() error {
+	info, err := o.file.Stat()
+	if err != nil {
+		return err
+	}
+	if err := o.file.Sync(); err != nil {
+		return err
+	}
+	if info.Size() <= o.ticket.SyncedBytes {
 		return nil
 	}
-	return removeUnfinalizedMarker(o.file.Name())
+	o.ticket.SyncedBytes = info.Size()
+	return o.outbox.update(&o.ticket)
 }
 
-func removeUnfinalizedMarker(recording string) error {
-	marker := recording + unfinalizedRecordingSuffix
-	if info, err := os.Lstat(marker); err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o200 == 0 { // #nosec G703 -- Marker derives from a validated reservation or recorder-owned directory entry.
-		if err := os.Chmod(marker, 0o600); err != nil { // #nosec G703 -- Same recorder-owned regular marker checked above.
-			return fmt.Errorf("make unfinalized recording marker writable: %w", err)
-		}
+// commit hands a finalized, released output on: in local-only mode the file is
+// the recording and its ticket goes; otherwise the uploader takes the ticket.
+func (o *recordingOutput) commit() error {
+	if o.ticket.Dest == "" {
+		return o.outbox.remove(&o.ticket)
 	}
-	if err := os.Remove(marker); err != nil && !errors.Is(err, os.ErrNotExist) { // #nosec G703 -- Path comes from a validated reservation or a recorder-owned spool/retention entry.
-		return fmt.Errorf("clear unfinalized recording marker: %w", err)
-	}
-	return nil
-}
-
-// recordFailure stores the reason and marks failure using read-only metadata,
-// independently of whether the reason write succeeds.
-func (o *recordingOutput) recordFailure(cause error) {
-	if !o.unfinalized {
-		return
-	}
-	marker := o.file.Name() + unfinalizedRecordingSuffix
-	if err := writeRecordingFailure(marker, []byte(cause.Error()+"\n"), 0o600); err != nil {
-		slog.Warn("cannot record why a recording failed", "file", o.file.Name(), "error", err)
-	}
-	info, err := os.Lstat(marker) // #nosec G703 -- Marker belongs to the validated recording reservation.
-	if err == nil && info.Mode().IsRegular() {
-		err = os.Chmod(marker, 0o400) // #nosec G703 -- Same validated reservation marker, checked as a regular file above.
-	}
-	if err != nil {
-		slog.Warn("cannot persist recording failure flag", "file", o.file.Name(), "error", err)
-	}
-}
-
-// recordingFailed recognizes a failure reason or read-only failure flag;
-// a marker that is not a plain file also counts as failed.
-func recordingFailed(path string) (bool, error) {
-	info, err := os.Lstat(path + unfinalizedRecordingSuffix)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("check unfinalized recording marker: %w", err)
-	}
-	return !info.Mode().IsRegular() || info.Size() > 0 || info.Mode().Perm()&0o200 == 0, nil
-}
-
-// finalizedRecording stats a recording for upload without following links. ok
-// is false for a marked, empty or non-regular file, which is never uploaded
-// automatically.
-func finalizedRecording(path string) (info os.FileInfo, ok bool, err error) {
-	if failed, err := recordingFailed(path); err != nil || failed {
-		return nil, false, err
-	}
-	info, err = os.Lstat(path)
-	if err != nil {
-		return nil, false, err
-	}
-	return info, info.Mode().IsRegular() && info.Size() > 0, nil
+	o.ticket.State, o.ticket.ReadyAt = ticketReady, time.Now()
+	return o.outbox.update(&o.ticket)
 }
 
 // release closes the reservation, once, before any upload or removal (Windows
@@ -866,13 +790,13 @@ func (o *recordingOutput) release() (int64, error) {
 	return info.Size(), nil
 }
 
-// remove deletes a released output, then its marker; one that is already gone
-// counts as removed. When the removal fails, the marker keeps the file out of uploads.
+// remove deletes a released output, then its ticket; one that is already gone
+// counts as removed. When the removal fails, the ticket keeps the file out of uploads.
 func (o *recordingOutput) remove() error {
 	if err := removeEmptyRecording(o.file.Name()); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove empty recording: %w", err)
 	}
-	return o.clearUnfinalized()
+	return o.outbox.remove(&o.ticket)
 }
 
 // discardEmpty removes a released output without audio.
@@ -890,10 +814,12 @@ func (o *recordingOutput) discard() {
 		return
 	}
 	if _, err := o.release(); err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			o.recordFailure(err) // A replacement must not pass for a crash leftover.
-			slog.Warn("cannot discard recording reservation", "file", o.file.Name(), "error", err)
+		if errors.Is(err, os.ErrNotExist) {
+			_ = o.outbox.remove(&o.ticket) // Nothing was recorded into it.
+			return
 		}
+		o.recordFailure(err) // A replacement must not pass for a crash leftover.
+		slog.Warn("cannot discard recording reservation", "file", o.file.Name(), "error", err)
 		return
 	}
 	if err := o.remove(); err != nil {
@@ -921,7 +847,13 @@ func prepareRecordingDir(storageMode types.StorageMode, dir string) error {
 		return err
 	}
 	if storageMode == types.StorageS3 {
-		if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // Spool directory needs to be readable.
+		// The directories must survive a power cut with the audio in them,
+		// also when an earlier attempt created them but could not sync them.
+		err := mkdirSynced(dir, 0o755)
+		if err == nil {
+			err = errors.Join(syncDir(filepath.Dir(dir)), syncDir(filepath.Dir(filepath.Dir(dir))))
+		}
+		if err != nil {
 			return fmt.Errorf("failed to create spool directory: %w", err)
 		}
 		return nil
@@ -944,6 +876,7 @@ func (r *GenericRecorder) startEncoderLocked(output *recordingOutput) error {
 	args = append(args, codecArgs...)
 	args = append(args,
 		"-f", format,
+		"-flush_packets", "1", // Finished packets reach the kernel as they are muxed.
 		"-hide_banner",
 		"-loglevel", "warning",
 		"-y", // This placeholder was exclusively created by this recorder.
@@ -958,6 +891,7 @@ func (r *GenericRecorder) startEncoderLocked(output *recordingOutput) error {
 	r.currentFile, r.currentOutput = output.file.Name(), output
 	r.rememberFilenameLocked(filepath.Base(r.currentFile))
 	r.result = result
+	r.stopSync = r.startSync(output)
 
 	// Scope writer state to this FFmpeg process; rotation creates fresh channels.
 	r.audioMu.Lock()
@@ -981,6 +915,39 @@ type encoderRun struct {
 	writerDone chan struct{}
 	file       string
 	output     *recordingOutput
+	stopSync   func()
+}
+
+// startSync syncs output every syncInterval until the returned function, which
+// waits for a sync in progress, is called. A failed sync is a recorder
+// warning; the synced length does not advance.
+func (r *GenericRecorder) startSync(output *recordingOutput) func() {
+	stop, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(syncInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+			}
+			if err := output.sync(); err != nil {
+				slog.Warn("cannot sync recording to disk", "id", r.id, "file", filepath.Base(output.file.Name()), "error", err)
+				r.mu.Lock()
+				if r.currentOutput == output {
+					r.lastError = "cannot sync recording to disk: " + err.Error()
+				}
+				r.mu.Unlock()
+			}
+		}
+	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() { close(stop) })
+		<-done
+	}
 }
 
 // claimEncoderLocked detaches the active FFmpeg process so that the caller
@@ -992,9 +959,11 @@ func (r *GenericRecorder) claimEncoderLocked() encoderRun {
 		writerDone: r.writerDone,
 		file:       r.currentFile,
 		output:     r.currentOutput,
+		stopSync:   r.stopSync,
 	}
 	r.result = nil
 	r.currentOutput = nil
+	r.stopSync = nil
 	// audioCh stays: a rotation keeps feeding it until the replacement is ready.
 	r.writerDone = nil
 	return run
@@ -1017,6 +986,7 @@ func (r *GenericRecorder) finishEncoder(run encoderRun) {
 	if run.result == nil {
 		return
 	}
+	run.stopSync() // Before the final sync and the release close the file.
 
 	// The claimer is the only channel closer; closing lets the writer drain
 	// buffered chunks.
@@ -1049,6 +1019,11 @@ func (r *GenericRecorder) finishEncoder(run encoderRun) {
 		r.failOutput(run, finalizeErr)
 		return
 	}
+	// The recording is never handed on before its bytes are durable.
+	if err := run.output.file.Sync(); err != nil {
+		r.failOutput(run, fmt.Errorf("sync recording to disk: %w", err))
+		return
+	}
 	if _, err := run.output.release(); err != nil {
 		run.output.recordFailure(err)
 		r.reportError(run.file, err)
@@ -1061,12 +1036,26 @@ func (r *GenericRecorder) finishEncoder(run encoderRun) {
 		}
 		return
 	}
-	if err := run.output.clearUnfinalized(); err != nil {
-		r.reportError(run.file, err)
+	if err := run.output.commit(); err != nil {
+		// The ticket still says recording; the next start recovers it.
+		r.reportError(run.file, fmt.Errorf("hand recording to upload: %w", err))
 		return
 	}
-	// queueForUpload handles local-only and missing S3 config.
-	r.queueForUpload(run.file)
+	if run.output.ticket.Dest == "" {
+		slog.Info("recording saved", "id", r.id, "path", run.file)
+		return
+	}
+	slog.Info("queued file for upload", "id", r.id, "file", filepath.Base(run.file))
+	p := r.logParams()
+	p.Filename, p.S3Key = filepath.Base(run.file), run.output.ticket.Key
+	r.logEvent(eventlog.UploadQueued, p)
+}
+
+// logParams snapshots the recorder's event fields.
+func (r *GenericRecorder) logParams() *eventlog.RecorderDetails {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.captureLogParamsLocked()
 }
 
 // scheduleRotationLocked arms the rotation for the first hour boundary after
@@ -1122,9 +1111,9 @@ func (r *GenericRecorder) rotateFile(generation uint64) {
 		// The current encoder still runs: keep recording into its file instead
 		// of stopping until the hourly retry.
 		r.result, r.writerDone, r.currentOutput = previous.result, previous.writerDone, previous.output
+		r.stopSync = previous.stopSync // The previous file keeps syncing.
 		previous = encoderRun{}
 	} else {
-		r.retiringFiles[previous.file] = struct{}{}
 		r.lastError = "" // Clears the error of an earlier failed rotation.
 		slog.Info("recorder rotated file", "id", r.id, "from", filepath.Base(previous.file), "to", filepath.Base(r.currentFile))
 	}
@@ -1136,12 +1125,6 @@ func (r *GenericRecorder) rotateFile(generation uint64) {
 	}
 
 	r.finishEncoder(previous)
-	r.mu.Lock()
-	delete(r.retiringFiles, previous.file)
-	r.mu.Unlock()
-
-	// Keep slow S3 retries outside retiring: Stop waits for this rotation.
-	go r.processRetryQueue()
 }
 
 // Must be called with r.mu held.

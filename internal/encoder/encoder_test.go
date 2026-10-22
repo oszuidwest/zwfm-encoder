@@ -610,6 +610,7 @@ func newSourceLifecycleTestEncoder(t *testing.T, helperMode string) *Encoder {
 		_ = e.Stop()
 		if e.recordingManager != nil {
 			_ = e.recordingManager.Stop()
+			e.recordingManager.Close()
 		}
 		if e.silenceDumpManager != nil {
 			e.silenceDumpManager.Stop()

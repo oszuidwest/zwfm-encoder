@@ -46,12 +46,11 @@ type WebhookPayload struct {
 
 	Input string `json:"input,omitempty"`
 
-	RecorderName string                         `json:"recorder_name,omitempty"`
-	Filename     string                         `json:"filename,omitempty"`
-	S3Key        string                         `json:"s3_key,omitempty"`
-	RetryCount   int                            `json:"retry_count,omitempty"`
-	LastError    string                         `json:"last_error,omitempty"`
-	StoragePaths []types.RecordingStorageStatus `json:"storage_paths,omitempty"`
+	OverdueUploads int                            `json:"overdue_uploads,omitempty"`
+	OldestUpload   string                         `json:"oldest_upload,omitempty"` // RFC3339
+	Recorders      []string                       `json:"recorders,omitempty"`
+	LastError      string                         `json:"last_error,omitempty"`
+	StoragePaths   []types.RecordingStorageStatus `json:"storage_paths,omitempty"`
 }
 
 // sendWebhookSilence notifies the configured webhook of critical silence detection.
@@ -131,18 +130,15 @@ func formatWebhookRuntimeError(issues validation.Issues) error {
 	}
 }
 
-// sendUploadAbandonedWebhook sends an upload_abandoned event to the webhook endpoint.
-func sendUploadAbandonedWebhook(ctx context.Context, webhookURL string, p UploadAbandonedData) error {
-	return sendWebhook(ctx, webhookURL, &WebhookPayload{
-		Event:        "upload_abandoned",
-		Message:      fmt.Sprintf("Upload abandoned for %s after %d retries: %s", p.Filename, p.RetryCount, p.LastError),
-		Timestamp:    timestampUTC(),
-		RecorderName: p.RecorderName,
-		Filename:     p.Filename,
-		S3Key:        p.S3Key,
-		RetryCount:   p.RetryCount,
-		LastError:    p.LastError,
-	})
+// sendUploadsOverdueWebhook sends upload_overdue or upload_overdue_cleared.
+func sendUploadsOverdueWebhook(ctx context.Context, webhookURL string, d *UploadsOverdueData) error {
+	event, message := d.message()
+	payload := &WebhookPayload{Event: event, Message: message, Timestamp: timestampUTC()}
+	if d.Overdue {
+		payload.OverdueUploads, payload.Recorders, payload.LastError = d.Count, d.Recorders, d.LastError
+		payload.OldestUpload = d.Oldest.UTC().Format(time.RFC3339)
+	}
+	return sendWebhook(ctx, webhookURL, payload)
 }
 
 // sendWebhookInputLost notifies the configured webhook that audio capture stopped.
@@ -318,9 +314,9 @@ func (c *WebhookChannel) SendAudioDump(
 	return sendWebhookDumpReady(ctx, cfg.WebhookURL, data)
 }
 
-// SendUploadAbandoned posts a webhook payload after a recording upload exhausts retries.
-func (c *WebhookChannel) SendUploadAbandoned(ctx context.Context, cfg *config.Snapshot, params UploadAbandonedData) error {
-	return sendUploadAbandonedWebhook(ctx, cfg.WebhookURL, params)
+// SendUploadsOverdue posts the upload overdue state.
+func (c *WebhookChannel) SendUploadsOverdue(ctx context.Context, cfg *config.Snapshot, data *UploadsOverdueData) error {
+	return sendUploadsOverdueWebhook(ctx, cfg.WebhookURL, data)
 }
 
 // SendInputLost posts a webhook payload when audio capture from the input stops.

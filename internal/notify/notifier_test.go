@@ -64,7 +64,7 @@ func (noopAlertChannel) SendInputRestored(_ context.Context, _ *config.Snapshot,
 	return nil
 }
 
-func (noopAlertChannel) SendUploadAbandoned(_ context.Context, _ *config.Snapshot, _ UploadAbandonedData) error {
+func (noopAlertChannel) SendUploadsOverdue(_ context.Context, _ *config.Snapshot, _ *UploadsOverdueData) error {
 	return nil
 }
 

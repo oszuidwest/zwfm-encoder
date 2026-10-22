@@ -301,13 +301,13 @@ func (e *Encoder) InitRecording() error {
 		return fmt.Errorf("create recording manager: %w", err)
 	}
 
-	mgr.SetUploadAbandonedCallback(func(event recording.UploadAbandonedEvent) {
-		e.alertOrchestrator.HandleUploadAbandoned(notify.UploadAbandonedData{
-			RecorderName: event.RecorderName,
-			Filename:     event.Filename,
-			S3Key:        event.S3Key,
-			LastError:    event.LastError,
-			RetryCount:   event.RetryCount,
+	mgr.SetUploadsOverdueCallback(func(state recording.UploadsOverdue) {
+		e.alertOrchestrator.HandleUploadsOverdue(&notify.UploadsOverdueData{
+			Overdue:   state.Overdue,
+			Count:     state.Count,
+			Oldest:    state.Oldest,
+			Recorders: state.Recorders,
+			LastError: state.LastError,
 		})
 	})
 	mgr.SetStorageChangeCallback(e.alertOrchestrator.HandleRecordingStorage)
@@ -317,6 +317,8 @@ func (e *Encoder) InitRecording() error {
 			slog.Warn("failed to add recorder", "id", snap.Recorders[i].ID, "error", err)
 		}
 	}
+	// Deliver recordings from now on, whether or not the input is ready.
+	mgr.StartUploads()
 
 	e.recordingManager = mgr
 	return nil
@@ -335,20 +337,12 @@ func (e *Encoder) RecorderStatuses() map[string]types.ProcessStatus {
 	return e.recordingManager.Statuses()
 }
 
-// PendingUploadCount returns the number of recording uploads waiting for retry.
-func (e *Encoder) PendingUploadCount() int {
+// UploadBacklog counts recordings that are not delivered to S3 yet.
+func (e *Encoder) UploadBacklog() recording.UploadBacklog {
 	if e.recordingManager == nil {
-		return 0
+		return recording.UploadBacklog{}
 	}
-	return e.recordingManager.PendingUploadCount()
-}
-
-// AbandonedUploadCount reports retained recordings no longer being retried.
-func (e *Encoder) AbandonedUploadCount() int {
-	if e.recordingManager == nil {
-		return 0
-	}
-	return e.recordingManager.AbandonedUploadCount()
+	return e.recordingManager.UploadBacklog()
 }
 
 // RecordingStorageStatuses returns cached disk observations, without filesystem I/O.
@@ -721,6 +715,10 @@ func (e *Encoder) restart(generation uint64) (err error) {
 // Close releases process-lifetime resources. Callers should stop the encoder first.
 func (e *Encoder) Close() error {
 	e.closeOnce.Do(func() {
+		// Uploads may still log or alert while they stop.
+		if e.recordingManager != nil {
+			e.recordingManager.Close()
+		}
 		if e.alertOrchestrator != nil {
 			e.alertOrchestrator.Close()
 		}

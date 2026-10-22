@@ -7,10 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
-	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
@@ -25,18 +26,15 @@ var lockReconcile = (*sync.Mutex).Lock
 // start.
 var startHourlyRecorder = (*GenericRecorder).startHourly
 
-// UploadAbandonedEvent contains details about an upload that was abandoned after exhausting retries.
-type UploadAbandonedEvent struct {
-	RecorderName string
-	LocalPath    string
-	Filename     string
-	S3Key        string
-	LastError    string
-	RetryCount   int
+// UploadBacklog counts recordings that are not delivered yet. Pending ones
+// wait for or are in an upload; overdue ones (a subset) wait longer than two
+// hours; failed and lost ones need the operator.
+type UploadBacklog struct {
+	Pending int
+	Overdue int
+	Failed  int
+	Lost    int
 }
-
-// UploadAbandonedCallback is called when an upload is abandoned after exceeding the retry limit.
-type UploadAbandonedCallback func(UploadAbandonedEvent)
 
 // Manager coordinates multiple GenericRecorders.
 type Manager struct {
@@ -51,15 +49,14 @@ type Manager struct {
 	maxDurationMinutes int  // Global max duration for on-demand recorders
 	running            bool // Whether encoder is running (recorders should be active)
 	eventLogger        *eventlog.Logger
-	onUploadAbandoned  UploadAbandonedCallback
+	outbox             *outbox
+	uploader           *uploader
 
 	cleanupStopCh     chan struct{} // Stop signal for cleanup scheduler; created per run in Start, closed in Stop
 	hourlyRetryStopCh chan struct{} // Stop signal for hourly retry scheduler; created per run in Start, closed in Stop
 
 	storageProbeMu  sync.Mutex // Bounds non-cancellable filesystem probes across Stop/Start.
 	storagePaths    []types.RecordingStorageStatus
-	abandoned       map[string]struct{}
-	restoreGen      uint64 // Advanced when restored uploads leave abandoned; stale scans skip merging.
 	onStorageChange func([]types.RecordingStorageStatus)
 	diskSpace       func(string) (uint64, uint64, error)
 }
@@ -71,7 +68,13 @@ func NewManager(ffmpegPath, spoolDir string, maxDurationMinutes int, eventLogger
 	}
 
 	// Ensure spool directory exists.
-	if err := os.MkdirAll(spoolDir, 0o755); err != nil { //nolint:gosec // Spool directory needs to be readable
+	// The spool directory needs to be readable. Its entry is synced also when
+	// an earlier start created it but could not sync it.
+	err := mkdirSynced(spoolDir, 0o755)
+	if err == nil {
+		err = syncDir(filepath.Dir(spoolDir))
+	}
+	if err != nil {
 		return nil, fmt.Errorf("create recording spool directory: %w", err)
 	}
 
@@ -98,24 +101,98 @@ func NewManager(ffmpegPath, spoolDir string, maxDurationMinutes int, eventLogger
 		}
 	}
 
-	return &Manager{
+	ob, err := openOutbox(spoolDir, func(t *ticket) { logInterrupted(eventLogger, t) })
+	if err != nil {
+		return nil, err
+	}
+
+	m := &Manager{
 		recorders:          make(map[string]*GenericRecorder),
 		removing:           make(map[string]struct{}),
 		spoolDir:           spoolDir,
 		ffmpegPath:         ffmpegPath,
 		maxDurationMinutes: maxDurationMinutes,
 		eventLogger:        eventLogger,
+		outbox:             ob,
+		uploader:           &uploader{outbox: ob, eventLogger: eventLogger, now: time.Now},
 		storagePaths:       storagePaths,
-		abandoned:          make(map[string]struct{}),
 		diskSpace:          diskSpace,
-	}, nil
+	}
+	m.uploader.refresh = m.refreshDestinations
+	return m, nil
 }
 
-// SetUploadAbandonedCallback configures the handler called when an upload is abandoned.
-func (m *Manager) SetUploadAbandonedCallback(cb UploadAbandonedCallback) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.onUploadAbandoned = cb
+func logInterrupted(eventLogger *eventlog.Logger, t *ticket) {
+	slog.Warn("recovering a recording interrupted by a crash or power loss", "id", t.RecorderID, "file", t.Path)
+	if eventLogger == nil {
+		return
+	}
+	if err := eventLogger.LogRecorder(eventlog.RecorderError, &eventlog.RecorderDetails{
+		RecorderName: t.RecorderName,
+		Filename:     filepath.Base(t.Path),
+		Error:        "recording was interrupted by a crash or power loss; kept up to that point",
+	}); err != nil {
+		slog.Warn("failed to log interrupted recording", "error", err)
+	}
+}
+
+// SetUploadsOverdueCallback installs the handler for overdue uploads and their
+// recovery; call it before StartUploads.
+func (m *Manager) SetUploadsOverdueCallback(cb func(UploadsOverdue)) {
+	m.uploader.mu.Lock()
+	defer m.uploader.mu.Unlock()
+	m.uploader.onOverdue = cb
+}
+
+// StartUploads starts delivering recordings, independent of the encoder's
+// input: uploads continue while capture restarts. It is idempotent.
+func (m *Manager) StartUploads() {
+	open := false
+	if m.eventLogger != nil {
+		var err error
+		if open, err = m.eventLogger.UploadOverdueOpen(); err != nil {
+			slog.Warn("could not restore the upload overdue state", "error", err)
+		}
+	}
+	m.uploader.start(open)
+}
+
+// Close stops delivering recordings and waits for an interrupted upload to be
+// aborted. Call it after Stop and before closing the event log and alerts.
+func (m *Manager) Close() {
+	m.uploader.stop()
+}
+
+// UploadBacklog counts undelivered recordings, including those of removed
+// recorders. A ticket that could not be read at startup counts as lost.
+func (m *Manager) UploadBacklog() UploadBacklog {
+	b := UploadBacklog{Lost: m.outbox.unreadable}
+	now := m.uploader.clock()
+	tickets := m.outbox.snapshot()
+	for i := range tickets {
+		t := &tickets[i]
+		switch t.State {
+		case ticketReady, ticketDelivered:
+			b.Pending++
+			if t.State == ticketReady && now.Sub(t.ReadyAt) >= uploadOverdueAfter {
+				b.Overdue++
+			}
+		case ticketFailed:
+			b.Failed++
+		case ticketLost:
+			b.Lost++
+		}
+	}
+	return b
+}
+
+// saveDestination stores cfg's S3 credentials for its undelivered recordings,
+// so a credential change reaches them and a removal does not strand them.
+func (m *Manager) saveDestination(cfg *types.Recorder) error {
+	if cfg.StorageMode == types.StorageLocal || !cfg.HasS3Credentials() {
+		return nil
+	}
+	return m.outbox.saveDestination(destinationID(cfg.ID, cfg.S3Endpoint, cfg.S3Bucket), destinationOf(cfg))
 }
 
 // SetMaxDurationMinutes updates the maximum allowed duration for on-demand recordings.
@@ -143,8 +220,7 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 	if _, exists := m.recorders[cfg.ID]; exists {
 		return fmt.Errorf("recorder already exists: %s", cfg.ID)
 	}
-	// Its spool still holds the removed run's open output, which recovery
-	// would take for a crash leftover.
+	// The removed run may still be finalizing into the same directory.
 	if _, removing := m.removing[cfg.ID]; removing {
 		return fmt.Errorf("recorder %s is still being removed", cfg.ID)
 	}
@@ -155,24 +231,12 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 		SpoolDir:           m.spoolDir,
 		MaxDurationMinutes: m.maxDurationMinutes,
 		EventLogger:        m.eventLogger,
-		OnUploadAbandoned:  func(event UploadAbandonedEvent) { m.handleUploadAbandoned(&event) },
+		Outbox:             m.outbox,
 	})
-	if err := recorder.reconcilePendingUploads(); err != nil {
-		return fmt.Errorf("reconcile pending uploads: %w", err)
+	if err := m.saveDestination(cfg); err != nil {
+		slog.Warn("cannot store upload destination; recording stores it again", "id", cfg.ID, "error", err)
 	}
 	m.recorders[cfg.ID] = recorder
-	// A process restart gives restored uploads a fresh retry window.
-	for i := range recorder.retryQueue {
-		p := &recorder.retryQueue[i]
-		if p.abandoned {
-			p.abandoned = false
-			if err := recorder.savePendingUpload(p); err != nil {
-				slog.Warn("failed to persist restored upload", "id", recorder.id, "path", p.metadataPath, "error", err)
-			}
-		}
-		delete(m.abandoned, p.request.localPath)
-		m.restoreGen++
-	}
 
 	m.publishAudioRecordersLocked()
 
@@ -206,9 +270,6 @@ func (m *Manager) RemoveRecorder(id string) error {
 	if err := recorder.Stop(); err != nil {
 		slog.Warn("error stopping recorder during removal", "id", id, "error", err)
 	}
-	// No later manager pass covers a removed recorder, so also retry what an
-	// earlier stop left queued; a pass this Stop started absorbs this one.
-	go recorder.processRetryQueue()
 	m.mu.Lock()
 	delete(m.removing, id)
 	m.mu.Unlock()
@@ -230,13 +291,16 @@ func (m *Manager) UpdateRecorder(cfg *types.Recorder) error {
 	if !exists {
 		return fmt.Errorf("recorder not found: %s", cfg.ID)
 	}
-
 	// A later update waits for this one, including its Stop, so it cannot
 	// change the config between this one's config change and its stop or start.
 	lockReconcile(&recorder.reconcileMu)
 	defer recorder.reconcileMu.Unlock()
 	if err := recorder.UpdateConfig(cfg); err != nil {
 		return err
+	}
+	// Waiting recordings use the new credentials.
+	if err := m.saveDestination(cfg); err != nil {
+		return fmt.Errorf("store upload credentials: %w", err)
 	}
 
 	// Stop runs outside the manager lock, like RemoveRecorder. It also tears
@@ -257,7 +321,7 @@ func (m *Manager) UpdateRecorder(cfg *types.Recorder) error {
 	}
 	// Wait for a Stop already in progress (such as the duration limit): it
 	// would refuse the start below. A failed run is not stopped: startHourly
-	// restarts it from ProcessError and reuses its upload worker.
+	// restarts it from ProcessError.
 	_ = recorder.stopIn(types.ProcessStopping)
 
 	// m.mu is held across the check and the start, so Manager.Stop and
@@ -325,6 +389,7 @@ func (m *Manager) Start() error {
 // StartIfActive checks source ownership under the same lock used by Stop.
 // The predicate must not call this manager.
 func (m *Manager) StartIfActive(active func() bool) error {
+	m.StartUploads()
 	m.lifecycleMu.Lock()
 	m.mu.Lock()
 	if active != nil && !active() {
@@ -358,7 +423,6 @@ func (m *Manager) StartIfActive(active func() bool) error {
 
 	// Start hourly retry scheduler for failed recorders
 	m.startHourlyRetryScheduler(m.hourlyRetryStopCh)
-	go m.processUploadRetryQueues()
 	go m.monitorStorage(m.cleanupStopCh)
 
 	count := len(m.recorders)
@@ -462,25 +526,28 @@ func (m *Manager) Statuses() map[string]types.ProcessStatus {
 	return statuses
 }
 
-// PendingUploadCount returns the total number of uploads waiting for retry.
-func (m *Manager) PendingUploadCount() int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	count := 0
-	for _, recorder := range m.recorders {
-		count += recorder.PendingUploadCount()
-	}
-	return count
+// startHourlyRetryScheduler retries failed hourly recorders until stopCh
+// closes. Capturing stopCh avoids racing Stop's field reset.
+func (m *Manager) startHourlyRetryScheduler(stopCh <-chan struct{}) {
+	util.RunHourly(stopCh, "recorder retry", m.retryFailedHourlyRecorders)
 }
 
-// startHourlyRetryScheduler retries hourly recorders and uploads until stopCh closes.
-// Capturing stopCh avoids racing Stop's field reset.
-func (m *Manager) startHourlyRetryScheduler(stopCh <-chan struct{}) {
-	util.RunHourly(stopCh, "recorder retry", func() {
-		m.retryFailedHourlyRecorders()
-		m.processUploadRetryQueues()
-	})
+// refreshDestinations stores every recorder's current credentials again, so
+// one whose save failed (at startup, say) recovers once storage does. The
+// uploader runs it hourly, also while capture is stopped.
+func (m *Manager) refreshDestinations() {
+	m.mu.RLock()
+	recorders := slices.Collect(maps.Values(m.recorders))
+	m.mu.RUnlock()
+	for _, r := range recorders {
+		// Serialized with updates, so it never writes an older config.
+		lockReconcile(&r.reconcileMu)
+		cfg := r.Config()
+		if err := m.saveDestination(&cfg); err != nil {
+			slog.Warn("cannot store upload destination", "id", cfg.ID, "error", err)
+		}
+		r.reconcileMu.Unlock()
+	}
 }
 
 func (m *Manager) retryFailedHourlyRecorders() {
@@ -502,15 +569,5 @@ func (m *Manager) retryFailedHourlyRecorders() {
 				}
 			}
 		}
-	}
-}
-
-func (m *Manager) processUploadRetryQueues() {
-	m.mu.RLock()
-	recorders := slices.Collect(maps.Values(m.recorders))
-	m.mu.RUnlock()
-
-	for _, recorder := range recorders {
-		recorder.processRetryQueue()
 	}
 }

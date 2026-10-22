@@ -19,8 +19,8 @@ func TestRecordersReserveDifferentFilesBeforeEncoding(t *testing.T) {
 	cfg := localOnDemandRecorder(t, "same-name")
 	second := *cfg
 	second.ID = "second"
-	a := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0]})
-	b := NewGenericRecorder(GenericRecorderConfig{Recorder: &second, FFmpegPath: os.Args[0]})
+	a := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0]})
+	b := newTestRecorder(t, GenericRecorderConfig{Recorder: &second, FFmpegPath: os.Args[0]})
 	files := make([]string, 2)
 	for i, r := range []*GenericRecorder{a, b} {
 		t.Cleanup(func() { _ = r.Stop() })
@@ -53,7 +53,7 @@ func TestReservationCollisionKeepsConcurrentForeignFile(t *testing.T) {
 				}
 			}
 			cfg := localOnDemandRecorder(t, "collision")
-			r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0]})
+			r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0]})
 			originalReserve := reserveRecordingFile
 			var foreign string
 			target := filepath.Join(t.TempDir(), "outside.ts")
@@ -97,7 +97,7 @@ func TestReservationCollisionKeepsConcurrentForeignFile(t *testing.T) {
 
 func TestStopDuringReservationRemovesUnstartedOutput(t *testing.T) {
 	cfg := localOnDemandRecorder(t, "stop-reservation")
-	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0]})
+	r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0]})
 	r.state, r.startGen = types.ProcessStarting, 1
 	originalReserve := reserveRecordingFile
 	reserved, blocked, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
@@ -137,7 +137,7 @@ func TestStopDuringReservationRemovesUnstartedOutput(t *testing.T) {
 
 func TestReservationErrorDoesNotLaunchEncoder(t *testing.T) {
 	cfg := localOnDemandRecorder(t, "permission-error")
-	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0]})
+	r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0]})
 	r.state, r.startGen = types.ProcessStarting, 1
 	originalReserve := reserveRecordingFile
 	var calls atomic.Int32
@@ -152,31 +152,6 @@ func TestReservationErrorDoesNotLaunchEncoder(t *testing.T) {
 	r.startAsync(1)
 	if status := r.Status(); status.State != types.ProcessError || !strings.Contains(status.Error, os.ErrPermission.Error()) || r.result != nil {
 		t.Fatalf("reservation failure was ignored: %+v", status)
-	}
-}
-
-func TestDiscardReservationLeavesReplacementUntouched(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "reserved.ts")
-	file, err := reserveRecordingFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	output := &recordingOutput{file: file}
-	if err := os.Remove(path); err != nil {
-		_ = file.Close()
-		if runtime.GOOS == "windows" {
-			t.Skipf("Windows protects the open reservation from replacement: %v", err)
-		}
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
-		_ = file.Close()
-		t.Fatal(err)
-	}
-	output.discard()
-	assertRecordedCapture(t, path, []byte("replacement"))
-	if _, err := file.Stat(); !errors.Is(err, os.ErrClosed) {
-		t.Fatalf("reservation descriptor not closed: %v", err)
 	}
 }
 
@@ -201,7 +176,7 @@ func TestReleaseReportsDisappearedOutput(t *testing.T) {
 
 func TestFailedEncoderStartReleasesReservation(t *testing.T) {
 	cfg := localOnDemandRecorder(t, "failed-start")
-	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, FFmpegPath: filepath.Join(t.TempDir(), "missing-ffmpeg")})
+	r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, FFmpegPath: filepath.Join(t.TempDir(), "missing-ffmpeg")})
 	r.state, r.startGen = types.ProcessStarting, 1
 	r.startAsync(1) // Returns after the failed-start cleanup.
 	if r.Status().State != types.ProcessError {

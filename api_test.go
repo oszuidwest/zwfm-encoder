@@ -19,6 +19,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
+	"github.com/oszuidwest/zwfm-encoder/internal/recording"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
@@ -103,8 +104,16 @@ func TestBuildReadyResponseFailures(t *testing.T) {
 		mutate    func(*readyInputs)
 	}{
 		{
-			name: "abandoned uploads", component: "uploads",
-			mutate: func(in *readyInputs) { in.abandonedUploads = 1 },
+			name: "overdue uploads", component: "uploads",
+			mutate: func(in *readyInputs) { in.uploads.Overdue = 1 },
+		},
+		{
+			name: "failed recording", component: "uploads",
+			mutate: func(in *readyInputs) { in.uploads.Failed = 1 },
+		},
+		{
+			name: "lost recording", component: "uploads",
+			mutate: func(in *readyInputs) { in.uploads.Lost = 1 },
 		},
 		{
 			name: "low recording disk", component: "recording_storage",
@@ -173,13 +182,6 @@ func TestBuildReadyResponseFailures(t *testing.T) {
 				status := in.recorderStatuses["recorder-1"]
 				status.State = types.ProcessStopped
 				in.recorderStatuses["recorder-1"] = status
-			},
-		},
-		{
-			name:      "pending uploads",
-			component: "uploads",
-			mutate: func(in *readyInputs) {
-				in.pendingUploads = 1
 			},
 		},
 	}
@@ -509,7 +511,7 @@ func readyFixture() readyInputs {
 			},
 		},
 		audioLevels:      audio.AudioLevels{},
-		pendingUploads:   0,
+		uploads:          recording.UploadBacklog{Pending: 2}, // Waiting for an upload is healthy.
 		recordingStorage: []types.RecordingStorageStatus{{Path: "/recordings", CheckedAt: time.Now()}},
 	}
 }

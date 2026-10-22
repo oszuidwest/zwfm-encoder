@@ -126,7 +126,7 @@ func startHourlyTestRecorder(t *testing.T, id string) *GenericRecorder {
 	t.Helper()
 	cfg := localOnDemandRecorder(t, id)
 	cfg.RecordingMode = types.RecordingHourly
-	r := NewGenericRecorder(GenericRecorderConfig{
+	r := newTestRecorder(t, GenericRecorderConfig{
 		Recorder:   cfg,
 		FFmpegPath: os.Args[0],
 		SpoolDir:   t.TempDir(),
@@ -239,7 +239,7 @@ func TestStopWaitsForRotatedFile(t *testing.T) {
 	t.Setenv(fakeFFmpegFinalizeEnv, "0s")
 	go rotateTestRecorder(r)
 	waitForHandOver(t, r, firstFile)
-	if !r.IsCurrentFile(firstFile) {
+	if !r.outbox.hasPath(firstFile) {
 		t.Fatal("the file being finalized is not protected from retention cleanup")
 	}
 	if err := r.Stop(); err != nil {
@@ -248,7 +248,7 @@ func TestStopWaitsForRotatedFile(t *testing.T) {
 	if _, err := os.Stat(firstFile); err != nil {
 		t.Fatalf("Stop returned before the rotated file was finalized: %v", err)
 	}
-	if r.IsCurrentFile(firstFile) {
+	if r.outbox.hasPath(firstFile) {
 		t.Fatal("the finalized file is still protected from retention cleanup")
 	}
 }
@@ -305,9 +305,9 @@ func TestOverlappingRotationsProtectEveryRetiringFile(t *testing.T) {
 	t.Setenv(fakeFFmpegFinalizeEnv, "0s")
 	go rotateTestRecorder(r)
 	waitForHandOver(t, r, secondFile)
-	if !r.IsCurrentFile(firstFile) || !r.IsCurrentFile(secondFile) {
+	if !r.outbox.hasPath(firstFile) || !r.outbox.hasPath(secondFile) {
 		t.Fatalf("finalizing files protected: first %t, second %t; want both",
-			r.IsCurrentFile(firstFile), r.IsCurrentFile(secondFile))
+			r.outbox.hasPath(firstFile), r.outbox.hasPath(secondFile))
 	}
 }
 

@@ -28,7 +28,7 @@ func TestChangedStorageIsPreparedBeforeEncoderLaunch(t *testing.T) {
 			if rotation {
 				cfg.RecordingMode = types.RecordingHourly
 			}
-			r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, FFmpegPath: executable, SpoolDir: t.TempDir()})
+			r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, FFmpegPath: executable, SpoolDir: t.TempDir()})
 			store := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				t.Error("empty storage-change test attempted an upload")
 				w.WriteHeader(http.StatusForbidden)
@@ -83,7 +83,8 @@ func TestChangedStorageIsPreparedBeforeEncoderLaunch(t *testing.T) {
 			}
 			release()
 			<-done
-			dir := filepath.Join(r.spoolDir, "recorders", r.id)
+			current := r.Config()
+			dir := filepath.Join(r.spoolDir, "recordings", current.RecordingFilePrefix())
 			if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 				t.Fatalf("new S3 output directory was not prepared: %v, %v", info, err)
 			}

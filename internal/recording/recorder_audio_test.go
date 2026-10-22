@@ -98,7 +98,7 @@ func TestStatusReportsAudioDrops(t *testing.T) {
 
 func TestCaptureRecordingFlagFollowsLifecycle(t *testing.T) {
 	t.Setenv(fakeFFmpegFailWriteEnv, "1")
-	r := NewGenericRecorder(GenericRecorderConfig{
+	r := newTestRecorder(t, GenericRecorderConfig{
 		Recorder: localOnDemandRecorder(t, "capture-state"), FFmpegPath: os.Args[0], SpoolDir: t.TempDir(),
 	})
 	t.Cleanup(func() { _ = r.Stop() })

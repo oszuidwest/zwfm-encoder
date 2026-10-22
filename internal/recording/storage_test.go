@@ -2,9 +2,7 @@ package recording
 
 import (
 	"errors"
-	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -256,7 +254,7 @@ func testBlockedStorageProbe(t *testing.T) {
 		m.WriteAudio([]byte{0, 0})
 		_ = m.Statuses()
 		_ = m.StorageStatuses()
-		_ = m.AbandonedUploadCount()
+		_ = m.UploadBacklog()
 		if err := m.Stop(); err != nil {
 			done <- err
 			return
@@ -307,90 +305,7 @@ func testBlockedStorageProbe(t *testing.T) {
 	if err := m.Stop(); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func TestAbandonedUploadsRemainVisibleAfterRemovalAndRestart(t *testing.T) {
-	t.Parallel()
-	spool := t.TempDir()
-	m := storageTestManager(t, spool)
-	cfg := testS3Recorder()
-	if err := m.AddRecorder(cfg); err != nil {
-		t.Fatal(err)
-	}
-	r := m.recorders[cfg.ID]
-	file := writeSpoolFile(t, spool, cfg.ID, "abandoned.mp3", "audio")
-	p := pendingUpload{request: uploadRequest{localPath: file, s3Key: "recordings/original.mp3", fileSize: 5}, firstAttempt: time.Now().Add(-25 * time.Hour)}
-	if err := r.savePendingUpload(&p); err != nil {
-		t.Fatal(err)
-	}
-	r.retryQueue = []pendingUpload{p}
-	r.processRetryQueue()
-	if m.PendingUploadCount() != 0 || m.AbandonedUploadCount() != 1 {
-		t.Fatal("abandoned file was hidden or still queued for retry")
-	}
-	if err := m.RemoveRecorder(cfg.ID); err != nil {
-		t.Fatal(err)
-	}
-	if m.AbandonedUploadCount() != 1 {
-		t.Fatal("recorder removal hid abandoned audio")
-	}
-	m.checkStorage(m.cleanupStopCh)
-	restarted := storageTestManager(t, spool)
-	restarted.checkStorage(restarted.cleanupStopCh)
-	if restarted.AbandonedUploadCount() != 1 {
-		t.Fatal("startup scan hid abandoned audio of removed recorder")
-	}
-	if data, err := os.ReadFile(file); err != nil || string(data) != "audio" { //nolint:gosec // Test recording.
-		t.Fatalf("monitor changed recording: %q, %v", data, err)
-	}
-	// Re-adding its original configuration restores the existing retry policy,
-	// without counting the same recording as both abandoned and pending.
-	if err := restarted.AddRecorder(cfg); err != nil {
-		t.Fatal(err)
-	}
-	// A check while processRetryQueue has the queue drained must not count it.
-	rr := restarted.recorders[cfg.ID]
-	rr.mu.Lock()
-	queued := rr.retryQueue
-	rr.retryQueue = nil
-	rr.mu.Unlock()
-	restarted.checkStorage(restarted.cleanupStopCh)
-	if restarted.AbandonedUploadCount() != 0 {
-		t.Fatal("restored upload counted as abandoned while its retry ran")
-	}
-	rr.mu.Lock()
-	rr.retryQueue = queued
-	rr.mu.Unlock()
-	restarted.checkStorage(restarted.cleanupStopCh)
-	if restarted.AbandonedUploadCount() != 0 || restarted.PendingUploadCount() != 1 {
-		t.Fatal("restart did not give abandoned upload a fresh retry window")
-	}
-	if err := os.Remove(file); err != nil {
-		t.Fatal(err)
-	}
-	m.checkStorage(m.cleanupStopCh)
-	if m.AbandonedUploadCount() != 0 {
-		t.Fatal("removed file still counted as retained audio")
-	}
-}
-
-func TestUnreadableUploadMetadataDoesNotFailStorageCheck(t *testing.T) {
-	t.Parallel()
-	spool := t.TempDir()
-	m := storageTestManager(t, spool)
-	dir := filepath.Join(spool, "uploads", "gone")
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "a"+pendingUploadMetadataSuffix), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	m.checkStorage(m.cleanupStopCh)
-	for _, p := range m.StorageStatuses() {
-		if p.Error != "" {
-			t.Fatalf("one unreadable metadata file failed %s: %s", p.Path, p.Error)
-		}
-	}
+	m.Close()
 }
 
 func TestRemovedLowPathClosesIncident(t *testing.T) {
@@ -419,101 +334,6 @@ func TestSpoolIsNotMonitoredWithoutRecorders(t *testing.T) {
 	m.checkStorage(m.cleanupStopCh)
 	if got := m.StorageStatuses(); len(got) != 0 {
 		t.Fatalf("an encoder without recorders reported recording storage: %+v", got)
-	}
-}
-
-func TestFailedAbandonmentSaveKeepsUploadVisible(t *testing.T) {
-	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
-		t.Skip("needs POSIX permissions as a regular user")
-	}
-	spool := t.TempDir()
-	m := storageTestManager(t, spool)
-	cfg := testS3Recorder()
-	if err := m.AddRecorder(cfg); err != nil {
-		t.Fatal(err)
-	}
-	r := m.recorders[cfg.ID]
-	file := writeSpoolFile(t, spool, cfg.ID, "abandoned.mp3", "audio")
-	p := pendingUpload{request: uploadRequest{localPath: file, s3Key: "recordings/x.mp3", fileSize: 5}, firstAttempt: time.Now().Add(-25 * time.Hour)}
-	if err := r.savePendingUpload(&p); err != nil {
-		t.Fatal(err)
-	}
-	// A full or read-only spool cannot persist the abandonment itself.
-	dir := filepath.Dir(p.metadataPath)
-	if err := os.Chmod(dir, 0o500); err != nil { //nolint:gosec // A read-only test directory is the point.
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) }) //nolint:gosec // Restore for cleanup.
-	r.retryQueue = []pendingUpload{p}
-	r.processRetryQueue()
-	m.checkStorage(m.cleanupStopCh)
-	if m.AbandonedUploadCount() != 1 {
-		t.Fatal("an abandonment that could not be saved vanished from readiness")
-	}
-}
-
-func TestDeletedAbandonedFileLeavesTheCount(t *testing.T) {
-	t.Parallel()
-	spool := t.TempDir()
-	m := storageTestManager(t, spool)
-	cfg := testS3Recorder()
-	if err := m.AddRecorder(cfg); err != nil {
-		t.Fatal(err)
-	}
-	r := m.recorders[cfg.ID]
-	file := writeSpoolFile(t, spool, cfg.ID, "abandoned.mp3", "audio")
-	p := pendingUpload{request: uploadRequest{localPath: file, s3Key: "recordings/x.mp3", fileSize: 5}, firstAttempt: time.Now().Add(-25 * time.Hour)}
-	if err := r.savePendingUpload(&p); err != nil {
-		t.Fatal(err)
-	}
-	r.retryQueue = []pendingUpload{p}
-	r.processRetryQueue()
-	if m.AbandonedUploadCount() != 1 {
-		t.Fatal("abandonment not counted")
-	}
-	if err := os.Remove(file); err != nil { // Metadata still says abandoned.
-		t.Fatal(err)
-	}
-	m.checkStorage(m.cleanupStopCh)
-	if m.AbandonedUploadCount() != 0 {
-		t.Fatal("a deleted abandoned file is still counted as retained audio")
-	}
-}
-
-func TestScanDuringRestoreDoesNotResurrectAbandonment(t *testing.T) {
-	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
-		t.Skip("needs POSIX permissions as a regular user")
-	}
-	spool := t.TempDir()
-	m := storageTestManager(t, spool)
-	if err := m.AddRecorder(localOnDemandRecorder(t, "other")); err != nil { // Keeps the spool monitored.
-		t.Fatal(err)
-	}
-	cfg := testS3Recorder()
-	prior := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: spool})
-	file := writeSpoolFile(t, spool, cfg.ID, "abandoned.mp3", "audio")
-	p := pendingUpload{request: uploadRequest{localPath: file, s3Key: "recordings/x.mp3", fileSize: 5}, firstAttempt: time.Now(), abandoned: true}
-	if err := prior.savePendingUpload(&p); err != nil {
-		t.Fatal(err)
-	}
-	// The restore cannot persist "no longer abandoned", so the scan still reads it.
-	dir := filepath.Dir(p.metadataPath)
-	if err := os.Chmod(dir, 0o500); err != nil { //nolint:gosec // A read-only test directory is the point.
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) }) //nolint:gosec // Restore for cleanup.
-	var restore sync.Once
-	m.diskSpace = func(string) (uint64, uint64, error) {
-		restore.Do(func() {
-			if err := m.AddRecorder(cfg); err != nil {
-				t.Error(err)
-			}
-		})
-		return 10 << 30, 20 << 30, nil
-	}
-	m.checkStorage(m.cleanupStopCh)
-	if m.AbandonedUploadCount() != 0 || m.PendingUploadCount() != 1 {
-		t.Fatalf("restored upload: abandoned=%d pending=%d, want 0 and 1", m.AbandonedUploadCount(), m.PendingUploadCount())
 	}
 }
 
@@ -612,30 +432,5 @@ func TestRestartClosesStorageIncidentLeftOpen(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestFailedRegistrationKeepsUploadAbandoned(t *testing.T) {
-	t.Parallel()
-	spool := t.TempDir()
-	cfg := testS3Recorder()
-	prior := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: spool})
-	file := writeSpoolFile(t, spool, cfg.ID, "abandoned.mp3", "audio")
-	p := pendingUpload{request: uploadRequest{localPath: file, s3Key: "recordings/x.mp3", fileSize: 5}, firstAttempt: time.Now(), abandoned: true}
-	if err := prior.savePendingUpload(&p); err != nil {
-		t.Fatal(err)
-	}
-	// ReadDir sorts names, so this broken metadata fails reconciliation after
-	// the abandoned entry was loaded.
-	if err := os.Symlink(filepath.Join(spool, "missing"), filepath.Join(prior.pendingUploadDir(), "zzzz.upload.json")); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
-	m := storageTestManager(t, spool)
-	if err := m.AddRecorder(cfg); err == nil {
-		t.Fatal("reconciliation unexpectedly succeeded")
-	}
-	m.checkStorage(m.cleanupStopCh)
-	if got := m.AbandonedUploadCount(); got != 1 {
-		t.Fatalf("abandoned count after a failed registration = %d, want 1", got)
 	}
 }

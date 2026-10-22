@@ -2,6 +2,9 @@ package notify
 
 import (
 	"context"
+	"fmt"
+	"strings"
+	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
@@ -21,8 +24,8 @@ type AlertChannel interface {
 	// IsConfiguredForImbalance reports whether channel imbalance events have the
 	// backend settings required before per-event subscriptions are checked.
 	IsConfiguredForImbalance(cfg *config.Snapshot) bool
-	// IsConfiguredForUpload reports whether upload-abandonment events have the
-	// backend settings required before dispatch.
+	// IsConfiguredForUpload reports whether upload and recording-storage events
+	// have the backend settings required before dispatch.
 	IsConfiguredForUpload(cfg *config.Snapshot) bool
 
 	// SubscribesSilenceStart reports whether a configured backend wants
@@ -52,8 +55,9 @@ type AlertChannel interface {
 	// SendAudioDump delivers a dump or errors if attachments are unsupported.
 	// Implementations must treat data as read-only.
 	SendAudioDump(ctx context.Context, cfg *config.Snapshot, data *AudioDumpData) error
-	// SendUploadAbandoned delivers an alert for a recording that exhausted upload retries.
-	SendUploadAbandoned(ctx context.Context, cfg *config.Snapshot, params UploadAbandonedData) error
+	// SendUploadsOverdue delivers the overdue state of recording uploads: an
+	// alert when recordings wait too long for S3, or their recovery.
+	SendUploadsOverdue(ctx context.Context, cfg *config.Snapshot, data *UploadsOverdueData) error
 	// SendRecordingStorage delivers the current aggregate recording-storage state.
 	SendRecordingStorage(ctx context.Context, cfg *config.Snapshot, paths []types.RecordingStorageStatus) error
 	// SendInputLost delivers an alert when audio capture from the input stops.
@@ -69,13 +73,26 @@ type InputData struct {
 	DurationMs int64  // set for input restoration
 }
 
-// UploadAbandonedData contains the retry context sent when a recorder upload is abandoned.
-type UploadAbandonedData struct {
-	RecorderName string
-	Filename     string
-	S3Key        string
-	LastError    string
-	RetryCount   int
+// UploadsOverdueData describes recordings that wait more than two hours for
+// S3, or with Overdue false that none do any longer.
+type UploadsOverdueData struct {
+	Overdue   bool
+	Count     int
+	Oldest    time.Time
+	Recorders []string
+	LastError string
+}
+
+func (d *UploadsOverdueData) message() (event, message string) {
+	if !d.Overdue {
+		return "upload_overdue_cleared", "All overdue recordings have been uploaded."
+	}
+	message = fmt.Sprintf("%d recordings have waited more than 2 hours for S3 (oldest since %s; recorders: %s).",
+		d.Count, d.Oldest.Format(time.RFC3339), strings.Join(d.Recorders, ", "))
+	if d.LastError != "" {
+		message += " Last error: " + d.LastError
+	}
+	return "upload_overdue", message
 }
 
 // ChannelImbalanceData contains the measured levels and thresholds for an
@@ -203,15 +220,5 @@ func (d *Dispatcher) DispatchAudioDump(
 		func(ch AlertChannel, cfg *config.Snapshot) error {
 			data := data // Give each channel its own struct value.
 			return ch.SendAudioDump(ctx, cfg, &data)
-		})
-}
-
-// DispatchUploadAbandoned sends upload-abandonment notifications to all configured channels.
-//
-//nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
-func (d *Dispatcher) DispatchUploadAbandoned(ctx context.Context, cfg config.Snapshot, params UploadAbandonedData) {
-	dispatch(d.channels, cfg, "upload_abandoned", AlertChannel.IsConfiguredForUpload,
-		func(ch AlertChannel, cfg *config.Snapshot) error {
-			return ch.SendUploadAbandoned(ctx, cfg, params)
 		})
 }

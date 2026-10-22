@@ -34,7 +34,7 @@ type logJob struct {
 }
 
 // AlertOrchestrator coordinates silence, channel-imbalance, audio-dump,
-// audio-input, and upload-abandonment alert lifecycles.
+// audio-input, recording-storage and upload-overdue alert lifecycles.
 type AlertOrchestrator struct {
 	cfg         *config.Config
 	eventLogger *eventlog.Logger
@@ -53,8 +53,10 @@ type AlertOrchestrator struct {
 	// storageQueues hold each channel's newest storage state, so input alerts
 	// cannot evict a storage transition that is only sent once.
 	storageQueues []chan func()
-	closeOnce     sync.Once // ensures Close drains and stops the worker exactly once
-	closed        bool
+	// uploadQueues hold each channel's newest upload overdue state.
+	uploadQueues []chan func()
+	closeOnce    sync.Once // ensures Close drains and stops the worker exactly once
+	closed       bool
 }
 
 // pendingRecoveryData holds recovery event data while waiting for the audio dump.
@@ -86,10 +88,11 @@ func NewAlertOrchestrator(cfg *config.Config, dispatcher *Dispatcher) *AlertOrch
 	// raised, so a restoration never lands before its loss and an old
 	// restoration never lands after a newer loss and clears a live outage.
 	for range dispatcher.Channels() {
-		input, storage := make(chan func(), inputQueueDepth), make(chan func(), 1)
+		input, storage, upload := make(chan func(), inputQueueDepth), make(chan func(), 1), make(chan func(), 1)
 		o.inputQueues = append(o.inputQueues, input)
 		o.storageQueues = append(o.storageQueues, storage)
-		for _, queue := range []chan func(){input, storage} {
+		o.uploadQueues = append(o.uploadQueues, upload)
+		for _, queue := range []chan func(){input, storage, upload} {
 			go func() {
 				for deliver := range queue {
 					deliver()
@@ -324,13 +327,15 @@ func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
 	})
 }
 
-// HandleUploadAbandoned dispatches an upload-abandonment alert outside the audio lifecycle.
-func (o *AlertOrchestrator) HandleUploadAbandoned(params UploadAbandonedData) {
-	cfg := o.cfg.Snapshot()
-	o.mu.Lock()
-	ctx := o.notifyCtx
-	o.mu.Unlock()
-	o.dispatcher.DispatchUploadAbandoned(ctx, cfg, params)
+// HandleUploadsOverdue sends the upload overdue state through the ordered
+// channel workers, so a delayed alert cannot arrive after its recovery.
+func (o *AlertOrchestrator) HandleUploadsOverdue(state *UploadsOverdueData) {
+	data := *state
+	data.Recorders = slices.Clone(state.Recorders)
+	o.enqueueOrdered(o.uploadQueues, "upload_overdue", AlertChannel.IsConfiguredForUpload,
+		func(ch AlertChannel, ctx context.Context, cfg *config.Snapshot) error {
+			return ch.SendUploadsOverdue(ctx, cfg, &data)
+		})
 }
 
 // HandleRecordingStorage sends storage changes through the ordered channel workers,
@@ -356,7 +361,7 @@ func (o *AlertOrchestrator) HandleInputRestored(data InputData) {
 }
 
 // handleInputEvent queues the alert on each channel's ordered worker. Like
-// upload abandonment, input alerts ignore per-event subscriptions.
+// recording-storage and upload alerts, input alerts ignore per-event subscriptions.
 func (o *AlertOrchestrator) handleInputEvent(
 	eventType string, data InputData,
 	send func(AlertChannel, context.Context, *config.Snapshot, InputData) error,
@@ -467,7 +472,7 @@ func (o *AlertOrchestrator) Close() {
 		o.logMu.Lock()
 		o.closed = true
 		queue := o.logQueue
-		for _, queue := range slices.Concat(o.inputQueues, o.storageQueues) {
+		for _, queue := range slices.Concat(o.inputQueues, o.storageQueues, o.uploadQueues) {
 			close(queue)
 		}
 		o.logMu.Unlock()

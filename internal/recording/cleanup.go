@@ -34,6 +34,11 @@ func (m *Manager) startCleanupScheduler(stopCh <-chan struct{}) {
 }
 
 func (m *Manager) runCleanup() {
+	if m.outbox.unreadable > 0 {
+		// An unreadable ticket may own any old file: expire nothing.
+		slog.Warn("cleanup: skipped, the upload queue holds tickets that could not be read", "count", m.outbox.unreadable)
+		return
+	}
 	m.mu.RLock()
 	recorders := slices.Collect(maps.Values(m.recorders))
 	m.mu.RUnlock()
@@ -92,7 +97,9 @@ func (m *Manager) cleanupLocalFiles(recorder *GenericRecorder) {
 		if fileDate.Before(cutoff) {
 			filePath := filepath.Join(cfg.LocalPath, name)
 
-			if recorder.IsCurrentFile(filePath) {
+			// A recording that is being written, finalized or not yet
+			// delivered, or that failed, is never expired.
+			if recorder.IsCurrentFile(filePath) || m.outbox.hasPath(filePath) {
 				continue
 			}
 
@@ -107,9 +114,6 @@ func (m *Manager) cleanupLocalFiles(recorder *GenericRecorder) {
 				slog.Warn("cleanup: failed to delete local file", "id", cfg.ID, "path", filePath, "error", err)
 			} else {
 				deleted++
-				if err := removeUnfinalizedMarker(filePath); err != nil {
-					slog.Warn("cleanup: failed to delete recording marker", "id", cfg.ID, "path", filePath, "error", err)
-				}
 				slog.Debug("cleanup: deleted local file", "id", cfg.ID, "file", name)
 			}
 		}

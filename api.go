@@ -908,8 +908,6 @@ type ReadyComponent struct {
 	Details map[string]any `json:"details,omitempty"`
 }
 
-const readinessMaxPendingUploads = 0
-
 // readinessMaxStorageAge rejects storage observations older than three check intervals.
 const readinessMaxStorageAge = 3 * time.Minute
 
@@ -978,8 +976,7 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		recorders:          cfg.Recorders,
 		recorderStatuses:   s.encoder.RecorderStatuses(),
 		audioLevels:        s.encoder.AudioLevels(),
-		pendingUploads:     s.encoder.PendingUploadCount(),
-		abandonedUploads:   s.encoder.AbandonedUploadCount(),
+		uploads:            s.encoder.UploadBacklog(),
 		recordingStorage:   s.encoder.RecordingStorageStatuses(),
 	})
 	s.writeJSON(w, httpStatus, resp)
@@ -994,8 +991,7 @@ type readyInputs struct {
 	recorders          []types.Recorder
 	recorderStatuses   map[string]types.ProcessStatus
 	audioLevels        audio.AudioLevels
-	pendingUploads     int
-	abandonedUploads   int
+	uploads            recording.UploadBacklog
 	recordingStorage   []types.RecordingStorageStatus
 }
 
@@ -1007,7 +1003,7 @@ func buildReadyResponse(in *readyInputs) (resp ReadyResponse, httpStatus int) {
 		"silence":           readySilence(&in.audioLevels),
 		"channel_imbalance": readyChannelImbalance(&in.audioLevels),
 		"recorders":         readyRecorders(in.recordingAvailable, in.recorders, in.recorderStatuses),
-		"uploads":           readyUploads(in.pendingUploads, in.abandonedUploads),
+		"uploads":           readyUploads(in.uploads),
 		"recording_storage": readyRecordingStorage(in.recordingStorage, in.recorders),
 	}
 
@@ -1141,17 +1137,22 @@ func readyRecorders(
 	return ReadyComponent{OK: true, Details: details}
 }
 
-func readyUploads(pending, abandoned int) ReadyComponent {
+// readyUploads is not ready only for recordings that need attention: a
+// pending upload is normal, an overdue, failed or lost recording is not.
+func readyUploads(b recording.UploadBacklog) ReadyComponent {
 	details := map[string]any{
-		"pending":   pending,
-		"abandoned": abandoned,
-		"max":       readinessMaxPendingUploads,
+		"pending": b.Pending,
+		"overdue": b.Overdue,
+		"failed":  b.Failed,
+		"lost":    b.Lost,
 	}
-	if abandoned > 0 {
-		return ReadyComponent{OK: false, Message: "abandoned recording uploads remain on disk", Details: details}
-	}
-	if pending > readinessMaxPendingUploads {
-		return ReadyComponent{OK: false, Message: "recording uploads are pending retry", Details: details}
+	switch {
+	case b.Lost > 0:
+		return ReadyComponent{OK: false, Message: "recordings were lost before their upload", Details: details}
+	case b.Failed > 0:
+		return ReadyComponent{OK: false, Message: "failed recordings are kept on disk for inspection", Details: details}
+	case b.Overdue > 0:
+		return ReadyComponent{OK: false, Message: "recording uploads are overdue", Details: details}
 	}
 	return ReadyComponent{OK: true, Details: details}
 }

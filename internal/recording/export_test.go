@@ -59,8 +59,16 @@ var manualTimers struct {
 	armed []manualTimer
 }
 
-// RetryUploadsNow runs the upload retry pass the hourly scheduler would run.
-func RetryUploadsNow(m *Manager) { m.processUploadRetryQueues() }
+// RetryUploadsNow makes every waiting upload due now, as if its backoff ended.
+func RetryUploadsNow(m *Manager) { m.outbox.retryAllNow() }
+
+// SetUploadClock replaces the clock the uploader judges backoff and overdue
+// uploads by.
+func SetUploadClock(m *Manager, now func() time.Time) {
+	m.uploader.mu.Lock()
+	m.uploader.now = now
+	m.uploader.mu.Unlock()
+}
 
 // CorpusChildEnv names the child-process scenario the test binary runs instead
 // of the tests; see TestMain.
@@ -69,3 +77,33 @@ const CorpusChildEnv = "ZWFM_RECORDING_CORPUS_CHILD"
 // CorpusChildren holds child-process scenarios by name. A scenario runs in a
 // re-executed test binary so the parent can kill it like a crashed service.
 var CorpusChildren = map[string]func() int{}
+
+// newTestRecorder creates a recorder with an outbox in its spool, as the
+// Manager does; a second one on the same spool models a restart.
+func newTestRecorder(t testing.TB, cfg GenericRecorderConfig) *GenericRecorder {
+	t.Helper()
+	if cfg.SpoolDir == "" {
+		cfg.SpoolDir = t.TempDir()
+	}
+	if cfg.Outbox == nil {
+		ob, err := openOutbox(cfg.SpoolDir, func(*ticket) {})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.Outbox = ob
+	}
+	return NewGenericRecorder(cfg)
+}
+
+// retryAllNow makes every waiting upload and cleanup due now, in memory only.
+func (o *outbox) retryAllNow() {
+	o.mu.Lock()
+	for id := range o.tickets {
+		if t := o.tickets[id]; t.State == ticketReady || t.State == ticketDelivered {
+			t.NextAttempt = time.Time{}
+			o.tickets[id] = t
+		}
+	}
+	o.mu.Unlock()
+	o.signal()
+}

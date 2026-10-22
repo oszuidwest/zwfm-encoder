@@ -74,8 +74,13 @@ const (
 	UploadFailed EventType = "upload_failed"
 	// UploadRetry indicates an upload retry event.
 	UploadRetry EventType = "upload_retry"
-	// UploadAbandoned indicates an upload abandoned event.
+	// UploadAbandoned indicates an upload abandoned event. Uploads are no longer
+	// abandoned; the type remains so older history still reads.
 	UploadAbandoned EventType = "upload_abandoned"
+	// UploadOverdue indicates recordings that wait longer than two hours for S3.
+	UploadOverdue EventType = "upload_overdue"
+	// UploadOverdueCleared indicates that no recording is overdue any longer.
+	UploadOverdueCleared EventType = "upload_overdue_cleared"
 	// CleanupCompleted indicates a cleanup completed event.
 	CleanupCompleted EventType = "cleanup_completed"
 	// RecordingStorageLow indicates low free space or an unavailable recording path.
@@ -555,6 +560,41 @@ func matchesFilter(t EventType, filter TypeFilter) bool {
 	default: // FilterAll and unknown filters match everything
 		return true
 	}
+}
+
+// UploadOverdueDetails describes the recordings an upload_overdue event covers.
+type UploadOverdueDetails struct {
+	Count     int       `json:"count"`
+	Oldest    time.Time `json:"oldest,omitzero"`
+	Recorders []string  `json:"recorders,omitempty"`
+	Error     string    `json:"error,omitempty"`
+}
+
+// UploadOverdueOpen reports whether the newest upload overdue event in the
+// retained logs opened an incident that was not cleared.
+func (l *Logger) UploadOverdueOpen() (bool, error) {
+	open := false
+	for _, path := range []string{l.filePath, util.RotatedPath(l.filePath)} {
+		found := false
+		err := readLinesReverse(path, func(line []byte) (bool, error) {
+			if !bytes.Contains(line, []byte(`"upload_overdue`)) {
+				return true, nil
+			}
+			event, ok := parseEventLine(line)
+			if !ok || (event.Type != UploadOverdue && event.Type != UploadOverdueCleared) {
+				return true, nil
+			}
+			open, found = event.Type == UploadOverdue, true
+			return false, nil
+		})
+		if found {
+			return open, nil
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return false, err
+		}
+	}
+	return false, nil
 }
 
 // LatestStorageEvents returns the newest recording storage event of each path in
