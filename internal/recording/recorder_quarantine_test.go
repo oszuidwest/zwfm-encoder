@@ -45,7 +45,7 @@ func TestFailedRecordingIsNotRecoveredAfterRestart(t *testing.T) {
 					r.Stop()
 					assertRecordedCapture(t, file, want)
 					assertRecordingQuarantined(t, r, file)
-					assertSingleRecorderError(t, events, file, "No space left on device")
+					assertSingleRecorderError(t, r, events, file, "No space left on device")
 					if tk, _ := ticketFor(r.outbox, file); !strings.Contains(tk.LastError, "No space left on device") {
 						t.Fatalf("failed ticket does not hold the reason: %q", tk.LastError)
 					}
@@ -60,9 +60,10 @@ func TestFailedRecordingIsNotRecoveredAfterRestart(t *testing.T) {
 	}
 }
 
-func assertSingleRecorderError(t *testing.T, eventsPath, file, cause string) {
+func assertSingleRecorderError(t *testing.T, r *GenericRecorder, eventsPath, file, cause string) {
 	t.Helper()
 	assertRecorderErrorEvent(t, eventsPath, filepath.Base(file), cause)
+	r.events.flush() // Count every error the operation queued.
 	events, _, err := eventlog.ReadLast(eventsPath, 100, 0, eventlog.FilterRecorder)
 	if err != nil {
 		t.Fatal(err)
@@ -92,7 +93,7 @@ func TestFailedEmptyRemovalStaysQuarantinedAfterRestart(t *testing.T) {
 	t.Cleanup(func() { removeEmptyRecording = originalRemove })
 	r.Stop()
 	assertRecordingQuarantined(t, r, file)
-	assertSingleRecorderError(t, events, file, "remove empty recording")
+	assertSingleRecorderError(t, r, events, file, "remove empty recording")
 	restarted := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, SpoolDir: r.spoolDir})
 	if pendingTickets(restarted) != 0 {
 		t.Fatal("failed empty-file removal became an automatic upload after restart")
@@ -121,7 +122,7 @@ func TestWriterTimeoutReportsOneErrorAndQuarantinesPartialAudio(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	r.Stop()
-	assertSingleRecorderError(t, events, file, "writer timed out")
+	assertSingleRecorderError(t, r, events, file, "writer timed out")
 	assertRecordingQuarantined(t, r, file)
 	assertRecordedCapture(t, file, bytes.Repeat([]byte{1, 2, 3, 4}, 1024))
 }

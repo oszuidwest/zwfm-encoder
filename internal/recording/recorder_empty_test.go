@@ -102,5 +102,5 @@ func TestFailedPlaceholderRemovalIsReportedWithTheFinalizeError(t *testing.T) {
 	if msg, _ := details["error"].(string); !strings.Contains(msg, "remove empty recording") {
 		t.Fatalf("one report must also name the failed removal: %q", msg)
 	}
-	assertSingleRecorderError(t, eventPath, file, "remove empty recording")
+	assertSingleRecorderError(t, r, eventPath, file, "remove empty recording")
 }

@@ -67,12 +67,11 @@ func Settle(m *Manager) {
 
 // settle waits until r neither prepares nor finalizes a file.
 func (r *GenericRecorder) settle() {
-	for {
+	if !WaitFor(10*time.Second, func() bool {
 		idle := true
-		if !r.do(func() { idle = r.run.next == nil && r.run.retiring == 0 }) || idle {
-			return
-		}
-		time.Sleep(time.Millisecond)
+		return !r.do(func() { idle = r.run.next == nil && r.run.retiring == 0 }) || idle
+	}) {
+		panic("recorder " + r.id + " did not settle")
 	}
 }
 

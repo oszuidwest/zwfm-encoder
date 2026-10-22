@@ -97,7 +97,7 @@ func TestFailedFinalizeReportsErrorAndKeepsPartialAudio(t *testing.T) {
 	if data, err := os.ReadFile(file); err != nil || !bytes.Equal(data, pcm) { //nolint:gosec // Test temp output.
 		t.Fatalf("partial recording = %d bytes, %v; want %d preserved bytes", len(data), err, len(pcm))
 	}
-	assertSingleRecorderError(t, path, file, "No space left on device")
+	assertSingleRecorderError(t, r, path, file, "No space left on device")
 	assertRecorderErrorLog(t, logs, filepath.Base(file))
 	rotateTestRecorder(r)
 	if status := r.Status(); status.State != types.ProcessRunning || status.Error != "" {
@@ -158,7 +158,7 @@ func TestWriteErrorQuarantinesPartialAudioWithoutUpload(t *testing.T) {
 	r.Stop()
 	assertRecordedCapture(t, file, make([]byte, 4096))
 	assertRecordingQuarantined(t, r, file)
-	assertSingleRecorderError(t, eventPath, file, "simulated write failure")
+	assertSingleRecorderError(t, r, eventPath, file, "simulated write failure")
 	if pendingTickets(r) != 0 || len(uploads()) != 0 {
 		t.Fatalf("failed output queued (%d) or uploaded (%d)", pendingTickets(r), len(uploads()))
 	}
