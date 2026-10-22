@@ -696,12 +696,12 @@ recovery has severity `success`, reason `recovery`. Incidents are grouped by pat
 of recorder names and upload incidents. Checks run on manager start and every minute, outside
 capture/status locks. Warnings fire below 1 GiB or 5% available, or when a probe fails;
 only transitions produce alerts. A path that switches between low and unavailable logs another
-`recording_storage_low` in the same incident, without alerting, so a restart knows which applies.
-A low path recovers only once it has the threshold plus max(1 GiB, 2.5%) available; on volumes
-under 3 GiB the margin is capped at half the space above the threshold, and a volume smaller
-than the threshold stays low. Free space that swings by more than the margin can still alert
-repeatedly. A path that could not be checked, also one that was unavailable when the process stopped, recovers on its first good
-check above the threshold. These checks never delete recordings.
+`recording_storage_low` in the same incident and notifies email and webhook again, since freeing
+space and fixing a mount are different jobs; Zabbix keeps its open problem. A low or unavailable path recovers only once it has the threshold plus
+max(1 GiB, 2.5%) available, also across a restart; on volumes under 3 GiB the margin is capped at
+half the space above the threshold, and a volume smaller than the threshold stays low. Free space
+that swings by more than the margin can still alert repeatedly. These checks never delete
+recordings.
 
 Details: `path`, `available_bytes` (including zero), `total_bytes` (on Linux and macOS used plus
 available to the process, leaving out free blocks reserved for root), `threshold_bytes`,

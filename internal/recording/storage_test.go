@@ -71,12 +71,13 @@ func TestStorageWarningsThresholdsDedupAndRecovery(t *testing.T) {
 		{"recovery margin inclusive", 2 << 30, 10 << 30, nil, false, 2},
 		{"relative threshold", 2 << 30, 100 << 30, nil, true, 3},
 		{"relative recovery margin", 7 << 30, 100 << 30, nil, true, 3},
-		{"probe error is not recovery", 0, 0, errors.New("disk offline"), false, 3},
-		// An unavailable path is not low: its next good probe uses the normal threshold.
-		{"healthy again", 6 << 30, 100 << 30, nil, false, 4},
+		// Low to unavailable and back alert; neither is a recovery (#511).
+		{"probe error during low", 0, 0, errors.New("disk offline"), false, 4},
+		{"unavailable holds until recovery margin", 6 << 30, 100 << 30, nil, true, 5},
+		{"healthy again", 15 << 29, 100 << 30, nil, false, 6},
 		// Small volumes recover halfway between the threshold and their size.
-		{"small volume", (1 << 30) - 1, 3 << 29, nil, true, 5},
-		{"small volume recovery attainable", 5 << 28, 3 << 29, nil, false, 6},
+		{"small volume", (1 << 30) - 1, 3 << 29, nil, true, 7},
+		{"small volume recovery attainable", 5 << 28, 3 << 29, nil, false, 8},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -99,8 +100,8 @@ func TestStorageWarningsThresholdsDedupAndRecovery(t *testing.T) {
 		})
 	}
 	events, _, err := eventlog.ReadLast(logPath, 100, 0, eventlog.FilterRecorder)
-	if err != nil || len(events) != 14 {
-		t.Fatalf("events=%+v err=%v; want two paths, six transitions and one change from low to unavailable", events, err)
+	if err != nil || len(events) != 16 {
+		t.Fatalf("events=%+v err=%v; want two paths with eight transitions each", events, err)
 	}
 }
 
@@ -383,8 +384,8 @@ func TestRestartClosesStorageIncidentLeftOpen(t *testing.T) {
 				old.diskSpace = p
 				old.checkStorage(old.cleanupStopCh)
 			}
-			if alerts != 1 {
-				t.Fatalf("alerts before restart = %d, want one (a change of kind is not a new alert)", alerts)
+			if alerts != len(tt.history) {
+				t.Fatalf("alerts before restart = %d, want one per kind of problem", alerts)
 			}
 			if tt.buried {
 				for range 600 { // More than ReadLast's limit of unrelated events.
