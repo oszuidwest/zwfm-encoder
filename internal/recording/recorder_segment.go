@@ -377,7 +377,9 @@ func (r *GenericRecorder) audioWriter(seg *segment) {
 				timer.Reset(silenceGap)
 				continue
 			}
-			frames := int64(time.Since(idleSince).Seconds()*audio.SampleRate) - filled
+			// At most a second per write, so a long stall (a blocked FFmpeg, a
+			// resumed machine) catches up in steps instead of one allocation.
+			frames := min(int64(time.Since(idleSince).Seconds()*audio.SampleRate)-filled, audio.SampleRate)
 			filled += frames
 			pcm = make([]byte, frames*frameBytes)
 		}
