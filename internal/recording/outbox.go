@@ -213,17 +213,9 @@ func parseTicketName(name string) (id string, seq uint64, ok bool) {
 }
 
 // recover applies crash recovery to a loaded ticket and reports whether it is
-// kept. Only a ticket still in ticketRecording was interrupted.
+// kept. Lost tickets are checked again in case unavailable storage returned.
 func (o *outbox) recover(t *ticket, logInterrupted func(*ticket)) bool {
-	if t.State == ticketFailed || t.State == ticketLost {
-		// The operator handles these by removing the file; a restart then
-		// clears the ticket.
-		if _, err := os.Lstat(t.Path); errors.Is(err, os.ErrNotExist) {
-			return !o.dropRecovered(t)
-		}
-		return true
-	}
-	if t.State != ticketRecording && t.State != ticketReady {
+	if t.State != ticketRecording && t.State != ticketReady && t.State != ticketLost {
 		return true
 	}
 	if _, err := os.Lstat(t.Path + failedMarkerSuffix); err == nil {
@@ -237,14 +229,13 @@ func (o *outbox) recover(t *ticket, logInterrupted func(*ticket)) bool {
 	return o.recoverInterrupted(t, logInterrupted)
 }
 
-// recoverInterrupted handles a ticket a crash left in ticketRecording.
+// recoverInterrupted checks an interrupted or previously lost recording.
 func (o *outbox) recoverInterrupted(t *ticket, logInterrupted func(*ticket)) bool {
 	info, err := os.Lstat(t.Path)
 	switch {
-	case errors.Is(err, os.ErrNotExist) && t.SyncedBytes == 0:
-		return !o.dropRecovered(t)
-	case errors.Is(err, os.ErrNotExist):
-		o.persistRecovered(t, ticketLost, "recording disappeared after a crash")
+	case errors.Is(err, os.ErrNotExist) && t.Dest != "":
+		t.ReadyAt = time.Now()
+		o.persistRecovered(t, ticketReady, err.Error())
 		return true
 	case err != nil:
 		// Unknown, such as an unavailable share: keep it for the next start.

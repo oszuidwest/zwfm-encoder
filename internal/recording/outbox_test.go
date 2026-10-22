@@ -149,13 +149,16 @@ func TestOutboxRecoversInterruptedRecordings(t *testing.T) {
 	}{
 		{name: "audio, local only", file: ptr("partial hour"), want: ""},
 		{name: "empty, never synced", dest: "d", file: ptr(""), want: ""},
-		{name: "missing, never synced", dest: "d", want: ""},
+		{name: "missing, never synced", dest: "d", want: ticketReady},
 		{name: "empty after a sync", dest: "d", synced: 10, file: ptr(""), want: ticketLost},
-		{name: "missing after a sync", dest: "d", synced: 10, want: ticketLost},
+		{name: "missing after a sync", dest: "d", synced: 10, want: ticketReady},
 		{name: "shorter than synced", dest: "d", synced: 100, file: ptr("partial"), want: ticketReady},
 		{name: "failure not persisted", dest: "d", file: ptr("partial"), marker: true, want: ticketFailed},
 		{name: "failed, kept for the operator", dest: "d", file: ptr("partial"), state: ticketFailed, want: ticketFailed},
-		{name: "failed, file removed by the operator", dest: "d", state: ticketFailed, want: ""},
+		{name: "failed, storage unavailable", dest: "d", state: ticketFailed, want: ticketFailed},
+		{name: "lost, storage unavailable", dest: "d", state: ticketLost, want: ticketReady},
+		{name: "lost, storage returned", dest: "d", file: ptr("partial"), state: ticketLost, want: ticketReady},
+		{name: "missing, local only", want: ticketRecording},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -197,7 +200,7 @@ func TestOutboxRecoversInterruptedRecordings(t *testing.T) {
 			if keepsFile := tt.file != nil && (*tt.file != "" || tt.synced > 0); keepsFile != (statErr == nil) {
 				t.Fatalf("file kept = %t, want %t", statErr == nil, keepsFile)
 			}
-			if wantLogged := tt.file != nil && *tt.file != "" && !tt.marker && tt.state == ""; (interrupted == 1) != wantLogged {
+			if wantLogged := tt.file != nil && *tt.file != "" && !tt.marker && (tt.state == "" || tt.state == ticketLost); (interrupted == 1) != wantLogged {
 				t.Fatalf("interrupted events = %d, want logged %t", interrupted, wantLogged)
 			}
 		})

@@ -89,9 +89,9 @@ func (u *uploader) start(overdueOpen bool) {
 func (u *uploader) stop() {
 	u.mu.Lock()
 	cancel, done := u.cancel, u.done
-	u.cancel = nil
+	u.cancel = func() {} // Keep shutdown terminal, including before the first start.
 	u.mu.Unlock()
-	if cancel == nil {
+	if done == nil {
 		return
 	}
 	cancel()
@@ -228,7 +228,9 @@ func (u *uploader) upload(ctx context.Context, t *ticket) error {
 
 	file, info, err := openRecording(t.Path)
 	if errors.Is(err, os.ErrNotExist) {
-		return verifyMissing(head(ctx))
+		if ours, headErr := head(ctx); headErr == nil && ours {
+			return nil
+		}
 	}
 	if err != nil {
 		return err
@@ -301,20 +303,6 @@ func (u *uploader) upload(ctx context.Context, t *ticket) error {
 	}
 }
 
-// verifyMissing decides on a recording whose file is gone from the HEAD of its
-// key: delivered before a crash when the object carries its identity, lost
-// when there is no such object.
-func verifyMissing(ours bool, headErr error) error {
-	switch {
-	case headErr == nil && ours:
-		return nil
-	case headErr == nil || isS3NotFound(headErr):
-		return errRecordingLost
-	default:
-		return fmt.Errorf("verify missing recording in S3: %w", headErr)
-	}
-}
-
 // nextKeySuffix is the suffix after t's current key: -2 after the base key,
 // -4 after -3. Suffixing always starts from the base key, never -2-2.
 func nextKeySuffix(t *ticket) int {
@@ -326,14 +314,14 @@ func nextKeySuffix(t *ticket) int {
 	return 2
 }
 
-// openRecording opens a regular recording file without following links.
+// openRecording opens an unmarked, regular recording file without following links.
 func openRecording(path string) (*os.File, os.FileInfo, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, nil, err
 	}
-	if !info.Mode().IsRegular() {
-		return nil, nil, fmt.Errorf("recording %s is not a regular file", path)
+	if _, err := os.Lstat(path + failedMarkerSuffix); !errors.Is(err, os.ErrNotExist) || !info.Mode().IsRegular() {
+		return nil, nil, fmt.Errorf("recording %s is failed or not a regular file", path)
 	}
 	file, err := os.Open(path) //nolint:gosec // Path comes from an outbox ticket.
 	if err != nil {
@@ -355,11 +343,6 @@ func isS3KeyConflict(err error) bool {
 	}
 	var responseErr interface{ HTTPStatusCode() int }
 	return errors.As(err, &responseErr) && responseErr.HTTPStatusCode() == http.StatusPreconditionFailed
-}
-
-func isS3NotFound(err error) bool {
-	var responseErr interface{ HTTPStatusCode() int }
-	return errors.As(err, &responseErr) && responseErr.HTTPStatusCode() == http.StatusNotFound
 }
 
 // checkOverdue reports when the set of overdue recordings becomes non-empty

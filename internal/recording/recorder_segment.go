@@ -506,7 +506,7 @@ func (r *GenericRecorder) finishOutput(seg *segment, cause error) error {
 		return err
 	}
 	if err := seg.output.commit(); err != nil {
-		// The ticket still says recording; the next start recovers it.
+		seg.output.outbox.publish(&seg.output.ticket)
 		return fmt.Errorf("hand recording to upload: %w", err)
 	}
 	if seg.output.ticket.Dest == "" {
