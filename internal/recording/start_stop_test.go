@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
@@ -483,4 +484,24 @@ func TestAddRecorderToRunningManagerStartsOnlyEnabledHourly(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A close that gives up on a hung finalization still releases everyone
+// waiting for that stop.
+func TestCloseReleasesStopWaiters(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := newTestRecorder(t, GenericRecorderConfig{Recorder: localOnDemandRecorder(t, "waiters")})
+		r.inspect(func(l *run) { l.state = types.ProcessRunning })
+		holdTeardown(t, r) // A finalization that never ends.
+		stopped := make(chan struct{})
+		go func() { r.Stop(); close(stopped) }()
+		synctest.Wait()
+		r.close() // Gives up after recorderCloseTimeout.
+		synctest.Wait()
+		select {
+		case <-stopped:
+		default:
+			t.Fatal("a Stop waiting on the removed recorder never returned")
+		}
+	})
 }

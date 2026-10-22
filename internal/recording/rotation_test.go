@@ -251,3 +251,24 @@ func firstDifference(a, b []byte) int {
 	}
 	return min(len(a), len(b))
 }
+
+// The hand-over ends a retired segment's writer: while that segment's
+// finalization hangs, it cannot fill silence after the next one took over.
+func TestRetiredSegmentGetsNoSilenceAfterHandOver(t *testing.T) {
+	neverRotate(t)
+	r := startHourlyTestRecorder(t, "hand-over")
+	old := r.currentSegment()
+	entered, release := make(chan struct{}), make(chan struct{})
+	join := old.stopSync
+	r.inspect(func(*run) { old.stopSync = func() { close(entered); <-release; join() } })
+	rotated := make(chan struct{})
+	go func() { rotateTestRecorder(r); close(rotated) }()
+	<-entered
+	select {
+	case <-old.writerDone: // It can no longer write filler.
+	case <-time.After(3 * time.Second):
+		t.Error("retired writer did not exit while finalization was blocked")
+	}
+	close(release)
+	<-rotated
+}

@@ -562,8 +562,8 @@ func syncFile(name string) error {
 }
 
 // syncDir makes directory entries durable. Windows has no directory fsync; a
-// file flushed through its own handle is durable there.
-func syncDir(dir string) error {
+// file flushed through its own handle is durable there. Tests make it fail.
+var syncDir = func(dir string) error {
 	if runtime.GOOS == "windows" {
 		return nil
 	}
