@@ -22,6 +22,9 @@ const (
 	// fakeFFmpegFinalizeBarrierEnv names a file the fake waits for (up to
 	// 10s) before it finalizes, so a test controls when a stop can finish.
 	fakeFFmpegFinalizeBarrierEnv = "ZWFM_RECORDING_FAKE_FFMPEG_FINALIZE_BARRIER"
+	// fakeFFmpegStreamEnv makes the fake write each chunk as it arrives, like
+	// a real encoder's muxer, so a killed fake leaves what it had written.
+	fakeFFmpegStreamEnv = "ZWFM_RECORDING_FAKE_FFMPEG_STREAM"
 	// fakeFFmpegFinalize is how long the fake takes to exit after stdin closes,
 	// like a real encoder flushing and finalizing its file.
 	fakeFFmpegFinalize = 100 * time.Millisecond
@@ -41,6 +44,14 @@ func TestMain(m *testing.M) {
 	}
 	// Recorder tests must not depend on the host's NTP state.
 	clockSynced = func() bool { return true }
+	if name := os.Getenv(CorpusChildEnv); name != "" {
+		child, ok := CorpusChildren[name]
+		if !ok {
+			_, _ = fmt.Fprintf(os.Stderr, "unknown corpus child scenario %q\n", name)
+			os.Exit(2)
+		}
+		os.Exit(child())
+	}
 	os.Exit(m.Run())
 }
 
@@ -52,6 +63,9 @@ func runFakeFFmpeg(args []string) int {
 		return 2
 	}
 	output := args[len(args)-1]
+	if os.Getenv(fakeFFmpegStreamEnv) == "1" {
+		return streamFakeFFmpeg(output)
+	}
 	reader := io.Reader(os.Stdin)
 	failWrite := os.Getenv(fakeFFmpegFailWriteEnv)
 	if failWrite != "" {
@@ -103,6 +117,22 @@ func runFakeFFmpeg(args []string) int {
 	}
 	if os.Getenv(fakeFFmpegFailFinalizeEnv) == "1" {
 		_, _ = fmt.Fprintln(os.Stderr, "Error writing trailer: No space left on device")
+		return 1
+	}
+	return 0
+}
+
+// streamFakeFFmpeg writes stdin to the output as it arrives and exits at EOF.
+func streamFakeFFmpeg(output string) int {
+	file, err := os.OpenFile(output, os.O_WRONLY|os.O_TRUNC, 0o600) //nolint:gosec // G304: path comes from the recorder under test.
+	if err != nil {
+		return 1
+	}
+	if _, err := io.Copy(file, os.Stdin); err != nil {
+		_ = file.Close()
+		return 1
+	}
+	if err := file.Close(); err != nil {
 		return 1
 	}
 	return 0
