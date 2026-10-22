@@ -207,7 +207,6 @@ outbox.
  │                 ▼                                            │
  │  Uploader (one per manager: backoff, overdue, joined)        │
  │                 │                                            │
- │  Health = f(recorder snapshots, outbox index, storage)       │
  └─────────────────┼────────────────────────────────────────────┘
                    ▼
                   S3
@@ -342,8 +341,7 @@ failure classes have different guarantees.
   - The bytes up to the watermark, and the audio they encode, survive a power
     cut. Later bytes may be lost.
   - Capture and encoder buffering mean the watermark trails real time by more
-    than W. Showing that lag in seconds belongs to the health snapshot of
-    step 4.
+    than W.
   - A sync that fails raises a recorder warning, and the watermark does not
     advance.
 - **Finalization order.** First FFmpeg exits, then the recorder fsyncs and
@@ -401,23 +399,22 @@ failure classes have different guarantees.
 - Failed and lost tickets wait for the operator. Their disk use shows up in
   the storage alert, and `/ready` stays red while they exist.
 
-### 4.6 Health: one derivation
+### 4.6 Health
 
-- `Manager.Health()` returns one snapshot with three parts:
-  - per recorder: state, sticky error, drops and current segment;
-  - the outbox: pending, overdue, failed, lost, removed-recorder and the
-    oldest ticket;
-  - storage paths.
-- `/ready`, the WebSocket status and alert edge detection all read this
-  snapshot.
 - Errors are sticky until the next successful segment or an operator action
   (#514).
-- Storage health becomes an enum (`ok`, `low`, `unavailable`):
-  - a `low` hold survives an intervening probe error;
-  - `low` → `unavailable` notifies;
+- A storage path is ok, low or unavailable (a failed probe); `Low` and `Error`
+  already express that, so no new type is needed (#511):
+  - a path that was low or unavailable stays low until it has the recovery
+    margin free, so a probe error during a low incident cannot fake a
+    recovery;
+  - a switch between low and unavailable alerts, since freeing space and
+    fixing a mount are different jobs;
   - #506's recovery margin is kept.
-
-  This resolves both #511 criteria.
+- The first draft had one `Manager.Health()` snapshot for `/ready`, the
+  WebSocket status and alerts. It was dropped (YAGNI): those read recorder
+  statuses, the upload backlog and storage separately, each already
+  consistent, and no defect came from that.
 
 ### 4.7 Encoder coupling (R1)
 
@@ -476,7 +473,7 @@ If-None-Match cover name reuse after an S3-only spool file is deleted.
 | #495 spool dirs use the raw ID | 4.2 recorder key from `RecordingFilePrefix()`; the name-collision validation needs its own fix |
 | #496 S3-only quarantine invisible | 4.2 failed tickets counted and alerted |
 | #502 removed recorder's uploads invisible | 4.2 removed recorders keep delivering and counting |
-| #511 storage probe error and hysteresis | 4.6 storage enum |
+| #511 storage probe error and hysteresis | 4.6 storage health |
 | #512 output settings not applied | 4.1 immediate make-before-break rotation (D3) |
 | #514 finalize error cleared on stop | 4.6 sticky errors |
 | #515 exported `Start` bypasses #508's guards | obsolete: commands only, same checks in the loop |
@@ -578,7 +575,7 @@ API, plus a new `Close`:
 3. The recorder loop. It replaces the lifecycle guards, flips #514 and keeps
    I7. Delete the white-box tests the corpus covers, but only after the corpus
    covers them.
-4. Health snapshot and storage enum. `/ready`, status and alerts read it.
+4. Storage health (#511). The health snapshot was dropped (4.6).
 5. Encoder decoupling (R1) and silence fill (D1).
 6. Corpus gaps (6.2, item 1), randomized schedules, then the soak.
 

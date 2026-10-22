@@ -79,7 +79,7 @@ func NewManager(ffmpegPath, spoolDir string, maxDurationMinutes int, eventLogger
 			}
 			details, _ := e.Details.(map[string]any)
 			path, _ := details["path"].(string)
-			// An unavailable path was not low; it recovers at the normal threshold.
+			// The kind is kept, so the restart does not report a switch.
 			status := types.RecordingStorageStatus{Path: path, Low: true}
 			if low, _ := details["low"].(bool); !low {
 				errMsg, _ := details["error"].(string)

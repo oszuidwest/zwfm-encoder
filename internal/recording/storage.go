@@ -131,9 +131,8 @@ func recoveryMargin(threshold, total uint64) uint64 {
 	return min(max(1<<30, total/40), (total-threshold)/2)
 }
 
-// holdLowUntilRecovered keeps a low path low until it has RecoveryBytes free.
-// A failed probe is not low, so a path that checks cleanly again is judged on
-// the normal threshold.
+// holdLowUntilRecovered keeps a path that was low or unavailable low until it
+// has RecoveryBytes free, so a failed probe cannot end a low incident early.
 func holdLowUntilRecovered(previous, current []types.RecordingStorageStatus) {
 	for i := range current {
 		p := &current[i]
@@ -141,16 +140,15 @@ func holdLowUntilRecovered(previous, current []types.RecordingStorageStatus) {
 			continue
 		}
 		p.Low = slices.ContainsFunc(previous, func(old types.RecordingStorageStatus) bool {
-			return old.Path == p.Path && old.Low
+			return old.Path == p.Path && old.Unhealthy()
 		})
 	}
 }
 
 // logStorageChanges logs per-path health transitions, including paths that left
-// monitoring while unhealthy, and reports whether any transition happened. A
-// switch between low and unavailable is logged too, without counting as a
-// transition: restart seeding needs the latest kind, which recovers differently.
-func (m *Manager) logStorageChanges(previous, current []types.RecordingStorageStatus) (changed bool) {
+// monitoring while unhealthy and switches between low and unavailable (the
+// operator then has to act differently), and reports whether any happened.
+func (m *Manager) logStorageChanges(previous, current []types.RecordingStorageStatus) bool {
 	was := make(map[string]types.RecordingStorageStatus, len(previous))
 	for _, p := range previous {
 		was[p.Path] = p
@@ -159,16 +157,12 @@ func (m *Manager) logStorageChanges(previous, current []types.RecordingStorageSt
 	for _, p := range current {
 		old := was[p.Path]
 		delete(was, p.Path)
-		if p.Unhealthy() != old.Unhealthy() {
-			changed = true
-			logged = append(logged, p)
-		} else if p.Unhealthy() && p.Low != old.Low {
+		if p.Unhealthy() != old.Unhealthy() || p.Unhealthy() && p.Low != old.Low {
 			logged = append(logged, p)
 		}
 	}
 	for _, old := range was {
 		if old.Unhealthy() {
-			changed = true
 			logged = append(logged, types.RecordingStorageStatus{Path: old.Path, CheckedAt: time.Now()})
 		}
 	}
@@ -186,5 +180,5 @@ func (m *Manager) logStorageChanges(previous, current []types.RecordingStorageSt
 			}
 		}
 	}
-	return changed
+	return len(logged) > 0
 }
