@@ -492,14 +492,17 @@ func TestCloseReleasesStopWaiters(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		r := newTestRecorder(t, GenericRecorderConfig{Recorder: localOnDemandRecorder(t, "waiters")})
 		r.inspect(func(l *run) { l.state = types.ProcessRunning })
-		holdTeardown(t, r)        // A finalization that never ends.
-		stopped := r.deactivate() // The same completion channel Stop waits on.
+		holdTeardown(t, r) // A finalization that never ends.
+		stopped := make(chan struct{})
+		go func() { r.Stop(); close(stopped) }()
+		synctest.Wait()
 		select {
 		case <-stopped:
 			t.Fatal("the stop ended before its finalization")
 		default:
 		}
 		r.close() // Gives up after recorderCloseTimeout.
+		synctest.Wait()
 		select {
 		case <-stopped:
 		default:

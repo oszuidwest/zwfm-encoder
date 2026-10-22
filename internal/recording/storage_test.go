@@ -220,6 +220,7 @@ func testBlockedStorageProbe(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := testS3Recorder()
+	cfg.RecordingMode = types.RecordingOnDemand // Prevent auto-start from clearing the planted capture.
 	if err := m.AddRecorder(cfg); err != nil {
 		t.Fatal(err)
 	}

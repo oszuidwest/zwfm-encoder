@@ -33,7 +33,11 @@ func TestModeChangesRescheduleRecordingBounds(t *testing.T) {
 	if err := r.UpdateConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
-	<-entered
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("recording path check did not start")
+	}
 	checkRecordingPath = original
 	ManualTimers(t)
 	cfg.RecordingMode = types.RecordingOnDemand

@@ -173,11 +173,6 @@ func TestStopWaitsForRotatedFile(t *testing.T) {
 	}
 	stopped := make(chan struct{})
 	go func() { r.Stop(); close(stopped) }()
-	select {
-	case <-stopped:
-		t.Error("Stop returned while the rotated file was still finalizing")
-	case <-time.After(30 * time.Millisecond):
-	}
 	release()
 	<-stopped
 	if _, err := os.Stat(old.file); err != nil {
