@@ -2,6 +2,7 @@ package recording
 
 import (
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,10 +23,27 @@ func TestModeChangesRescheduleRecordingBounds(t *testing.T) {
 	t.Cleanup(func() { r.Stop() })
 	startCaptureTestRecorder(t, r)
 	oldRotation := capturedTimers()[0].callback
+	// Save a new output, then switch modes while its D3 rotation is preparing.
+	cfg.LocalPath = t.TempDir()
+	entered, blocked := make(chan struct{}), make(chan struct{})
+	release := sync.OnceFunc(func() { close(blocked) })
+	original := checkRecordingPath
+	checkRecordingPath = func(path string) error { close(entered); <-blocked; return original(path) }
+	t.Cleanup(func() { release(); r.close(); checkRecordingPath = original })
+	if err := r.UpdateConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	<-entered
+	checkRecordingPath = original
 	ManualTimers(t)
 	cfg.RecordingMode = types.RecordingOnDemand
 	if err := r.UpdateConfig(cfg); err != nil {
 		t.Fatal(err)
+	}
+	release()
+	r.settle()
+	if got := r.currentSegment().cfg.LocalPath; got != cfg.LocalPath {
+		t.Fatalf("recording in %s, want the saved %s", got, cfg.LocalPath)
 	}
 	beforeMode := r.currentSegment()
 	oldRotation() // A callback already queued before the mode change.

@@ -145,37 +145,3 @@ func TestRecordingDirectoryRejectsTraversalBeforeCreation(t *testing.T) {
 		})
 	}
 }
-
-// A new output saved while hourly survives a switch to on-demand that cancels
-// the rotation preparing it.
-func TestModeSwitchKeepsSavedOutput(t *testing.T) {
-	neverRotate(t)
-	r := startHourlyTestRecorder(t, "mode-output")
-	saved := r.Config()
-	saved.LocalPath = t.TempDir()
-	entered, release := make(chan struct{}), make(chan struct{})
-	unblock := sync.OnceFunc(func() { close(release) })
-	original := reserveRecordingFile
-	reserveRecordingFile = func(path string) (*os.File, error) {
-		if filepath.Dir(path) == saved.LocalPath {
-			close(entered)
-			<-release
-		}
-		return original(path)
-	}
-	t.Cleanup(func() { unblock(); r.close(); reserveRecordingFile = original })
-	if err := r.UpdateConfig(&saved); err != nil {
-		t.Fatal(err)
-	}
-	<-entered // The D3 rotation to the new path is preparing.
-	reserveRecordingFile = original
-	saved.RecordingMode = types.RecordingOnDemand
-	if err := r.UpdateConfig(&saved); err != nil {
-		t.Fatal(err)
-	}
-	unblock()
-	r.settle()
-	if got := r.currentSegment().cfg.LocalPath; got != saved.LocalPath {
-		t.Fatalf("recording in %s, want the saved %s", got, saved.LocalPath)
-	}
-}
