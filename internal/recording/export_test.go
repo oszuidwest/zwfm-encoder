@@ -221,11 +221,6 @@ func (m *Manager) WriteAudio(pcm []byte) {
 	})
 }
 
-// Start begins recorder management and is idempotent across source retries.
-func (m *Manager) Start() error {
-	return m.StartIfActive(nil)
-}
-
 // saveDestination stores the credentials of a destination.
 func (o *outbox) saveDestination(id string, d S3Config) error {
 	o.destMu.Lock()

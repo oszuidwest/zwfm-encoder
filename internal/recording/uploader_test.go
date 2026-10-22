@@ -445,8 +445,16 @@ func TestMissingRecordingIsVerifiedAgainstS3(t *testing.T) {
 			}
 			testUploader(r).process(t.Context(), &tk)
 			got, ok := ticketFor(r.outbox, tk.Path)
-			if committed && ok || !committed && got.State != ticketLost {
-				t.Fatalf("ticket = %+v, %t; want delivered when committed, lost otherwise", got, ok)
+			if committed && ok || !committed && (got.State != ticketReady || got.Attempts != 1 || !got.NextAttempt.After(time.Now())) {
+				t.Fatalf("ticket = %+v, %t; want delivered when committed, retry otherwise", got, ok)
+			}
+			if !committed {
+				if err := os.WriteFile(tk.Path, []byte("audio"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				r.outbox.retryAllNow()
+				deliverDue(t, r)
+				assertDelivered(t, r, tk.Path)
 			}
 		})
 	}
@@ -684,6 +692,9 @@ func TestUploadRefusesWhatIsNotARecording(t *testing.T) {
 		prepare func(path string) error
 		want    ticketState
 	}{
+		{name: "failed marker", prepare: func(path string) error {
+			return os.WriteFile(path+failedMarkerSuffix, []byte("failed"), 0o600) // #nosec G703 -- Marker beside a test-owned temporary recording.
+		}, want: ticketReady},
 		{name: "emptied", prepare: func(path string) error { return os.Truncate(path, 0) }, want: ticketLost},
 		{name: "symlink", prepare: func(path string) error {
 			target := path + ".target"
@@ -711,5 +722,21 @@ func TestUploadRefusesWhatIsNotARecording(t *testing.T) {
 				t.Fatalf("uploaded %v", slices.Sorted(maps.Keys(store.objects)))
 			}
 		})
+	}
+}
+
+func TestUploaderStopIsTerminal(t *testing.T) {
+	for _, started := range []bool{false, true} {
+		u := &uploader{outbox: &outbox{}, now: time.Now}
+		if started {
+			u.start(false)
+		}
+		u.stop()
+		done := u.done
+		u.start(false)
+		t.Cleanup(u.stop)
+		if u.done != done {
+			t.Fatal("uploader restarted after stop")
+		}
 	}
 }

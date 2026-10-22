@@ -93,6 +93,8 @@ type Encoder struct {
 	restartGate         chan struct{} // Serializes restarts; initialized under mu.
 	lifecycleGeneration uint64        // Explicit Stop invalidates already pending restarts; protected by mu.
 	operatorStopped     bool          // The last stop was an explicit Stop; protected by mu.
+	recordingWanted     bool          // Recordings run: set by a successful start, cleared by an explicit Stop; protected by mu.
+	recordingMu         sync.Mutex    // Serializes syncRecording.
 	restarting          bool          // A background restart runs; protected by mu.
 	restartAgain        bool          // Another background restart was requested meanwhile; protected by mu.
 	restartAgainGen     uint64        // lifecycleGeneration of that request; protected by mu.
@@ -447,9 +449,9 @@ func (e *Encoder) StreamStatuses(streams []types.Stream) map[string]types.Proces
 	return result
 }
 
-// Start starts audio capture and stream processes.
+// Start starts audio capture, stream processes and recordings.
 func (e *Encoder) Start() error {
-	return e.start(nil)
+	return errors.Join(e.start(nil), e.syncRecording())
 }
 
 func (e *Encoder) start(expectedGeneration *uint64) error {
@@ -474,6 +476,7 @@ func (e *Encoder) start(expectedGeneration *uint64) error {
 	}
 
 	e.operatorStopped = false
+	e.recordingWanted = true
 	e.state = types.StateStarting
 	e.stopChan = make(chan struct{})
 	e.sourceLoopDone = make(chan struct{})
@@ -493,16 +496,35 @@ func (e *Encoder) start(expectedGeneration *uint64) error {
 	return nil
 }
 
-// Stop shuts down all processes.
+// Stop shuts down all processes, recordings included.
 func (e *Encoder) Stop() error {
-	return e.stop(nil)
+	return errors.Join(e.stop(nil), e.syncRecording())
+}
+
+// syncRecording makes the recording manager follow recordingWanted, so
+// recordings run from a successful start until an explicit Stop, across
+// restarts and input changes (R1). It reads the wish under recordingMu, so the
+// last call applies the latest one.
+func (e *Encoder) syncRecording() error {
+	if e.recordingManager == nil {
+		return nil
+	}
+	e.recordingMu.Lock()
+	defer e.recordingMu.Unlock()
+	e.mu.RLock()
+	wanted := e.recordingWanted
+	e.mu.RUnlock()
+	if wanted {
+		return e.recordingManager.Start()
+	}
+	return e.recordingManager.Stop()
 }
 
 func (e *Encoder) stop(expectedGeneration *uint64) error {
 	e.mu.Lock()
 	if expectedGeneration == nil {
 		e.lifecycleGeneration++
-		e.operatorStopped = true
+		e.operatorStopped, e.recordingWanted = true, false
 	} else if e.lifecycleGeneration != *expectedGeneration {
 		e.mu.Unlock()
 		return nil
@@ -513,8 +535,7 @@ func (e *Encoder) stop(expectedGeneration *uint64) error {
 		return nil
 	}
 	if e.state == types.StateStopping {
-		// Like the first Stop, wait for streams and recorders before timing the
-		// source, so a shutdown cannot exit while a recording is still being finalized.
+		// Like the first Stop, wait for streams before timing the source.
 		consumers, done := e.consumersStopped, e.stopDone
 		e.mu.Unlock()
 		<-consumers
@@ -538,7 +559,11 @@ func (e *Encoder) stop(expectedGeneration *uint64) error {
 	if sourceCancel != nil {
 		sourceCancel()
 	}
-	errs := e.stopConsumers()
+	// Recordings outlive restarts (R1); Stop ends them through syncRecording.
+	streamsErr := e.streamManager.StopAll()
+	if streamsErr != nil {
+		streamsErr = fmt.Errorf("stop streams: %w", streamsErr)
+	}
 	close(consumersStopped)
 
 	// A timed-out Stop must keep Start out until the old loop and cleanup finish.
@@ -553,10 +578,7 @@ func (e *Encoder) stop(expectedGeneration *uint64) error {
 		close(stopped)
 	}()
 
-	if err := waitForSourceStop(stopped); err != nil {
-		errs = append(errs, err)
-	}
-	return errors.Join(errs...)
+	return errors.Join(streamsErr, waitForSourceStop(stopped))
 }
 
 func waitForSourceStop(stopped <-chan struct{}) error {
@@ -568,20 +590,6 @@ func waitForSourceStop(stopped <-chan struct{}) error {
 		slog.Warn("source capture did not stop in time")
 		return errors.New("source shutdown timeout")
 	}
-}
-
-// stopConsumers stops managed streams and recorders and combines their errors.
-func (e *Encoder) stopConsumers() []error {
-	var errs []error
-	if err := e.streamManager.StopAll(); err != nil {
-		errs = append(errs, fmt.Errorf("stop streams: %w", err))
-	}
-	if e.recordingManager != nil {
-		if err := e.recordingManager.Stop(); err != nil {
-			errs = append(errs, fmt.Errorf("stop recording: %w", err))
-		}
-	}
-	return errs
 }
 
 // resetDetection clears detector, notification, dump, and alert-log state.
@@ -665,10 +673,10 @@ func (e *Encoder) restart(generation uint64) (err error) {
 		}
 	}()
 
-	// Not bounded either: recorders do not wait for S3, but finalizing on a
-	// stalled recording filesystem can take long, and giving up would leave
-	// the encoder stopped for good. Say so if it takes that long.
-	const stallMessage = "audio input restart is still waiting for the previous input, streams and recordings to stop"
+	// Not bounded either: stopping streams and the source can take long, and
+	// giving up would leave the encoder stopped for good. Say so if it takes
+	// that long.
+	const stallMessage = "audio input restart is still waiting for the previous input and streams to stop"
 	finished := false // protected by e.mu
 	stalled := time.AfterFunc(restartTimeout, func() {
 		e.mu.Lock()
@@ -702,7 +710,7 @@ func (e *Encoder) restart(generation uint64) (err error) {
 	}
 	// A Start from the tray may already have brought the encoder up.
 	if err := e.start(&generation); !errors.Is(err, ErrAlreadyRunning) {
-		return err
+		return errors.Join(err, e.syncRecording())
 	}
 	return nil
 }
@@ -1182,12 +1190,6 @@ func (e *Encoder) startEnabledStreams(runID uint64) {
 			slog.Error("failed to start stream", "stream_id", stream.ID, "error", err)
 		}
 	}
-
-	if e.recordingManager != nil {
-		if err := e.recordingManager.StartIfActive(active); err != nil {
-			slog.Error("failed to start recording manager", "error", err)
-		}
-	}
 }
 
 // runDistributor reads PCM audio and fans it out to meters, alerts, streams, and recorders.
@@ -1207,6 +1209,9 @@ func (e *Encoder) runDistributor(runID uint64) {
 	// Publish silence from this goroutine so it wins after the last live level.
 	defer e.resetAudioLevels()
 	defer e.endAudio(runID)
+	// Consumers get whole frames only. A pipe read can end inside one; its
+	// start waits for the next read, and is dropped with this run's source.
+	held := 0
 
 	for {
 		e.mu.RLock()
@@ -1226,7 +1231,7 @@ func (e *Encoder) runDistributor(runID uint64) {
 		default:
 		}
 
-		n, err := reader.Read(buf)
+		n, err := reader.Read(buf[held:])
 		if err != nil {
 			return
 		}
@@ -1234,8 +1239,12 @@ func (e *Encoder) runDistributor(runID uint64) {
 			continue
 		}
 		e.noteAudio(runID)
-
-		chunk := buf[:n]
+		n += held
+		held = n % (audio.Channels * 2)
+		if n == held {
+			continue // Not one whole frame yet; it stays at the start of buf.
+		}
+		chunk := buf[:n-held]
 
 		distributor.ProcessSamples(chunk)
 
@@ -1253,6 +1262,7 @@ func (e *Encoder) runDistributor(runID uint64) {
 		if e.recordingManager != nil {
 			e.recordingManager.WriteAudioShared(copyChunk)
 		}
+		copy(buf, buf[n-held:n])
 	}
 }
 

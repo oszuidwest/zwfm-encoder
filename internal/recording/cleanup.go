@@ -27,12 +27,6 @@ const recordingTimestampLayout = "2006-01-02-15-04"
 // types.codecPresets, or files of a new codec never expire.
 var recordingNameTail = regexp.MustCompile(`^-(\d{4}-\d{2}-\d{2}-\d{2}-\d{2})(?:-\d+)?\.(?:mp3|ts|ogg|mkv|mp2)$`)
 
-// startCleanupScheduler runs hourly retention cleanup until stopCh closes.
-// Capturing stopCh avoids racing Stop's field reset.
-func (m *Manager) startCleanupScheduler(stopCh <-chan struct{}) {
-	util.RunHourly(stopCh, "recording cleanup", m.runCleanup)
-}
-
 func (m *Manager) runCleanup() {
 	if m.outbox.unreadable > 0 {
 		// An unreadable ticket may own any old file: expire nothing.

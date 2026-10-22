@@ -74,8 +74,10 @@ func installMenu(cfg Config, done <-chan struct{}, handlers *sync.WaitGroup) {
 			stopItem.Enable()
 			systray.SetTooltip(cfg.AppName + " - running")
 		case StatusStopped:
+			// A failed restart leaves capture stopped with recordings running;
+			// Stop ends those too.
 			startItem.Enable()
-			stopItem.Disable()
+			stopItem.Enable()
 			systray.SetTooltip(cfg.AppName + " - stopped")
 		case StatusFFmpegMissing:
 			startItem.Disable()

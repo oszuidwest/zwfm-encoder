@@ -259,6 +259,44 @@ func TestSlowRestartIsReportedWhileItWaits(t *testing.T) {
 	})
 }
 
+// R1: restarts, also a failed one, leave recordings alone; Stop ends them.
+func TestRestartsKeepRecordingsRunning(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e, _ := startDanteEncoder(t, slowTeardown(0))
+		probe := &types.Recorder{
+			ID: "probe", Name: "probe", Enabled: true, Codec: types.CodecPCM,
+			RecordingMode: types.RecordingOnDemand, StorageMode: types.StorageLocal, LocalPath: t.TempDir(),
+		}
+		if err := e.recordingManager.AddRecorder(probe); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.recordingManager.StartRecorder(probe.ID); err != nil {
+			t.Fatal(err)
+		}
+		state := func() types.ProcessState { synctest.Wait(); return e.recordingManager.Statuses()[probe.ID].State }
+		// Without FFmpeg the run fails, and stays failed until something stops it.
+		if got := state(); got != types.ProcessError {
+			t.Fatalf("probe state = %s, want error", got)
+		}
+		if err := e.Restart(); err != nil {
+			t.Fatal(err)
+		}
+		e.config.Audio.Input = ""
+		if err := e.Restart(); !errors.Is(err, ErrNoAudioInput) {
+			t.Fatalf("Restart without input = %v, want ErrNoAudioInput", err)
+		}
+		if got := state(); got != types.ProcessError {
+			t.Fatalf("probe state after restarts = %s; a restart stopped the recordings", got)
+		}
+		if err := e.Stop(); err != nil {
+			t.Fatal(err)
+		}
+		if got := state(); got != types.ProcessStopped {
+			t.Fatalf("probe state after Stop = %s, want stopped", got)
+		}
+	})
+}
+
 func TestInputChangeStartsEncoderLeftStoppedByAFailure(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e, _ := startDanteEncoder(t, slowTeardown(0))

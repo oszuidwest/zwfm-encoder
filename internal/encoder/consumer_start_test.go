@@ -26,7 +26,6 @@ func TestStopCancelsDelayedProductionConsumerStarts(t *testing.T) {
 		{name: "manual reserved listener", message: "starting listener encoder", manual: true, listener: true},
 		{name: "automatic reserved listener", message: "starting listener encoder", listener: true},
 		{name: "automatic dump manager", message: "audio incident dump manager started"},
-		{name: "automatic recorder manager", message: "recording manager started"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newSourceLifecycleTestEncoder(t, "exit")
@@ -139,7 +138,7 @@ func TestStopCancelsSourceBeforeStoppingConsumers(t *testing.T) {
 	t.Cleanup(e.alertOrchestrator.Close)
 	e.state, e.sourceRunID = types.StateRunning, 1
 	e.stopChan, e.sourceStdout = make(chan struct{}), strings.NewReader("")
-	if err := e.recordingManager.StartIfActive(nil); err != nil {
+	if err := e.recordingManager.Start(); err != nil {
 		t.Fatal(err)
 	}
 	canceled := make(chan struct{})

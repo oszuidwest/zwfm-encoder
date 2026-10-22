@@ -165,26 +165,30 @@ func TestTicketCreationFailureDoesNotStartEncoder(t *testing.T) {
 	}
 }
 
-func TestFailedTicketWriteStillQuarantinesOutput(t *testing.T) {
+func TestTicketWriteFailurePublishesFinalState(t *testing.T) {
 	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
 		t.Skip("directory permissions do not stop root or Windows")
 	}
-	t.Setenv(fakeFFmpegFailFinalizeEnv, "1")
-	cfg := testS3Recorder()
-	cfg.RecordingMode, cfg.StorageMode, cfg.LocalPath = types.RecordingOnDemand, types.StorageBoth, t.TempDir()
-	r, _ := errorTestRecorder(t, cfg)
-	file := startCaptureTestRecorder(t, r)
-	r.WriteAudio([]byte{1, 2, 3, 4})
-	// The outbox cannot record the failure; the marker beside the file must.
-	if err := os.Chmod(r.outbox.dir, 0o500); err != nil { //nolint:gosec // A test dir must stay traversable.
-		t.Fatal(err)
+	for fail, want := range map[string]ticketState{"1": ticketFailed, "0": ticketReady} {
+		t.Setenv(fakeFFmpegFailFinalizeEnv, fail)
+		cfg := testS3Recorder()
+		cfg.RecordingMode, cfg.StorageMode, cfg.LocalPath = types.RecordingOnDemand, types.StorageBoth, t.TempDir()
+		r, _ := errorTestRecorder(t, cfg)
+		file := startCaptureTestRecorder(t, r)
+		r.WriteAudio([]byte{1, 2, 3, 4})
+		// Neither final state can be persisted; it must still apply in memory.
+		if err := os.Chmod(r.outbox.dir, 0o500); err != nil { //nolint:gosec // A test dir must stay traversable.
+			t.Fatal(err)
+		}
+		r.Stop()
+		if err := os.Chmod(r.outbox.dir, 0o700); err != nil { //nolint:gosec // Restore the test dir.
+			t.Fatal(err)
+		}
+		assertRecordedCapture(t, file, []byte{1, 2, 3, 4})
+		assertTicketState(t, r.outbox, file, want)
+		restarted := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, SpoolDir: r.spoolDir})
+		assertTicketState(t, restarted.outbox, file, want)
 	}
-	r.Stop()
-	if err := os.Chmod(r.outbox.dir, 0o700); err != nil { //nolint:gosec // Restore the test dir.
-		t.Fatal(err)
-	}
-	assertRecordedCapture(t, file, []byte{1, 2, 3, 4})
-	assertRecordingQuarantined(t, r, file)
 }
 
 func TestDiscardMarksAReplacedReservationAsFailed(t *testing.T) {

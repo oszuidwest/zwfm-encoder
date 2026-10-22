@@ -26,73 +26,39 @@ type LevelData struct {
 	ClipCountL  int
 	ClipCountR  int
 	SampleCount int
-
-	// remainder carries an incomplete stereo frame across reads.
-	remainder    [bytesPerFrame - 1]byte
-	remainderLen int
 }
 
-// ProcessSamples accumulates level data from a buffer of S16LE stereo PCM.
-//
-// Pipe reads can split 4-byte stereo frames, so partial frames are carried into
-// the next call. The carry survives Reset because frame alignment is independent
-// of metering-window boundaries.
+// ProcessSamples accumulates level data from whole S16LE stereo frames. The
+// encoder's distributor passes whole frames only; a trailing partial one is
+// ignored.
 func ProcessSamples(buf []byte, data *LevelData) {
-	i := 0
+	for i := 0; i+bytesPerFrame <= len(buf); i += bytesPerFrame {
+		//nolint:gosec // Intentional reinterpretation of unsigned PCM to signed
+		leftSample := int16(binary.LittleEndian.Uint16(buf[i:]))
+		//nolint:gosec // Intentional reinterpretation of unsigned PCM to signed
+		rightSample := int16(binary.LittleEndian.Uint16(buf[i+2:]))
+		left := float64(leftSample)
+		right := float64(rightSample)
 
-	// Complete a frame split by the previous read.
-	if data.remainderLen > 0 {
-		need := bytesPerFrame - data.remainderLen
-		if len(buf) < need {
-			data.remainderLen += copy(data.remainder[data.remainderLen:], buf)
-			return
+		data.SumSquaresL += left * left
+		data.SumSquaresR += right * right
+
+		if absL := math.Abs(left); absL > data.PeakL {
+			data.PeakL = absL
 		}
-		var frame [bytesPerFrame]byte
-		copy(frame[:], data.remainder[:data.remainderLen])
-		copy(frame[data.remainderLen:], buf[:need])
-		accumulateFrame(frame[:], data)
-		i = need
-		data.remainderLen = 0
-	}
+		if absR := math.Abs(right); absR > data.PeakR {
+			data.PeakR = absR
+		}
 
-	// Accumulate every complete frame.
-	for ; i+bytesPerFrame <= len(buf); i += bytesPerFrame {
-		accumulateFrame(buf[i:], data)
-	}
+		if leftSample >= ClipThreshold || leftSample <= -ClipThreshold {
+			data.ClipCountL++
+		}
+		if rightSample >= ClipThreshold || rightSample <= -ClipThreshold {
+			data.ClipCountR++
+		}
 
-	// Carry trailing bytes for the next read.
-	if i < len(buf) {
-		data.remainderLen = copy(data.remainder[:], buf[i:])
+		data.SampleCount++
 	}
-}
-
-// accumulateFrame folds one S16LE stereo frame into data.
-func accumulateFrame(frame []byte, data *LevelData) {
-	//nolint:gosec // Intentional reinterpretation of unsigned PCM to signed
-	leftSample := int16(binary.LittleEndian.Uint16(frame[0:]))
-	//nolint:gosec // Intentional reinterpretation of unsigned PCM to signed
-	rightSample := int16(binary.LittleEndian.Uint16(frame[2:]))
-	left := float64(leftSample)
-	right := float64(rightSample)
-
-	data.SumSquaresL += left * left
-	data.SumSquaresR += right * right
-
-	if absL := math.Abs(left); absL > data.PeakL {
-		data.PeakL = absL
-	}
-	if absR := math.Abs(right); absR > data.PeakR {
-		data.PeakR = absR
-	}
-
-	if leftSample >= ClipThreshold || leftSample <= -ClipThreshold {
-		data.ClipCountL++
-	}
-	if rightSample >= ClipThreshold || rightSample <= -ClipThreshold {
-		data.ClipCountR++
-	}
-
-	data.SampleCount++
 }
 
 // Levels contains calculated audio levels in dB.
@@ -133,13 +99,7 @@ func CalculateLevels(data *LevelData) Levels {
 	}
 }
 
-// Reset clears the metering window while preserving PCM frame alignment.
+// Reset clears the metering window.
 func (d *LevelData) Reset() {
-	d.SampleCount = 0
-	d.SumSquaresL = 0
-	d.SumSquaresR = 0
-	d.PeakL = 0
-	d.PeakR = 0
-	d.ClipCountL = 0
-	d.ClipCountR = 0
+	*d = LevelData{}
 }

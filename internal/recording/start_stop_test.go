@@ -121,7 +121,7 @@ func TestManagerStartWaitsForPreviousStop(t *testing.T) {
 	go func() { stopped <- m.Stop() }()
 	waitForRecorderState(t, r, types.ProcessStopping)
 	started := make(chan error, 1)
-	go func() { started <- m.StartIfActive(func() bool { return true }) }()
+	go func() { started <- m.Start() }()
 	select {
 	case err := <-started:
 		release()

@@ -147,7 +147,7 @@ Decisions taken on 2026-10-22:
   recording reaches S3, also after a crash and after its recorder is removed.
 - **R3. Uploads are retried forever.** Retries use backoff and raise an
   overdue alert. Nothing is abandoned or deleted before delivery unless an
-  operator explicitly discards it. Disk pressure is alerted and is the only
+  operator explicitly clears it. Disk pressure is alerted and is the only
   limit.
 - **R4. No on-disk migration.** Existing spool directories and upload sidecars
   need not be readable. The external interfaces stay: local filenames, S3 keys
@@ -167,7 +167,7 @@ scenario needs a seam the redesign introduces (section 6).
 |---|---|---|
 | I1 | Capture never waits on recording. | existing white-box tests; keep |
 | I2 | Every chunk accepted while running ends up in a finalized file, or is counted in `AudioDrops`. | `RoundTrip/*` (normal stop only) |
-| I3 | After a crash of the service, with or without its FFmpeg children, restart finds every recording that holds audio, in every storage mode. After power loss, audio up to the durability watermark survives (section 4.3). | `Durable/*` (service and tree crash at one point; gap: power loss, more crash points) |
+| I3 | After a crash of the service, with or without its FFmpeg children, restart finds every recording that holds audio, in every storage mode. After power loss, audio up to the durability watermark survives (section 4.3). | `Durable/*` (s3/both only; local-only retains its file but is unverified; gaps: power loss, more crash points) |
 | I4 | Each recording reaches each destination exactly once and never replaces an object it did not write. | `RoundTrip/*`, `ExactlyOnce/*`, `Durable/*` |
 | I5 | Stopping a recorder or the manager is bounded by local work (FFmpeg finalization), never by the network. | `BoundedStop/*` |
 | I6 | Every undelivered recording is counted, including during an upload and after its recorder is removed. All counts derive from one source. | `HonestPending/*` |
@@ -175,8 +175,8 @@ scenario needs a seam the redesign introduces (section 6).
 | I8 | A failure stays visible until a later success or an operator action clears it. | `ErrorStaysVisible/*` |
 | I9 | Nothing deletes an undelivered recording except the operator. | gap: needs a clock seam |
 | I10 | An undelivered recording is retried until delivered, and is alerted as overdue after a threshold. | gap: needs a clock seam |
-| I11 | An input change or source restart does not cut a recording (R1). | gap: encoder-level scenario |
-| I12 | During an input outage the file keeps pace with wall-clock time (silence), and a segment with only silence is discarded (D1). | gap: needs a clock seam |
+| I11 | An input change or source restart does not cut a recording (R1). | encoder test `TestRestartsKeepRecordingsRunning` |
+| I12 | During an input outage the file keeps pace with wall-clock time (silence), and a segment with only silence is discarded (D1). | `KeepsPace/*` |
 
 About I9: today, in local+S3 mode, retention (`cleanup.go:92–106`) protects
 only the current and retiring files and files modified within the retention
@@ -283,21 +283,16 @@ outbox.
   - `ready` → `delivered` once S3 confirms the object.
   - `delivered` → removal of the spool copy (S3-only mode) → removal of the
     ticket.
-  - Any state → `failed` when finalization fails. A `failed` ticket stays
-    until the operator deletes its file; the next start then removes the
-    ticket. A `lost` ticket is cleared the same way.
+  - Finalization failures stay `failed`; clear failed/lost tickets only with the
+    service stopped: salvage/delete audio and its marker, then remove every ticket generation.
 - **Recovery** (one scan at startup) depends on the storage mode:
-  - `recording` with audio → `ready` in the S3 modes, and simply removed in
-    local-only mode, where the file stays as it is. Either way an
-    `interrupted` event is logged. This also covers the interrupted local
-    file in local+S3 mode, which today is never uploaded.
-  - `recording` without audio, never synced (section 4.3) → removed. Nothing
-    durable was promised for it.
-  - `recording` whose file is missing or empty although the ticket records a
-    completed sync → `lost`, with an alert.
-  - `ready` with the local file missing → the uploader HEADs the key. If
-    the object carries the ticket's identity, delivery is finished. If there
-    is no such object, the ticket becomes lost, with an alert.
+  - `recording` with audio → `ready` in S3 modes; local-only tickets are
+    removed while their files remain. Both paths log an interrupted event.
+  - `recording` with an empty file and no synced audio → removed (section 4.3).
+  - Missing interrupted files stay protected: S3 tickets become `ready` for
+    retries; local-only tickets wait for another restart. Empty synced files become `lost`.
+  - A missing `ready` file is delivered only if HEAD confirms its ticket ID;
+    otherwise it retries with backoff and overdue alerting.
   - `delivered` with the local file gone → only the ticket is removed; S3
     already confirmed the object.
 
@@ -310,10 +305,7 @@ outbox.
   abandoned map and its rescans disappear.
 - **Removed recorders.** Their tickets keep their destination and are still
   delivered. They are counted under the removed recorder until delivered or
-  discarded (#502, R2).
-- **Failed tickets** (quarantined recordings) are counted and alerted, and
-  never expire on their own (#496, I9). The operator handles one by deleting
-  its file and restarting the service.
+  explicitly cleared by the operator (#502, R2).
 
 ### 4.3 Durability boundary
 
@@ -374,7 +366,7 @@ failure classes have different guarantees.
   from 1 minute up to a cap of 1 hour, with no abandonment (R3).
 - **Overdue alerting.** A recording becomes overdue two hours after it was
   finalized and became ready (D2). A single "uploads overdue" alert covers the overdue set. It
-  clears on delivery or on an explicit discard.
+  clears when no overdue recordings remain.
 - **Shutdown is owned by the manager.**
   - Uploads run from `Manager.StartUploads` until the process-lifetime
     `Manager.Close`; `Manager.Stop`, which an input change also calls, leaves
@@ -396,7 +388,7 @@ failure classes have different guarantees.
 - Local retention skips every file that has a ticket in any state (I9).
 - S3 retention stays as it is: owned namespaces, name time and
   `LastModified`.
-- Failed and lost tickets wait for the operator. Their disk use shows up in
+- Failed tickets wait for the operator; lost tickets are rechecked at startup. Their disk use shows up in
   the storage alert, and `/ready` stays red while they exist.
 
 ### 4.6 Health
@@ -418,24 +410,34 @@ failure classes have different guarantees.
 
 ### 4.7 Encoder coupling (R1)
 
-- The recording manager starts once, when the encoder first starts. It stops
-  only on an operator stop or process exit. Input changes and source restarts
-  no longer call `recordingManager.Stop()`.
+- Recordings run from a successful encoder start until an operator stop or
+  process exit. Input changes and source restarts, also failed ones, leave
+  them alone. The encoder keeps one wish (`recordingWanted`) and one function
+  makes the manager follow it, so concurrent starts and stops end in the
+  latest wish. Uploads keep their own lifetime, from `InitRecording` to
+  `Close`.
 - **Input outages are filled with silence (D1).** A file's playback position
-  then equals wall-clock time: minute 37 of the 14:00 file is 14:37.
-  - The writer goroutine of a segment tracks the audio it has written against
-    the time since the segment started.
-  - When no PCM has arrived for longer than a gap threshold (proposed 1 s,
-    well above the capture chunk interval), the writer writes silence (zero
-    samples in the capture format) in 100 ms blocks until capture resumes.
+  then stays close to wall-clock time: minute 37 of the 14:00 file is about
+  14:37 (short outages are unfilled; blocked writes can leave longer gaps).
+  - The writer of a segment measures an outage from when it last finished
+    writing input PCM (or from the segment's start). After 1 s without PCM,
+    and with none queued, it writes silence (zero samples in the capture
+    format) for the outage so far, then tops it up every 100 ms until
+    capture resumes. The encoder's distributor passes only whole frames (it
+    drops a half frame when its source ends), so filler never shifts the
+    channels.
+  - Handing capture to another segment closes the old segment's channel at
+    once, so it cannot gain filler after a rotation.
   - Only outages are filled. The writer does not correct drift between the
     capture clock and the wall clock.
-  - A segment holding nothing but filler is discarded like today's empty
-    file (#440), so an hour in which the input never came back leaves no
-    silent file. The segment therefore counts real and filler bytes
-    separately.
-  - The start and end of a filled gap are logged as recorder events with
-    their duration.
+  - A segment that got no input PCM, only filler, is discarded when it is
+    finalized, like an empty file (#440), so an hour in which the input never
+    came back leaves no silent file. A failed segment is quarantined as
+    before, and after a crash the file is kept: what was filler is not
+    recorded on disk.
+  - A filled gap is logged (slog) with its duration. Recorder events for it
+    were dropped by operator decision: `input_lost`/`input_restored` cover
+    real outages.
 
 ### 4.8 What stays and what goes
 

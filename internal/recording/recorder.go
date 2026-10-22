@@ -280,11 +280,16 @@ func (r *GenericRecorder) WriteAudio(pcm []byte) {
 	}
 }
 
-// setAudio hands capture to ch; nil stops capture.
+// setAudio hands capture to ch (nil stops it) and closes the channel it
+// replaces, so that segment's writer drains and stops filling silence (D1).
 func (r *GenericRecorder) setAudio(ch chan []byte) {
 	r.audioMu.Lock()
+	old := r.audioCh
 	r.audioCh = ch
 	r.audioMu.Unlock()
+	if old != nil {
+		close(old) // No sender holds it once audioMu was taken.
+	}
 }
 
 func recordingFilename(cfg *types.Recorder, t time.Time) string {
