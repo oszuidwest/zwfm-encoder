@@ -11,7 +11,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
@@ -48,10 +47,6 @@ type GenericRecorder struct {
 	audioCh    chan []byte
 	recording  atomic.Bool
 	audioDrops atomic.Int64 // Lost chunks from overflow or teardown.
-
-	s3Mu        sync.Mutex
-	s3Client    *s3.Client // Retention's client; uploads use the outbox destinations.
-	s3ConfigKey string     // Config key used to create cached client
 }
 
 // GenericRecorderConfig holds the parameters for creating a GenericRecorder.
@@ -292,22 +287,6 @@ func (r *GenericRecorder) setAudio(ch chan []byte) {
 	r.audioMu.Unlock()
 }
 
-// getOrCreateS3Client returns the cached S3 client, recreating it when the
-// config changed. It returns nil when S3 is not configured.
-func (r *GenericRecorder) getOrCreateS3Client() *s3.Client {
-	cfg := r.Config()
-	if !cfg.HasS3Credentials() {
-		return nil
-	}
-	r.s3Mu.Lock()
-	defer r.s3Mu.Unlock()
-	if key := cfg.S3Endpoint + "|" + cfg.S3AccessKeyID + "|" + cfg.S3SecretAccessKey; r.s3Client == nil || r.s3ConfigKey != key {
-		r.s3Client = createS3Client(RecorderToS3Config(&cfg))
-		r.s3ConfigKey = key
-	}
-	return r.s3Client
-}
-
 func recordingFilename(cfg *types.Recorder, t time.Time) string {
 	return fmt.Sprintf("%s-%s.%s", cfg.RecordingFilePrefix(), t.Format(recordingTimestampLayout), cfg.Codec.FileExtension())
 }
@@ -331,11 +310,6 @@ func withNumericSuffix(name string, n int) string {
 // s3Namespace is the object-key prefix for files under one filename prefix.
 func s3Namespace(filePrefix string) string {
 	return "recordings/" + filePrefix + "/"
-}
-
-// TestRecorderS3Connection tests S3 connectivity for a recorder configuration.
-func TestRecorderS3Connection(cfg *types.Recorder) error {
-	return TestS3Connection(RecorderToS3Config(cfg))
 }
 
 // eventWriter writes recorder events in order, outside the loop, so a slow

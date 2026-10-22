@@ -87,7 +87,6 @@ func TestWebhookChannelSendPayloads(t *testing.T) {
 			name: "uploads overdue",
 			send: func(channel *WebhookChannel, cfg *config.Snapshot) error {
 				return channel.SendUploadsOverdue(context.Background(), cfg, &UploadsOverdueData{
-					Overdue:   true,
 					Count:     3,
 					Oldest:    time.Date(2026, 10, 22, 8, 0, 0, 0, time.UTC),
 					Recorders: []string{"Archive", "Studio"},

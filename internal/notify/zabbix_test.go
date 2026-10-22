@@ -103,7 +103,6 @@ func TestZabbixChannelSendPayloads(t *testing.T) {
 			value: `event=UPLOAD_OVERDUE count=2 oldest="2026-10-22T08:00:00Z" recorders="Archive,Studio" error="request timed out"`,
 			send: func(channel *ZabbixChannel, cfg *config.Snapshot) error {
 				return channel.SendUploadsOverdue(context.Background(), cfg, &UploadsOverdueData{
-					Overdue:   true,
 					Count:     2,
 					Oldest:    time.Date(2026, 10, 22, 8, 0, 0, 0, time.UTC),
 					Recorders: []string{"Archive", "Studio"},

@@ -74,9 +74,8 @@ type InputData struct {
 }
 
 // UploadsOverdueData describes recordings that wait more than two hours for
-// S3, or with Overdue false that none do any longer.
+// S3; a zero Count reports that none do any longer.
 type UploadsOverdueData struct {
-	Overdue   bool
 	Count     int
 	Oldest    time.Time
 	Recorders []string
@@ -84,7 +83,7 @@ type UploadsOverdueData struct {
 }
 
 func (d *UploadsOverdueData) message() (event, message string) {
-	if !d.Overdue {
+	if d.Count == 0 {
 		return "upload_overdue_cleared", "All overdue recordings have been uploaded."
 	}
 	message = fmt.Sprintf("%d recordings have waited more than 2 hours for S3 (oldest since %s; recorders: %s).",

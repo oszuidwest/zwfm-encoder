@@ -197,7 +197,7 @@ func readyTestTicket(t *testing.T, r *GenericRecorder, data []byte) ticket {
 	}
 	cfg := r.Config()
 	dest := destinationID(cfg.ID, cfg.S3Endpoint, cfg.S3Bucket)
-	if err := r.outbox.saveDestination(dest, destinationOf(&cfg)); err != nil {
+	if err := r.outbox.saveDestination(dest, *RecorderToS3Config(&cfg)); err != nil {
 		t.Fatal(err)
 	}
 	tk := ticket{

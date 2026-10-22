@@ -23,15 +23,6 @@ type EmailChannel struct {
 	cachedKey    string
 }
 
-func uploadsOverdueEmail(station string, d *UploadsOverdueData) (subject, body string) {
-	_, message := d.message()
-	if !d.Overdue {
-		return "[OK] Recording Uploads Delivered - " + station, message
-	}
-	return "[ALERT] Recording Uploads Overdue - " + station,
-		message + "\n\nRecordings stay on disk and are retried until they are uploaded. Check the S3 settings and connection."
-}
-
 func sendEmailWithClient(ctx context.Context, cfg *GraphConfig, client *GraphClient, subject, body string) error {
 	recipients := ParseRecipients(cfg.Recipients)
 	if len(recipients) == 0 {
@@ -362,7 +353,12 @@ func (c *EmailChannel) SendAudioDump(
 // SendUploadsOverdue emails an overdue alert or its recovery.
 func (c *EmailChannel) SendUploadsOverdue(ctx context.Context, cfg *config.Snapshot, data *UploadsOverdueData) error {
 	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client *GraphClient) error {
-		subject, body := uploadsOverdueEmail(cfg.StationName, data)
+		_, body := data.message()
+		subject := "[OK] Recording Uploads Delivered - " + cfg.StationName
+		if data.Count > 0 {
+			subject = "[ALERT] Recording Uploads Overdue - " + cfg.StationName
+			body += "\n\nRecordings stay on disk and are retried until they are uploaded. Check the S3 settings and connection."
+		}
 		return sendEmailWithClient(ctx, graphCfg, client, subject, body)
 	})
 }

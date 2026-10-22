@@ -18,7 +18,7 @@ func TestUnconfiguredChannelsSendNothing(t *testing.T) {
 			"silence end":             channel.SendSilenceEnd(ctx, cfg, 1000, -12, -14),
 			"channel imbalance start": channel.SendChannelImbalanceStart(ctx, cfg, ChannelImbalanceData{}),
 			"channel imbalance end":   channel.SendChannelImbalanceEnd(ctx, cfg, ChannelImbalanceData{}),
-			"uploads overdue":         channel.SendUploadsOverdue(ctx, cfg, &UploadsOverdueData{Overdue: true}),
+			"uploads overdue":         channel.SendUploadsOverdue(ctx, cfg, &UploadsOverdueData{Count: 1}),
 			"recording storage":       channel.SendRecordingStorage(ctx, cfg, nil),
 		} {
 			if err != nil {

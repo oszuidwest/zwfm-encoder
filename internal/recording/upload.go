@@ -12,39 +12,29 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
 // createS3Client creates an S3 client with the given configuration.
 func createS3Client(cfg *S3Config) *s3.Client {
-	creds := credentials.NewStaticCredentialsProvider(
-		cfg.AccessKeyID,
-		cfg.SecretAccessKey,
-		"",
-	)
-
-	options := []func(*s3.Options){
-		func(o *s3.Options) {
-			o.Credentials = creds
-			o.Region = "auto"
-		},
+	options := s3.Options{
+		Credentials: credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
+		Region:      "auto",
 	}
-
 	if cfg.Endpoint != "" {
-		options = append(options, func(o *s3.Options) {
-			o.BaseEndpoint = aws.String(cfg.Endpoint)
-			o.UsePathStyle = true
-		})
+		options.BaseEndpoint = aws.String(cfg.Endpoint)
+		options.UsePathStyle = true
 	}
-
-	return s3.New(s3.Options{}, options...)
+	return s3.New(options)
 }
 
-// TestS3Connection tests connectivity to an S3 bucket.
-func TestS3Connection(cfg *S3Config) error {
-	if !cfg.IsConfigured() {
+// TestRecorderS3Connection tests S3 connectivity for a recorder configuration.
+func TestRecorderS3Connection(recorder *types.Recorder) error {
+	if !recorder.HasS3Credentials() {
 		return fmt.Errorf("S3 is not configured")
 	}
 
+	cfg := RecorderToS3Config(recorder)
 	client := createS3Client(cfg)
 
 	ctx, cancel := context.WithTimeoutCause(

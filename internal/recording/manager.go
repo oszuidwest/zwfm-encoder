@@ -194,7 +194,7 @@ func (m *Manager) saveDestination(r *GenericRecorder) error {
 	if cfg.StorageMode == types.StorageLocal || !cfg.HasS3Credentials() {
 		return nil
 	}
-	return m.outbox.saveDestinationLocked(destinationID(cfg.ID, cfg.S3Endpoint, cfg.S3Bucket), destinationOf(&cfg))
+	return m.outbox.saveDestinationLocked(destinationID(cfg.ID, cfg.S3Endpoint, cfg.S3Bucket), *RecorderToS3Config(&cfg))
 }
 
 // SetMaxDurationMinutes updates the maximum allowed duration for on-demand recordings.
@@ -366,13 +366,6 @@ func (m *Manager) StartIfActive(active func() bool) error {
 	}
 	slog.Info("recording manager started", "recorders", count)
 	return nil
-}
-
-// IsRunning reports whether recorder management is active.
-func (m *Manager) IsRunning() bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.running
 }
 
 // Stop stops all recorders and background schedulers. Recorders refuse

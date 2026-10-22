@@ -130,17 +130,6 @@ func formatWebhookRuntimeError(issues validation.Issues) error {
 	}
 }
 
-// sendUploadsOverdueWebhook sends upload_overdue or upload_overdue_cleared.
-func sendUploadsOverdueWebhook(ctx context.Context, webhookURL string, d *UploadsOverdueData) error {
-	event, message := d.message()
-	payload := &WebhookPayload{Event: event, Message: message, Timestamp: timestampUTC()}
-	if d.Overdue {
-		payload.OverdueUploads, payload.Recorders, payload.LastError = d.Count, d.Recorders, d.LastError
-		payload.OldestUpload = d.Oldest.UTC().Format(time.RFC3339)
-	}
-	return sendWebhook(ctx, webhookURL, payload)
-}
-
 // sendWebhookInputLost notifies the configured webhook that audio capture stopped.
 func sendWebhookInputLost(ctx context.Context, webhookURL string, d InputData) error {
 	return sendWebhook(ctx, webhookURL, &WebhookPayload{
@@ -316,7 +305,13 @@ func (c *WebhookChannel) SendAudioDump(
 
 // SendUploadsOverdue posts the upload overdue state.
 func (c *WebhookChannel) SendUploadsOverdue(ctx context.Context, cfg *config.Snapshot, data *UploadsOverdueData) error {
-	return sendUploadsOverdueWebhook(ctx, cfg.WebhookURL, data)
+	event, message := data.message()
+	payload := &WebhookPayload{Event: event, Message: message, Timestamp: timestampUTC()}
+	if data.Count > 0 {
+		payload.OverdueUploads, payload.Recorders, payload.LastError = data.Count, data.Recorders, data.LastError
+		payload.OldestUpload = data.Oldest.UTC().Format(time.RFC3339)
+	}
+	return sendWebhook(ctx, cfg.WebhookURL, payload)
 }
 
 // SendInputLost posts a webhook payload when audio capture from the input stops.
