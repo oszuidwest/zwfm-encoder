@@ -80,18 +80,6 @@ type prepareJob struct {
 	waitClock bool
 }
 
-// prepareSegment reserves the output and starts FFmpeg on it, then hands the
-// segment to the loop. A result the loop no longer wants is cleaned up.
-func (r *GenericRecorder) prepareSegment(job *prepareJob) {
-	if job.waitClock && !r.waitForClock(job) {
-		return
-	}
-	seg, file, err := r.openSegment(job)
-	if !r.post(func() { r.prepared(job, seg, file, err) }) {
-		r.abandon(seg)
-	}
-}
-
 // waitForClock delays the first file to keep boot-time clock errors out of
 // filenames and retention dates. The job then takes the configuration of that
 // moment. False means the start was cancelled meanwhile.
@@ -251,7 +239,7 @@ func (r *GenericRecorder) reserveRecordingOutput(path string, cfg *types.Recorde
 		t.BaseKey = s3Namespace(cfg.RecordingFilePrefix()) + filepath.Base(path)
 		t.Key = t.BaseKey
 		t.DeleteAfterUpload = cfg.StorageMode == types.StorageS3
-		if err := r.outbox.ensureDestination(t.Dest, destinationOf(cfg)); err != nil {
+		if err := r.outbox.ensureDestination(t.Dest, *RecorderToS3Config(cfg)); err != nil {
 			err = errors.Join(fmt.Errorf("save upload destination: %w", err), file.Close(), os.Remove(path)) // #nosec G703 -- The reservation this call created.
 			return nil, err
 		}
@@ -266,18 +254,6 @@ func (r *GenericRecorder) reserveRecordingOutput(path string, cfg *types.Recorde
 		return nil, errors.Join(fmt.Errorf("create recording ticket: %w", err), file.Close(), os.Remove(path)) // #nosec G703 -- The reservation this call created.
 	}
 	return &recordingOutput{file: file, outbox: r.outbox, ticket: t}, nil
-}
-
-func destinationOf(cfg *types.Recorder) destination {
-	return destination{
-		Endpoint: cfg.S3Endpoint, Bucket: cfg.S3Bucket,
-		AccessKeyID: cfg.S3AccessKeyID, SecretAccessKey: cfg.S3SecretAccessKey,
-	}
-}
-
-// recordFailure keeps the output for inspection; it is never uploaded.
-func (o *recordingOutput) recordFailure(cause error) {
-	o.outbox.fail(&o.ticket, cause)
 }
 
 // sync makes what the encoder wrote so far durable and records how much that
@@ -349,12 +325,12 @@ func (o *recordingOutput) discard() {
 			_ = o.outbox.remove(&o.ticket) // Nothing was recorded into it.
 			return
 		}
-		o.recordFailure(err) // A replacement must not pass for a crash leftover.
+		o.outbox.fail(&o.ticket, err) // A replacement must not pass for a crash leftover.
 		slog.Warn("cannot discard recording reservation", "file", o.file.Name(), "error", err)
 		return
 	}
 	if err := o.remove(); err != nil {
-		o.recordFailure(err)
+		o.outbox.fail(&o.ticket, err)
 		slog.Warn("failed to discard recording reservation", "file", o.file.Name(), "error", err)
 	}
 }
@@ -475,7 +451,7 @@ func (r *GenericRecorder) finishOutput(seg *segment, cause error) error {
 		err = errors.Join(err, discardErr)
 	}
 	if err != nil {
-		seg.output.recordFailure(err)
+		seg.output.outbox.fail(&seg.output.ticket, err)
 		return err
 	}
 	if err := seg.output.commit(); err != nil {

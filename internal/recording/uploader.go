@@ -35,9 +35,8 @@ const (
 )
 
 // UploadsOverdue describes the recordings that wait longer than two hours
-// for S3, or reports with Overdue false that none do any longer.
+// for S3; a zero Count reports that none do any longer.
 type UploadsOverdue struct {
-	Overdue   bool
 	Count     int
 	Oldest    time.Time // When the oldest overdue recording became ready.
 	Recorders []string
@@ -218,10 +217,7 @@ func (u *uploader) upload(ctx context.Context, t *ticket) error {
 	if err != nil {
 		return err
 	}
-	client := createS3Client(&S3Config{
-		Endpoint: dest.Endpoint, Bucket: dest.Bucket,
-		AccessKeyID: dest.AccessKeyID, SecretAccessKey: dest.SecretAccessKey,
-	})
+	client := createS3Client(&dest)
 	head := func(ctx context.Context) (bool, error) {
 		out, err := client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(dest.Bucket), Key: aws.String(t.Key)})
 		if err != nil {
@@ -373,15 +369,15 @@ func (u *uploader) checkOverdue() {
 	defer u.overdueMu.Unlock()
 	state := overdueState(u.outbox.snapshot(), u.clock())
 	u.mu.Lock()
-	changed := state.Overdue != u.overdueOpen
-	u.overdueOpen = state.Overdue
+	changed := (state.Count > 0) != u.overdueOpen
+	u.overdueOpen = state.Count > 0
 	cb := u.onOverdue
 	u.mu.Unlock()
 	if !changed {
 		return
 	}
 	eventType, message := eventlog.UploadOverdueCleared, "Recording uploads delivered"
-	if state.Overdue {
+	if state.Count > 0 {
 		eventType, message = eventlog.UploadOverdue, "Recording uploads overdue"
 		slog.Warn(message, "count", state.Count, "oldest", state.Oldest, "error", state.LastError)
 	} else {
@@ -415,7 +411,6 @@ func overdueState(tickets []ticket, now time.Time) UploadsOverdue {
 		}
 	}
 	slices.Sort(state.Recorders)
-	state.Overdue = state.Count > 0
 	return state
 }
 
@@ -455,9 +450,6 @@ var _ transfermanager.ObjectBytesTransferredListener = (*uploadProgressListener)
 func (l *uploadProgressListener) OnObjectBytesTransferred(
 	_ context.Context, e *transfermanager.ObjectBytesTransferredEvent,
 ) {
-	if l.fileSize == 0 {
-		return
-	}
 	pct := int(e.BytesTransferred * 100 / l.fileSize)
 	l.mu.Lock()
 	defer l.mu.Unlock()

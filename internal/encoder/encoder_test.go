@@ -757,8 +757,21 @@ func waitForCondition(t *testing.T, timeout time.Duration, description string, c
 }
 func assertManagersStopped(t *testing.T, e *Encoder, reason string) {
 	t.Helper()
-	if e.recordingManager.IsRunning() {
-		t.Fatalf("recording manager is running: %s", reason)
+	probe := &types.Recorder{
+		ID: "manager-state-probe", Name: "Manager state probe", Codec: types.CodecPCM,
+		RecordingMode: types.RecordingOnDemand,
+		StorageMode:   types.StorageLocal, LocalPath: t.TempDir(),
+	}
+	if err := e.recordingManager.AddRecorder(probe); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := e.recordingManager.RemoveRecorder(probe.ID); err != nil {
+			t.Error(err)
+		}
+	}()
+	if err := e.recordingManager.StartRecorder(probe.ID); !errors.Is(err, recording.ErrManagerNotRunning) {
+		t.Fatalf("recording manager stop guard (%s): got %v, want ErrManagerNotRunning", reason, err)
 	}
 	if e.silenceDumpManager.IsRunning() {
 		t.Fatalf("silence dump manager is running: %s", reason)

@@ -302,13 +302,8 @@ func (e *Encoder) InitRecording() error {
 	}
 
 	mgr.SetUploadsOverdueCallback(func(state recording.UploadsOverdue) {
-		e.alertOrchestrator.HandleUploadsOverdue(&notify.UploadsOverdueData{
-			Overdue:   state.Overdue,
-			Count:     state.Count,
-			Oldest:    state.Oldest,
-			Recorders: state.Recorders,
-			LastError: state.LastError,
-		})
+		data := notify.UploadsOverdueData(state)
+		e.alertOrchestrator.HandleUploadsOverdue(&data)
 	})
 	mgr.SetStorageChangeCallback(e.alertOrchestrator.HandleRecordingStorage)
 

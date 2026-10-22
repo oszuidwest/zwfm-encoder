@@ -70,15 +70,6 @@ func (s ticketState) valid() bool {
 	}
 }
 
-// destination is where a recording is delivered. It is kept in the spool so a
-// removed recorder still delivers what it recorded.
-type destination struct {
-	Endpoint        string `json:"endpoint,omitempty"`
-	Bucket          string `json:"bucket"`
-	AccessKeyID     string `json:"access_key_id"`
-	SecretAccessKey string `json:"secret_access_key"`
-}
-
 // destinationID scopes credentials to one recorder and one bucket, so recorders
 // that share a bucket with different credentials stay apart, and a credential
 // change of a recorder reaches its undelivered recordings.
@@ -309,11 +300,7 @@ func (o *outbox) dropRecovered(t *ticket) bool {
 // newTicket persists t as a new ticket for a reserved output; it sets its ID.
 func (o *outbox) newTicket(t *ticket) error {
 	t.ID, t.Seq, t.State = rand.Text(), 0, ticketRecording
-	if err := o.write(t); err != nil {
-		return err
-	}
-	o.publish(t)
-	return nil
+	return o.update(t)
 }
 
 // update persists a change of a ticket the caller owns, then publishes it.
@@ -424,7 +411,7 @@ func (o *outbox) signal() {
 func (o *outbox) write(t *ticket) error {
 	next := *t
 	var name string
-	for range 3 {
+	for {
 		next.Seq++
 		data, err := json.MarshalIndent(&next, "", "  ")
 		if err != nil {
@@ -439,9 +426,6 @@ func (o *outbox) write(t *ticket) error {
 			}
 			break
 		}
-	}
-	if _, err := os.Lstat(name); err != nil { // #nosec G703 -- An outbox-owned generation name.
-		return fmt.Errorf("write ticket: %w", err)
 	}
 	if err := syncDir(o.dir); err != nil {
 		// The generation exists but may not survive a power cut: the next
@@ -484,44 +468,32 @@ func (o *outbox) nextDue(now time.Time) (t ticket, due bool, wait time.Duration)
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	wait = time.Hour
-	var best *ticket
 	for id := range o.tickets {
 		c := o.tickets[id]
 		if c.State != ticketReady && c.State != ticketDelivered {
 			continue
 		}
-		at := c.NextAttempt
-		if !at.After(now) {
-			if best == nil || c.ReadyAt.Before(best.ReadyAt) {
-				best = &c
+		if !c.NextAttempt.After(now) {
+			if !due || c.ReadyAt.Before(t.ReadyAt) {
+				t, due = c, true
 			}
 			continue
 		}
-		wait = min(wait, at.Sub(now))
+		wait = min(wait, c.NextAttempt.Sub(now))
 	}
-	if best == nil {
-		return ticket{}, false, wait
+	if due {
+		wait = 0
 	}
-	return *best, true, 0
+	return t, due, wait
 }
 
 func (o *outbox) destinationPath(id string) string {
 	return filepath.Join(o.destinationDir(), id+".json")
 }
 
-// saveDestination stores the credentials of a destination.
-func (o *outbox) saveDestination(id string, d destination) error {
-	o.destMu.Lock()
-	defer o.destMu.Unlock()
-	return o.saveDestinationLocked(id, d)
-}
-
 // saveDestinationLocked must be called with destMu held.
-func (o *outbox) saveDestinationLocked(id string, d destination) error {
-	data, err := json.Marshal(&d)
-	if err != nil {
-		return err
-	}
+func (o *outbox) saveDestinationLocked(id string, d S3Config) error {
+	data, _ := json.Marshal(&d) // Only string fields.
 	path := o.destinationPath(id)
 	if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, data) { //nolint:gosec // Outbox-owned path.
 		return nil
@@ -541,7 +513,7 @@ func (o *outbox) saveDestinationLocked(id string, d destination) error {
 // ensureDestination stores d only when id has no credentials yet. A
 // reservation uses it: its config may be older than an update that already
 // stored new credentials.
-func (o *outbox) ensureDestination(id string, d destination) error {
+func (o *outbox) ensureDestination(id string, d S3Config) error {
 	o.destMu.Lock()
 	defer o.destMu.Unlock()
 	if _, err := os.Stat(o.destinationPath(id)); err == nil { // #nosec G703 -- An outbox-owned destination file.
@@ -550,8 +522,8 @@ func (o *outbox) ensureDestination(id string, d destination) error {
 	return o.saveDestinationLocked(id, d)
 }
 
-func (o *outbox) loadDestination(id string) (destination, error) {
-	var d destination
+func (o *outbox) loadDestination(id string) (S3Config, error) {
+	var d S3Config
 	data, err := os.ReadFile(o.destinationPath(id)) // #nosec G703 -- An outbox-owned destination file.
 	if err != nil {
 		return d, fmt.Errorf("read upload destination: %w", err)

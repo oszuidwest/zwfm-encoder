@@ -225,3 +225,17 @@ func (m *Manager) WriteAudio(pcm []byte) {
 func (m *Manager) Start() error {
 	return m.StartIfActive(nil)
 }
+
+// saveDestination stores the credentials of a destination.
+func (o *outbox) saveDestination(id string, d S3Config) error {
+	o.destMu.Lock()
+	defer o.destMu.Unlock()
+	return o.saveDestinationLocked(id, d)
+}
+
+// IsRunning reports whether recorder management is active.
+func (m *Manager) IsRunning() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.running
+}

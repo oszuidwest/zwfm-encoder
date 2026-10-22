@@ -563,7 +563,7 @@ func TestInvariantOverdue(t *testing.T) {
 		// Thirty hours later, past the old 24-hour abandonment as well.
 		offset.Store(int64(30 * time.Hour))
 		recording.RetryUploadsNow(m)
-		if !waitFor(10*time.Second, func() bool { a := alerted(); return len(a) == 1 && a[0].Overdue && a[0].Count == 1 }) {
+		if !waitFor(10*time.Second, func() bool { a := alerted(); return len(a) == 1 && a[0].Count == 1 }) {
 			t.Errorf("an upload failing for 30 hours raised alerts %+v, want one overdue alert", alerted())
 		}
 		if b := m.UploadBacklog(); b.Overdue != 1 || b.Pending != 1 {
@@ -576,7 +576,7 @@ func TestInvariantOverdue(t *testing.T) {
 		}) {
 			t.Errorf("the overdue upload was not delivered once S3 healed")
 		}
-		if !waitFor(10*time.Second, func() bool { a := alerted(); return len(a) == 2 && !a[1].Overdue }) {
+		if !waitFor(10*time.Second, func() bool { a := alerted(); return len(a) == 2 && a[1].Count == 0 }) {
 			t.Errorf("alerts after delivery = %+v, want the overdue alert cleared once", alerted())
 		}
 	})

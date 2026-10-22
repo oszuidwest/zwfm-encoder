@@ -37,11 +37,6 @@ type S3Config struct {
 	SecretAccessKey string `json:"secret_access_key,omitempty"`
 }
 
-// IsConfigured reports whether S3 settings are configured.
-func (c *S3Config) IsConfigured() bool {
-	return c.Bucket != "" && c.AccessKeyID != "" && c.SecretAccessKey != ""
-}
-
 const (
 	// DefaultTempDir is the fallback temporary directory for non-systemd platforms.
 	DefaultTempDir = "/tmp/encoder-recordings"

@@ -135,18 +135,6 @@ func sendZabbixEvent(ctx context.Context, server string, port int, host, key, va
 	return sendZabbixPayload(ctx, server, port, req)
 }
 
-// sendUploadsOverdueZabbix sends UPLOAD_OVERDUE or its recovery to Zabbix.
-func sendUploadsOverdueZabbix(
-	ctx context.Context, server string, port int, host, key string, d *UploadsOverdueData,
-) error {
-	value := "event=UPLOAD_OVERDUE_CLEARED"
-	if d.Overdue {
-		value = fmt.Sprintf("event=UPLOAD_OVERDUE count=%d oldest=%q recorders=%q error=%q",
-			d.Count, d.Oldest.UTC().Format(time.RFC3339), strings.Join(d.Recorders, ","), d.LastError)
-	}
-	return sendZabbixEvent(ctx, server, port, host, key, value)
-}
-
 // sendZabbixSilence sends a silence alert to Zabbix.
 func sendZabbixSilence(ctx context.Context, server string, port int, host, key string, e silenceEventData) error {
 	return sendZabbixEvent(ctx, server, port, host, key,
@@ -318,7 +306,12 @@ func (c *ZabbixChannel) SendAudioDump(
 
 // SendUploadsOverdue sends the upload overdue state on the upload trapper item.
 func (c *ZabbixChannel) SendUploadsOverdue(ctx context.Context, cfg *config.Snapshot, data *UploadsOverdueData) error {
-	return sendUploadsOverdueZabbix(ctx, cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixUploadKey, data)
+	value := "event=UPLOAD_OVERDUE_CLEARED"
+	if data.Count > 0 {
+		value = fmt.Sprintf("event=UPLOAD_OVERDUE count=%d oldest=%q recorders=%q error=%q",
+			data.Count, data.Oldest.UTC().Format(time.RFC3339), strings.Join(data.Recorders, ","), data.LastError)
+	}
+	return sendZabbixEvent(ctx, cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixUploadKey, value)
 }
 
 // SendInputLost sends a Zabbix trapper value on the silence key when audio capture stops.

@@ -225,7 +225,15 @@ func (r *GenericRecorder) prepare(at time.Time) {
 	job := &prepareJob{cfg: l.cfg, at: at, dir: dir, lock: lock, used: maps.Clone(l.usedFilenames),
 		waitClock: l.state == types.ProcessStarting}
 	l.next = job
-	r.helpers.Go(func() { r.prepareSegment(job) })
+	r.helpers.Go(func() {
+		if job.waitClock && !r.waitForClock(job) {
+			return
+		}
+		seg, file, err := r.openSegment(job)
+		if !r.post(func() { r.prepared(job, seg, file, err) }) {
+			r.abandon(seg)
+		}
+	})
 }
 
 // prepared takes the result of job: seg, or the error preparing file.

@@ -1,6 +1,8 @@
 package recording
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -104,6 +106,33 @@ func TestOutboxLoadsNewestValidGeneration(t *testing.T) {
 	}
 	if again, _ := openOutbox(spool, func(*ticket) {}); len(again.snapshot()) != 0 {
 		t.Fatal("a removed ticket came back")
+	}
+}
+
+// Generation files left ahead of a ticket must not swallow an update.
+func TestOutboxUpdateSkipsTakenGenerations(t *testing.T) {
+	t.Parallel()
+	ob, err := openOutbox(t.TempDir(), func(*ticket) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tk := ticket{Path: filepath.Join(t.TempDir(), "a.mp3")}
+	if err := ob.newTicket(&tk); err != nil {
+		t.Fatal(err)
+	}
+	for seq := tk.Seq + 1; seq <= tk.Seq+4; seq++ {
+		if err := os.WriteFile(filepath.Join(ob.dir, fmt.Sprintf("%s.%d.json", tk.ID, seq)), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tk.State = ticketFailed
+	if err := ob.update(&tk); err != nil {
+		t.Fatal(err)
+	}
+	var stored ticket
+	data, err := os.ReadFile(filepath.Join(ob.dir, fmt.Sprintf("%s.%d.json", tk.ID, tk.Seq)))
+	if err != nil || json.Unmarshal(data, &stored) != nil || stored.State != ticketFailed {
+		t.Fatalf("update persisted %q, %v; want state %s", data, err, ticketFailed)
 	}
 }
 

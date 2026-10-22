@@ -132,12 +132,12 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 		return
 	}
 
-	client := recorder.getOrCreateS3Client()
-	if client == nil {
+	if !cfg.HasS3Credentials() {
 		slog.Warn("cleanup: no S3 client available", "id", cfg.ID)
 		return
 	}
 
+	client := createS3Client(RecorderToS3Config(&cfg))
 	cutoff := util.OldestToKeep(cfg.RetentionDays, time.Now())
 
 	ctx, cancel := context.WithTimeoutCause(
