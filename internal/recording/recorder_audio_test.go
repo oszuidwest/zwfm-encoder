@@ -11,8 +11,9 @@ import (
 
 func TestWriteAudioNeverBlocksAndCountsDrops(t *testing.T) {
 	t.Parallel()
-	r := &GenericRecorder{id: "r1", state: types.ProcessRunning, audioCh: make(chan []byte, 2)}
+	r := &GenericRecorder{id: "r1", audioCh: make(chan []byte, 2)}
 	r.recording.Store(true)
+	r.status.Store(&types.ProcessStatus{})
 	done := make(chan struct{})
 	go func() {
 		for i := range 5 {
@@ -25,7 +26,7 @@ func TestWriteAudioNeverBlocksAndCountsDrops(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("WriteAudio blocked when the buffer was full")
 	}
-	if got := r.audioDrops.Load(); got != 3 {
+	if got := r.Status().AudioDrops; got != 3 {
 		t.Fatalf("audioDrops = %d, want 3", got)
 	}
 	if got := len(r.audioCh); got != 2 {
@@ -41,7 +42,7 @@ func TestWriteAudioNeverBlocksAndCountsDrops(t *testing.T) {
 
 func TestWriteAudioConcurrentWithTeardownNoPanic(t *testing.T) {
 	for range 50 {
-		r := &GenericRecorder{id: "r1", state: types.ProcessRunning, audioCh: make(chan []byte, 4)}
+		r := &GenericRecorder{id: "r1", audioCh: make(chan []byte, 4)}
 		r.recording.Store(true)
 		ch := r.audioCh
 		drained := make(chan struct{})
@@ -74,25 +75,16 @@ func TestWriteAudioConcurrentWithTeardownNoPanic(t *testing.T) {
 
 func TestWriteAudioNoopWhenNotRecording(t *testing.T) {
 	t.Parallel()
-	noCh := &GenericRecorder{id: "r1", state: types.ProcessRunning}
+	noCh := &GenericRecorder{id: "r1"}
 	noCh.recording.Store(true)
 	noCh.WriteAudio([]byte{1})
 	if got := noCh.audioDrops.Load(); got != 0 {
 		t.Fatalf("audioDrops with nil channel = %d, want 0", got)
 	}
-	stopped := &GenericRecorder{id: "r2", state: types.ProcessStopped, audioCh: make(chan []byte, 2)}
+	stopped := &GenericRecorder{id: "r2", audioCh: make(chan []byte, 2)}
 	stopped.WriteAudio([]byte{1})
 	if got := len(stopped.audioCh); got != 0 {
 		t.Fatalf("buffered chunks while stopped = %d, want 0", got)
-	}
-}
-
-func TestStatusReportsAudioDrops(t *testing.T) {
-	t.Parallel()
-	r := &GenericRecorder{id: "r1", state: types.ProcessRunning}
-	r.audioDrops.Store(7)
-	if got := r.Status().AudioDrops; got != 7 {
-		t.Fatalf("Status().AudioDrops = %d, want 7", got)
 	}
 }
 
@@ -101,25 +93,19 @@ func TestCaptureRecordingFlagFollowsLifecycle(t *testing.T) {
 	r := newTestRecorder(t, GenericRecorderConfig{
 		Recorder: localOnDemandRecorder(t, "capture-state"), FFmpegPath: os.Args[0], SpoolDir: t.TempDir(),
 	})
-	t.Cleanup(func() { _ = r.Stop() })
+	t.Cleanup(func() { r.Stop() })
 	for range 2 {
 		startCaptureTestRecorder(t, r)
 		if !r.IsRecording() {
 			t.Fatal("running recorder is not accepting audio")
 		}
-		deadline := time.Now().Add(3 * time.Second)
-		for r.Status().State == types.ProcessRunning && time.Now().Before(deadline) {
-			r.WriteAudio(make([]byte, 16384))
-			time.Sleep(5 * time.Millisecond)
-		}
+		writeUntilRecorderLeavesRunning(t, r)
 		waitForRecorderState(t, r, types.ProcessError)
 		r.WriteAudio([]byte{1, 2, 3, 4})
-		if r.IsRecording() || len(r.audioCh) != 0 {
+		if r.IsRecording() || r.audioCh != nil {
 			t.Fatal("failed recorder is still accepting audio")
 		}
-		if err := r.Stop(); err != nil {
-			t.Fatal(err)
-		}
+		r.Stop()
 		if r.IsRecording() {
 			t.Fatal("stopped recorder is still accepting audio")
 		}
@@ -132,27 +118,20 @@ func TestManagerWriteAudioSharesOneCopyAcrossRecorders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	add := func(id string, state types.ProcessState) *GenericRecorder {
-		cfg := &types.Recorder{
-			ID:            id,
-			Name:          id,
-			Codec:         types.CodecPCM,
-			RecordingMode: types.RecordingOnDemand,
-			StorageMode:   types.StorageLocal,
-			LocalPath:     t.TempDir(),
-		}
+	t.Cleanup(m.Close)
+	add := func(id string, recording bool) *GenericRecorder {
+		cfg := localOnDemandRecorder(t, id)
 		if err := m.AddRecorder(cfg); err != nil {
 			t.Fatalf("add recorder %s: %v", id, err)
 		}
 		rec := m.recorders[id]
-		rec.state = state
-		rec.recording.Store(state == types.ProcessRunning)
+		rec.recording.Store(recording)
 		rec.audioCh = make(chan []byte, 4)
 		return rec
 	}
-	a := add("a", types.ProcessRunning)
-	b := add("b", types.ProcessRunning)
-	c := add("c", types.ProcessStopped)
+	a := add("a", true)
+	b := add("b", true)
+	c := add("c", false)
 	src := []byte{1, 2, 3, 4}
 	m.WriteAudio(src)
 	src[0] = 99 // Simulate distributor buffer reuse.

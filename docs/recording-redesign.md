@@ -1,7 +1,7 @@
 # Recording Subsystem Redesign
 
-Status: proposal, 2026-10-22, against main `ccb54e1` (after #508). Step 2
-(section 7) is implemented in the follow-up PR to this one. Scope:
+Status: proposal, 2026-10-22, against main `ccb54e1` (after #508). Steps 2
+and 3 (section 7) are implemented in the follow-up PRs to this one. Scope:
 `internal/recording` (recorders, spool, S3 upload, retention, storage alerts)
 and its coupling to `internal/encoder`.
 
@@ -217,8 +217,9 @@ outbox.
 
 - **One loop goroutine per recorder.** Only that goroutine reads or writes the
   run state: current segment, timers, config and error. Everything else
-  talks to it through commands (`Start`, `Stop`, `Update(cfg)`, `Remove`),
-  each with a reply channel. After `Manager.Stop` the loop rejects `Start`.
+  talks to it through commands (start, stop, update, activate, deactivate,
+  close), each run in the loop while the caller waits. After `Manager.Stop`
+  the loop rejects a start until the next `Manager.Start`.
 - **Blocking work never runs in the loop.** Reserving the output on a slow
   share, starting FFmpeg, periodic fsync, and draining and finalizing all run
   in helpers that send their result back as an event. A slow disk therefore
@@ -228,21 +229,29 @@ outbox.
   - A helper whose result arrives for a segment that is no longer current
     cleans up what it created (discards the reservation, kills the process)
     instead of being silently dropped.
-- **Timers send events into the loop.** Rotation and periodic-fsync events
-  carry the ID of the segment they belong to. The on-demand duration limit
-  belongs to the run and keeps its deadline across segment changes. Those
-  two keys replace `startGen`, `rotationGeneration`, `durationGeneration`,
-  `claimedGeneration` and the recheck loop.
-- **Segment states are explicit:** reserving → recording → finalizing →
-  committed, failed or empty. Committed means the outbox holds the recording.
+  - Recorder events are written in order by a writer outside the loop.
+  - Removing a recorder, or `Manager.Close`, waits up to 10 seconds for its
+    stop, helpers and events (#526). A helper still hung on a share after
+    that starts no FFmpeg and discards its reservation.
+- **Timers run in the loop.** A timer acts only while it is still the one
+  the loop armed, so stopping or replacing it also cancels a callback that
+  already fired. The hourly rotation and the retry of a failed hourly run are
+  such timers, and so is the on-demand duration limit, which belongs to the
+  run and keeps its deadline across segment changes. That check replaces
+  `startGen`, `rotationGeneration`, `durationGeneration`, `claimedGeneration`,
+  the recheck loop and the manager's hourly retry scheduler.
+- **A segment** is prepared (the only one whose result the loop takes),
+  current, then finalizing until it is committed, failed or empty. Committed
+  means the outbox holds the recording.
 - **`Status()` reads an `atomic.Pointer[Status]`** published by the loop, so
-  it takes no lock. The manager's status needs no `m.mu` across recorders.
+  it takes no recorder lock; the manager holds `m.mu` only to read its map.
 - **Config rules:**
   - `enabled` and the recording mode apply immediately (#487; #508 already
     does this).
-  - Saving new output settings (codec, bitrate, path, storage mode) starts a
-    new segment immediately with a make-before-break rotation (#512, D3).
-    "Changes apply on save" then holds.
+  - Saving new output settings (codec, bitrate, path, storage mode, S3
+    endpoint or bucket) starts a new segment immediately with a
+    make-before-break rotation (#512, D3). "Changes apply on save" then
+    holds.
 - **The capture path stays as it is:** a bounded per-segment channel feeds a
   writer goroutine for FFmpeg stdin, and rotation is make-before-break (#299,
   #418, #441).
@@ -492,14 +501,14 @@ The corpus lives in `internal/recording/invariants_test.go`, in this PR.
   child process that is SIGKILLed to simulate a crash, either alone or with
   its whole process tree. The harness waits until the whole process group is
   gone. Crash scenarios need process groups and skip on Windows.
-- **It needs three seams,** in `export_test.go`: manual timers, an immediate
-  retry pass, and child scenarios. The redesign must keep offering them.
-- **`knownViolations` is a ratchet.**
-  - A known scenario is skipped only when its violations are exactly the
-    expected ones, or all contain the expected text. Any other violation
-    fails.
-  - A known scenario that starts to hold fails until its entry is removed.
-  - `ZWFM_RECORDING_CORPUS_STRICT=1` turns every violation into a failure.
+- **It needs a few seams,** in `export_test.go`: manual timers, waiting until
+  the recorders have acted on them or on a configuration change, an
+  immediate retry pass, the uploader's clock, and child scenarios. The
+  redesign must keep offering them.
+- **Known violations were a ratchet.** Until step 3, a scenario known to fail
+  on main was skipped only when its violations matched the expected ones,
+  and failed once it started to hold. With the last entry (#514) gone, the
+  ratchet was removed: every scenario must hold.
 
 Results on main `ccb54e1`:
 
@@ -534,9 +543,6 @@ Known limits of the corpus:
   durability watermark is untested until the fault-injection seam exists
   (6.2).
 - Files are small, so multipart uploads are not exercised.
-- The current code does not join retry passes. Temporary directories are
-  therefore removed with retries, and a directory that keeps being written
-  fails the test. `Manager.Close` (4.4) becomes the corpus's quiescence point.
 - The crash scenarios do not run on Windows.
 
 ### 6.2 Next steps

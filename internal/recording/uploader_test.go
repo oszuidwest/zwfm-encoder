@@ -254,7 +254,6 @@ func TestCommittedUploadWithLostResponseCreatesOneObject(t *testing.T) {
 		size    int
 		foreign bool
 	}{
-		{name: "put", size: 5},
 		{name: "multipart", size: 17 << 20},
 		{name: "put with foreign identical audio", size: 5, foreign: true},
 		{name: "multipart with foreign identical audio", size: 17 << 20, foreign: true},

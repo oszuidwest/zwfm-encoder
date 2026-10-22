@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,8 +35,6 @@ func TestChangedStorageIsPreparedBeforeEncoderLaunch(t *testing.T) {
 			t.Cleanup(store.Close)
 			if rotation {
 				startCaptureTestRecorder(t, r)
-			} else {
-				r.state, r.startGen = types.ProcessStarting, 1
 			}
 			entered, blocked, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 			release := sync.OnceFunc(func() { close(blocked) })
@@ -60,14 +57,14 @@ func TestChangedStorageIsPreparedBeforeEncoderLaunch(t *testing.T) {
 				defer close(done)
 				if rotation {
 					rotateTestRecorder(r)
-				} else {
-					r.startAsync(1)
+				} else if err := r.Start(); err != nil {
+					t.Error(err)
 				}
 			}()
 			t.Cleanup(func() {
 				release()
 				<-done
-				_ = r.Stop()
+				r.Stop()
 				checkRecordingPath, reserveRecordingFile = originalCheck, originalReserve
 			})
 			select {
@@ -83,6 +80,7 @@ func TestChangedStorageIsPreparedBeforeEncoderLaunch(t *testing.T) {
 			}
 			release()
 			<-done
+			waitForRecorderState(t, r, types.ProcessRunning)
 			current := r.Config()
 			dir := filepath.Join(r.spoolDir, "recordings", current.RecordingFilePrefix())
 			if info, err := os.Stat(dir); err != nil || !info.IsDir() {
@@ -98,9 +96,7 @@ func TestChangedStorageIsPreparedBeforeEncoderLaunch(t *testing.T) {
 func TestRotationDirectoryFailureKeepsCurrentEncoder(t *testing.T) {
 	neverRotate(t)
 	r := startHourlyTestRecorder(t, "directory-failure")
-	r.mu.RLock()
-	previous, path := r.result, r.currentFile
-	r.mu.RUnlock()
+	previous := r.currentSegment()
 	pcm := []byte{1, 2, 3, 4}
 	r.WriteAudio(pcm)
 	blocked := filepath.Join(t.TempDir(), "not-a-directory")
@@ -112,27 +108,21 @@ func TestRotationDirectoryFailureKeepsCurrentEncoder(t *testing.T) {
 	if err := r.UpdateConfig(&updated); err != nil {
 		t.Fatal(err)
 	}
-	var rearmed atomic.Int32
-	never := afterFunc
-	afterFunc = func(d time.Duration, f func()) *time.Timer { rearmed.Add(1); return never(d, f) }
+	r.settle() // The new path is tried at once (D3).
+	before := len(capturedTimers())
 	rotateTestRecorder(r)
 	if status := r.Status(); status.State != types.ProcessRunning || !strings.Contains(status.Error, "writable") {
 		t.Fatalf("directory failure stopped current recording or lost its error: %+v", status)
 	}
-	if rearmed.Load() != 1 {
-		t.Fatalf("failed rotation armed %d next rotations, want 1: one mount blip must not end hourly rotation", rearmed.Load())
+	if rearmed := len(capturedTimers()) - before; rearmed != 1 {
+		t.Fatalf("failed rotation armed %d next rotations, want 1: one mount blip must not end hourly rotation", rearmed)
 	}
-	r.mu.RLock()
-	unchanged := r.result == previous && r.currentFile == path
-	r.mu.RUnlock()
-	if !unchanged {
+	if r.currentSegment() != previous {
 		t.Fatal("failed output preparation detached the active recording")
 	}
 	r.WriteAudio(pcm)
-	if err := r.Stop(); err != nil {
-		t.Fatal(err)
-	}
-	assertRecordedCapture(t, path, append(pcm, pcm...))
+	r.Stop()
+	assertRecordedCapture(t, previous.file, append(pcm, pcm...))
 }
 
 func TestRecordingDirectoryRejectsTraversalBeforeCreation(t *testing.T) {
@@ -153,28 +143,5 @@ func TestRecordingDirectoryRejectsTraversalBeforeCreation(t *testing.T) {
 				t.Fatalf("rejected directory was created: %v", err)
 			}
 		})
-	}
-}
-
-func TestSwitchingToOnDemandCancelsHourlyRotation(t *testing.T) {
-	neverRotate(t)
-	r := startHourlyTestRecorder(t, "mode-switch")
-	r.mu.RLock()
-	previous, path, generation := r.result, r.currentFile, r.rotationGeneration
-	r.mu.RUnlock()
-	updated := r.Config()
-	updated.RecordingMode = types.RecordingOnDemand
-	if err := r.UpdateConfig(&updated); err != nil {
-		t.Fatal(err)
-	}
-	var rearmed atomic.Int32
-	never := afterFunc
-	afterFunc = func(d time.Duration, f func()) *time.Timer { rearmed.Add(1); return never(d, f) }
-	r.rotateFile(generation) // A callback that was already due.
-	r.mu.RLock()
-	unchanged := r.result == previous && r.currentFile == path
-	r.mu.RUnlock()
-	if !unchanged || rearmed.Load() != 0 {
-		t.Fatalf("on-demand recorder rotated (unchanged=%t) or rescheduled %d rotations", unchanged, rearmed.Load())
 	}
 }

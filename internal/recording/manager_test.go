@@ -6,26 +6,16 @@ import (
 )
 
 func TestSetMaxDurationMinutesPropagatesToExistingRecorders(t *testing.T) {
-	m, err := NewManager("", t.TempDir(), 60, nil)
-	if err != nil {
-		t.Fatal(err)
+	m, _ := newTestManager(t, localOnDemandRecorder(t, "r1"))
+	maxMinutes := func() (minutes int) {
+		m.recorders["r1"].inspect(func(l *run) { minutes = l.maxMinutes })
+		return minutes
 	}
-	cfg := &types.Recorder{
-		ID:            "r1",
-		Name:          "Test",
-		Codec:         types.CodecPCM,
-		RecordingMode: types.RecordingOnDemand,
-		StorageMode:   types.StorageLocal,
-		LocalPath:     t.TempDir(),
-	}
-	if err := m.AddRecorder(cfg); err != nil {
-		t.Fatal(err)
-	}
-	if got := m.recorders["r1"].maxDurationMinutes; got != 60 {
+	if got := maxMinutes(); got != 60 {
 		t.Fatalf("initial maxDurationMinutes: got %d, want 60", got)
 	}
 	m.SetMaxDurationMinutes(90)
-	if got := m.recorders["r1"].maxDurationMinutes; got != 90 {
+	if got := maxMinutes(); got != 90 {
 		t.Errorf("after SetMaxDurationMinutes(90): got %d, want 90", got)
 	}
 }
@@ -58,6 +48,7 @@ func testS3Recorder() *types.Recorder {
 	return &types.Recorder{
 		ID:                "r1",
 		Name:              "Test",
+		Enabled:           true,
 		Codec:             types.CodecMP3,
 		RecordingMode:     types.RecordingHourly,
 		StorageMode:       types.StorageS3,

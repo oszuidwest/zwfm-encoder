@@ -113,9 +113,10 @@ func TestRecordingFileTimeMatchesGeneratedNames(t *testing.T) {
 
 	start := time.Date(2026, time.September, 28, 14, 37, 0, 0, time.Local)
 	for _, codec := range []types.Codec{types.CodecMP3, types.CodecOpus, types.CodecPCM} {
-		recorder := newTestRecorder(t, GenericRecorderConfig{Recorder: &types.Recorder{ID: "stable", Name: "Studio B!", Codec: codec}})
-		name := recorder.generateFilename(start)
-		if got, ok := recordingFileTime(recorder.config.RecordingFilePrefix(), name); !ok || !got.Equal(start) {
+		cfg := types.Recorder{ID: "stable", Name: "Studio B!", Codec: codec}
+		cfg.InitializeFileIdentity()
+		name := recordingFilename(&cfg, start)
+		if got, ok := recordingFileTime(cfg.RecordingFilePrefix(), name); !ok || !got.Equal(start) {
 			t.Errorf("recordingFileTime(%q) = %v, %t; want %v, true", name, got, ok, start)
 		}
 	}
@@ -135,7 +136,6 @@ func TestCleanupLocalFilesDeletesOnlyExpiredOwnedFiles(t *testing.T) {
 		{name: "Studio-2000-01-01-00-00.mp3"},
 		{name: "Studio-2000-01-01-00-01-2.mp3"},
 		{name: "Studio-2000-01-01-00-03.ogg"},
-		{name: "Studio-2000-01-01-00-02.mp3", wantExists: true},
 		{name: "Studio-2000-01-01-00-04.json", wantExists: true},
 		{name: "Studio-2000-01-01-00-05.mp3", wantExists: true}, // Old name, written just now.
 		{name: "Studio-2000-01-01-00-06.mp3", wantExists: true}, // Not delivered yet: it has a ticket.
@@ -152,9 +152,7 @@ func TestCleanupLocalFilesDeletesOnlyExpiredOwnedFiles(t *testing.T) {
 		}
 	}
 
-	currentFile := filepath.Join(directory, "Studio-2000-01-01-00-02.mp3")
 	recorder := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg})
-	recorder.currentFile = currentFile
 	if err := recorder.outbox.newTicket(&ticket{Path: filepath.Join(directory, "Studio-2000-01-01-00-06.mp3")}); err != nil {
 		t.Fatal(err)
 	}

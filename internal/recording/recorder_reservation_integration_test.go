@@ -28,9 +28,7 @@ func TestRealFFmpegWritesReservedOutputForEveryCodec(t *testing.T) {
 				t.Fatalf("output was not reserved before audio: %v", err)
 			}
 			r.WriteAudio(bytes.Repeat([]byte{0, 1, 0, 2}, 48000))
-			if err := r.Stop(); err != nil {
-				t.Fatal(err)
-			}
+			r.Stop()
 			final, err := os.Stat(path)
 			if err != nil || final.Size() == 0 || !os.SameFile(info, final) {
 				t.Fatalf("FFmpeg did not write its reserved inode: %v, %v", final, err)

@@ -107,9 +107,7 @@ func TestLiveRenameKeepsStableNewObjectKeyAndAudio(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.WriteAudio(pcm)
-	if err := r.Stop(); err != nil {
-		t.Fatal(err)
-	}
+	r.Stop()
 	deliverDue(t, r)
 	key := "recordings/" + cfg.RecordingFilePrefix() + "/" + filepath.Base(file)
 	store.mu.Lock()
@@ -195,8 +193,6 @@ func TestLongRecorderIDAndDisplayNameStillProduceWritableOutput(t *testing.T) {
 	r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0]})
 	file := startCaptureTestRecorder(t, r)
 	r.WriteAudio([]byte{1, 2, 3, 4})
-	if err := r.Stop(); err != nil {
-		t.Fatal(err)
-	}
+	r.Stop()
 	assertRecordedCapture(t, file, []byte{1, 2, 3, 4})
 }

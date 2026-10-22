@@ -1,9 +1,7 @@
 package recording
 
 import (
-	"bytes"
 	"cmp"
-	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -15,16 +13,7 @@ import (
 
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
-	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
-
-// lockReconcile takes a recorder's reconcile lock; tests replace it to see a
-// call wait while another update or StopRecorder holds it.
-var lockReconcile = (*sync.Mutex).Lock
-
-// startHourlyRecorder is UpdateRecorder's start; tests replace it to hold that
-// start.
-var startHourlyRecorder = (*GenericRecorder).startHourly
 
 // UploadBacklog counts recordings that are not delivered yet. Pending ones
 // wait for or are in an upload; overdue ones (a subset) wait longer than two
@@ -52,8 +41,7 @@ type Manager struct {
 	outbox             *outbox
 	uploader           *uploader
 
-	cleanupStopCh     chan struct{} // Stop signal for cleanup scheduler; created per run in Start, closed in Stop
-	hourlyRetryStopCh chan struct{} // Stop signal for hourly retry scheduler; created per run in Start, closed in Stop
+	cleanupStopCh chan struct{} // Stop signal for cleanup scheduler; created per run in Start, closed in Stop
 
 	storageProbeMu  sync.Mutex // Bounds non-cancellable filesystem probes across Stop/Start.
 	storagePaths    []types.RecordingStorageStatus
@@ -157,9 +145,18 @@ func (m *Manager) StartUploads() {
 	m.uploader.start(open)
 }
 
-// Close stops delivering recordings and waits for an interrupted upload to be
-// aborted. Call it after Stop and before closing the event log and alerts.
+// Close ends the recorders and stops delivering recordings, waiting for an
+// interrupted upload to be aborted. Call it after Stop and before closing the
+// event log and alerts.
 func (m *Manager) Close() {
+	m.mu.RLock()
+	recorders := slices.Collect(maps.Values(m.recorders))
+	m.mu.RUnlock()
+	var wg sync.WaitGroup // At once, so the close budget is not per recorder.
+	for _, r := range recorders {
+		wg.Go(r.close)
+	}
+	wg.Wait()
 	m.uploader.stop()
 }
 
@@ -186,13 +183,18 @@ func (m *Manager) UploadBacklog() UploadBacklog {
 	return b
 }
 
-// saveDestination stores cfg's S3 credentials for its undelivered recordings,
-// so a credential change reaches them and a removal does not strand them.
-func (m *Manager) saveDestination(cfg *types.Recorder) error {
+// saveDestination stores r's current S3 credentials for its undelivered
+// recordings, so a credential change reaches them and a removal does not
+// strand them. Saves run one at a time and read the configuration then, so
+// the last one stores the latest configuration.
+func (m *Manager) saveDestination(r *GenericRecorder) error {
+	m.outbox.destMu.Lock()
+	defer m.outbox.destMu.Unlock()
+	cfg := r.Config()
 	if cfg.StorageMode == types.StorageLocal || !cfg.HasS3Credentials() {
 		return nil
 	}
-	return m.outbox.saveDestination(destinationID(cfg.ID, cfg.S3Endpoint, cfg.S3Bucket), destinationOf(cfg))
+	return m.outbox.saveDestinationLocked(destinationID(cfg.ID, cfg.S3Endpoint, cfg.S3Bucket), destinationOf(&cfg))
 }
 
 // SetMaxDurationMinutes updates the maximum allowed duration for on-demand recordings.
@@ -204,7 +206,7 @@ func (m *Manager) SetMaxDurationMinutes(minutes int) {
 	m.mu.Unlock()
 
 	for _, r := range recorders {
-		r.SetMaxDurationMinutes(minutes)
+		r.do(func() { r.run.maxMinutes = minutes })
 	}
 }
 
@@ -233,7 +235,7 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 		EventLogger:        m.eventLogger,
 		Outbox:             m.outbox,
 	})
-	if err := m.saveDestination(cfg); err != nil {
+	if err := m.saveDestination(recorder); err != nil {
 		slog.Warn("cannot store upload destination; recording stores it again", "id", cfg.ID, "error", err)
 	}
 	m.recorders[cfg.ID] = recorder
@@ -242,7 +244,7 @@ func (m *Manager) AddRecorder(cfg *types.Recorder) error {
 
 	// Auto-start hourly recorders if encoder is running (ondemand never auto-starts)
 	if m.running {
-		if err := recorder.startHourly(); err != nil {
+		if err := recorder.activate(); err != nil {
 			slog.Warn("failed to auto-start recorder", "id", cfg.ID, "error", err)
 		}
 	}
@@ -267,9 +269,7 @@ func (m *Manager) RemoveRecorder(id string) error {
 	}
 
 	// Delete before teardown so WriteAudio stops seeing this recorder.
-	if err := recorder.Stop(); err != nil {
-		slog.Warn("error stopping recorder during removal", "id", id, "error", err)
-	}
+	recorder.close()
 	m.mu.Lock()
 	delete(m.removing, id)
 	m.mu.Unlock()
@@ -278,12 +278,11 @@ func (m *Manager) RemoveRecorder(id string) error {
 	return nil
 }
 
-// UpdateRecorder updates an existing recorder configuration and applies its
-// enabled state: a disabled recorder stops, and an enabled hourly recorder
-// starts while the manager runs, also after an error the update may have fixed.
-// A failed on-demand run is torn down. It waits for an earlier update or
-// StopRecorder of this recorder, and a disabling or enabled hourly save also
-// waits for a Stop in progress.
+// UpdateRecorder updates an existing recorder configuration and applies it
+// right away: a disabled recorder stops, an enabled hourly recorder starts
+// while the manager runs (also after an error), a failed on-demand run is torn
+// down, and new output settings start a new file. It waits for a stop it
+// causes.
 func (m *Manager) UpdateRecorder(cfg *types.Recorder) error {
 	m.mu.RLock()
 	recorder, exists := m.recorders[cfg.ID]
@@ -291,64 +290,26 @@ func (m *Manager) UpdateRecorder(cfg *types.Recorder) error {
 	if !exists {
 		return fmt.Errorf("recorder not found: %s", cfg.ID)
 	}
-	// A later update waits for this one, including its Stop, so it cannot
-	// change the config between this one's config change and its stop or start.
-	lockReconcile(&recorder.reconcileMu)
-	defer recorder.reconcileMu.Unlock()
-	if err := recorder.UpdateConfig(cfg); err != nil {
+	stopped, err := recorder.update(cfg)
+	if err != nil {
 		return err
 	}
 	// Waiting recordings use the new credentials.
-	if err := m.saveDestination(cfg); err != nil {
+	err = m.saveDestination(recorder)
+	<-stopped
+	if err != nil {
 		return fmt.Errorf("store upload credentials: %w", err)
-	}
-
-	// Stop runs outside the manager lock, like RemoveRecorder. It also tears
-	// down a failed run and waits for a Stop already in progress, so this
-	// disable does not return early.
-	if !cfg.Enabled {
-		if err := recorder.Stop(); err != nil {
-			slog.Warn("error stopping disabled recorder", "id", cfg.ID, "error", err)
-		}
-		return nil
-	}
-	if cfg.RecordingMode != types.RecordingHourly {
-		// Saving clears a failed on-demand run, which only a start would reuse.
-		if err := recorder.stopIn(types.ProcessError); err != nil {
-			slog.Warn("error stopping failed recorder", "id", cfg.ID, "error", err)
-		}
-		return nil
-	}
-	// Wait for a Stop already in progress (such as the duration limit): it
-	// would refuse the start below. A failed run is not stopped: startHourly
-	// restarts it from ProcessError.
-	_ = recorder.stopIn(types.ProcessStopping)
-
-	// m.mu is held across the check and the start, so Manager.Stop and
-	// RemoveRecorder either fail the check or see the recorder starting.
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if !m.running || m.recorders[cfg.ID] != recorder {
-		return nil
-	}
-	if err := startHourlyRecorder(recorder); err != nil && !errors.Is(err, ErrAlreadyRecording) {
-		slog.Warn("failed to start recorder after update", "id", cfg.ID, "error", err)
 	}
 	return nil
 }
 
 // StartRecorder starts an enabled on-demand recorder by ID.
 func (m *Manager) StartRecorder(id string) error {
-	// Held until the start returns, so Stop cannot pass between the running check and Start.
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-
 	recorder, exists := m.recorders[id]
+	m.mu.RUnlock()
 	if !exists {
 		return fmt.Errorf("recorder not found: %s", id)
-	}
-	if !m.running {
-		return ErrManagerNotRunning
 	}
 	return recorder.startOnDemand()
 }
@@ -358,32 +319,10 @@ func (m *Manager) StopRecorder(id string) error {
 	m.mu.RLock()
 	recorder, exists := m.recorders[id]
 	m.mu.RUnlock()
-
 	if !exists {
 		return fmt.Errorf("recorder not found: %s", id)
 	}
-
-	// Serialized with updates, so a save that switches the recorder to hourly
-	// is applied after this stop instead of being undone by it.
-	lockReconcile(&recorder.reconcileMu)
-	defer recorder.reconcileMu.Unlock()
-
-	// Only on-demand recorders can be stopped via API
-	if recorder.Config().RecordingMode == types.RecordingHourly {
-		return ErrHourlyRecorderNotControllable
-	}
-
-	// A start that waits for clock synchronization can be cancelled too.
-	if state := recorder.Status().State; state != types.ProcessRunning && state != types.ProcessStarting {
-		return ErrNotRecording
-	}
-
-	return recorder.Stop()
-}
-
-// Start begins recorder management and is idempotent across source retries.
-func (m *Manager) Start() error {
-	return m.StartIfActive(nil)
+	return recorder.stopOnDemand()
 }
 
 // StartIfActive checks source ownership under the same lock used by Stop.
@@ -407,22 +346,16 @@ func (m *Manager) StartIfActive(active func() bool) error {
 
 	// Each scheduler captures its per-run stop channel.
 	m.cleanupStopCh = make(chan struct{})
-	m.hourlyRetryStopCh = make(chan struct{})
 
-	// Start enabled hourly recorders (ondemand never auto-starts). The config
-	// check is part of the start, as an update may change a recorder meanwhile.
+	// Start enabled hourly recorders (ondemand never auto-starts).
 	startErrors := make(map[string]error)
 	for id, recorder := range m.recorders {
-		if err := recorder.startHourly(); err != nil {
+		if err := recorder.activate(); err != nil {
 			startErrors[id] = err
 		}
 	}
 
-	// Start cleanup scheduler
 	m.startCleanupScheduler(m.cleanupStopCh)
-
-	// Start hourly retry scheduler for failed recorders
-	m.startHourlyRetryScheduler(m.hourlyRetryStopCh)
 	go m.monitorStorage(m.cleanupStopCh)
 
 	count := len(m.recorders)
@@ -442,53 +375,30 @@ func (m *Manager) IsRunning() bool {
 	return m.running
 }
 
-// Stop stops all recorders and background schedulers.
+// Stop stops all recorders and background schedulers. Recorders refuse
+// starts until the next Start.
 func (m *Manager) Stop() error {
 	m.lifecycleMu.Lock()
 	defer m.lifecycleMu.Unlock()
 	m.mu.Lock()
-	// Close scheduler channels once; on-demand recorders may still need Stop.
 	if m.running {
 		m.running = false
 		close(m.cleanupStopCh)
-		close(m.hourlyRetryStopCh)
 	}
-
-	// Snapshot before blocking on FFmpeg shutdown.
 	recorders := slices.Collect(maps.Values(m.recorders))
 	m.mu.Unlock()
 
-	// Stop recorders concurrently so one process cannot stall the rest.
-	var (
-		wg    sync.WaitGroup
-		errMu sync.Mutex
-		errs  []error
-	)
+	// Every recorder stops at once, so one process cannot stall the rest.
+	stopped := make([]<-chan struct{}, 0, len(recorders))
 	for _, recorder := range recorders {
-		wg.Go(func() {
-			if err := recorder.Stop(); err != nil {
-				slog.Warn("error stopping recorder", "id", recorder.ID(), "error", err)
-				errMu.Lock()
-				errs = append(errs, err)
-				errMu.Unlock()
-			}
-		})
+		stopped = append(stopped, recorder.deactivate())
 	}
-	wg.Wait()
+	for _, done := range stopped {
+		<-done
+	}
 
 	slog.Info("recording manager stopped")
-	return errors.Join(errs...)
-}
-
-// WriteAudio fans out one PCM copy without blocking the distributor.
-func (m *Manager) WriteAudio(pcm []byte) {
-	var shared []byte
-	m.WriteAudioShared(func() []byte {
-		if shared == nil {
-			shared = bytes.Clone(pcm)
-		}
-		return shared
-	})
+	return nil
 }
 
 // WriteAudioShared queues one immutable chunk for every recording recorder,
@@ -526,12 +436,6 @@ func (m *Manager) Statuses() map[string]types.ProcessStatus {
 	return statuses
 }
 
-// startHourlyRetryScheduler retries failed hourly recorders until stopCh
-// closes. Capturing stopCh avoids racing Stop's field reset.
-func (m *Manager) startHourlyRetryScheduler(stopCh <-chan struct{}) {
-	util.RunHourly(stopCh, "recorder retry", m.retryFailedHourlyRecorders)
-}
-
 // refreshDestinations stores every recorder's current credentials again, so
 // one whose save failed (at startup, say) recovers once storage does. The
 // uploader runs it hourly, also while capture is stopped.
@@ -540,34 +444,8 @@ func (m *Manager) refreshDestinations() {
 	recorders := slices.Collect(maps.Values(m.recorders))
 	m.mu.RUnlock()
 	for _, r := range recorders {
-		// Serialized with updates, so it never writes an older config.
-		lockReconcile(&r.reconcileMu)
-		cfg := r.Config()
-		if err := m.saveDestination(&cfg); err != nil {
-			slog.Warn("cannot store upload destination", "id", cfg.ID, "error", err)
-		}
-		r.reconcileMu.Unlock()
-	}
-}
-
-func (m *Manager) retryFailedHourlyRecorders() {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if !m.running {
-		return
-	}
-
-	for _, recorder := range m.recorders {
-		cfg := recorder.Config()
-		if cfg.RecordingMode == types.RecordingHourly && cfg.Enabled {
-			status := recorder.Status()
-			if status.State == types.ProcessError {
-				slog.Info("retrying failed hourly recorder at hour boundary", "id", cfg.ID, "name", cfg.Name)
-				// An update may have changed it since the check above.
-				if err := recorder.startHourly(); err != nil {
-					slog.Warn("failed to retry hourly recorder", "id", recorder.ID(), "error", err)
-				}
-			}
+		if err := m.saveDestination(r); err != nil {
+			slog.Warn("cannot store upload destination", "id", r.id, "error", err)
 		}
 	}
 }

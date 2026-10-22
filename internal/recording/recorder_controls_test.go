@@ -20,45 +20,33 @@ func TestBlockedFilenameCheckDoesNotBlockRecorderControls(t *testing.T) {
 			name = "rotation"
 		}
 		t.Run(name, func(t *testing.T) {
-			executable, err := os.Executable()
-			if err != nil {
-				t.Fatal(err)
-			}
-			m, err := NewManager(executable, t.TempDir(), 0, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
 			cfg := localOnDemandRecorder(t, "slow")
-			cfg.RecordingMode, cfg.Enabled = types.RecordingHourly, true
-			if err := m.AddRecorder(cfg); err != nil {
-				t.Fatal(err)
-			}
-			r := m.recorders[cfg.ID]
+			cfg.RecordingMode = types.RecordingHourly
+			m, r := newTestManager(t, cfg)
 			if rotation {
 				startCaptureTestRecorder(t, r)
-			} else {
-				r.state, r.startGen = types.ProcessStarting, 1
 			}
 			entered, blocked, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 			release := sync.OnceFunc(func() { close(blocked) })
 			markEntered := sync.OnceFunc(func() { close(entered) })
 			originalReserve := reserveRecordingFile
 			reserveRecordingFile = func(path string) (*os.File, error) {
+				file, err := originalReserve(path)
 				if strings.HasPrefix(path, cfg.LocalPath+string(os.PathSeparator)) {
 					markEntered()
 					<-blocked
 				}
-				return originalReserve(path)
+				return file, err
 			}
 			go func() {
 				defer close(done)
 				if rotation {
 					rotateTestRecorder(r)
-				} else {
-					r.startAsync(1)
+				} else if err := m.Start(); err != nil {
+					t.Error(err)
 				}
 			}()
-			t.Cleanup(func() { release(); <-done; reserveRecordingFile = originalReserve; _ = m.Stop() })
+			t.Cleanup(func() { release(); <-done; reserveRecordingFile = originalReserve })
 			select {
 			case <-entered:
 			case <-time.After(3 * time.Second):
@@ -87,7 +75,8 @@ func TestBlockedFilenameCheckDoesNotBlockRecorderControls(t *testing.T) {
 			}
 			release()
 			<-done
-			if status := r.Status(); status.State != types.ProcessStopped || status.Error != "" || r.result != nil {
+			waitForEmptyDir(t, cfg.LocalPath)
+			if status := r.Status(); status.State != types.ProcessStopped || status.Error != "" || r.currentSegment() != nil {
 				t.Fatalf("obsolete file preparation changed the stopped recorder: %+v", status)
 			}
 		})
@@ -107,19 +96,21 @@ func TestFilenamePreparationRevalidatesConfigAndRun(t *testing.T) {
 			}
 			cfg := localOnDemandRecorder(t, "test")
 			r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, FFmpegPath: executable, SpoolDir: t.TempDir()})
-			r.state, r.startGen = types.ProcessStarting, 1
-			entered, blocked, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			entered, blocked := make(chan struct{}), make(chan struct{})
 			release := sync.OnceFunc(func() { close(blocked) })
 			originalReserve := reserveRecordingFile
 			blockFirst := sync.OnceFunc(func() { close(entered); <-blocked })
 			reserveRecordingFile = func(path string) (*os.File, error) {
+				file, err := originalReserve(path)
 				if strings.HasPrefix(path, cfg.LocalPath+string(os.PathSeparator)) {
 					blockFirst()
 				}
-				return originalReserve(path)
+				return file, err
 			}
-			go func() { defer close(done); r.startAsync(1) }()
-			t.Cleanup(func() { release(); <-done; reserveRecordingFile = originalReserve; _ = r.Stop() })
+			if err := r.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { release(); reserveRecordingFile = originalReserve })
 			select {
 			case <-entered:
 			case <-time.After(3 * time.Second):
@@ -131,28 +122,21 @@ func TestFilenamePreparationRevalidatesConfigAndRun(t *testing.T) {
 				t.Fatal(err)
 			}
 			if restart {
-				if err := r.Stop(); err != nil {
-					t.Fatal(err)
-				}
+				r.Stop()
 				if err := r.Start(); err != nil {
 					t.Fatal(err)
 				}
 				waitForRecorderState(t, r, types.ProcessRunning)
 			}
-			r.mu.RLock()
-			newResult := r.result
-			r.mu.RUnlock()
+			waitForRecorderState(t, r, types.ProcessRunning)
+			newSegment := r.currentSegment()
 			release()
-			<-done
-			if files, err := os.ReadDir(cfg.LocalPath); err != nil || len(files) != 0 {
-				t.Fatalf("stale configuration left recording reservations: %v, %v", files, err)
+			waitForEmptyDir(t, cfg.LocalPath)
+			seg, state := r.currentSegment(), r.Status().State
+			if state != types.ProcessRunning || !strings.HasPrefix(seg.file, filepath.Join(updated.LocalPath, updated.RecordingFilePrefix()+"-")) || seg.cfg.Name != updated.Name {
+				t.Fatalf("prepared output used stale state: state=%s, file=%s", state, seg.file)
 			}
-			r.mu.RLock()
-			defer r.mu.RUnlock()
-			if r.state != types.ProcessRunning || !strings.HasPrefix(r.currentFile, filepath.Join(updated.LocalPath, updated.RecordingFilePrefix()+"-")) || r.config.Name != updated.Name {
-				t.Fatalf("prepared output used stale state: state=%s, file=%s", r.state, r.currentFile)
-			}
-			if restart && r.result != newResult {
+			if seg != newSegment {
 				t.Fatal("old preparation replaced the newer run's process")
 			}
 		})
@@ -177,14 +161,14 @@ func TestHungFilenameCheckDoesNotMultiplyAcrossRestarts(t *testing.T) {
 		return originalReserve(path)
 	}
 	// Five concurrent filename preparations share one blocked filesystem check.
+	job := prepareJob{cfg: r.Config(), dir: cfg.LocalPath, lock: new(sync.Mutex), at: time.Now()}
 	var starts sync.WaitGroup
 	t.Cleanup(func() { release(); starts.Wait(); reserveRecordingFile = originalReserve })
 	for range 5 {
 		starts.Go(func() {
-			r.mu.Lock()
-			output, _, _ := r.prepareFilenameLocked(time.Now())
-			r.mu.Unlock()
-			output.discard()
+			if output, err := r.reserveOutput(&job); err == nil {
+				output.discard()
+			}
 		})
 	}
 	// Directory preparation runs first; wait for the first check to block.

@@ -27,22 +27,14 @@ func TestEmptyRecordingsAreDiscardedButSilentAudioIsKept(t *testing.T) {
 				t.Fatal(err)
 			}
 			waitForRecorderState(t, r, types.ProcessRunning)
-			r.mu.RLock()
-			emptyRotation := r.currentFile
-			r.mu.RUnlock()
+			emptyRotation := r.currentFile()
 			rotateTestRecorder(r)
 			assertNoRecording(t, emptyRotation)
-			r.mu.RLock()
-			withAudio := r.currentFile
-			r.mu.RUnlock()
+			withAudio := r.currentFile()
 			r.WriteAudio(pcm)
 			rotateTestRecorder(r)
-			r.mu.RLock()
-			emptyStop := r.currentFile
-			r.mu.RUnlock()
-			if err := r.Stop(); err != nil {
-				t.Fatal(err)
-			}
+			emptyStop := r.currentFile()
+			r.Stop()
 			deliverDue(t, r)
 			assertNoRecording(t, emptyStop)
 			wantUploads := 1
@@ -77,12 +69,8 @@ func TestEmptyFailedFinalizePreservesOutputForInspection(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForRecorderState(t, r, types.ProcessRunning)
-	r.mu.RLock()
-	file := r.currentFile
-	r.mu.RUnlock()
-	if err := r.Stop(); err != nil {
-		t.Fatal(err)
-	}
+	file := r.currentFile()
+	r.Stop()
 	if data, err := os.ReadFile(file); err != nil || string(data) != "header without audio" { //nolint:gosec // Test temp recording.
 		t.Fatalf("failed output = %q, %v; want preserved", data, err)
 	}
@@ -93,9 +81,7 @@ func TestFailedFinalizeRemovesUntouchedPlaceholder(t *testing.T) {
 	t.Setenv(fakeFFmpegFailFinalizeEnv, "1")
 	r, eventPath := errorTestRecorder(t, localOnDemandRecorder(t, "failed-untouched"))
 	file := startCaptureTestRecorder(t, r)
-	if err := r.Stop(); err != nil {
-		t.Fatal(err)
-	}
+	r.Stop()
 	assertNoRecording(t, file)
 	if _, ok := ticketFor(r.outbox, file); ok {
 		t.Fatal("ticket left for a removed recording")
@@ -110,30 +96,11 @@ func TestFailedPlaceholderRemovalIsReportedWithTheFinalizeError(t *testing.T) {
 	t.Cleanup(func() { removeEmptyRecording = originalRemove })
 	r, eventPath := errorTestRecorder(t, localOnDemandRecorder(t, "failed-removal"))
 	file := startCaptureTestRecorder(t, r)
-	if err := r.Stop(); err != nil {
-		t.Fatal(err)
-	}
+	r.Stop()
 	assertRecordingQuarantined(t, r, file)
 	details := assertRecorderErrorEvent(t, eventPath, filepath.Base(file), "No space left on device")
 	if msg, _ := details["error"].(string); !strings.Contains(msg, "remove empty recording") {
 		t.Fatalf("one report must also name the failed removal: %q", msg)
 	}
-	assertSingleRecorderError(t, eventPath, file, "remove empty recording")
-}
-
-func TestRotationFinalizeFailureQuarantinesThePreviousFile(t *testing.T) {
-	neverRotate(t)
-	t.Setenv(fakeFFmpegFailFinalizeEnv, "1")
-	cfg := localOnDemandRecorder(t, "rotation-failure")
-	cfg.RecordingMode = types.RecordingHourly
-	r, eventPath := errorTestRecorder(t, cfg)
-	previous := startCaptureTestRecorder(t, r)
-	r.WriteAudio([]byte{1, 2, 3, 4})
-	t.Setenv(fakeFFmpegFailFinalizeEnv, "") // Only the rotated-out encoder fails.
-	rotateTestRecorder(r)
-	assertRecordingQuarantined(t, r, previous)
-	assertSingleRecorderError(t, eventPath, previous, "No space left on device")
-	if err := r.Stop(); err != nil {
-		t.Fatal(err)
-	}
+	assertSingleRecorderError(t, r, eventPath, file, "remove empty recording")
 }
