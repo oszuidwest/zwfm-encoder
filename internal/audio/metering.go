@@ -33,37 +33,32 @@ type LevelData struct {
 // ignored.
 func ProcessSamples(buf []byte, data *LevelData) {
 	for i := 0; i+bytesPerFrame <= len(buf); i += bytesPerFrame {
-		accumulateFrame(buf[i:], data)
-	}
-}
+		//nolint:gosec // Intentional reinterpretation of unsigned PCM to signed
+		leftSample := int16(binary.LittleEndian.Uint16(buf[i:]))
+		//nolint:gosec // Intentional reinterpretation of unsigned PCM to signed
+		rightSample := int16(binary.LittleEndian.Uint16(buf[i+2:]))
+		left := float64(leftSample)
+		right := float64(rightSample)
 
-// accumulateFrame folds one S16LE stereo frame into data.
-func accumulateFrame(frame []byte, data *LevelData) {
-	//nolint:gosec // Intentional reinterpretation of unsigned PCM to signed
-	leftSample := int16(binary.LittleEndian.Uint16(frame[0:]))
-	//nolint:gosec // Intentional reinterpretation of unsigned PCM to signed
-	rightSample := int16(binary.LittleEndian.Uint16(frame[2:]))
-	left := float64(leftSample)
-	right := float64(rightSample)
+		data.SumSquaresL += left * left
+		data.SumSquaresR += right * right
 
-	data.SumSquaresL += left * left
-	data.SumSquaresR += right * right
+		if absL := math.Abs(left); absL > data.PeakL {
+			data.PeakL = absL
+		}
+		if absR := math.Abs(right); absR > data.PeakR {
+			data.PeakR = absR
+		}
 
-	if absL := math.Abs(left); absL > data.PeakL {
-		data.PeakL = absL
-	}
-	if absR := math.Abs(right); absR > data.PeakR {
-		data.PeakR = absR
-	}
+		if leftSample >= ClipThreshold || leftSample <= -ClipThreshold {
+			data.ClipCountL++
+		}
+		if rightSample >= ClipThreshold || rightSample <= -ClipThreshold {
+			data.ClipCountR++
+		}
 
-	if leftSample >= ClipThreshold || leftSample <= -ClipThreshold {
-		data.ClipCountL++
+		data.SampleCount++
 	}
-	if rightSample >= ClipThreshold || rightSample <= -ClipThreshold {
-		data.ClipCountR++
-	}
-
-	data.SampleCount++
 }
 
 // Levels contains calculated audio levels in dB.
@@ -104,13 +99,7 @@ func CalculateLevels(data *LevelData) Levels {
 	}
 }
 
-// Reset clears the metering window while preserving PCM frame alignment.
+// Reset clears the metering window.
 func (d *LevelData) Reset() {
-	d.SampleCount = 0
-	d.SumSquaresL = 0
-	d.SumSquaresR = 0
-	d.PeakL = 0
-	d.PeakR = 0
-	d.ClipCountL = 0
-	d.ClipCountR = 0
+	*d = LevelData{}
 }

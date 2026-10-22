@@ -553,12 +553,8 @@ func writeSynced(name string, data []byte) error {
 		return err
 	}
 	_, err = f.Write(data)
-	if syncErr := f.Sync(); err == nil {
-		err = syncErr
-	}
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
-	}
+	// Sync and close even on failure; preserve the first error.
+	err = cmp.Or(err, f.Sync(), f.Close())
 	if err != nil {
 		_ = os.Remove(name) // #nosec G703 -- The file this call just created.
 	}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 // UploadBacklog counts recordings that are not delivered yet. Pending ones
@@ -348,7 +349,7 @@ func (m *Manager) Start() error {
 		}
 	}
 
-	m.startCleanupScheduler(m.cleanupStopCh)
+	util.RunHourly(m.cleanupStopCh, "recording cleanup", m.runCleanup)
 	go m.monitorStorage(m.cleanupStopCh)
 
 	count := len(m.recorders)

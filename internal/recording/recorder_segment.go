@@ -492,8 +492,9 @@ func (r *GenericRecorder) finishOutput(seg *segment, cause error) error {
 		empty = size == 0
 	}
 	if ownErr == nil && empty {
-		discardErr := r.discardEmpty(seg)
+		discardErr := seg.output.remove()
 		if discardErr == nil {
+			slog.Info("discarded recording without audio", "id", r.id, "file", filepath.Base(seg.file))
 			return err
 		}
 		err = errors.Join(err, discardErr)
@@ -514,15 +515,6 @@ func (r *GenericRecorder) finishOutput(seg *segment, cause error) error {
 	p := detailsOf(&seg.cfg)
 	p.Filename, p.S3Key = filepath.Base(seg.file), seg.output.ticket.Key
 	r.events.emit(eventlog.UploadQueued, p)
-	return nil
-}
-
-// discardEmpty removes a released output without audio.
-func (r *GenericRecorder) discardEmpty(seg *segment) error {
-	if err := seg.output.remove(); err != nil {
-		return err
-	}
-	slog.Info("discarded recording without audio", "id", r.id, "file", filepath.Base(seg.file))
 	return nil
 }
 
