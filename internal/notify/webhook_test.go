@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -83,24 +84,34 @@ func TestWebhookChannelSendPayloads(t *testing.T) {
 			},
 		},
 		{
-			name: "upload abandoned",
+			name: "uploads overdue",
 			send: func(channel *WebhookChannel, cfg *config.Snapshot) error {
-				return channel.SendUploadAbandoned(context.Background(), cfg, UploadAbandonedData{
-					RecorderName: "Archive",
-					Filename:     "archive.mp3",
-					S3Key:        "recordings/Archive/archive.mp3",
-					RetryCount:   24,
-					LastError:    "request timed out",
+				return channel.SendUploadsOverdue(context.Background(), cfg, &UploadsOverdueData{
+					Overdue:   true,
+					Count:     3,
+					Oldest:    time.Date(2026, 10, 22, 8, 0, 0, 0, time.UTC),
+					Recorders: []string{"Archive", "Studio"},
+					LastError: "request timed out",
 				})
 			},
 			want: map[string]any{
-				"event":         "upload_abandoned",
-				"message":       "Upload abandoned for archive.mp3 after 24 retries: request timed out",
-				"recorder_name": "Archive",
-				"filename":      "archive.mp3",
-				"s3_key":        "recordings/Archive/archive.mp3",
-				"retry_count":   float64(24),
-				"last_error":    "request timed out",
+				"event": "upload_overdue",
+				"message": "3 recordings have waited more than 2 hours for S3 (oldest since 2026-10-22T08:00:00Z; " +
+					"recorders: Archive, Studio). Last error: request timed out",
+				"overdue_uploads": float64(3),
+				"oldest_upload":   "2026-10-22T08:00:00Z",
+				"recorders":       []any{"Archive", "Studio"},
+				"last_error":      "request timed out",
+			},
+		},
+		{
+			name: "uploads overdue cleared",
+			send: func(channel *WebhookChannel, cfg *config.Snapshot) error {
+				return channel.SendUploadsOverdue(context.Background(), cfg, &UploadsOverdueData{})
+			},
+			want: map[string]any{
+				"event":   "upload_overdue_cleared",
+				"message": "All overdue recordings have been uploaded.",
 			},
 		},
 	}
@@ -210,7 +221,7 @@ func assertWebhookPayload(t *testing.T, payload, want map[string]any) {
 	t.Helper()
 
 	for key, wantValue := range want {
-		if got := payload[key]; got != wantValue {
+		if got := payload[key]; !reflect.DeepEqual(got, wantValue) {
 			t.Errorf("payload[%q] = %v, want %v", key, got, wantValue)
 		}
 	}

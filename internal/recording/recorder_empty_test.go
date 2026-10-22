@@ -43,14 +43,14 @@ func TestEmptyRecordingsAreDiscardedButSilentAudioIsKept(t *testing.T) {
 			if err := r.Stop(); err != nil {
 				t.Fatal(err)
 			}
-			waitForRetryPass(t, r) // Stop may leave the rotated file to the retry queue.
+			deliverDue(t, r)
 			assertNoRecording(t, emptyStop)
 			wantUploads := 1
 			if mode == types.StorageLocal {
 				wantUploads = 0
 			}
-			if got := len(uploads()); got != wantUploads || r.PendingUploadCount() != 0 {
-				t.Errorf("uploads = %d, pending = %d; want %d, 0", got, r.PendingUploadCount(), wantUploads)
+			if got := len(uploads()); got != wantUploads || pendingTickets(r) != 0 {
+				t.Errorf("uploads = %d, pending = %d; want %d, 0", got, pendingTickets(r), wantUploads)
 			}
 			if mode != types.StorageS3 {
 				data, err := os.ReadFile(withAudio) //nolint:gosec // Test temp recording.
@@ -97,7 +97,9 @@ func TestFailedFinalizeRemovesUntouchedPlaceholder(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertNoRecording(t, file)
-	assertNoRecording(t, file+unfinalizedRecordingSuffix)
+	if _, ok := ticketFor(r.outbox, file); ok {
+		t.Fatal("ticket left for a removed recording")
+	}
 	assertRecorderErrorEvent(t, eventPath, filepath.Base(file), "No space left on device")
 }
 
@@ -111,7 +113,7 @@ func TestFailedPlaceholderRemovalIsReportedWithTheFinalizeError(t *testing.T) {
 	if err := r.Stop(); err != nil {
 		t.Fatal(err)
 	}
-	assertRecordingQuarantined(t, file)
+	assertRecordingQuarantined(t, r, file)
 	details := assertRecorderErrorEvent(t, eventPath, filepath.Base(file), "No space left on device")
 	if msg, _ := details["error"].(string); !strings.Contains(msg, "remove empty recording") {
 		t.Fatalf("one report must also name the failed removal: %q", msg)
@@ -129,7 +131,7 @@ func TestRotationFinalizeFailureQuarantinesThePreviousFile(t *testing.T) {
 	r.WriteAudio([]byte{1, 2, 3, 4})
 	t.Setenv(fakeFFmpegFailFinalizeEnv, "") // Only the rotated-out encoder fails.
 	rotateTestRecorder(r)
-	assertRecordingQuarantined(t, previous)
+	assertRecordingQuarantined(t, r, previous)
 	assertSingleRecorderError(t, eventPath, previous, "No space left on device")
 	if err := r.Stop(); err != nil {
 		t.Fatal(err)

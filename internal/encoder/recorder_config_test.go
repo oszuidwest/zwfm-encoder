@@ -14,7 +14,8 @@ import (
 )
 
 func TestRecorderRuntimeFailureReportsPersistedChange(t *testing.T) {
-	for _, operation := range []string{"add", "update", "remove"} {
+	// A fresh add cannot fail at runtime: the config generates a new ID.
+	for _, operation := range []string{"update", "remove"} {
 		t.Run(operation, func(t *testing.T) {
 			e := newSourceLifecycleTestEncoder(t, "exit")
 			t.Cleanup(e.alertOrchestrator.Close)
@@ -30,18 +31,11 @@ func TestRecorderRuntimeFailureReportsPersistedChange(t *testing.T) {
 			}
 			recorder := &types.Recorder{Name: "Before", Codec: types.CodecMP3, RecordingMode: types.RecordingOnDemand,
 				StorageMode: types.StorageLocal, LocalPath: t.TempDir()}
-			if operation != "add" {
-				// Config exists, but runtime has lost the recorder.
-				if err := e.config.AddRecorder(recorder); err != nil {
-					t.Fatal(err)
-				}
+			// Config exists, but runtime has lost the recorder.
+			if err := e.config.AddRecorder(recorder); err != nil {
+				t.Fatal(err)
 			}
 			switch operation {
-			case "add":
-				if err := os.WriteFile(filepath.Join(spool, "uploads"), nil, 0o600); err != nil {
-					t.Fatal(err)
-				}
-				err = e.AddRecorder(recorder)
 			case "update":
 				recorder.Name = "After"
 				err = e.UpdateRecorder(recorder)

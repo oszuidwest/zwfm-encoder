@@ -113,7 +113,7 @@ func TestRecordingFileTimeMatchesGeneratedNames(t *testing.T) {
 
 	start := time.Date(2026, time.September, 28, 14, 37, 0, 0, time.Local)
 	for _, codec := range []types.Codec{types.CodecMP3, types.CodecOpus, types.CodecPCM} {
-		recorder := NewGenericRecorder(GenericRecorderConfig{Recorder: &types.Recorder{ID: "stable", Name: "Studio B!", Codec: codec}})
+		recorder := newTestRecorder(t, GenericRecorderConfig{Recorder: &types.Recorder{ID: "stable", Name: "Studio B!", Codec: codec}})
 		name := recorder.generateFilename(start)
 		if got, ok := recordingFileTime(recorder.config.RecordingFilePrefix(), name); !ok || !got.Equal(start) {
 			t.Errorf("recordingFileTime(%q) = %v, %t; want %v, true", name, got, ok, start)
@@ -138,16 +138,13 @@ func TestCleanupLocalFilesDeletesOnlyExpiredOwnedFiles(t *testing.T) {
 		{name: "Studio-2000-01-01-00-02.mp3", wantExists: true},
 		{name: "Studio-2000-01-01-00-04.json", wantExists: true},
 		{name: "Studio-2000-01-01-00-05.mp3", wantExists: true}, // Old name, written just now.
+		{name: "Studio-2000-01-01-00-06.mp3", wantExists: true}, // Not delivered yet: it has a ticket.
 		{name: recentFile, wantExists: true},
 		{name: "Studio-B-2000-01-01-00-00.mp3", wantExists: true},
 	}
 	old := time.Now().AddDate(0, 0, -2)
 	for _, file := range files {
 		writeCleanupFile(t, directory, file.name)
-		writeCleanupFile(t, directory, file.name+unfinalizedRecordingSuffix)
-		if err := os.Chmod(filepath.Join(directory, file.name+unfinalizedRecordingSuffix), 0o400); err != nil {
-			t.Fatal(err)
-		}
 		if file.name != "Studio-2000-01-01-00-05.mp3" {
 			if err := os.Chtimes(filepath.Join(directory, file.name), old, old); err != nil {
 				t.Fatal(err)
@@ -156,10 +153,13 @@ func TestCleanupLocalFilesDeletesOnlyExpiredOwnedFiles(t *testing.T) {
 	}
 
 	currentFile := filepath.Join(directory, "Studio-2000-01-01-00-02.mp3")
-	recorder := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg})
+	recorder := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg})
 	recorder.currentFile = currentFile
+	if err := recorder.outbox.newTicket(&ticket{Path: filepath.Join(directory, "Studio-2000-01-01-00-06.mp3")}); err != nil {
+		t.Fatal(err)
+	}
 
-	manager := &Manager{}
+	manager := &Manager{outbox: recorder.outbox}
 	manager.cleanupLocalFiles(recorder)
 
 	for _, file := range files {
@@ -170,10 +170,6 @@ func TestCleanupLocalFilesDeletesOnlyExpiredOwnedFiles(t *testing.T) {
 			t.Errorf("expected %q to survive cleanup: %v", file.name, err)
 		case !file.wantExists && !os.IsNotExist(err):
 			t.Errorf("expected %q to be deleted, stat error = %v", file.name, err)
-		}
-		_, markerErr := os.Stat(path + unfinalizedRecordingSuffix)
-		if file.wantExists && markerErr != nil || !file.wantExists && !os.IsNotExist(markerErr) {
-			t.Errorf("marker cleanup did not follow owned recording %q: %v", file.name, markerErr)
 		}
 	}
 }
@@ -217,7 +213,7 @@ func TestCleanupS3FilesDeletesOnlyObjectsExpiredByNameAndUploadTime(t *testing.T
 	cfg := testS3Recorder()
 	cfg.S3Endpoint = server.URL
 	cfg.RetentionDays = 1
-	(&Manager{}).cleanupS3Files(NewGenericRecorder(GenericRecorderConfig{Recorder: cfg}))
+	(&Manager{}).cleanupS3Files(newTestRecorder(t, GenericRecorderConfig{Recorder: cfg}))
 
 	mu.Lock()
 	defer mu.Unlock()

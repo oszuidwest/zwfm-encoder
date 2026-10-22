@@ -17,7 +17,7 @@ func TestModeChangesRescheduleRecordingBounds(t *testing.T) {
 	}
 	cfg := localOnDemandRecorder(t, "mode-bounds")
 	cfg.RecordingMode = types.RecordingHourly
-	r := NewGenericRecorder(GenericRecorderConfig{
+	r := newTestRecorder(t, GenericRecorderConfig{
 		Recorder: cfg, FFmpegPath: executable, SpoolDir: t.TempDir(), MaxDurationMinutes: 60,
 	})
 	t.Cleanup(func() { _ = r.Stop() })

@@ -20,7 +20,7 @@ func TestRecorderFileIdentitySurvivesRename(t *testing.T) {
 	t.Parallel()
 	cfg := localOnDemandRecorder(t, "stable-id")
 	cfg.Name = "Before"
-	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg})
+	r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg})
 	at := time.Date(2026, 10, 18, 14, 0, 0, 0, time.Local)
 	before := r.generateFilename(at)
 	updated := *cfg
@@ -70,7 +70,7 @@ func TestRecorderRenameKeepsLegacyAndIDS3Retention(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			cfg.S3Endpoint = server.URL
-			r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg})
+			r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg})
 			updated := *cfg
 			updated.Name = "After"
 			if err := r.UpdateConfig(&updated); err != nil {
@@ -94,46 +94,10 @@ func TestRecorderRenameKeepsLegacyAndIDS3Retention(t *testing.T) {
 	}
 }
 
-func TestRecorderRenamePreservesPendingLegacyUploadIdentity(t *testing.T) {
-	t.Parallel()
-	store, cfg := newIdentityStore(t)
-	cfg.Name = "Before"
-	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
-	file := writeSpoolFile(t, r.spoolDir, cfg.ID, "Before-2026-10-18-14-00.mp3", "audio")
-	key := "recordings/Before/Before-2026-10-18-14-00.mp3"
-	pending := pendingUpload{request: uploadRequest{localPath: file, s3Key: key, fileSize: 5, deleteAfterUpload: true}, uploadID: "original-upload-id"}
-	if err := r.savePendingUpload(&pending); err != nil {
-		t.Fatal(err)
-	}
-	updated := r.Config()
-	updated.Name = "After"
-	if err := r.UpdateConfig(&updated); err != nil {
-		t.Fatal(err)
-	}
-	restarted := NewGenericRecorder(GenericRecorderConfig{Recorder: &updated, SpoolDir: r.spoolDir})
-	if err := restarted.reconcilePendingUploads(); err != nil {
-		t.Fatal(err)
-	}
-	if len(restarted.retryQueue) != 1 {
-		t.Fatalf("recovered uploads = %d, want 1", len(restarted.retryQueue))
-	}
-	got := restarted.retryQueue[0]
-	if got.uploadID != pending.uploadID || got.baseKey != pending.baseKey || got.request.s3Key != key || got.request.localPath != file {
-		t.Fatalf("rename changed persisted upload identity: %+v", got)
-	}
-	restarted.processRetryQueue()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	object, ok := store.objects[key]
-	if !ok || object.id != pending.uploadID || string(object.body) != "audio" || len(store.objects) != 1 {
-		t.Fatalf("legacy retry changed identity or duplicated audio: %+v", store.objects)
-	}
-}
-
 func TestLiveRenameKeepsStableNewObjectKeyAndAudio(t *testing.T) {
 	store, cfg := newIdentityStore(t)
 	cfg.Name, cfg.RecordingMode = "Before", types.RecordingOnDemand
-	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0], SpoolDir: t.TempDir()})
+	r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0], SpoolDir: t.TempDir()})
 	file := startCaptureTestRecorder(t, r)
 	pcm := bytes.Repeat([]byte{1, 2, 3, 4}, 1024)
 	r.WriteAudio(pcm)
@@ -146,7 +110,7 @@ func TestLiveRenameKeepsStableNewObjectKeyAndAudio(t *testing.T) {
 	if err := r.Stop(); err != nil {
 		t.Fatal(err)
 	}
-	waitForRetryPass(t, r) // Stop leaves the final file to the retry queue.
+	deliverDue(t, r)
 	key := "recordings/" + cfg.RecordingFilePrefix() + "/" + filepath.Base(file)
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -168,7 +132,7 @@ func TestNewRecorderDoesNotAdoptLegacyFilesWithReusedName(t *testing.T) {
 	if err := os.Chtimes(file, old, old); err != nil {
 		t.Fatal(err)
 	}
-	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg})
+	r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg})
 	own := filepath.Join(cfg.LocalPath, cfg.RecordingFilePrefix()+"-2000-01-01-00-00.ts")
 	if err := os.WriteFile(own, []byte("own audio"), 0o600); err != nil {
 		t.Fatal(err)
@@ -176,7 +140,7 @@ func TestNewRecorderDoesNotAdoptLegacyFilesWithReusedName(t *testing.T) {
 	if err := os.Chtimes(own, old, old); err != nil {
 		t.Fatal(err)
 	}
-	(&Manager{}).cleanupLocalFiles(r)
+	(&Manager{outbox: r.outbox}).cleanupLocalFiles(r)
 	assertRecordedCapture(t, file, []byte("foreign audio"))
 	assertNoRecording(t, own) // Retention itself still ran.
 }
@@ -193,7 +157,7 @@ func TestRecorderRenameKeepsLegacyLocalRetention(t *testing.T) {
 	if err := os.Chtimes(path, old, old); err != nil {
 		t.Fatal(err)
 	}
-	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg})
+	r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg})
 	idFile := r.generateFilename(time.Date(2000, 1, 1, 0, 0, 0, 0, time.Local))
 	writeCleanupFile(t, cfg.LocalPath, idFile)
 	if err := os.Chtimes(filepath.Join(cfg.LocalPath, idFile), old, old); err != nil {
@@ -204,7 +168,7 @@ func TestRecorderRenameKeepsLegacyLocalRetention(t *testing.T) {
 	if err := r.UpdateConfig(&updated); err != nil {
 		t.Fatal(err)
 	}
-	(&Manager{}).cleanupLocalFiles(r)
+	(&Manager{outbox: r.outbox}).cleanupLocalFiles(r)
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("rename stranded expired legacy recording: %v", err)
 	}
@@ -216,7 +180,7 @@ func TestRecorderRenameKeepsLegacyLocalRetention(t *testing.T) {
 func TestRecorderRuntimeRejectsIdentityChange(t *testing.T) {
 	t.Parallel()
 	cfg := localOnDemandRecorder(t, "immutable")
-	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg})
+	r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg})
 	before := r.Config()
 	updated := before
 	updated.ID = "another"
@@ -228,36 +192,11 @@ func TestRecorderRuntimeRejectsIdentityChange(t *testing.T) {
 func TestLongRecorderIDAndDisplayNameStillProduceWritableOutput(t *testing.T) {
 	cfg := localOnDemandRecorder(t, strings.Repeat("r", 250))
 	cfg.Name = strings.Repeat("Very long display name", 20)
-	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0]})
+	r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0]})
 	file := startCaptureTestRecorder(t, r)
 	r.WriteAudio([]byte{1, 2, 3, 4})
 	if err := r.Stop(); err != nil {
 		t.Fatal(err)
 	}
 	assertRecordedCapture(t, file, []byte{1, 2, 3, 4})
-}
-
-func TestSpoolRecoveryDoesNotAdoptForeignFilesInAliasedDirectory(t *testing.T) {
-	t.Parallel()
-	cfg := testS3Recorder()
-	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
-	at := time.Date(2026, 10, 18, 14, 0, 0, 0, time.Local)
-	ownedName := r.generateFilename(at)
-	foreign := *cfg
-	foreign.ID = strings.ToUpper(cfg.ID)
-	foreignName := foreign.RecordingFilePrefix() + "-2026-10-18-14-00.mp3"
-	for _, name := range []string{ownedName, "Test-2026-10-18-14-00.mp3", foreignName, "Unrelated-2026-10-18-14-00.mp3"} {
-		writeSpoolFile(t, r.spoolDir, cfg.ID, name, "audio")
-	}
-	if err := r.reconcilePendingUploads(); err != nil {
-		t.Fatal(err)
-	}
-	if len(r.retryQueue) != 2 {
-		t.Fatalf("recovery adopted an unowned file: %+v", r.retryQueue)
-	}
-	for _, pending := range r.retryQueue {
-		if name := filepath.Base(pending.request.localPath); name != ownedName && name != "Test-2026-10-18-14-00.mp3" {
-			t.Fatalf("foreign output queued: %s", name)
-		}
-	}
 }

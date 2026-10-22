@@ -37,6 +37,8 @@ func TestEventTypeClassification(t *testing.T) {
 		UploadFailed:             {category: CategoryRecorder, severity: SeverityError, reason: ReasonProblem},
 		UploadRetry:              {category: CategoryRecorder, severity: SeverityWarning, reason: ReasonProblem},
 		UploadAbandoned:          {category: CategoryRecorder, severity: SeverityError, reason: ReasonProblem},
+		UploadOverdue:            {category: CategoryRecorder, severity: SeverityError, reason: ReasonProblem},
+		UploadOverdueCleared:     {category: CategoryRecorder, severity: SeveritySuccess, reason: ReasonRecovery},
 		CleanupCompleted:         {category: CategoryRecorder, severity: SeveritySuccess, reason: ReasonRoutine},
 		RecordingStorageLow:      {category: CategoryRecorder, severity: SeverityWarning, reason: ReasonProblem},
 		RecordingStorageRestored: {category: CategoryRecorder, severity: SeveritySuccess, reason: ReasonRecovery},

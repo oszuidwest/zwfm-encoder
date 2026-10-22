@@ -23,28 +23,13 @@ type EmailChannel struct {
 	cachedKey    string
 }
 
-// sendUploadAbandonedEmail sends an upload abandonment alert via Microsoft Graph.
-// A fresh client is created each time because upload abandonments are rare one-off events
-// where caching would add complexity without meaningful benefit.
-func sendUploadAbandonedEmail(ctx context.Context, cfg *GraphConfig, stationName string, p UploadAbandonedData) error {
-	client, err := NewGraphClient(cfg)
-	if err != nil {
-		return util.WrapError("create Graph client", err)
+func uploadsOverdueEmail(station string, d *UploadsOverdueData) (subject, body string) {
+	_, message := d.message()
+	if !d.Overdue {
+		return "[OK] Recording Uploads Delivered - " + station, message
 	}
-
-	subject := "[ALERT] Upload Abandoned - " + stationName
-	body := fmt.Sprintf(
-		"A recording upload was abandoned at %s.\n\n"+
-			"Recorder: %s\n"+
-			"File: %s\n"+
-			"S3 key: %s\n"+
-			"Retries: %d\n"+
-			"Last error: %s\n\n"+
-			"The file could not be uploaded to S3 after exhausting all retries.",
-		util.HumanTime(), p.RecorderName, p.Filename, p.S3Key, p.RetryCount, p.LastError,
-	)
-
-	return sendEmailWithClient(ctx, cfg, client, subject, body)
+	return "[ALERT] Recording Uploads Overdue - " + station,
+		message + "\n\nRecordings stay on disk and are retried until they are uploaded. Check the S3 settings and connection."
 }
 
 func sendEmailWithClient(ctx context.Context, cfg *GraphConfig, client *GraphClient, subject, body string) error {
@@ -374,9 +359,12 @@ func (c *EmailChannel) SendAudioDump(
 	})
 }
 
-// SendUploadAbandoned sends a Microsoft Graph email after a recording upload exhausts retries.
-func (c *EmailChannel) SendUploadAbandoned(ctx context.Context, cfg *config.Snapshot, params UploadAbandonedData) error {
-	return sendUploadAbandonedEmail(ctx, BuildGraphConfig(cfg), cfg.StationName, params)
+// SendUploadsOverdue emails an overdue alert or its recovery.
+func (c *EmailChannel) SendUploadsOverdue(ctx context.Context, cfg *config.Snapshot, data *UploadsOverdueData) error {
+	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client *GraphClient) error {
+		subject, body := uploadsOverdueEmail(cfg.StationName, data)
+		return sendEmailWithClient(ctx, graphCfg, client, subject, body)
+	})
 }
 
 // SendInputLost sends a Microsoft Graph email when audio capture from the input stops.

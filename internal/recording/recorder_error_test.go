@@ -161,10 +161,10 @@ func TestWriteErrorQuarantinesPartialAudioWithoutUpload(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertRecordedCapture(t, file, make([]byte, 4096))
-	assertRecordingQuarantined(t, file)
+	assertRecordingQuarantined(t, r, file)
 	assertSingleRecorderError(t, eventPath, file, "simulated write failure")
-	if r.PendingUploadCount() != 0 || len(uploads()) != 0 {
-		t.Fatalf("failed output queued (%d) or uploaded (%d)", r.PendingUploadCount(), len(uploads()))
+	if pendingTickets(r) != 0 || len(uploads()) != 0 {
+		t.Fatalf("failed output queued (%d) or uploaded (%d)", pendingTickets(r), len(uploads()))
 	}
 }
 
@@ -198,8 +198,8 @@ func TestWriteErrorKeepsReplacedRecording(t *testing.T) {
 	if err := r.Stop(); err != nil {
 		t.Fatal(err)
 	}
-	if metadata, err := os.ReadDir(r.pendingUploadDir()); err == nil && len(metadata) != 0 {
-		t.Fatalf("replacement registered for recovery: %v", metadata)
+	if n := pendingTickets(r); n != 0 {
+		t.Fatalf("replacement registered for recovery: %d", n)
 	}
 	if got := len(uploads()); got != 0 {
 		t.Errorf("uploaded unrelated replacement %d times", got)
@@ -229,8 +229,8 @@ func TestWriteErrorQuarantinesAudioDespiteZeroAcceptedBytes(t *testing.T) {
 		t.Fatalf("pipe accepted %d bytes, want 0", result.BytesWritten())
 	}
 	assertRecordedCapture(t, file, []byte("header without audio"))
-	assertRecordingQuarantined(t, file)
-	if r.PendingUploadCount() != 0 {
+	assertRecordingQuarantined(t, r, file)
+	if pendingTickets(r) != 0 {
 		t.Fatal("quarantined output registered for upload")
 	}
 }
@@ -256,7 +256,7 @@ func errorTestRecorder(t *testing.T, cfg *types.Recorder) (recorder *GenericReco
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = logger.Close() })
-	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0], SpoolDir: t.TempDir(), EventLogger: logger})
+	r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0], SpoolDir: t.TempDir(), EventLogger: logger})
 	t.Cleanup(func() { _ = r.Stop() })
 	return r, path
 }
@@ -329,12 +329,13 @@ func TestWriteErrorWithEmptyOutputIsNotRecovered(t *testing.T) {
 	if err := r.Stop(); err != nil {
 		t.Fatal(err)
 	}
-	// A queued recovery persists metadata before uploading.
-	if metadata, err := os.ReadDir(r.pendingUploadDir()); err == nil && len(metadata) != 0 {
-		t.Fatalf("empty output registered for recovery: %v", metadata)
+	if n := pendingTickets(r); n != 0 {
+		t.Fatalf("empty output registered for recovery: %d", n)
 	}
-	assertNoRecording(t, file)                            // An empty placeholder is not left behind,
-	assertNoRecording(t, file+unfinalizedRecordingSuffix) // nor its marker.
+	assertNoRecording(t, file) // An empty placeholder is not left behind,
+	if _, ok := ticketFor(r.outbox, file); ok {
+		t.Fatal("ticket left for a removed recording")
+	}
 	if put := len(uploads()); put != 0 {
 		t.Fatalf("empty output uploaded %d times", put)
 	}

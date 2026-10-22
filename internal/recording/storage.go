@@ -1,14 +1,10 @@
 package recording
 
 import (
-	"encoding/json"
-	"errors"
 	"log/slog"
 	"maps"
-	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
@@ -23,24 +19,6 @@ func (m *Manager) SetStorageChangeCallback(cb func([]types.RecordingStorageStatu
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onStorageChange = cb
-}
-
-func (m *Manager) handleUploadAbandoned(event *UploadAbandonedEvent) {
-	m.mu.Lock()
-	m.abandoned[event.LocalPath] = struct{}{}
-	cb := m.onUploadAbandoned
-	m.mu.Unlock()
-	if cb != nil {
-		cb(*event)
-	}
-}
-
-// AbandonedUploadCount includes retained uploads of removed recorders. It does
-// not re-queue them; missing files are reconciled by the background disk check.
-func (m *Manager) AbandonedUploadCount() int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return len(m.abandoned)
 }
 
 // StorageStatuses returns cached observations without accessing recording disks.
@@ -69,17 +47,7 @@ func (m *Manager) checkStorage(stop <-chan struct{}) {
 		return
 	}
 	defer m.storageProbeMu.Unlock()
-	ordered, activeUploads, known, gen := m.storageTargets()
-	observations := m.probeStorage(ordered)
-	// Scan retained metadata too: removing a recorder must not hide its abandoned
-	// audio after a process restart. This scan never modifies metadata or audio.
-	abandoned, scanErr := scanAbandonedUploads(m.spoolDir, activeUploads)
-	var missing []string
-	for _, path := range known {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			missing = append(missing, path)
-		}
-	}
+	observations := m.probeStorage(m.storageTargets())
 
 	m.mu.Lock()
 	if !m.running || m.cleanupStopCh != stop {
@@ -87,31 +55,8 @@ func (m *Manager) checkStorage(stop <-chan struct{}) {
 		return // An old, blocked run must not publish into a new run.
 	}
 	previous := m.storagePaths
-	// Hold before adding a scan error: the spool's space counts are still valid.
 	holdLowUntilRecovered(previous, observations)
-	if scanErr != nil {
-		i := slices.IndexFunc(observations, func(o types.RecordingStorageStatus) bool {
-			return o.Path == filepath.Clean(m.spoolDir)
-		})
-		if i < 0 {
-			observations = append(observations, types.RecordingStorageStatus{Path: filepath.Clean(m.spoolDir), CheckedAt: time.Now()})
-			i = len(observations) - 1
-		}
-		msg := "scan abandoned uploads: " + scanErr.Error()
-		if observations[i].Error != "" {
-			msg = observations[i].Error + "; " + msg
-		}
-		observations[i].Error = msg
-	}
 	m.storagePaths = observations
-	// Add, never replace: an abandonment the callback reported after the scan
-	// started is not on disk yet. Restored uploads are saved as not abandoned.
-	if m.restoreGen == gen { // A restore during the scan makes its result stale.
-		maps.Copy(m.abandoned, abandoned)
-	}
-	for _, path := range missing {
-		delete(m.abandoned, path)
-	}
 	cb := m.onStorageChange
 	m.mu.Unlock()
 	// Logging and delivery run outside status locks (and never on capture).
@@ -120,27 +65,33 @@ func (m *Manager) checkStorage(stop <-chan struct{}) {
 	}
 }
 
-func (m *Manager) storageTargets() (ordered []string, activeUploads map[string]struct{}, abandoned []string, restoreGen uint64) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+// storageTargets lists the spool and every directory that holds recordings:
+// those of enabled or recording recorders, and those of undelivered or failed
+// recordings, also of removed recorders.
+func (m *Manager) storageTargets() []string {
 	paths := make(map[string]struct{})
-	// An encoder that does not record has no spool to fill.
-	if len(m.recorders) > 0 || len(m.abandoned) > 0 {
-		paths[filepath.Clean(m.spoolDir)] = struct{}{}
+	tickets := m.outbox.snapshot()
+	spool := filepath.Clean(m.spoolDir)
+	for i := range tickets {
+		dir := filepath.Clean(filepath.Dir(tickets[i].Path))
+		if rel, err := filepath.Rel(spool, dir); err == nil && filepath.IsLocal(rel) {
+			dir = spool // The spool is one filesystem.
+		}
+		paths[dir] = struct{}{}
 	}
-	activeUploads = make(map[string]struct{})
+	m.mu.RLock()
+	// An encoder that does not record has no spool to fill.
+	if len(m.recorders) > 0 || len(tickets) > 0 {
+		paths[spool] = struct{}{}
+	}
 	for _, r := range m.recorders {
 		cfg := r.Config()
 		if (cfg.Enabled || r.IsRecording()) && cfg.StorageMode != types.StorageS3 && cfg.LocalPath != "" {
 			paths[filepath.Clean(cfg.LocalPath)] = struct{}{}
 		}
-		r.mu.RLock()
-		for i := range r.retryQueue {
-			activeUploads[r.retryQueue[i].request.localPath] = struct{}{}
-		}
-		r.mu.RUnlock()
 	}
-	return slices.Sorted(maps.Keys(paths)), activeUploads, slices.Collect(maps.Keys(m.abandoned)), m.restoreGen
+	m.mu.RUnlock()
+	return slices.Sorted(maps.Keys(paths))
 }
 
 func (m *Manager) probeStorage(ordered []string) []types.RecordingStorageStatus {
@@ -236,43 +187,4 @@ func (m *Manager) logStorageChanges(previous, current []types.RecordingStorageSt
 		}
 	}
 	return changed
-}
-
-func scanAbandonedUploads(spool string, active map[string]struct{}) (map[string]struct{}, error) {
-	found := make(map[string]struct{})
-	root := filepath.Join(spool, "uploads")
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if d.IsDir() || !strings.HasSuffix(d.Name(), pendingUploadMetadataSuffix) {
-			return nil
-		}
-		// One unreadable file (a finished retry removing it, or a power cut
-		// mid-write) must not fail the spool check; it holds no abandonment.
-		data, err := os.ReadFile(path) //nolint:gosec // Metadata in the manager-owned spool; read-only.
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		var meta pendingUploadMetadata
-		if err == nil {
-			err = json.Unmarshal(data, &meta)
-		}
-		if err != nil {
-			slog.Warn("skipping unreadable upload metadata", "path", path, "error", err)
-			return nil
-		}
-		if _, queued := active[meta.LocalPath]; !queued && meta.Abandoned && meta.LocalPath != "" {
-			if _, err := os.Stat(meta.LocalPath); err == nil {
-				found[meta.LocalPath] = struct{}{}
-			} else if !os.IsNotExist(err) {
-				return err
-			}
-		}
-		return nil
-	})
-	return found, err
 }

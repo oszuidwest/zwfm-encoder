@@ -73,6 +73,7 @@ type historicalIncident struct {
 
 var eventCloses = map[EventType]EventType{
 	RecordingStorageLow:   RecordingStorageRestored,
+	UploadOverdue:         UploadOverdueCleared,
 	SilenceStart:          SilenceEnd,
 	ChannelImbalanceStart: ChannelImbalanceEnd,
 	InputLost:             InputRestored,
@@ -106,6 +107,8 @@ var eventLabels = map[EventType]string{
 	UploadFailed:             "Upload Failed",
 	UploadRetry:              "Retry",
 	UploadAbandoned:          "Abandoned",
+	UploadOverdue:            "Uploads Overdue",
+	UploadOverdueCleared:     "Uploads Delivered",
 	CleanupCompleted:         "Cleanup",
 }
 
@@ -506,6 +509,9 @@ func eventSourceKey(event groupedEvent) string {
 		if event.view.Type == RecordingStorageLow || event.view.Type == RecordingStorageRestored {
 			return "recorder-storage:" + detailString(event.details, "path")
 		}
+		if event.view.Type == UploadOverdue || event.view.Type == UploadOverdueCleared {
+			return "recorder-uploads"
+		}
 		name := detailString(event.details, "recorder_name")
 		if isUploadEvent(event.view.Type) {
 			file := cmp.Or(
@@ -565,6 +571,8 @@ func incidentTitle(t EventType) string {
 		return "Upload failed"
 	case UploadAbandoned:
 		return "Upload abandoned"
+	case UploadOverdue:
+		return "Recording uploads overdue"
 	case RecorderError:
 		return "Recorder error"
 	case RecordingStorageLow:
@@ -699,6 +707,9 @@ func eventDetailFor(t EventType, details map[string]any) string {
 		return cmp.Or(detailString(details, "error"), "Unknown error")
 	case UploadRetry, UploadAbandoned:
 		return retryErrorDetail(details, "Unknown error")
+	case UploadOverdue:
+		return joinNonEmpty(" - ", fmt.Sprintf("%d recordings waiting more than 2h", detailInt64(details, "count")),
+			detailString(details, "error"))
 	case RecorderFile, UploadQueued, UploadCompleted:
 		codec := strings.ToUpper(detailString(details, "codec"))
 		return joinNonEmpty(" - ", detailString(details, "filename"), codec)

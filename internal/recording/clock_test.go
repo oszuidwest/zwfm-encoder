@@ -24,7 +24,7 @@ func fakeClockSync(t *testing.T) *atomic.Bool {
 func TestRecorderWaitsForClockSync(t *testing.T) {
 	synced := fakeClockSync(t)
 	cfg := localOnDemandRecorder(t, "clock")
-	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0], SpoolDir: t.TempDir()})
+	r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0], SpoolDir: t.TempDir()})
 	if err := r.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestStopRecorderCancelsClockWait(t *testing.T) {
 		if err := m.Start(); err != nil {
 			t.Fatal(err)
 		}
-		defer func() { _ = m.Stop() }()
+		defer func() { _ = m.Stop(); m.Close() }()
 		if err := m.StartRecorder(cfg.ID); err != nil {
 			t.Fatal(err)
 		}

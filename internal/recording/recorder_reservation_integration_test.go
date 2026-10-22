@@ -21,7 +21,7 @@ func TestRealFFmpegWritesReservedOutputForEveryCodec(t *testing.T) {
 		t.Run(string(codec), func(t *testing.T) {
 			cfg := localOnDemandRecorder(t, "real-ffmpeg")
 			cfg.Codec = codec
-			r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, FFmpegPath: ffmpegPath})
+			r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, FFmpegPath: ffmpegPath})
 			path := startCaptureTestRecorder(t, r)
 			info, err := os.Stat(path)
 			if err != nil {

@@ -57,7 +57,7 @@ func TestNextRecordingFilename(t *testing.T) {
 func TestRememberFilenameForgetsNamesAfterWindow(t *testing.T) {
 	t.Parallel()
 
-	recorder := NewGenericRecorder(GenericRecorderConfig{Recorder: &types.Recorder{}})
+	recorder := newTestRecorder(t, GenericRecorderConfig{Recorder: &types.Recorder{}})
 	recorder.usedFilenames["old.ts"] = time.Now().Add(-usedFilenameWindow - time.Minute)
 	recorder.usedFilenames["recent.ts"] = time.Now().Add(-usedFilenameWindow + time.Minute)
 
@@ -105,7 +105,7 @@ func TestHourlyStartKeepsEarlierRecordingOfSameMinute(t *testing.T) {
 
 	cfg := localOnDemandRecorder(t, "Studio")
 	cfg.RecordingMode = types.RecordingHourly
-	recorder := NewGenericRecorder(GenericRecorderConfig{
+	recorder := newTestRecorder(t, GenericRecorderConfig{
 		Recorder:   cfg,
 		FFmpegPath: os.Args[0],
 		SpoolDir:   t.TempDir(),
@@ -148,7 +148,7 @@ func TestRestartDoesNotReuseDeletedRecordingName(t *testing.T) {
 	t.Parallel()
 
 	cfg := localOnDemandRecorder(t, "Studio")
-	recorder := NewGenericRecorder(GenericRecorderConfig{
+	recorder := newTestRecorder(t, GenericRecorderConfig{
 		Recorder:   cfg,
 		FFmpegPath: os.Args[0],
 		SpoolDir:   t.TempDir(),

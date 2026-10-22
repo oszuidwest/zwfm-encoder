@@ -125,7 +125,7 @@ Configure notifications under Settings -> Notifications. Channels can be combine
 | Email (Microsoft Graph) | Same as webhook |
 | Zabbix (trapper items) | Same, except `audio_dump` |
 
-Recovery events are sent as soon as recovery is confirmed; the MP3 follows as a separate `audio_dump_ready` event. Input loss and restore, abandoned uploads and low recording storage always go to every configured channel, regardless of the toggles (on Zabbix, input events need the silence key and the others the upload key). Every event is also written to the [event log](#event-log).
+Recovery events are sent as soon as recovery is confirmed; the MP3 follows as a separate `audio_dump_ready` event. Input loss and restore, overdue uploads and low recording storage always go to every configured channel, regardless of the toggles (on Zabbix, input events need the silence key and the others the upload key). Every event is also written to the [event log](#event-log).
 
 ### Microsoft 365 Email Setup
 
@@ -143,7 +143,7 @@ The encoder warns when the secret expires within 30 days.
 2. Link the template to your encoder host
 3. Configure in the encoder: server, port (default 10051), host name (must match Zabbix exactly) and the template's item keys `silence.alert`, `imbalance.alert` and `upload.alert`
 
-The template has triggers for silence, input loss, channel imbalance, abandoned uploads and low recording storage. Input events use the silence key; low storage uses `upload.alert.storage` (with a custom upload key, insert `.storage` before any parameters: `upload.alert[studio]` becomes `upload.alert.storage[studio]`). Re-import the template after upgrading to get new triggers.
+The template has triggers for silence, input loss, channel imbalance, overdue uploads and low recording storage. Input events use the silence key; low storage uses `upload.alert.storage` (with a custom upload key, insert `.storage` before any parameters: `upload.alert[studio]` becomes `upload.alert.storage[studio]`). Re-import the template after upgrading to get new triggers.
 
 ## Recording
 
@@ -176,17 +176,17 @@ Only enabled on-demand recorders can be started, and only while the encoder runs
 
 ### Storage and S3
 
-For local storage under the packaged service, use a directory under `/var/lib/encoder`; other paths need a drop-in that adds them to `ReadWritePaths=`. In S3-only mode, recordings wait in a spool under `/var/lib/encoder/recordings` until they are uploaded.
+For local storage under the packaged service, use a directory under `/var/lib/encoder`; other paths need a drop-in that adds them to `ReadWritePaths=`. In S3-only mode, recordings wait in a spool under `/var/lib/encoder/recordings` until they are uploaded. The spool also holds the upload queue (`outbox/`), in every storage mode.
 
-S3 storage must support conditional writes (`If-None-Match: *`), preserve user metadata and allow `HeadObject` (on AWS: `s3:GetObject`); the connection test checks metadata and `HeadObject`. Failed uploads are retried, also after a restart, without duplicating objects. Stopping a recorder or the service does not wait for uploads: they continue in the background, or after a service stop at the next start. Add a bucket lifecycle rule that removes incomplete multipart uploads. After 24 hours retries stop with an `upload_abandoned` alert and the file stays on disk: fix S3 and restart the encoder service to queue it again. Uploads of a deleted recorder are never retried; once abandoned, they keep `/ready` failing until you remove the recording.
+S3 storage must support conditional writes (`If-None-Match: *`), preserve user metadata and allow `HeadObject` (on AWS: `s3:GetObject`); the connection test checks metadata and `HeadObject`. Every finished recording is uploaded until it succeeds, also after a crash or restart, in local+S3 mode as well as S3-only, without duplicating objects. Failed attempts are retried after a minute, doubling up to an hour. Stopping a recorder or changing the audio input does not touch uploads: they continue in the background. A service stop interrupts a running upload (waiting at most a few seconds to abort a multipart upload), and the next start continues it. Add a bucket lifecycle rule that removes incomplete multipart uploads. A recording that has waited two hours sends `upload_overdue`; `upload_overdue_cleared` follows once none is overdue. A deleted recorder's recordings are still uploaded with the S3 settings they were recorded with; the encoder keeps a copy of those credentials in the spool, removed at the first start after the last of them is delivered. Changing a recorder's bucket or endpoint applies to new recordings; changed credentials also reach recordings that wait.
 
-In S3-only mode, recordings are never deleted before they are uploaded. In local+S3 mode, retention deletes local files by age even if their upload is still pending, so fix S3 problems before the retention period ends. The encoder checks the spool and local recording paths every minute: below 1 GiB or 5% free (whichever is larger), or when a path cannot be checked, it sends `recording_storage_low`; `recording_storage_restored` follows once an extra 1 GiB or 2.5% (whichever is larger) is free again.
+Retention never deletes a recording that is not uploaded yet, or one that failed; it pauses entirely while the upload queue holds an entry that cannot be read. The encoder checks the spool and local recording paths every minute: below 1 GiB or 5% free (whichever is larger), or when a path cannot be checked, it sends `recording_storage_low`; `recording_storage_restored` follows once an extra 1 GiB or 2.5% (whichever is larger) is free again.
 
 ### Failed recordings
 
-Each file being written has a `<filename>.unfinalized` marker next to it. When the encoder detects that writing or finalizing failed, it reports `recorder_error`, marks the file as failed and never uploads it, also after a restart. A recording that received no audio at all is removed. A crash or power loss leaves no failure mark, so S3-only mode uploads that partial file at the next start.
+Each recording is in the upload queue from the moment its file is created. When the encoder detects that writing or finalizing failed, it reports `recorder_error`, marks the recording as failed and never uploads it, also after a restart. A recording that received no audio at all is removed. After a crash, the next start uploads the interrupted file in both S3 modes. While a file is being written it is synced to disk every 30 seconds, so a power cut loses at most the audio after the last sync and what the encoder was still buffering.
 
-To recover a failed recording, stop the recorder, inspect the file and copy usable audio by hand. Do not delete the marker just to retry the upload. Failed files in the S3-only spool are kept until you remove them.
+Failed recordings are kept, and keep `/ready` failing, until you remove them. To recover one, stop the recorder, inspect the file and copy usable audio by hand, then delete the file and restart the service. A recording whose synced audio disappeared (lost, for example on a failed disk) is reported the same way; remove what is left of its file and restart to clear it.
 
 If only finalizing fails at an hourly rotation, the recorder keeps running and `status.error` shows the failure until the next successful hour, so monitor `recorder_error` events, not only the recorder state. If recording itself fails, the recorder goes into error and retries at the next hour.
 
@@ -212,10 +212,10 @@ Both endpoints are public (no login) and return JSON.
 | `silence` | No silence alarm |
 | `channel_imbalance` | No imbalance alarm |
 | `recorders` | Enabled hourly recorders running, no enabled recorder in error |
-| `uploads` | No uploads pending retry or abandoned |
+| `uploads` | No upload waiting longer than two hours, no failed or lost recording (a normal pending upload is fine) |
 | `recording_storage` | All required paths checked within the last 3 minutes, none low or unavailable |
 
-The response lists every component with `ok` and, where relevant, a `message` and `details`. The overall status is strict: one pending upload or a planned silence makes it `503`. To page only on on-air problems, alert on `process`, `input`, `streams`, `silence` and `channel_imbalance` instead of the overall status.
+The response lists every component with `ok` and, where relevant, a `message` and `details`. The overall status is strict: one overdue upload, a failed recording or a planned silence makes it `503`. To page only on on-air problems, alert on `process`, `input`, `streams`, `silence` and `channel_imbalance` instead of the overall status.
 
 ### Event Log
 

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
@@ -134,14 +135,16 @@ func sendZabbixEvent(ctx context.Context, server string, port int, host, key, va
 	return sendZabbixPayload(ctx, server, port, req)
 }
 
-// sendUploadAbandonedZabbix sends an upload abandonment event to Zabbix.
-func sendUploadAbandonedZabbix(
-	ctx context.Context, server string, port int, host, key string, p UploadAbandonedData,
+// sendUploadsOverdueZabbix sends UPLOAD_OVERDUE or its recovery to Zabbix.
+func sendUploadsOverdueZabbix(
+	ctx context.Context, server string, port int, host, key string, d *UploadsOverdueData,
 ) error {
-	return sendZabbixEvent(ctx, server, port, host, key, fmt.Sprintf(
-		"event=UPLOAD_ABANDONED recorder=%q file=%q retries=%d error=%q",
-		p.RecorderName, p.Filename, p.RetryCount, p.LastError,
-	))
+	value := "event=UPLOAD_OVERDUE_CLEARED"
+	if d.Overdue {
+		value = fmt.Sprintf("event=UPLOAD_OVERDUE count=%d oldest=%q recorders=%q error=%q",
+			d.Count, d.Oldest.UTC().Format(time.RFC3339), strings.Join(d.Recorders, ","), d.LastError)
+	}
+	return sendZabbixEvent(ctx, server, port, host, key, value)
 }
 
 // sendZabbixSilence sends a silence alert to Zabbix.
@@ -313,9 +316,9 @@ func (c *ZabbixChannel) SendAudioDump(
 	return fmt.Errorf("zabbix channel does not support audio dump delivery")
 }
 
-// SendUploadAbandoned sends a Zabbix trapper value after a recording upload exhausts retries.
-func (c *ZabbixChannel) SendUploadAbandoned(ctx context.Context, cfg *config.Snapshot, params UploadAbandonedData) error {
-	return sendUploadAbandonedZabbix(ctx, cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixUploadKey, params)
+// SendUploadsOverdue sends the upload overdue state on the upload trapper item.
+func (c *ZabbixChannel) SendUploadsOverdue(ctx context.Context, cfg *config.Snapshot, data *UploadsOverdueData) error {
+	return sendUploadsOverdueZabbix(ctx, cfg.ZabbixServer, cfg.ZabbixPort, cfg.ZabbixHost, cfg.ZabbixUploadKey, data)
 }
 
 // SendInputLost sends a Zabbix trapper value on the silence key when audio capture stops.

@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
@@ -97,16 +98,25 @@ func TestZabbixChannelSendPayloads(t *testing.T) {
 			},
 		},
 		{
-			name:  "upload abandoned",
+			name:  "uploads overdue",
 			key:   "encoder.upload",
-			value: `event=UPLOAD_ABANDONED recorder="Archive" file="archive.mp3" retries=24 error="request timed out"`,
+			value: `event=UPLOAD_OVERDUE count=2 oldest="2026-10-22T08:00:00Z" recorders="Archive,Studio" error="request timed out"`,
 			send: func(channel *ZabbixChannel, cfg *config.Snapshot) error {
-				return channel.SendUploadAbandoned(context.Background(), cfg, UploadAbandonedData{
-					RecorderName: "Archive",
-					Filename:     "archive.mp3",
-					RetryCount:   24,
-					LastError:    "request timed out",
+				return channel.SendUploadsOverdue(context.Background(), cfg, &UploadsOverdueData{
+					Overdue:   true,
+					Count:     2,
+					Oldest:    time.Date(2026, 10, 22, 8, 0, 0, 0, time.UTC),
+					Recorders: []string{"Archive", "Studio"},
+					LastError: "request timed out",
 				})
+			},
+		},
+		{
+			name:  "uploads overdue cleared",
+			key:   "encoder.upload",
+			value: "event=UPLOAD_OVERDUE_CLEARED",
+			send: func(channel *ZabbixChannel, cfg *config.Snapshot) error {
+				return channel.SendUploadsOverdue(context.Background(), cfg, &UploadsOverdueData{})
 			},
 		},
 	}

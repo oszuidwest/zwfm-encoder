@@ -17,33 +17,6 @@ func localOnDemandRecorder(t *testing.T, id string) *types.Recorder {
 	}
 }
 
-func TestQueueForUploadAfterWorkerStopPersistsToRetryQueue(t *testing.T) {
-	spoolDir := t.TempDir()
-	r := NewGenericRecorder(GenericRecorderConfig{
-		Recorder: testS3Recorder(),
-		SpoolDir: spoolDir,
-	})
-	r.mu.Lock()
-	r.state = types.ProcessRunning
-	r.startUploadWorkerLocked()
-	r.mu.Unlock()
-	// Hold off the retry pass Stop starts, so the late file stays in
-	// retryQueue. Never unlock: a pass released at return could write
-	// metadata into the spool while TempDir removes it.
-	r.retryProcessMu.Lock()
-	if err := r.Stop(); err != nil {
-		t.Fatalf("Stop: %v", err)
-	}
-	filePath := writeSpoolFile(t, spoolDir, r.id, "late.mp3", "late-recording")
-	r.queueForUpload(filePath)
-	if got := len(r.uploadQueue); got != 0 {
-		t.Fatalf("late upload stranded in channel with no worker: uploadQueue len = %d, want 0", got)
-	}
-	if got := len(r.retryQueue); got != 1 {
-		t.Fatalf("late upload not persisted: retryQueue len = %d, want 1", got)
-	}
-}
-
 func TestRemoveRecorderStopsAndRemoves(t *testing.T) {
 	m, err := NewManager("", t.TempDir(), 60, nil)
 	if err != nil {

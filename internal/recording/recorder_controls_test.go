@@ -106,7 +106,7 @@ func TestFilenamePreparationRevalidatesConfigAndRun(t *testing.T) {
 				t.Fatal(err)
 			}
 			cfg := localOnDemandRecorder(t, "test")
-			r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, FFmpegPath: executable, SpoolDir: t.TempDir()})
+			r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, FFmpegPath: executable, SpoolDir: t.TempDir()})
 			r.state, r.startGen = types.ProcessStarting, 1
 			entered, blocked, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 			release := sync.OnceFunc(func() { close(blocked) })
@@ -161,7 +161,7 @@ func TestFilenamePreparationRevalidatesConfigAndRun(t *testing.T) {
 
 func TestHungFilenameCheckDoesNotMultiplyAcrossRestarts(t *testing.T) {
 	cfg := localOnDemandRecorder(t, "hung")
-	r := NewGenericRecorder(GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0], SpoolDir: t.TempDir()})
+	r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0], SpoolDir: t.TempDir()})
 	var active, peak atomic.Int32
 	blocked := make(chan struct{})
 	release := sync.OnceFunc(func() { close(blocked) })
