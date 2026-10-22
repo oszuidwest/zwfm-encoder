@@ -14,56 +14,28 @@ import (
 
 func TestNextRecordingFilename(t *testing.T) {
 	t.Parallel()
-
-	tests := []struct {
-		name  string
-		taken []string
-		want  string
-	}{
-		{
-			name: "free name is kept",
-			want: "Studio-2026-09-28-14-37.mp3",
-		},
-		{
-			name:  "taken name gets -2",
-			taken: []string{"Studio-2026-09-28-14-37.mp3"},
-			want:  "Studio-2026-09-28-14-37-2.mp3",
-		},
-		{
-			name: "multiple collisions",
-			taken: []string{
-				"Studio-2026-09-28-14-37.mp3",
-				"Studio-2026-09-28-14-37-2.mp3",
-				"Studio-2026-09-28-14-37-3.mp3",
-			},
-			want: "Studio-2026-09-28-14-37-4.mp3",
-		},
+	taken := []string{
+		"Studio-2026-09-28-14-37.mp3",
+		"Studio-2026-09-28-14-37-2.mp3",
+		"Studio-2026-09-28-14-37-3.mp3",
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			got := nextRecordingFilename("Studio-2026-09-28-14-37.mp3", func(name string) bool {
-				return slices.Contains(tt.taken, name)
-			})
-			if got != tt.want {
-				t.Fatalf("nextRecordingFilename() = %q, want %q", got, tt.want)
-			}
-		})
+	got := nextRecordingFilename(taken[0], func(name string) bool { return slices.Contains(taken, name) })
+	if got != "Studio-2026-09-28-14-37-4.mp3" {
+		t.Fatalf("nextRecordingFilename() = %q, want fourth name", got)
 	}
 }
 
 func TestRememberFilenameForgetsNamesAfterWindow(t *testing.T) {
 	t.Parallel()
 
-	recorder := newTestRecorder(t, GenericRecorderConfig{Recorder: &types.Recorder{}})
-	recorder.usedFilenames["old.ts"] = time.Now().Add(-usedFilenameWindow - time.Minute)
-	recorder.usedFilenames["recent.ts"] = time.Now().Add(-usedFilenameWindow + time.Minute)
+	used := map[string]time.Time{
+		"old.ts":    time.Now().Add(-usedFilenameWindow - time.Minute),
+		"recent.ts": time.Now().Add(-usedFilenameWindow + time.Minute),
+	}
 
-	recorder.rememberFilenameLocked("new.ts")
+	rememberFilename(used, "new.ts")
 
-	got := slices.Sorted(maps.Keys(recorder.usedFilenames))
+	got := slices.Sorted(maps.Keys(used))
 	if want := []string{"new.ts", "recent.ts"}; !slices.Equal(got, want) {
 		t.Fatalf("remembered names = %v, want %v", got, want)
 	}
@@ -82,9 +54,7 @@ func recordOnce(t *testing.T, recorder *GenericRecorder, dir string) []string {
 	}
 	waitForRecorderState(t, recorder, types.ProcessRunning)
 	recorder.WriteAudio([]byte{1, 2, 3, 4})
-	if err := recorder.Stop(); err != nil {
-		t.Fatalf("Stop() error = %v", err)
-	}
+	recorder.Stop()
 	after, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)

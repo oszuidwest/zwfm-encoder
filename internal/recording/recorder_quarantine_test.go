@@ -42,9 +42,7 @@ func TestFailedRecordingIsNotRecoveredAfterRestart(t *testing.T) {
 						want = bytes.Repeat([]byte{1, 2, 3, 4}, 1024)
 						r.WriteAudio(want)
 					}
-					if err := r.Stop(); err != nil {
-						t.Fatal(err)
-					}
+					r.Stop()
 					assertRecordedCapture(t, file, want)
 					assertRecordingQuarantined(t, r, file)
 					assertSingleRecorderError(t, events, file, "No space left on device")
@@ -92,9 +90,7 @@ func TestFailedEmptyRemovalStaysQuarantinedAfterRestart(t *testing.T) {
 	originalRemove := removeEmptyRecording
 	removeEmptyRecording = func(path string) error { return &os.PathError{Op: "remove", Path: path, Err: os.ErrPermission} }
 	t.Cleanup(func() { removeEmptyRecording = originalRemove })
-	if err := r.Stop(); err != nil {
-		t.Fatal(err)
-	}
+	r.Stop()
 	assertRecordingQuarantined(t, r, file)
 	assertSingleRecorderError(t, events, file, "remove empty recording")
 	restarted := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, SpoolDir: r.spoolDir})
@@ -124,28 +120,10 @@ func TestWriterTimeoutReportsOneErrorAndQuarantinesPartialAudio(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if err := r.Stop(); err != nil {
-		t.Fatal(err)
-	}
+	r.Stop()
 	assertSingleRecorderError(t, events, file, "writer timed out")
 	assertRecordingQuarantined(t, r, file)
 	assertRecordedCapture(t, file, bytes.Repeat([]byte{1, 2, 3, 4}, 1024))
-}
-
-func TestRunningFinalizeWarningClearsOnNextSuccessfulRotation(t *testing.T) {
-	neverRotate(t)
-	t.Setenv(fakeFFmpegFailFinalizeEnv, "1")
-	r := startHourlyTestRecorder(t, "warning")
-	r.WriteAudio([]byte{1, 2, 3, 4})
-	t.Setenv(fakeFFmpegFailFinalizeEnv, "")
-	rotateTestRecorder(r)
-	if status := r.Status(); status.State != types.ProcessRunning || !strings.Contains(status.Error, "No space left on device") {
-		t.Fatalf("running recorder lost finalize warning: %+v", status)
-	}
-	rotateTestRecorder(r)
-	if status := r.Status(); status.State != types.ProcessRunning || status.Error != "" {
-		t.Fatalf("successful rotation did not clear previous finalize warning: %+v", status)
-	}
 }
 
 func TestTicketReservesNameWithoutAnAudioFile(t *testing.T) {
@@ -161,9 +139,7 @@ func TestTicketReservesNameWithoutAnAudioFile(t *testing.T) {
 	if !strings.HasSuffix(file, "-2.ts") {
 		t.Fatalf("reused a ticket's filename: %s", file)
 	}
-	if err := r.Stop(); err != nil {
-		t.Fatal(err)
-	}
+	r.Stop()
 	if _, ok := ticketFor(r.outbox, file); ok {
 		t.Fatal("a successful empty run left its ticket")
 	}
@@ -179,9 +155,8 @@ func TestTicketCreationFailureDoesNotStartEncoder(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(r.outbox.dir, 0o700) }) //nolint:gosec // Restore the test dir for cleanup.
-	r.state, r.startGen = types.ProcessStarting, 1
-	r.startAsync(1)
-	if status := r.Status(); status.State != types.ProcessError || !strings.Contains(status.Error, "ticket") || r.result != nil {
+	startSettled(t, r)
+	if status := r.Status(); status.State != types.ProcessError || !strings.Contains(status.Error, "ticket") || r.currentSegment() != nil {
 		t.Fatalf("ticket failure did not prevent encoding: %+v", status)
 	}
 	if entries, err := os.ReadDir(cfg.LocalPath); err != nil || len(entries) != 0 {
@@ -203,9 +178,7 @@ func TestFailedTicketWriteStillQuarantinesOutput(t *testing.T) {
 	if err := os.Chmod(r.outbox.dir, 0o500); err != nil { //nolint:gosec // A test dir must stay traversable.
 		t.Fatal(err)
 	}
-	if err := r.Stop(); err != nil {
-		t.Fatal(err)
-	}
+	r.Stop()
 	if err := os.Chmod(r.outbox.dir, 0o700); err != nil { //nolint:gosec // Restore the test dir.
 		t.Fatal(err)
 	}

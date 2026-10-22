@@ -7,14 +7,6 @@ package recording_test
 // checks one guarantee the subsystem must give (see
 // docs/recording-redesign.md). Scenarios do not look inside the package, so
 // the same corpus judges the current code and a redesign.
-//
-// knownViolations lists the scenarios main is known to fail, with their issue
-// and the text every reported violation must contain. A known violation is reported as a skip;
-// any other violation of a known scenario fails. When a
-// known scenario starts to hold, it fails until its entry is removed, so the
-// list only shrinks. Set ZWFM_RECORDING_CORPUS_STRICT=1 to fail on known
-// violations as well.
-
 import (
 	"bufio"
 	"bytes"
@@ -40,22 +32,6 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
-type expectation struct {
-	issue string
-	match string // Every violation of the scenario must contain this text.
-}
-
-func (e expectation) matches(violations []string) bool {
-	if len(violations) == 0 {
-		return false
-	}
-	return !slices.ContainsFunc(violations, func(v string) bool { return !strings.Contains(v, e.match) })
-}
-
-var knownViolations = map[string]expectation{
-	"ErrorStaysVisible/FinalizeFailure": {issue: "#514", match: "with no error"},
-}
-
 // undelivered counts recordings that are not in S3 and need no new audio.
 func undelivered(m *recording.Manager) int {
 	b := m.UploadBacklog()
@@ -65,38 +41,6 @@ func undelivered(m *recording.Manager) int {
 // stopBound is how long stopping may take when nothing but the network is
 // slow; the fake FFmpeg finalizes in 100ms.
 const stopBound = 5 * time.Second
-
-type check struct {
-	t          *testing.T
-	violations []string
-}
-
-func (c *check) violatef(format string, args ...any) {
-	c.t.Helper()
-	msg := fmt.Sprintf(format, args...)
-	c.t.Log("violation: " + msg)
-	c.violations = append(c.violations, msg)
-}
-
-// invariant runs one scenario as a subtest and applies the knownViolations
-// ratchet. name is the scenario's key in knownViolations.
-func invariant(t *testing.T, name string, scenario func(t *testing.T, c *check)) {
-	t.Helper()
-	t.Run(name, func(t *testing.T) {
-		c := &check{t: t}
-		scenario(t, c)
-		known, isKnown := knownViolations[name]
-		expected := isKnown && known.matches(c.violations)
-		switch {
-		case expected && os.Getenv("ZWFM_RECORDING_CORPUS_STRICT") != "1":
-			t.Skipf("known violation (%s): %s", known.issue, strings.Join(c.violations, "; "))
-		case len(c.violations) > 0:
-			t.Errorf("invariant violated: %s", strings.Join(c.violations, "; "))
-		case isKnown:
-			t.Errorf("invariant now holds: remove %q (%s) from knownViolations", name, known.issue)
-		}
-	})
-}
 
 // fakeS3 stores objects under their key. Like a store with conditional
 // writes, it refuses a PUT without If-None-Match: * and answers 412 when the
@@ -298,18 +242,7 @@ func newCorpusManager(t *testing.T, spool string, s3 *fakeS3, recorders ...*type
 	return m
 }
 
-func waitFor(timeout time.Duration, cond func() bool) bool {
-	deadline := time.Now().Add(timeout)
-	for {
-		if cond() {
-			return true
-		}
-		if time.Now().After(deadline) {
-			return false
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-}
+var waitFor = recording.WaitFor
 
 func state(m *recording.Manager, id string) types.ProcessState {
 	return m.Statuses()[id].State
@@ -381,7 +314,7 @@ func payload(tag string) string { return strings.Repeat(tag+"|", 200) }
 // and exactly once, and S3-only mode leaves no audio behind in the spool.
 func TestInvariantRoundTrip(t *testing.T) {
 	for _, storage := range []types.StorageMode{types.StorageLocal, types.StorageS3, types.StorageBoth} {
-		invariant(t, "RoundTrip/"+string(storage), func(t *testing.T, c *check) {
+		t.Run("RoundTrip/"+string(storage), func(t *testing.T) {
 			s3 := newFakeS3(t, "ok")
 			spool := t.TempDir()
 			cfg := corpusRecorder(t, "rt", storage, types.RecordingOnDemand, s3)
@@ -392,28 +325,28 @@ func TestInvariantRoundTrip(t *testing.T) {
 				t.Fatal(err)
 			}
 			if drops := m.Statuses()[cfg.ID].AudioDrops; drops != 0 {
-				c.violatef("recorder dropped %d chunks of paced audio", drops)
+				t.Errorf("recorder dropped %d chunks of paced audio", drops)
 			}
 			if storage != types.StorageS3 {
 				if local := audioFiles(t, cfg.LocalPath); !slices.Equal(local, []string{want}) {
-					c.violatef("local files = %d, holding the recorded audio: %v", len(local), slices.Contains(local, want))
+					t.Errorf("local files = %d, holding the recorded audio: %v", len(local), slices.Contains(local, want))
 				}
 			}
 			if storage != types.StorageLocal {
 				if !waitFor(5*time.Second, func() bool { return s3.count(want) == 1 }) {
-					c.violatef("S3 holds the recording %d times, want once", s3.count(want))
+					t.Errorf("S3 holds the recording %d times, want once", s3.count(want))
 				}
 				if n := s3.committed(want); n > 1 {
-					c.violatef("the recording was written to S3 %d times, want once", n)
+					t.Errorf("the recording was written to S3 %d times, want once", n)
 				}
 			}
 			if storage == types.StorageS3 {
 				if !waitFor(5*time.Second, func() bool { return len(audioFiles(t, spool)) == 0 }) {
-					c.violatef("spool still holds %d audio files after upload", len(audioFiles(t, spool)))
+					t.Errorf("spool still holds %d audio files after upload", len(audioFiles(t, spool)))
 				}
 			}
 			if !waitFor(5*time.Second, func() bool { return m.UploadBacklog().Pending == 0 }) {
-				c.violatef("%d uploads pending after a successful upload", m.UploadBacklog().Pending)
+				t.Errorf("%d uploads pending after a successful upload", m.UploadBacklog().Pending)
 			}
 		})
 	}
@@ -422,7 +355,7 @@ func TestInvariantRoundTrip(t *testing.T) {
 // I4: an upload never replaces an object it did not write, and a commit whose
 // response is lost is not written twice.
 func TestInvariantExactlyOnce(t *testing.T) {
-	invariant(t, "ExactlyOnce/ForeignObject", func(t *testing.T, c *check) {
+	t.Run("ExactlyOnce/ForeignObject", func(t *testing.T) {
 		s3 := newFakeS3(t, "ok")
 		s3.set(func(s *fakeS3) { s.conflictOnce = true })
 		cfg := corpusRecorder(t, "eo", types.StorageS3, types.RecordingOnDemand, s3)
@@ -433,13 +366,13 @@ func TestInvariantExactlyOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 		if !waitFor(5*time.Second, func() bool { return s3.count(want) == 1 }) {
-			c.violatef("S3 holds the recording %d times next to a foreign object, want once", s3.count(want))
+			t.Errorf("S3 holds the recording %d times next to a foreign object, want once", s3.count(want))
 		}
 		if n := s3.count(foreignBody); n != 1 {
-			c.violatef("the foreign object at the recording's key is gone (%d copies)", n)
+			t.Errorf("the foreign object at the recording's key is gone (%d copies)", n)
 		}
 	})
-	invariant(t, "ExactlyOnce/LostResponse", func(t *testing.T, c *check) {
+	t.Run("ExactlyOnce/LostResponse", func(t *testing.T) {
 		s3 := newFakeS3(t, "ok")
 		s3.set(func(s *fakeS3) { s.loseResponse = true })
 		cfg := corpusRecorder(t, "lr", types.StorageS3, types.RecordingOnDemand, s3)
@@ -456,7 +389,7 @@ func TestInvariantExactlyOnce(t *testing.T) {
 			return m.UploadBacklog().Pending == 0 && s3.count(want) > 0
 		})
 		if n, w := s3.count(want), s3.committed(want); n != 1 || w != 1 {
-			c.violatef("after a lost response S3 holds the recording %d times from %d writes, want 1 and 1", n, w)
+			t.Errorf("after a lost response S3 holds the recording %d times from %d writes, want 1 and 1", n, w)
 		}
 	})
 }
@@ -464,20 +397,20 @@ func TestInvariantExactlyOnce(t *testing.T) {
 // I5: stopping is bounded by local work; a slow or unreachable S3 never holds
 // up a stop, so a service stop or input change cannot lose audio to it.
 func TestInvariantBoundedStop(t *testing.T) {
-	invariant(t, "BoundedStop/StopRecorder", func(t *testing.T, c *check) {
+	t.Run("BoundedStop/StopRecorder", func(t *testing.T) {
 		s3 := newFakeS3(t, "hang")
 		cfg := corpusRecorder(t, "bs", types.StorageS3, types.RecordingOnDemand, s3)
 		m := newCorpusManager(t, t.TempDir(), s3, cfg)
 		record(t, m, cfg.ID, payload("bounded"))
 		took, inTime, err := stopWithin(stopBound, func() error { return m.StopRecorder(cfg.ID) }, s3.heal)
 		if !inTime {
-			c.violatef("StopRecorder took %s with S3 unreachable, bound %s", took.Round(time.Millisecond), stopBound)
+			t.Errorf("StopRecorder took %s with S3 unreachable, bound %s", took.Round(time.Millisecond), stopBound)
 		}
 		if err != nil {
-			c.violatef("StopRecorder: %v", err)
+			t.Errorf("StopRecorder: %v", err)
 		}
 	})
-	invariant(t, "BoundedStop/ManagerStop", func(t *testing.T, c *check) {
+	t.Run("BoundedStop/ManagerStop", func(t *testing.T) {
 		recording.ManualTimers(t)
 		s3 := newFakeS3(t, "hang")
 		cfg := corpusRecorder(t, "bm", types.StorageS3, types.RecordingHourly, s3)
@@ -486,14 +419,14 @@ func TestInvariantBoundedStop(t *testing.T) {
 			t.Fatalf("hourly recorder never ran: %+v", m.Statuses()[cfg.ID])
 		}
 		feed(m, payload("hour-1"))
-		recording.FireTimers() // Rotation queues hour 1 while S3 hangs.
+		recording.FireTimers(m) // Rotation queues hour 1 while S3 hangs.
 		feed(m, payload("hour-2"))
 		took, inTime, err := stopWithin(stopBound, m.Stop, s3.heal)
 		if !inTime {
-			c.violatef("Manager.Stop took %s with an upload in flight, bound %s", took.Round(time.Millisecond), stopBound)
+			t.Errorf("Manager.Stop took %s with an upload in flight, bound %s", took.Round(time.Millisecond), stopBound)
 		}
 		if err != nil {
-			c.violatef("Manager.Stop: %v", err)
+			t.Errorf("Manager.Stop: %v", err)
 		}
 	})
 }
@@ -501,7 +434,7 @@ func TestInvariantBoundedStop(t *testing.T) {
 // I6: a recording that is not yet in S3 is always counted as pending or
 // abandoned, including while it uploads and after its recorder is removed.
 func TestInvariantHonestPending(t *testing.T) {
-	invariant(t, "HonestPending/UploadFailed", func(t *testing.T, c *check) {
+	t.Run("HonestPending/UploadFailed", func(t *testing.T) {
 		s3 := newFakeS3(t, "deny")
 		cfg := corpusRecorder(t, "hp", types.StorageS3, types.RecordingOnDemand, s3)
 		m := newCorpusManager(t, t.TempDir(), s3, cfg)
@@ -510,10 +443,10 @@ func TestInvariantHonestPending(t *testing.T) {
 			t.Fatal(err)
 		}
 		if !waitFor(5*time.Second, func() bool { return undelivered(m) > 0 }) {
-			c.violatef("a refused upload is counted nowhere")
+			t.Errorf("a refused upload is counted nowhere")
 		}
 	})
-	invariant(t, "HonestPending/UploadInFlight", func(t *testing.T, c *check) {
+	t.Run("HonestPending/UploadInFlight", func(t *testing.T) {
 		s3 := newFakeS3(t, "deny")
 		cfg := corpusRecorder(t, "hi", types.StorageS3, types.RecordingOnDemand, s3)
 		m := newCorpusManager(t, t.TempDir(), s3, cfg)
@@ -552,10 +485,10 @@ func TestInvariantHonestPending(t *testing.T) {
 		s3.heal()
 		<-retried
 		if zero > 0 {
-			c.violatef("pending+abandoned was 0 in %d of 50 samples while a retry upload was in flight", zero)
+			t.Errorf("pending+abandoned was 0 in %d of 50 samples while a retry upload was in flight", zero)
 		}
 	})
-	invariant(t, "HonestPending/RemovedRecorder", func(t *testing.T, c *check) {
+	t.Run("HonestPending/RemovedRecorder", func(t *testing.T) {
 		s3 := newFakeS3(t, "deny")
 		cfg := corpusRecorder(t, "hr", types.StorageS3, types.RecordingOnDemand, s3)
 		m := newCorpusManager(t, t.TempDir(), s3, cfg)
@@ -571,7 +504,7 @@ func TestInvariantHonestPending(t *testing.T) {
 		}
 		time.Sleep(time.Second) // Give a background scan or retry pass time to count it.
 		if undelivered(m) == 0 {
-			c.violatef("removing the recorder made its unuploaded recording invisible")
+			t.Errorf("removing the recorder made its unuploaded recording invisible")
 		}
 		// R2: the removed recorder's recording is still delivered.
 		s3.heal()
@@ -579,7 +512,7 @@ func TestInvariantHonestPending(t *testing.T) {
 			recording.RetryUploadsNow(m)
 			return s3.count(payload("removed")) == 1 && undelivered(m) == 0
 		}) {
-			c.violatef("the removed recorder's recording is in S3 %d times, want once", s3.count(payload("removed")))
+			t.Errorf("the removed recorder's recording is in S3 %d times, want once", s3.count(payload("removed")))
 		}
 	})
 }
@@ -587,7 +520,7 @@ func TestInvariantHonestPending(t *testing.T) {
 // I10: an upload that keeps failing is retried until it is delivered; after
 // two hours it is alerted as overdue, and the alert clears on delivery.
 func TestInvariantOverdue(t *testing.T) {
-	invariant(t, "Overdue/AlertedAndCleared", func(t *testing.T, c *check) {
+	t.Run("Overdue/AlertedAndCleared", func(t *testing.T) {
 		s3 := newFakeS3(t, "deny")
 		cfg := corpusRecorder(t, "ov", types.StorageS3, types.RecordingOnDemand, s3)
 		m, err := recording.NewManager(os.Args[0], t.TempDir(), 0, nil)
@@ -625,33 +558,33 @@ func TestInvariantOverdue(t *testing.T) {
 		}
 		waitFor(5*time.Second, func() bool { return m.UploadBacklog().Pending == 1 })
 		if len(alerted()) != 0 || m.UploadBacklog().Overdue != 0 {
-			c.violatef("a fresh failed upload is already overdue")
+			t.Errorf("a fresh failed upload is already overdue")
 		}
 		// Thirty hours later, past the old 24-hour abandonment as well.
 		offset.Store(int64(30 * time.Hour))
 		recording.RetryUploadsNow(m)
 		if !waitFor(10*time.Second, func() bool { a := alerted(); return len(a) == 1 && a[0].Overdue && a[0].Count == 1 }) {
-			c.violatef("an upload failing for 30 hours raised alerts %+v, want one overdue alert", alerted())
+			t.Errorf("an upload failing for 30 hours raised alerts %+v, want one overdue alert", alerted())
 		}
 		if b := m.UploadBacklog(); b.Overdue != 1 || b.Pending != 1 {
-			c.violatef("backlog after 30 hours = %+v, want one overdue pending upload", b)
+			t.Errorf("backlog after 30 hours = %+v, want one overdue pending upload", b)
 		}
 		s3.heal()
 		if !waitFor(10*time.Second, func() bool {
 			recording.RetryUploadsNow(m)
 			return s3.count(payload("overdue")) == 1
 		}) {
-			c.violatef("the overdue upload was not delivered once S3 healed")
+			t.Errorf("the overdue upload was not delivered once S3 healed")
 		}
 		if !waitFor(10*time.Second, func() bool { a := alerted(); return len(a) == 2 && !a[1].Overdue }) {
-			c.violatef("alerts after delivery = %+v, want the overdue alert cleared once", alerted())
+			t.Errorf("alerts after delivery = %+v, want the overdue alert cleared once", alerted())
 		}
 	})
 }
 
 // I7: once the manager has stopped, no recorder runs until it starts again.
 func TestInvariantClosedLifecycle(t *testing.T) {
-	invariant(t, "ClosedLifecycle/StartAfterStop", func(t *testing.T, c *check) {
+	t.Run("ClosedLifecycle/StartAfterStop", func(t *testing.T) {
 		cfg := corpusRecorder(t, "cl", types.StorageLocal, types.RecordingOnDemand, nil)
 		m := newCorpusManager(t, t.TempDir(), nil, cfg)
 		if err := m.Stop(); err != nil {
@@ -660,15 +593,15 @@ func TestInvariantClosedLifecycle(t *testing.T) {
 		_ = m.StartRecorder(cfg.ID)
 		time.Sleep(time.Second)
 		if s := state(m, cfg.ID); s == types.ProcessRunning || s == types.ProcessStarting {
-			c.violatef("recorder is %s after Manager.Stop", s)
+			t.Errorf("recorder is %s after Manager.Stop", s)
 		}
 	})
 }
 
 // I7: a saved recorder configuration is what runs: enabling starts an hourly
-// recorder, disabling stops it.
+// recorder, disabling stops it, and new output settings start a new file.
 func TestInvariantConfigApplies(t *testing.T) {
-	invariant(t, "ConfigApplies/Disable", func(t *testing.T, c *check) {
+	t.Run("ConfigApplies/Disable", func(t *testing.T) {
 		recording.ManualTimers(t)
 		cfg := corpusRecorder(t, "cd", types.StorageLocal, types.RecordingHourly, nil)
 		m := newCorpusManager(t, t.TempDir(), nil, cfg)
@@ -681,10 +614,10 @@ func TestInvariantConfigApplies(t *testing.T) {
 			t.Fatal(err)
 		}
 		if !waitFor(stopBound, func() bool { return state(m, cfg.ID) == types.ProcessStopped }) {
-			c.violatef("disabled hourly recorder is still %s", state(m, cfg.ID))
+			t.Errorf("disabled hourly recorder is still %s", state(m, cfg.ID))
 		}
 	})
-	invariant(t, "ConfigApplies/Enable", func(t *testing.T, c *check) {
+	t.Run("ConfigApplies/Enable", func(t *testing.T) {
 		recording.ManualTimers(t)
 		cfg := corpusRecorder(t, "ce", types.StorageLocal, types.RecordingHourly, nil)
 		cfg.Enabled = false
@@ -695,7 +628,39 @@ func TestInvariantConfigApplies(t *testing.T) {
 			t.Fatal(err)
 		}
 		if !waitFor(stopBound, func() bool { return state(m, cfg.ID) == types.ProcessRunning }) {
-			c.violatef("enabled hourly recorder is still %s", state(m, cfg.ID))
+			t.Errorf("enabled hourly recorder is still %s", state(m, cfg.ID))
+		}
+	})
+	t.Run("ConfigApplies/OutputSettings", func(t *testing.T) {
+		recording.ManualTimers(t)
+		cfg := corpusRecorder(t, "co", types.StorageLocal, types.RecordingHourly, nil)
+		m := newCorpusManager(t, t.TempDir(), nil, cfg)
+		if !waitFor(5*time.Second, func() bool { return state(m, cfg.ID) == types.ProcessRunning }) {
+			t.Fatalf("hourly recorder never ran")
+		}
+		feed(m, payload("before"))
+		updated := *cfg
+		updated.Codec, updated.LocalPath = types.CodecPCM, t.TempDir()
+		if err := m.UpdateRecorder(&updated); err != nil {
+			t.Fatal(err)
+		}
+		recording.Settle(m)
+		feed(m, payload("after"))
+		if err := m.Stop(); err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []struct{ dir, ext, data string }{
+			{cfg.LocalPath, ".mp3", payload("before")},
+			{updated.LocalPath, ".ts", payload("after")},
+		} {
+			files, _ := filepath.Glob(filepath.Join(want.dir, "*"))
+			if len(files) != 1 || filepath.Ext(files[0]) != want.ext {
+				t.Errorf("%s holds %v, want one %s recording", want.dir, files, want.ext)
+				continue
+			}
+			if data, _ := os.ReadFile(files[0]); string(data) != want.data { //nolint:gosec // Test temp dir.
+				t.Errorf("%s holds %d bytes, want the audio from its settings' time", files[0], len(data))
+			}
 		}
 	})
 }
@@ -703,7 +668,7 @@ func TestInvariantConfigApplies(t *testing.T) {
 // I8: a recording that failed stays visible in the recorder status until the
 // operator acts, also when the failure happened while stopping.
 func TestInvariantErrorStaysVisible(t *testing.T) {
-	invariant(t, "ErrorStaysVisible/FinalizeFailure", func(t *testing.T, c *check) {
+	t.Run("ErrorStaysVisible/FinalizeFailure", func(t *testing.T) {
 		cfg := corpusRecorder(t, "ev", types.StorageLocal, types.RecordingOnDemand, nil)
 		m := newCorpusManager(t, t.TempDir(), nil, cfg)
 		t.Setenv("ZWFM_RECORDING_FAKE_FFMPEG_FAIL_FINALIZE", "1")
@@ -712,7 +677,7 @@ func TestInvariantErrorStaysVisible(t *testing.T) {
 			t.Fatal(err)
 		}
 		if st := m.Statuses()[cfg.ID]; st.Error == "" && st.State != types.ProcessError {
-			c.violatef("finalize failure left status %q with no error", st.State)
+			t.Errorf("finalize failure left status %q with no error", st.State)
 		}
 	})
 }
@@ -744,19 +709,19 @@ func TestInvariantDurable(t *testing.T) {
 					recording.RetryUploadsNow(m)
 					return !slices.ContainsFunc(hours, func(h string) bool { return s3.count(h) == 0 })
 				})
-				delivered := func(c *check, numbers ...int) {
+				delivered := func(t *testing.T, numbers ...int) {
 					for _, n := range numbers {
 						if got := s3.count(hours[n-1]); got != 1 {
-							c.violatef("hour %d is in S3 %d times after restart, want once", n, got)
+							t.Errorf("hour %d is in S3 %d times after restart, want once", n, got)
 						}
 					}
 				}
 				prefix := "Durable/" + crash + "/"
-				invariant(t, prefix+"QueuedFinalized/"+string(storage), func(_ *testing.T, c *check) {
-					delivered(c, 1, 2, 3) // Finalized: one in flight, two queued behind it.
+				t.Run(prefix+"QueuedFinalized/"+string(storage), func(t *testing.T) {
+					delivered(t, 1, 2, 3) // Finalized: one in flight, two queued behind it.
 				})
-				invariant(t, prefix+"InterruptedActive/"+string(storage), func(_ *testing.T, c *check) {
-					delivered(c, 4) // Still being recorded at the crash.
+				t.Run(prefix+"InterruptedActive/"+string(storage), func(t *testing.T) {
+					delivered(t, 4) // Still being recorded at the crash.
 				})
 			})
 		}
@@ -841,7 +806,7 @@ func init() {
 		}
 		for hour := 1; hour <= 3; hour++ {
 			feed(m, payload(fmt.Sprintf("hour-%d", hour)))
-			recording.FireTimers()
+			recording.FireTimers(m)
 		}
 		feed(m, payload("hour-4"))
 		// Crash only once the streaming FFmpeg has written all of hour 4.

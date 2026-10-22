@@ -29,7 +29,6 @@ func TestStorageWarningsThresholdsDedupAndRecovery(t *testing.T) {
 	t.Parallel()
 	m := storageTestManager(t, t.TempDir())
 	cfg := localOnDemandRecorder(t, "local")
-	cfg.Enabled = true
 	if err := m.AddRecorder(cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +110,6 @@ func localStorageManager(t *testing.T) (m *Manager, cfg *types.Recorder, logPath
 	t.Helper()
 	m = storageTestManager(t, t.TempDir())
 	cfg = localOnDemandRecorder(t, "local")
-	cfg.Enabled = true
 	if err := m.AddRecorder(cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -369,7 +367,6 @@ func TestRestartClosesStorageIncidentLeftOpen(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			spool, logPath := t.TempDir(), filepath.Join(t.TempDir(), "events.jsonl")
 			cfg := localOnDemandRecorder(t, "local")
-			cfg.Enabled = true
 			logger, err := eventlog.NewLogger(logPath)
 			if err != nil {
 				t.Fatal(err)

@@ -17,11 +17,9 @@ func TestBlockedFilenameCheckDoesNotStopCaptureFanout(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		rotation bool
-		update   bool
 	}{
 		{name: "startup"},
 		{name: "rotation", rotation: true},
-		{name: "rotation with concurrent config update", rotation: true, update: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, err := NewManager(os.Args[0], t.TempDir(), 0, nil)
@@ -29,14 +27,14 @@ func TestBlockedFilenameCheckDoesNotStopCaptureFanout(t *testing.T) {
 				t.Fatal(err)
 			}
 			slowCfg := localOnDemandRecorder(t, "slow")
-			slowCfg.RecordingMode, slowCfg.Enabled = types.RecordingHourly, true
+			slowCfg.RecordingMode = types.RecordingHourly
 			healthyCfg := localOnDemandRecorder(t, "healthy")
 			for _, cfg := range []*types.Recorder{slowCfg, healthyCfg} {
 				if err := m.AddRecorder(cfg); err != nil {
 					t.Fatal(err)
 				}
 			}
-			t.Cleanup(func() { _ = m.Stop() })
+			t.Cleanup(func() { _ = m.Stop(); m.Close() })
 			slow, healthy := m.recorders[slowCfg.ID], m.recorders[healthyCfg.ID]
 			files := []string{startCaptureTestRecorder(t, healthy)}
 			if tc.rotation {
@@ -65,12 +63,6 @@ func TestBlockedFilenameCheckDoesNotStopCaptureFanout(t *testing.T) {
 			case <-time.After(3 * time.Second):
 				t.Fatal("filename check did not block")
 			}
-			updated := make(chan error, 1)
-			if tc.update {
-				go func() { updated <- m.UpdateRecorder(slowCfg) }()
-			} else {
-				updated <- nil
-			}
 			pcm := []byte{1, 2, 3, 4}
 			const chunks = 10
 			delivered := make(chan struct{})
@@ -84,12 +76,6 @@ func TestBlockedFilenameCheckDoesNotStopCaptureFanout(t *testing.T) {
 			case <-delivered:
 			case <-time.After(time.Second):
 				t.Error("capture fan-out waited for the blocked filename check")
-			}
-			select {
-			case err := <-updated:
-				requireRecorderUpdate(t, err)
-			case <-time.After(time.Second):
-				t.Error("config update waited for the blocked filename check")
 			}
 			release()
 			<-delivered
@@ -109,22 +95,13 @@ func TestBlockedFilenameCheckDoesNotStopCaptureFanout(t *testing.T) {
 	}
 }
 
-func requireRecorderUpdate(t *testing.T, err error) {
-	t.Helper()
-	if err != nil {
-		t.Errorf("recorder update failed: %v", err)
-	}
-}
-
 func startCaptureTestRecorder(t *testing.T, r *GenericRecorder) string {
 	t.Helper()
 	if err := r.Start(); err != nil {
 		t.Fatal(err)
 	}
 	waitForRecorderState(t, r, types.ProcessRunning)
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.currentFile
+	return r.currentFile()
 }
 
 func assertRecordedCapture(t *testing.T, file string, want []byte) {

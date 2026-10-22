@@ -99,7 +99,7 @@ func (m *Manager) cleanupLocalFiles(recorder *GenericRecorder) {
 
 			// A recording that is being written, finalized or not yet
 			// delivered, or that failed, is never expired.
-			if recorder.IsCurrentFile(filePath) || m.outbox.hasPath(filePath) {
+			if m.outbox.hasPath(filePath) {
 				continue
 			}
 

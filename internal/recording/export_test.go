@@ -1,10 +1,15 @@
 package recording
 
 import (
+	"bytes"
+	"maps"
 	"math"
+	"slices"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
 // This file exposes the few seams the black-box invariant corpus
@@ -21,10 +26,10 @@ func ManualTimers(tb testing.TB) {
 	manualTimers.Lock()
 	manualTimers.armed = nil
 	manualTimers.Unlock()
-	afterFunc = func(_ time.Duration, callback func()) *time.Timer {
+	afterFunc = func(d time.Duration, callback func()) *time.Timer {
 		timer := time.NewTimer(math.MaxInt64)
 		manualTimers.Lock()
-		manualTimers.armed = append(manualTimers.armed, manualTimer{timer: timer, callback: callback})
+		manualTimers.armed = append(manualTimers.armed, manualTimer{timer: timer, callback: callback, delay: d})
 		manualTimers.Unlock()
 		return timer
 	}
@@ -34,22 +39,45 @@ func ManualTimers(tb testing.TB) {
 }
 
 // FireTimers runs every timer that is still armed, as if its deadline passed,
-// and waits for the callbacks to return.
-func FireTimers() {
+// and waits until m's recorders have acted on them: a rotation has started the
+// next file and finalized the previous one, a duration limit has stopped.
+func FireTimers(m *Manager) {
 	manualTimers.Lock()
 	armed := manualTimers.armed
 	manualTimers.armed = nil
 	manualTimers.Unlock()
-	var wg sync.WaitGroup
 	for _, t := range armed {
 		if t.timer.Stop() { // Still armed: the recorder did not cancel it.
-			wg.Go(t.callback)
+			t.callback()
 		}
 	}
-	wg.Wait()
+	Settle(m)
+}
+
+// Settle waits until m's recorders neither prepare nor finalize a file, such
+// as the new file a configuration change starts.
+func Settle(m *Manager) {
+	m.mu.RLock()
+	recorders := slices.Collect(maps.Values(m.recorders))
+	m.mu.RUnlock()
+	for _, r := range recorders {
+		r.settle()
+	}
+}
+
+// settle waits until r neither prepares nor finalizes a file.
+func (r *GenericRecorder) settle() {
+	for {
+		idle := true
+		if !r.do(func() { idle = r.run.next == nil && r.run.retiring == 0 }) || idle {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 type manualTimer struct {
+	delay    time.Duration
 	timer    *time.Timer
 	callback func()
 }
@@ -57,6 +85,12 @@ type manualTimer struct {
 var manualTimers struct {
 	sync.Mutex
 	armed []manualTimer
+}
+
+func capturedTimers() []manualTimer {
+	manualTimers.Lock()
+	defer manualTimers.Unlock()
+	return slices.Clone(manualTimers.armed)
 }
 
 // RetryUploadsNow makes every waiting upload due now, as if its backoff ended.
@@ -92,7 +126,19 @@ func newTestRecorder(t testing.TB, cfg GenericRecorderConfig) *GenericRecorder {
 		}
 		cfg.Outbox = ob
 	}
-	return NewGenericRecorder(cfg)
+	r := NewGenericRecorder(cfg)
+	t.Cleanup(r.close)
+	return r
+}
+
+// Start starts r whatever its mode and enabled flag, as if the manager ran.
+func (r *GenericRecorder) Start() error {
+	err := errRecorderClosed
+	r.do(func() {
+		r.run.active = true
+		err = r.startRun()
+	})
+	return err
 }
 
 // retryAllNow makes every waiting upload and cleanup due now, in memory only.
@@ -106,4 +152,77 @@ func (o *outbox) retryAllNow() {
 	}
 	o.mu.Unlock()
 	o.signal()
+}
+
+// inspect runs f on r's run state in its loop.
+func (r *GenericRecorder) inspect(f func(l *run)) {
+	r.do(func() { f(&r.run) })
+}
+
+// currentSegment returns the segment r is recording into, or nil.
+func (r *GenericRecorder) currentSegment() *segment {
+	var seg *segment
+	r.inspect(func(l *run) { seg = l.seg })
+	return seg
+}
+
+// currentFile returns the file r is recording into, or "".
+func (r *GenericRecorder) currentFile() string {
+	if seg := r.currentSegment(); seg != nil {
+		return seg.file
+	}
+	return ""
+}
+
+// Stop finalizes the recording and waits for that; uploads are the uploader's,
+// so Stop never waits for S3. A Stop already in progress is joined.
+func (r *GenericRecorder) Stop() {
+	stopped := closedChannel()
+	r.do(func() { stopped = r.stop() })
+	<-stopped
+}
+
+// UpdateConfig applies cfg and waits for a stop it causes.
+func (r *GenericRecorder) UpdateConfig(cfg *types.Recorder) error {
+	stopped, err := r.update(cfg)
+	if err != nil {
+		return err
+	}
+	<-stopped
+	return nil
+}
+
+func (r *GenericRecorder) generateFilename(t time.Time) string {
+	cfg := r.Config()
+	return recordingFilename(&cfg, t)
+}
+
+// WaitFor polls cond until it holds or timeout passes.
+func WaitFor(timeout time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if cond() {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// WriteAudio fans out one PCM copy without blocking the distributor.
+func (m *Manager) WriteAudio(pcm []byte) {
+	var shared []byte
+	m.WriteAudioShared(func() []byte {
+		if shared == nil {
+			shared = bytes.Clone(pcm)
+		}
+		return shared
+	})
+}
+
+// Start begins recorder management and is idempotent across source retries.
+func (m *Manager) Start() error {
+	return m.StartIfActive(nil)
 }

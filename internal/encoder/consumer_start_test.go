@@ -139,7 +139,7 @@ func TestStopCancelsSourceBeforeStoppingConsumers(t *testing.T) {
 	t.Cleanup(e.alertOrchestrator.Close)
 	e.state, e.sourceRunID = types.StateRunning, 1
 	e.stopChan, e.sourceStdout = make(chan struct{}), strings.NewReader("")
-	if err := e.recordingManager.Start(); err != nil {
+	if err := e.recordingManager.StartIfActive(nil); err != nil {
 		t.Fatal(err)
 	}
 	canceled := make(chan struct{})

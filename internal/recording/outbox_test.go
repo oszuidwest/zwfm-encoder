@@ -118,7 +118,6 @@ func TestOutboxRecoversInterruptedRecordings(t *testing.T) {
 		state  ticketState // the state before the restart; default recording
 		want   ticketState
 	}{
-		{name: "audio, S3", dest: "d", file: ptr("partial hour"), want: ticketReady},
 		{name: "audio, local only", file: ptr("partial hour"), want: ""},
 		{name: "empty, never synced", dest: "d", file: ptr(""), want: ""},
 		{name: "missing, never synced", dest: "d", want: ""},

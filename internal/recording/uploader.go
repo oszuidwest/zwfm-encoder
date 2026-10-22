@@ -183,7 +183,7 @@ func uploadBackoff(attempts int) time.Duration {
 func (u *uploader) cleanup(t *ticket) {
 	err := error(nil)
 	if t.DeleteAfterUpload {
-		if err = os.Remove(t.Path); errors.Is(err, os.ErrNotExist) {
+		if err = os.Remove(t.Path); errors.Is(err, os.ErrNotExist) { // #nosec G703 -- The recorder-reserved output of the ticket.
 			err = nil
 		}
 	}

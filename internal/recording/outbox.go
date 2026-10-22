@@ -552,7 +552,7 @@ func (o *outbox) ensureDestination(id string, d destination) error {
 
 func (o *outbox) loadDestination(id string) (destination, error) {
 	var d destination
-	data, err := os.ReadFile(o.destinationPath(id))
+	data, err := os.ReadFile(o.destinationPath(id)) // #nosec G703 -- An outbox-owned destination file.
 	if err != nil {
 		return d, fmt.Errorf("read upload destination: %w", err)
 	}

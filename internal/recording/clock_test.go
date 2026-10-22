@@ -28,7 +28,7 @@ func TestRecorderWaitsForClockSync(t *testing.T) {
 	if err := r.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = r.Stop() })
+	t.Cleanup(func() { r.Stop() })
 
 	time.Sleep(100 * time.Millisecond)
 	if status := r.Status(); status.State != types.ProcessStarting || status.Error == "" {
@@ -48,18 +48,7 @@ func TestStopRecorderCancelsClockWait(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		synced := fakeClockSync(t)
 		cfg := localOnDemandRecorder(t, "clock-cancel")
-		cfg.Enabled = true
-		m, err := NewManager("", t.TempDir(), 0, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := m.AddRecorder(cfg); err != nil {
-			t.Fatal(err)
-		}
-		if err := m.Start(); err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = m.Stop(); m.Close() }()
+		m, _ := startedTestManager(t, cfg)
 		if err := m.StartRecorder(cfg.ID); err != nil {
 			t.Fatal(err)
 		}
