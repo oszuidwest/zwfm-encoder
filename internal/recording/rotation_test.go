@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -151,23 +152,38 @@ func TestScheduleRotationTargetsNextHour(t *testing.T) {
 // and Stop must not return before it is done.
 func TestStopWaitsForRotatedFile(t *testing.T) {
 	neverRotate(t)
-	t.Setenv(fakeFFmpegFinalizeEnv, "500ms")
+	t.Setenv(fakeFFmpegFinalizeEnv, "0s")
 	r := startHourlyTestRecorder(t, "retiring")
 	r.WriteAudio([]byte{1, 2, 3, 4})
-	firstFile := r.currentFile()
-
-	// The next file finalizes at once, so only the rotation keeps Stop busy.
-	t.Setenv(fakeFFmpegFinalizeEnv, "0s")
+	old := r.currentSegment()
+	entered, blocked := make(chan struct{}), make(chan struct{})
+	release := sync.OnceFunc(func() { close(blocked) })
+	t.Cleanup(release)
+	join := old.stopSync
+	r.inspect(func(*run) { old.stopSync = func() { close(entered); <-blocked; join() } })
 	go rotateTestRecorder(r)
-	waitForHandOver(t, r, firstFile)
-	if !r.outbox.hasPath(firstFile) {
+	select {
+	case <-old.writerDone: // The hand-over ends it: no filler, even while finalization hangs.
+	case <-time.After(writerDrainTimeout / 2): // Before finalization would cancel it.
+		t.Error("retired writer did not exit at the hand-over")
+	}
+	<-entered
+	if !r.outbox.hasPath(old.file) {
 		t.Fatal("the file being finalized is not protected from retention cleanup")
 	}
-	r.Stop()
-	if _, err := os.Stat(firstFile); err != nil {
+	stopped := make(chan struct{})
+	go func() { r.Stop(); close(stopped) }()
+	select {
+	case <-stopped:
+		t.Error("Stop returned while the rotated file was still finalizing")
+	case <-time.After(30 * time.Millisecond):
+	}
+	release()
+	<-stopped
+	if _, err := os.Stat(old.file); err != nil {
 		t.Fatalf("Stop returned before the rotated file was finalized: %v", err)
 	}
-	if r.outbox.hasPath(firstFile) {
+	if r.outbox.hasPath(old.file) {
 		t.Fatal("the finalized file is still protected from retention cleanup")
 	}
 }
