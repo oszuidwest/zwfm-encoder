@@ -23,6 +23,7 @@ import (
 
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
+	"github.com/oszuidwest/zwfm-encoder/internal/notify"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
@@ -73,6 +74,7 @@ func main() {
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), util.ShutdownSignals()...)
+	go notify.RunHeartbeat(ctx, a.cfg.Snapshot().HeartbeatURL, time.Minute)
 	runShell(ctx, a)
 	// Restore default signal handling so a second Ctrl+C during shutdown
 	// force-kills instead of being swallowed.

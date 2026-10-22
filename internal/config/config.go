@@ -161,6 +161,10 @@ type EmailConfig struct {
 
 // NotificationsConfig holds notification settings.
 type NotificationsConfig struct {
+	// Heartbeat holds the push monitor URL pinged every minute while the encoder runs.
+	Heartbeat struct {
+		URL string `json:"url"`
+	} `json:"heartbeat"`
 	// Webhook contains webhook notification settings.
 	Webhook WebhookConfig `json:"webhook"`
 	// Email contains Microsoft Graph email settings.
@@ -513,6 +517,9 @@ func (c *Config) validate() error {
 func (c *Config) validateNotifications() error {
 	for _, issue := range types.ValidateWebhookURL(c.Notifications.Webhook.URL, validation.AllowEmpty) {
 		return fmt.Errorf("invalid %s", formatWebhookIssue("notifications.webhook.url", issue))
+	}
+	for _, issue := range types.ValidateWebhookURL(c.Notifications.Heartbeat.URL, validation.AllowEmpty) {
+		return fmt.Errorf("invalid %s", formatWebhookIssue("notifications.heartbeat.url", issue))
 	}
 	if msg := validateOptionalEmail("notifications.email.from_address", c.Notifications.Email.FromAddress); msg != "" {
 		return fmt.Errorf("invalid %s", msg)
@@ -1066,6 +1073,8 @@ type Snapshot struct {
 
 	// WebhookURL is the endpoint to POST audio alerts to.
 	WebhookURL string
+	// HeartbeatURL is the push heartbeat endpoint, or empty when disabled.
+	HeartbeatURL string
 	// WebhookEvents controls which audio events trigger webhook notifications.
 	WebhookEvents types.EventSubscriptions
 	// EmailEvents controls which audio events trigger email notifications.
@@ -1180,6 +1189,7 @@ func (c *Config) Snapshot() Snapshot {
 
 		// Notifications
 		WebhookURL:    c.Notifications.Webhook.URL,
+		HeartbeatURL:  c.Notifications.Heartbeat.URL,
 		WebhookEvents: c.Notifications.Webhook.Events,
 		EmailEvents:   c.Notifications.Email.Events,
 		ZabbixEvents:  c.Notifications.Zabbix.Events.ToEventSubscriptions(),

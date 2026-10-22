@@ -117,6 +117,7 @@ func TestLoadPreservesConfigDataAndSnapshotEntities(t *testing.T) {
 	t.Parallel()
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	want := fullyPopulatedConfigData(t)
+	want.Notifications.Heartbeat.URL = "https://heartbeat.example/m1-token"
 	data, err := json.MarshalIndent(want, "", "  ")
 	if err != nil {
 		t.Fatalf("MarshalIndent() error = %v", err)
@@ -135,6 +136,7 @@ func TestLoadPreservesConfigDataAndSnapshotEntities(t *testing.T) {
 		t.Fatalf("ConfigData after Load() mismatch:\n got  %+v\n want %+v", cfg.ConfigData, want)
 	}
 	snap := cfg.Snapshot()
+	assertEqual(t, "HeartbeatURL", snap.HeartbeatURL, want.Notifications.Heartbeat.URL)
 	if !reflect.DeepEqual(snap.Streams, want.Streaming.Streams) {
 		t.Fatalf("Snapshot().Streams = %+v, want %+v", snap.Streams, want.Streaming.Streams)
 	}
@@ -448,6 +450,7 @@ func TestLoadRejectsInvalidFileSettings(t *testing.T) {
 		badConfig("explicit null channel imbalance duration", validConfigJSON(`"channel_imbalance_detection":{"threshold_db":12,"duration_ms":null,"recovery_ms":5000}`), "channel_imbalance_detection.duration_ms: must be greater than 0"),
 		badConfig("negative silence dump retention", validConfigJSON(`"silence_dump":{"retention_days":-1}`), "silence_dump.retention_days: cannot be negative"),
 		badConfig("invalid webhook url", validConfigJSON(`"notifications":{"webhook":{"url":"://broken"}}`), "notifications.webhook.url: invalid URL format"),
+		badConfig("invalid heartbeat url", validConfigJSON(`"notifications":{"heartbeat":{"url":"://broken"}}`), "notifications.heartbeat.url: invalid URL format"),
 		badConfig("invalid graph from address", validConfigJSON(`"notifications":{"email":{"from_address":"not-an-email"}}`), "notifications.email.from_address: invalid email format"),
 		badConfig("invalid graph recipient", validConfigJSON(`"notifications":{"email":{"recipients":"good@example.com, bad-address"}}`), "notifications.email.recipients: contains invalid email address"),
 		badConfig("invalid zabbix port", validConfigJSON(`"notifications":{"zabbix":{"port":70000}}`), "notifications.zabbix.port: must be between 1 and 65535"),

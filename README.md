@@ -62,6 +62,7 @@ Most settings are made in the web interface. These are not:
 - `system`: `port`, `bind_address`, `username`, `password_hash`, `trusted_proxies`, `ffmpeg_path`
 - `web`: `station_name`, `color_light`, `color_dark`
 - `audio.input` for a [Dante-compatible input](#dante-compatible-input)
+- `notifications.heartbeat.url` for the [heartbeat](#heartbeat)
 
 Back up the file before editing and restart with `sudo systemctl restart encoder`. An invalid file keeps the encoder, and every stream, down; check `journalctl -u encoder` after the restart. Never change a recorder's `id`, `id_based_files` or `legacy_file_prefix`: file names and retention depend on them.
 
@@ -190,6 +191,10 @@ To recover a failed recording, stop the recorder, inspect the file and copy usab
 If only finalizing fails at an hourly rotation, the recorder keeps running and `status.error` shows the failure until the next successful hour, so monitor `recorder_error` events, not only the recorder state. If recording itself fails, the recorder goes into error and retries at the next hour.
 
 ## Monitoring
+
+### Heartbeat
+
+With `notifications.heartbeat.url` set to a push monitor URL (for example an UptimeRobot heartbeat), the encoder sends a GET to it every minute while it runs, starting one minute after startup. The monitor goes down when the Pi, its network or the encoder is down; audio problems are covered by [alerting](#alerting). Redirects are not followed. The installer asks for the URL on a fresh install.
 
 ### Health and Readiness
 
