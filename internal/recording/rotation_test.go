@@ -171,6 +171,11 @@ func TestStopWaitsForRotatedFile(t *testing.T) {
 	if !r.outbox.hasPath(old.file) {
 		t.Fatal("the file being finalized is not protected from retention cleanup")
 	}
+	r.inspect(func(l *run) {
+		if l.retiring != 1 {
+			t.Errorf("rotated files being finalized = %d, want 1", l.retiring)
+		}
+	})
 	stopped := make(chan struct{})
 	go func() { r.Stop(); close(stopped) }()
 	release()
