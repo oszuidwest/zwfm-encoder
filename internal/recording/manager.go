@@ -152,9 +152,11 @@ func (m *Manager) Close() {
 	m.mu.RLock()
 	recorders := slices.Collect(maps.Values(m.recorders))
 	m.mu.RUnlock()
+	var wg sync.WaitGroup // At once, so the close budget is not per recorder.
 	for _, r := range recorders {
-		r.close()
+		wg.Go(r.close)
 	}
+	wg.Wait()
 	m.uploader.stop()
 }
 
