@@ -130,7 +130,7 @@ if [ "$KEEP_CONFIG" != "y" ]; then
   # Timezone with validation (retry loop)
   while true; do
     prompt_user "TIMEZONE" "Europe/Amsterdam" "Enter your timezone (e.g. Europe/Amsterdam, Europe/London, Europe/Berlin)" "str"
-    if timedatectl list-timezones | grep -qx "$TIMEZONE"; then
+    if timedatectl list-timezones | grep -Fqx -- "$TIMEZONE"; then
       break
     fi
     echo -e "${RED}Invalid timezone '${TIMEZONE}'. Use 'timedatectl list-timezones' to see valid options.${NC}"
