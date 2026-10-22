@@ -418,7 +418,7 @@ failure classes have different guarantees.
   `Close`.
 - **Input outages are filled with silence (D1).** A file's playback position
   then stays close to wall-clock time: minute 37 of the 14:00 file is about
-  14:37 (each outage can come up to 100 ms short).
+  14:37 (short outages are unfilled; blocked writes can leave longer gaps).
   - The writer of a segment measures an outage from when it last finished
     writing input PCM (or from the segment's start). After 1 s without PCM,
     and with none queued, it writes silence (zero samples in the capture

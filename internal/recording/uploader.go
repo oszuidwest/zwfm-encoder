@@ -228,11 +228,11 @@ func (u *uploader) upload(ctx context.Context, t *ticket) error {
 
 	file, info, err := openRecording(t.Path)
 	if errors.Is(err, os.ErrNotExist) {
-		if ours, headErr := head(ctx); headErr == nil && ours {
-			return nil
+		if ours, headErr := head(ctx); !ours {
+			return errors.Join(err, headErr)
 		}
-	}
-	if err != nil {
+		return nil
+	} else if err != nil {
 		return err
 	}
 	defer func() {
