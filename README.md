@@ -70,7 +70,7 @@ Back up the file before editing and restart with `sudo systemctl restart encoder
 
 Connect the audio output of your audio processor to the HiFiBerry input. The encoder captures 48 kHz, 16-bit stereo.
 
-If the input fails or stops delivering audio (none within 30 seconds of opening, or a 10-second gap), the encoder reopens it every 3 to 15 seconds until it returns; streams and recorders keep running. The first failure logs `input_lost` and alerts every configured channel; `input_restored` follows after 10 seconds of steady audio, with the outage duration. An outage stays open across encoder stops and process restarts, so it alerts once. Changing the input in the web interface restarts the encoder.
+If the input fails or stops delivering audio (none within 30 seconds of opening, or a 10-second gap), the encoder reopens it every 3 to 15 seconds until it returns; streams and recorders keep running. The first failure logs `input_lost` and alerts every configured channel; `input_restored` follows after 10 seconds of steady audio, with the outage duration. An outage stays open across encoder stops and process restarts, so it alerts once. Changing the input in the web interface restarts the encoder. Recordings keep running through restarts and outages: after a second without audio a recorder writes silence, so a file keeps pace with the clock. Only stopping the encoder or the service ends them.
 
 ### Dante-compatible input
 
@@ -184,7 +184,7 @@ Retention never deletes a recording that is not uploaded yet, or one that failed
 
 ### Failed recordings
 
-Each recording is in the upload queue from the moment its file is created. When the encoder detects that writing or finalizing failed, it reports `recorder_error`, marks the recording as failed and never uploads it, also after a restart. A recording that received no audio at all is removed. After a crash, the next start uploads the interrupted file in both S3 modes. While a file is being written it is synced to disk every 30 seconds, so a power cut loses at most the audio after the last sync and what the encoder was still buffering.
+Each recording is in the upload queue from the moment its file is created. When the encoder detects that writing or finalizing failed, it reports `recorder_error`, marks the recording as failed and never uploads it, also after a restart. A recording that received no input audio is removed, also when the recorder filled it with silence (silence in the input itself is kept); a failed or crash-interrupted one is kept. After a crash, the next start uploads the interrupted file in both S3 modes. While a file is being written it is synced to disk every 30 seconds, so a power cut loses at most the audio after the last sync and what the encoder was still buffering.
 
 Failed recordings are kept, and keep `/ready` failing, until you remove them. To recover one, stop the recorder, inspect the file and copy usable audio by hand, then delete the file and restart the service. A recording whose synced audio disappeared (lost, for example on a failed disk) is reported the same way; remove what is left of its file and restart to clear it.
 

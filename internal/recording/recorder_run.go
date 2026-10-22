@@ -279,8 +279,9 @@ func (r *GenericRecorder) prepared(job *prepareJob, seg *segment, file string, e
 	}
 }
 
-// begin makes seg the encoder capture writes to; a previous one keeps its
-// channel until it is finalized (make-before-break).
+// begin makes seg the encoder capture writes to. Capture stays with the
+// previous encoder until this one runs (make-before-break); the hand-over
+// closes the previous channel, whose writer then drains it.
 func (r *GenericRecorder) begin(seg *segment) {
 	l := &r.run
 	l.seg = seg

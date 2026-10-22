@@ -26,43 +26,14 @@ type LevelData struct {
 	ClipCountL  int
 	ClipCountR  int
 	SampleCount int
-
-	// remainder carries an incomplete stereo frame across reads.
-	remainder    [bytesPerFrame - 1]byte
-	remainderLen int
 }
 
-// ProcessSamples accumulates level data from a buffer of S16LE stereo PCM.
-//
-// Pipe reads can split 4-byte stereo frames, so partial frames are carried into
-// the next call. The carry survives Reset because frame alignment is independent
-// of metering-window boundaries.
+// ProcessSamples accumulates level data from whole S16LE stereo frames. The
+// encoder's distributor passes whole frames only; a trailing partial one is
+// ignored.
 func ProcessSamples(buf []byte, data *LevelData) {
-	i := 0
-
-	// Complete a frame split by the previous read.
-	if data.remainderLen > 0 {
-		need := bytesPerFrame - data.remainderLen
-		if len(buf) < need {
-			data.remainderLen += copy(data.remainder[data.remainderLen:], buf)
-			return
-		}
-		var frame [bytesPerFrame]byte
-		copy(frame[:], data.remainder[:data.remainderLen])
-		copy(frame[data.remainderLen:], buf[:need])
-		accumulateFrame(frame[:], data)
-		i = need
-		data.remainderLen = 0
-	}
-
-	// Accumulate every complete frame.
-	for ; i+bytesPerFrame <= len(buf); i += bytesPerFrame {
+	for i := 0; i+bytesPerFrame <= len(buf); i += bytesPerFrame {
 		accumulateFrame(buf[i:], data)
-	}
-
-	// Carry trailing bytes for the next read.
-	if i < len(buf) {
-		data.remainderLen = copy(data.remainder[:], buf[i:])
 	}
 }
 

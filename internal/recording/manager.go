@@ -325,18 +325,11 @@ func (m *Manager) StopRecorder(id string) error {
 	return recorder.stopOnDemand()
 }
 
-// StartIfActive checks source ownership under the same lock used by Stop.
-// The predicate must not call this manager.
-func (m *Manager) StartIfActive(active func() bool) error {
-	m.StartUploads()
+// Start begins recorder management; it is idempotent. Uploads have their own
+// lifetime (StartUploads to Close).
+func (m *Manager) Start() error {
 	m.lifecycleMu.Lock()
 	m.mu.Lock()
-	if active != nil && !active() {
-		m.mu.Unlock()
-		m.lifecycleMu.Unlock()
-		return nil
-	}
-
 	if m.running {
 		m.mu.Unlock()
 		m.lifecycleMu.Unlock()

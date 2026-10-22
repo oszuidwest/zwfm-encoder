@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/ffmpeg"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
@@ -50,6 +51,13 @@ var errRecorderStopped = errors.New("recorder stopped")
 const (
 	// recorderAudioBufferChunks bounds backlog to about 3s of audio.
 	recorderAudioBufferChunks = 30
+	// silenceGap is how long a segment may get no PCM before its writer fills
+	// the outage with silence (D1); well above the capture chunk interval.
+	silenceGap = time.Second
+	// silenceStep is how often an open outage is topped up.
+	silenceStep = 100 * time.Millisecond
+	// frameBytes is one sample of every channel in the capture format.
+	frameBytes = audio.Channels * 2
 	// processStopTimeout bounds waiting before escalating to SIGTERM.
 	processStopTimeout = 10 * time.Second
 	// processKillTimeout bounds waiting after SIGTERM before SIGKILL.
@@ -68,6 +76,7 @@ type segment struct {
 	audioCh    chan []byte
 	writerDone chan struct{}
 	stopSync   func()
+	hasAudio   bool // Input PCM reached FFmpeg; set by the writer, read after writerDone.
 }
 
 // prepareJob is what a helper needs to prepare a segment.
@@ -336,12 +345,51 @@ func (o *recordingOutput) discard() {
 }
 
 // audioWriter owns blocking stdin writes for one FFmpeg process.
+// While no PCM arrives for silenceGap it writes silence, so the file keeps
+// pace with the clock through an input outage (D1). It does not correct
+// drift between the capture clock and the wall clock.
 func (r *GenericRecorder) audioWriter(seg *segment) {
 	defer close(seg.writerDone)
+	idleSince := time.Now() // When the writer last finished writing input PCM.
+	var filled int64        // Silent frames written in the current outage.
+	endGap := func() {
+		if filled > 0 {
+			slog.Info("filled an input gap with silence", "id", r.id, "file", filepath.Base(seg.file),
+				"duration", time.Duration(filled)*time.Second/audio.SampleRate)
+			filled = 0
+		}
+	}
+	defer endGap()
+	timer := time.NewTimer(silenceGap)
+	defer timer.Stop()
 
-	for pcm := range seg.audioCh {
-		_, err := seg.result.WriteStdin(pcm)
+	for {
+		var pcm []byte
+		select {
+		case chunk, ok := <-seg.audioCh:
+			if !ok {
+				return
+			}
+			endGap()
+			pcm = chunk // Whole frames: the encoder's distributor aligns them.
+		case <-timer.C:
+			if len(seg.audioCh) > 0 { // Input is queued, not missing.
+				timer.Reset(silenceGap)
+				continue
+			}
+			frames := int64(time.Since(idleSince).Seconds()*audio.SampleRate) - filled
+			filled += frames
+			pcm = make([]byte, frames*frameBytes)
+		}
+		n, err := seg.result.WriteStdin(pcm)
 		if err == nil {
+			if filled == 0 {
+				seg.hasAudio = seg.hasAudio || n > 0
+				idleSince = time.Now()
+				timer.Reset(silenceGap)
+			} else {
+				timer.Reset(silenceStep)
+			}
 			continue
 		}
 
@@ -390,8 +438,8 @@ func (r *GenericRecorder) startSync(seg *segment) func() {
 // finishEncoder finalizes seg and hands its file on. Stuck writers are
 // cancelled instead of taking stdinMu.
 func (r *GenericRecorder) finishEncoder(seg *segment, writeErr error) error {
-	seg.stopSync() // Before the final sync and the release close the file.
 	if writeErr != nil {
+		seg.stopSync()
 		// The failing write released stdinMu; CloseStdin cannot deadlock.
 		seg.result.CloseStdin()
 		if err := r.drainProcess(seg.result); err != nil {
@@ -400,10 +448,7 @@ func (r *GenericRecorder) finishEncoder(seg *segment, writeErr error) error {
 		return r.finishOutput(seg, writeErr)
 	}
 
-	// The finisher is the only channel closer; closing lets the writer drain
-	// buffered chunks.
-	close(seg.audioCh)
-
+	// The hand-over closed the channel; the writer drains buffered chunks.
 	var finalizeErr error
 	select {
 	case <-seg.writerDone:
@@ -417,6 +462,9 @@ func (r *GenericRecorder) finishEncoder(seg *segment, writeErr error) error {
 		finalizeErr = errors.Join(fmt.Errorf("recording writer timed out after %s", writerDrainTimeout), r.drainProcess(seg.result))
 		<-seg.writerDone
 	}
+	// After the writer, so a sync in progress cannot delay its drain; before
+	// the final sync and the release close the file.
+	seg.stopSync()
 
 	// writerDone has fired; remaining buffered chunks are teardown loss.
 	if abandoned := len(seg.audioCh); abandoned > 0 {
@@ -438,7 +486,7 @@ func (r *GenericRecorder) finishEncoder(seg *segment, writeErr error) error {
 func (r *GenericRecorder) finishOutput(seg *segment, cause error) error {
 	size, ownErr := seg.output.release()
 	err := errors.Join(cause, ownErr)
-	empty := seg.result.BytesWritten() == 0
+	empty := !seg.hasAudio // Silence alone is not a recording (D1).
 	if cause != nil {
 		// A failed encoder can have written audio despite accepting no PCM.
 		empty = size == 0

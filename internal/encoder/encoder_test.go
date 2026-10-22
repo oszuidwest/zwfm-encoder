@@ -159,7 +159,9 @@ func TestDelayedStarterDoesNotStartManagersAfterQuickSourceExit(t *testing.T) {
 		return e.state == types.StateStarting && e.retryCount > 0
 	})
 	time.Sleep(starterDelay + testStreamRestartDelay)
-	assertManagersStopped(t, e, "stale delayed source starter ran after a quick source exit")
+	if e.silenceDumpManager.IsRunning() { // Recordings run since Start (R1).
+		t.Fatal("stale delayed source starter ran after a quick source exit")
+	}
 }
 func TestStaleStarterDoesNotStartManagersForNewRun(t *testing.T) {
 	e := newSourceLifecycleTestEncoder(t, "exit")

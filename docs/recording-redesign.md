@@ -175,8 +175,8 @@ scenario needs a seam the redesign introduces (section 6).
 | I8 | A failure stays visible until a later success or an operator action clears it. | `ErrorStaysVisible/*` |
 | I9 | Nothing deletes an undelivered recording except the operator. | gap: needs a clock seam |
 | I10 | An undelivered recording is retried until delivered, and is alerted as overdue after a threshold. | gap: needs a clock seam |
-| I11 | An input change or source restart does not cut a recording (R1). | gap: encoder-level scenario |
-| I12 | During an input outage the file keeps pace with wall-clock time (silence), and a segment with only silence is discarded (D1). | gap: needs a clock seam |
+| I11 | An input change or source restart does not cut a recording (R1). | encoder test `TestRestartsKeepRecordingsRunning` |
+| I12 | During an input outage the file keeps pace with wall-clock time (silence), and a segment with only silence is discarded (D1). | `KeepsPace/*` |
 
 About I9: today, in local+S3 mode, retention (`cleanup.go:92–106`) protects
 only the current and retiring files and files modified within the retention
@@ -418,24 +418,34 @@ failure classes have different guarantees.
 
 ### 4.7 Encoder coupling (R1)
 
-- The recording manager starts once, when the encoder first starts. It stops
-  only on an operator stop or process exit. Input changes and source restarts
-  no longer call `recordingManager.Stop()`.
+- Recordings run from a successful encoder start until an operator stop or
+  process exit. Input changes and source restarts, also failed ones, leave
+  them alone. The encoder keeps one wish (`recordingWanted`) and one function
+  makes the manager follow it, so concurrent starts and stops end in the
+  latest wish. Uploads keep their own lifetime, from `InitRecording` to
+  `Close`.
 - **Input outages are filled with silence (D1).** A file's playback position
-  then equals wall-clock time: minute 37 of the 14:00 file is 14:37.
-  - The writer goroutine of a segment tracks the audio it has written against
-    the time since the segment started.
-  - When no PCM has arrived for longer than a gap threshold (proposed 1 s,
-    well above the capture chunk interval), the writer writes silence (zero
-    samples in the capture format) in 100 ms blocks until capture resumes.
+  then stays close to wall-clock time: minute 37 of the 14:00 file is about
+  14:37 (each outage can come up to 100 ms short).
+  - The writer of a segment measures an outage from when it last finished
+    writing input PCM (or from the segment's start). After 1 s without PCM,
+    and with none queued, it writes silence (zero samples in the capture
+    format) for the outage so far, then tops it up every 100 ms until
+    capture resumes. The encoder's distributor passes only whole frames (it
+    drops a half frame when its source ends), so filler never shifts the
+    channels.
+  - Handing capture to another segment closes the old segment's channel at
+    once, so it cannot gain filler after a rotation.
   - Only outages are filled. The writer does not correct drift between the
     capture clock and the wall clock.
-  - A segment holding nothing but filler is discarded like today's empty
-    file (#440), so an hour in which the input never came back leaves no
-    silent file. The segment therefore counts real and filler bytes
-    separately.
-  - The start and end of a filled gap are logged as recorder events with
-    their duration.
+  - A segment that got no input PCM, only filler, is discarded when it is
+    finalized, like an empty file (#440), so an hour in which the input never
+    came back leaves no silent file. A failed segment is quarantined as
+    before, and after a crash the file is kept: what was filler is not
+    recorded on disk.
+  - A filled gap is logged (slog) with its duration. Recorder events for it
+    were dropped by operator decision: `input_lost`/`input_restored` cover
+    real outages.
 
 ### 4.8 What stays and what goes
 

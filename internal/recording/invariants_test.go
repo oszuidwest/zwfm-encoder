@@ -28,6 +28,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/recording"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
@@ -229,6 +230,7 @@ func newCorpusManager(t *testing.T, spool string, s3 *fakeS3, recorders ...*type
 			t.Fatal(err)
 		}
 	}
+	m.StartUploads()
 	if err := m.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -539,6 +541,7 @@ func TestInvariantOverdue(t *testing.T) {
 		if err := m.AddRecorder(cfg); err != nil {
 			t.Fatal(err)
 		}
+		m.StartUploads()
 		if err := m.Start(); err != nil {
 			t.Fatal(err)
 		}
@@ -663,6 +666,61 @@ func TestInvariantConfigApplies(t *testing.T) {
 			}
 		}
 	})
+}
+
+// I12: through an input outage the file keeps pace with the clock (silence),
+// and a segment that only got silence leaves nothing behind (D1).
+func TestInvariantKeepsPace(t *testing.T) {
+	const gap = 1300 * time.Millisecond
+	t.Run("KeepsPace/Gaps", func(t *testing.T) {
+		cfg := corpusRecorder(t, "kp", types.StorageLocal, types.RecordingOnDemand, nil)
+		m := newCorpusManager(t, t.TempDir(), nil, cfg)
+		record(t, m, cfg.ID, "")
+		time.Sleep(gap)
+		feed(m, payload("a"))
+		time.Sleep(gap)
+		feed(m, payload("b"))
+		if err := m.StopRecorder(cfg.ID); err != nil {
+			t.Fatal(err)
+		}
+		files, _ := filepath.Glob(filepath.Join(cfg.LocalPath, "*"))
+		if len(files) != 1 {
+			t.Fatalf("recordings = %v, want one", files)
+		}
+		data, _ := os.ReadFile(files[0]) //nolint:gosec // Test temp dir.
+		a, b := bytes.Index(data, []byte(payload("a"))), bytes.Index(data, []byte(payload("b")))
+		if a < 0 || b < a || b+len(payload("b")) != len(data) {
+			t.Fatalf("recording does not hold both payloads in order: %d bytes", len(data))
+		}
+		for name, filler := range map[string][]byte{"leading": data[:a], "interior": data[a+len(payload("a")) : b]} {
+			seconds := float64(len(filler)) / audio.BytesPerSecond
+			if bytes.ContainsFunc(filler, func(r rune) bool { return r != 0 }) || seconds < gap.Seconds()-0.2 || seconds > gap.Seconds()+0.4 {
+				t.Errorf("%s outage of about %s holds %.2f s, not all silence", name, gap, seconds)
+			}
+		}
+	})
+	for _, storage := range []types.StorageMode{types.StorageLocal, types.StorageS3} {
+		t.Run("KeepsPace/SilenceOnly/"+string(storage), func(t *testing.T) {
+			s3, spool := newFakeS3(t, "ok"), t.TempDir()
+			cfg := corpusRecorder(t, "ks", storage, types.RecordingOnDemand, s3)
+			m := newCorpusManager(t, spool, s3, cfg)
+			record(t, m, cfg.ID, "")
+			time.Sleep(gap)
+			if err := m.StopRecorder(cfg.ID); err != nil {
+				t.Fatal(err)
+			}
+			left, _ := filepath.Glob(filepath.Join(spool, "recordings", "*", "*"))
+			if cfg.LocalPath != "" {
+				left, _ = filepath.Glob(filepath.Join(cfg.LocalPath, "*"))
+			}
+			s3.mu.Lock()
+			objects := len(s3.objects)
+			s3.mu.Unlock()
+			if len(left) != 0 || undelivered(m) != 0 || objects != 0 {
+				t.Errorf("a silence-only segment left %v, %d undelivered, %d S3 objects", left, undelivered(m), objects)
+			}
+		})
+	}
 }
 
 // I8: a recording that failed stays visible in the recorder status until the
@@ -798,6 +856,7 @@ func init() {
 		if err != nil {
 			return 2
 		}
+		m.StartUploads()
 		if m.AddRecorder(&cfg) != nil || m.Start() != nil {
 			return 2
 		}
