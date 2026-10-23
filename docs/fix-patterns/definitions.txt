@@ -1,0 +1,48 @@
+# Measurement definitions (shared, frozen before analysis)
+
+Repo: zwfm-encoder, HEAD = 3e82d0c (history analysed up to and including #507).
+
+## Period
+Non-merge commits reachable from HEAD with author date >= 2025-12-16
+(the first Go commit, eafdc86 "feat: multi output rewrite (#20)").
+
+## Fix commit
+Non-merge commit whose subject matches (case-insensitive) the regex
+`^fix(\([^)]*\))?!?[:\s]`  — i.e. conventional `fix:` / `fix(scope):` or a subject starting with the word "Fix ".
+
+## Source file
+A path ending in .go .js .mjs .ts .svelte .css .html .sh, EXCLUDING:
+`*_test.go`, `*.test.js`, `*.spec.*`, anything under `tests/`, `docs/`, `.github/`, `node_modules/`, `vendor/`.
+
+## Module (by path at the commit in question)
+- `internal/<pkg>/...`  -> `<pkg>`
+- `*.go` in repo root     -> `root`
+- `web/...`               -> `web`
+- `deploy/...` or `install.sh` or other root `*.sh` -> `deploy`
+- `zabbix/...`            -> `zabbix`
+- anything else           -> `other`
+
+## Strict SZZ (bug-introducing commits)
+For each fix commit C and each source file F that exists in both C^ and C:
+1. Take the old-side line numbers that C deletes or modifies in F:
+   `git diff -U0 -w C^ C -- F` (hunk headers `@@ -a,b +c,d @@`, lines a..a+b-1 when b>0).
+2. Drop lines that are blank or only a comment (trimmed line starts with `//`, `#`, `/*`, `*`, `<!--`).
+3. Blame those lines at C^: `git blame -w -M -C --porcelain C^ -- F`.
+4. The set of distinct commits returned are the bug-introducing candidates for C.
+Pure-addition hunks (b == 0) contribute nothing in strict SZZ.
+
+## Fix-on-fix
+A fix commit C is *fix-induced* if at least one of its strict-SZZ introducing commits is itself a fix commit
+(per the definition above) inside the period. Attribute C to every module whose files contributed blamed lines.
+
+## Base rate (to normalise fix-on-fix)
+For each (C, F) pair above, blame the whole file F at C^ and compute the share of non-blank, non-comment lines
+authored by fix commits. Report per module:
+- observed = (# blamed lines whose author commit is a fix) / (# blamed lines)
+- expected = (# lines in the blamed files at C^ authored by fix commits) / (# lines in those files)   (summed over pairs)
+- lift = observed / expected
+
+## Hotspot (per source file, current HEAD)
+- revisions = # period commits touching the file (any commit, not only fixes)
+- fixes     = # period fix commits touching the file
+- complexity: for .go files, sum of gocognit cognitive complexity of all functions; for others, non-blank LOC.
