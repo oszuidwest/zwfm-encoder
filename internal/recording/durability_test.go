@@ -16,6 +16,9 @@ func TestFailedSyncKeepsAudioUndurable(t *testing.T) {
 	cfg.RecordingMode, cfg.StorageMode, cfg.LocalPath = types.RecordingOnDemand, types.StorageBoth, t.TempDir()
 	r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0]})
 	file := startCaptureTestRecorder(t, r)
+	seg := r.currentSegment()
+	seg.stopSync()
+	seg.stopSync = func() {}
 	if err := os.WriteFile(file, []byte("audio"), 0o600); err != nil { // As FFmpeg would have.
 		t.Fatal(err)
 	}
