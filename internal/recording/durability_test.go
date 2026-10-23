@@ -34,8 +34,8 @@ func TestFailedSyncKeepsAudioUndurable(t *testing.T) {
 	if err := output.sync(); err == nil {
 		t.Fatal("a failed sync was reported as done")
 	}
-	if tk, _ := ticketFor(r.outbox, file); tk.SyncedBytes != 0 {
-		t.Fatalf("watermark = %d after a failed sync, want 0", tk.SyncedBytes)
+	if tk, ok := ticketFor(r.outbox, file); !ok || tk.State != ticketRecording || tk.SyncedBytes != 0 {
+		t.Fatalf("ticket after a failed sync = %+v, %t; want recording with watermark 0", tk, ok)
 	}
 	failedSync := syncOutput
 	syncOutput = original
