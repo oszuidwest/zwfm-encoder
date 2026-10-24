@@ -153,11 +153,20 @@ func TestCleanupLocalFilesDeletesOnlyExpiredOwnedFiles(t *testing.T) {
 	}
 
 	recorder := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg})
-	if err := recorder.outbox.newTicket(&ticket{Path: filepath.Join(directory, "Studio-2000-01-01-00-06.mp3")}); err != nil {
+	tk := ticket{Path: filepath.Join(directory, "Studio-2000-01-01-00-06.mp3"), Dest: "s3"}
+	if err := recorder.outbox.newTicket(&tk); err != nil {
+		t.Fatal(err)
+	}
+	tk.State = ticketReady
+	if err := recorder.outbox.update(&tk); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := openOutbox(recorder.spoolDir, func(*ticket) {})
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	manager := &Manager{outbox: recorder.outbox}
+	manager := &Manager{outbox: restarted}
 	manager.cleanupLocalFiles(recorder)
 
 	for _, file := range files {

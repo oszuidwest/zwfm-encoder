@@ -223,14 +223,19 @@ func TestOutboxKeepsTicketItCannotRead(t *testing.T) {
 	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
 		t.Skip("file permissions do not stop root or Windows")
 	}
-	spool := t.TempDir()
+	spool, cfg := t.TempDir(), localOnDemandRecorder(t, "Studio")
+	cfg.RetentionDays = 1
 	ob, err := openOutbox(spool, func(*ticket) {})
 	if err != nil {
 		t.Fatal(err)
 	}
-	tk := ticket{Path: filepath.Join(spool, "a.mp3"), Dest: "d"}
+	tk := ticket{Path: filepath.Join(cfg.LocalPath, "Studio-2000-01-01-00-00.mp3"), Dest: "d"}
 	if err := ob.newTicket(&tk); err != nil {
 		t.Fatal(err)
+	}
+	writeCleanupFile(t, cfg.LocalPath, filepath.Base(tk.Path))
+	if old := time.Now().AddDate(0, 0, -2); os.Chtimes(tk.Path, old, old) != nil {
+		t.Fatal("cannot age the recording")
 	}
 	name := filepath.Join(ob.dir, tk.ID+".1.json")
 	if err := os.Chmod(name, 0); err != nil {
@@ -245,5 +250,10 @@ func TestOutboxKeepsTicketItCannotRead(t *testing.T) {
 	}
 	if _, err := os.Lstat(name); err != nil {
 		t.Fatalf("an unreadable ticket was deleted: %v", err)
+	}
+	r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, Outbox: reloaded})
+	(&Manager{outbox: reloaded, recorders: map[string]*GenericRecorder{cfg.ID: r}}).runCleanup()
+	if _, err := os.Lstat(tk.Path); err != nil {
+		t.Fatalf("retention deleted a recording an unreadable ticket may own: %v", err)
 	}
 }

@@ -310,6 +310,107 @@ func TestUploadInterruptedAfterCommitIsNotDuplicated(t *testing.T) {
 	assertDelivered(t, r, tk.Path)
 }
 
+// Close interrupts a multipart upload: its stored parts are aborted, and the
+// recording stays ready for a retry with its identity and attempts.
+func TestCloseAbortsMultipartUpload(t *testing.T) {
+	t.Parallel()
+	store := &identityStore{objects: make(map[string]storedTestUpload), multipart: make(map[string]*multipartTestUpload)}
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Query().Get("partNumber") == "2" { // Held, so the upload is in flight at Close.
+			select {
+			case <-req.Context().Done():
+			case <-release:
+			}
+			return
+		}
+		store.serveHTTP(w, req)
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(func() { close(release) })
+	cfg := testS3Recorder()
+	cfg.S3Endpoint = server.URL
+	r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg})
+	tk := readyTestTicket(t, r, bytes.Repeat([]byte{1}, 17<<20))
+	tk.Attempts = 4
+	if err := r.outbox.update(&tk); err != nil {
+		t.Fatal(err)
+	}
+	m, err := NewManager(os.Args[0], r.spoolDir, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(m.Close)
+	m.StartUploads()
+	if !WaitFor(10*time.Second, func() bool {
+		store.mu.Lock()
+		defer store.mu.Unlock()
+		return slices.ContainsFunc(slices.Collect(maps.Values(store.multipart)), func(u *multipartTestUpload) bool { return len(u.parts) > 0 })
+	}) {
+		t.Fatal("no part of the multipart upload was stored")
+	}
+	m.Close()
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.multipart) != 0 || len(store.objects) != 0 {
+		t.Errorf("after Close: %d multipart uploads left open, %d objects", len(store.multipart), len(store.objects))
+	}
+	restarted, err := openOutbox(m.spoolDir, func(*ticket) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := ticketFor(restarted, tk.Path); got.ID != tk.ID || got.State != ticketReady || got.Attempts != tk.Attempts || got.Key != tk.Key {
+		t.Errorf("ticket after Close = %+v, want it ready as before", got)
+	}
+}
+
+// I10 across a restart: a recovered upload keeps its age and backoff, so it is
+// overdue at once, waits for its next attempt and clears the alert on delivery.
+func TestRecoveredUploadKeepsAgeAndBackoff(t *testing.T) {
+	t.Parallel()
+	store, cfg := newIdentityStore(t)
+	r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg})
+	tk := readyTestTicket(t, r, []byte("audio"))
+	tk.ReadyAt, tk.Attempts, tk.NextAttempt = time.Now().Add(-3*time.Hour), 4, time.Now().Add(time.Hour)
+	if err := r.outbox.update(&tk); err != nil {
+		t.Fatal(err)
+	}
+	m, err := NewManager(os.Args[0], r.spoolDir, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(m.Close)
+	if _, due, wait := m.outbox.nextDue(tk.NextAttempt.Add(-time.Minute)); due || wait != time.Minute {
+		t.Fatalf("recovered upload due = %t, wait = %v; want false, 1m", due, wait)
+	}
+	alerts := make(chan UploadsOverdue, 2)
+	m.SetUploadsOverdueCallback(func(o UploadsOverdue) { alerts <- o })
+	next := func() (o UploadsOverdue) {
+		select {
+		case o = <-alerts:
+		case <-time.After(10 * time.Second):
+			t.Fatal("no overdue transition")
+		}
+		return o
+	}
+	m.StartUploads()
+	if o := next(); o.Count != 1 || !o.Oldest.Equal(tk.ReadyAt) {
+		t.Errorf("first alert after restart = %+v, want the recording overdue since %v", o, tk.ReadyAt)
+	}
+	if got, _ := ticketFor(m.outbox, tk.Path); got.Attempts != tk.Attempts || !got.NextAttempt.Equal(tk.NextAttempt) {
+		t.Errorf("recovered ticket = %+v, want attempts %d due at %v", got, tk.Attempts, tk.NextAttempt)
+	}
+	RetryUploadsNow(m)
+	if o := next(); o.Count != 0 {
+		t.Errorf("alert after delivery = %+v, want it cleared", o)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.objects[uploadTestKey].id != tk.ID {
+		t.Errorf("stored objects = %v, want the recovered recording", slices.Sorted(maps.Keys(store.objects)))
+	}
+}
+
 func TestCommittedUploadIdentitySurvivesRestart(t *testing.T) {
 	t.Parallel()
 	for _, size := range []int{5, 17 << 20} {
