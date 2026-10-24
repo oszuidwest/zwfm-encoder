@@ -65,7 +65,6 @@ type schedule struct {
 	m               *recording.Manager
 	running         bool // The manager.
 	recorders       []*scheduleRecorder
-	added           int
 }
 
 type scheduleRecorder struct {
@@ -234,8 +233,7 @@ func (s *schedule) step(i int, exec bool) error { //nolint:gocyclo // One case p
 // add creates the model of a new recorder, hourly or on demand, with S3
 // credentials and a local path whatever its storage mode.
 func (s *schedule) add() *scheduleRecorder {
-	s.added++
-	id := "r" + strconv.Itoa(s.added)
+	id := "r" + strconv.Itoa(len(s.recorders)+1)
 	r := &scheduleRecorder{cfg: types.Recorder{
 		ID: id, Name: id, Enabled: true, Codec: types.CodecMP3,
 		RecordingMode: []types.RecordingMode{types.RecordingHourly, types.RecordingOnDemand}[s.rng.IntN(2)],
@@ -417,9 +415,8 @@ func (s *schedule) finish() error {
 		for _, c := range r.chunks {
 			expectedDir[c.tag] = c.dir
 		}
-		onDisk := map[string]map[string]int{}
+		onDisk := map[string]int{}
 		for _, dir := range dirs {
-			onDisk[dir] = map[string]int{}
 			files, _ := filepath.Glob(filepath.Join(dir, "*"))
 			for _, file := range files {
 				data, err := os.ReadFile(file) //nolint:gosec // Test temp dir.
@@ -431,27 +428,20 @@ func (s *schedule) finish() error {
 					if expected, ok := expectedDir[tag]; !ok || expected != dir {
 						return fmt.Errorf("unexpected chunk %s in %s", tag, file)
 					}
-					onDisk[dir][tag]++
+					onDisk[tag]++
 				}
 			}
 		}
 		for _, c := range r.chunks {
-			if n := inS3[r.cfg.ID][c.tag]; n != b2i(c.s3) {
-				return fmt.Errorf("%s has %s in S3 %d times, want %d", r.cfg.ID, c.tag, n, b2i(c.s3))
+			if n := inS3[r.cfg.ID][c.tag]; c.s3 && n != 1 {
+				return fmt.Errorf("%s has %s in S3 %d times, want 1", r.cfg.ID, c.tag, n)
 			}
-			if n := onDisk[c.dir][c.tag]; c.dir != "" && n != 1 {
+			if n := onDisk[c.tag]; c.dir != "" && n != 1 {
 				return fmt.Errorf("%s has %s in %s %d times, want 1", r.cfg.ID, c.tag, c.dir, n)
 			}
 		}
 	}
 	return nil
-}
-
-func b2i(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
 }
 
 // chunkTags returns the tags of the chunks a recording holds, which must be
