@@ -1,17 +1,23 @@
 package encoder
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/oszuidwest/zwfm-encoder/internal/recording"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
@@ -295,6 +301,90 @@ func TestRestartsKeepRecordingsRunning(t *testing.T) {
 			t.Fatalf("probe state after Stop = %s, want stopped", got)
 		}
 	})
+}
+
+// R1 with audio flowing: restarts, a failed one included, and an input change
+// keep writing the same file.
+func TestRestartsKeepActiveRecordingInOneFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the FFmpeg stand-in is a shell script")
+	}
+	ffmpeg := filepath.Join(t.TempDir(), "ffmpeg")
+	if err := os.WriteFile(ffmpeg, []byte("#!/bin/sh\nfor out do :; done\ncat > \"$out\"\n"), 0o700); err != nil { //nolint:gosec // Executable test stand-in.
+		t.Fatal(err)
+	}
+	e := newSourceLifecycleTestEncoder(t, "exit")
+	t.Cleanup(e.alertOrchestrator.Close)
+	e.recordingManager.Close()
+	var err error
+	if e.recordingManager, err = recording.NewManager(ffmpeg, t.TempDir(), 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	e.config.Audio.Input = "dante://tx/Left/Right"
+	sources := make(chan *io.PipeWriter, 1)
+	e.openDanteSource = func(ctx context.Context, _ string) (source, error) {
+		reader, writer := io.Pipe()
+		context.AfterFunc(ctx, func() { _ = writer.Close() })
+		sources <- writer
+		return fakeDanteSource{reader, ctx.Done()}, nil
+	}
+	if err := e.Start(); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &types.Recorder{
+		ID: "live", Name: "live", Enabled: true, Codec: types.CodecPCM,
+		RecordingMode: types.RecordingOnDemand, StorageMode: types.StorageLocal, LocalPath: t.TempDir(),
+	}
+	if err := e.recordingManager.AddRecorder(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.recordingManager.StartRecorder(cfg.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitForCondition(t, 5*time.Second, "the recording to run", func() bool {
+		status := e.recordingManager.Statuses()[cfg.ID]
+		if status.State == types.ProcessStarting && status.Error == "waiting for system clock synchronization" {
+			t.Skip(status.Error)
+		}
+		return status.State == types.ProcessRunning
+	})
+	var fed [][]byte
+	feed := func(tag byte) {
+		t.Helper()
+		pcm := bytes.Repeat([]byte{tag, 1, 2, 3}, 200)
+		select {
+		case writer := <-sources:
+			stuck := time.AfterFunc(5*time.Second, func() { _ = writer.Close() }) // A source that never reads.
+			_, err := writer.Write(pcm)
+			stuck.Stop()
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("no source after restart")
+		}
+		fed = append(fed, pcm)
+		waitForCondition(t, 5*time.Second, "the recording to hold all audio so far", func() bool {
+			files, _ := filepath.Glob(filepath.Join(cfg.LocalPath, "*"))
+			if len(files) != 1 {
+				return false
+			}
+			data, _ := os.ReadFile(files[0]) //nolint:gosec // Test temp dir.
+			return !slices.ContainsFunc(fed, func(pcm []byte) bool { return !bytes.Contains(data, pcm) })
+		})
+	}
+	feed(4)
+	if err := e.Restart(); err != nil {
+		t.Fatal(err)
+	}
+	feed(5)
+	e.config.Audio.Input = ""
+	if err := e.Restart(); !errors.Is(err, ErrNoAudioInput) {
+		t.Fatalf("Restart without input = %v, want ErrNoAudioInput", err)
+	}
+	e.config.Audio.Input = "dante://tx/New/Right"
+	e.RestartInBackground()
+	feed(6)
 }
 
 func TestInputChangeStartsEncoderLeftStoppedByAFailure(t *testing.T) {
