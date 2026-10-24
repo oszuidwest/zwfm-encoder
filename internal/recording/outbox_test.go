@@ -2,10 +2,12 @@ package recording
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -208,6 +210,58 @@ func TestOutboxRecoversInterruptedRecordings(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+// I3: recovery hands an interrupted recording on only once its audio is
+// durable; until then the next start tries again.
+func TestRecoveryKeepsRecordingWhoseAudioCannotBeSynced(t *testing.T) {
+	spool := t.TempDir()
+	ob, err := openOutbox(spool, func(*ticket) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tk := ticket{Path: filepath.Join(spool, "rec.mp3"), Dest: "d"}
+	if err := os.WriteFile(tk.Path, []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ob.newTicket(&tk); err != nil {
+		t.Fatal(err)
+	}
+	original := fsync
+	t.Cleanup(func() { fsync = original })
+	fsync = func(f *os.File) error {
+		if f.Name() == tk.Path {
+			return errors.New("sync failed")
+		}
+		return original(f)
+	}
+	reloaded, err := openOutbox(spool, func(*ticket) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertTicketState(t, reloaded, tk.Path, ticketRecording)
+}
+
+// I3: removing a ticket takes its newest generation last, after a barrier, so
+// a failure or power cut never brings back an older state.
+func TestTicketRemovalKeepsNewestGenerationUntilBarrier(t *testing.T) {
+	ob, err := openOutbox(t.TempDir(), func(*ticket) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tk := ticket{Path: "rec.mp3"}
+	if err := ob.newTicket(&tk); err != nil {
+		t.Fatal(err)
+	}
+	original := syncDir
+	t.Cleanup(func() { syncDir = original })
+	syncDir = func(string) error { return errors.New("sync failed") }
+	if err := ob.removeFiles(&tk); err == nil {
+		t.Fatal("a failed barrier was ignored")
+	}
+	if _, err := os.Stat(filepath.Join(ob.dir, tk.ID+"."+strconv.FormatUint(tk.Seq, 10)+ticketSuffix)); err != nil {
+		t.Fatalf("newest generation removed before its barrier: %v", err)
+	}
+}
 
 // assertTicketState checks path's ticket state; an empty want means no ticket.
 func assertTicketState(t *testing.T, ob *outbox, path string, want ticketState) {

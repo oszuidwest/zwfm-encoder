@@ -29,14 +29,12 @@ var reserveRecordingFile = func(path string) (*os.File, error) {
 // checkRecordingPath lets lifecycle tests hold directory validation on a slow mount.
 var checkRecordingPath = util.CheckPathWritable
 
-// syncOutput makes a recording's bytes durable; tests make it fail.
-var syncOutput = (*os.File).Sync
-
 // removeEmptyRecording lets tests reproduce a failed unlink without relying on mount permissions.
 var removeEmptyRecording = os.Remove
 
-// syncInterval is how often a running recording is synced to disk (D4).
-const syncInterval = 30 * time.Second
+// syncInterval is how often a running recording is synced to disk (D4);
+// tests shorten it.
+var syncInterval = 30 * time.Second
 
 // writerDrainTimeout bounds graceful writer drain; tests shorten it.
 var writerDrainTimeout = 5 * time.Second
@@ -275,7 +273,7 @@ func (o *recordingOutput) sync() error {
 	if err != nil {
 		return err
 	}
-	if err := syncOutput(o.file); err != nil {
+	if err := fsync(o.file); err != nil {
 		return err
 	}
 	if info.Size() <= o.ticket.SyncedBytes {
@@ -480,7 +478,7 @@ func (r *GenericRecorder) finishEncoder(seg *segment, writeErr error) error {
 
 	if finalizeErr == nil {
 		// The recording is never handed on before its bytes are durable.
-		if err := syncOutput(seg.output.file); err != nil {
+		if err := fsync(seg.output.file); err != nil {
 			finalizeErr = fmt.Errorf("sync recording to disk: %w", err)
 		}
 	}

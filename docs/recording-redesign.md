@@ -167,15 +167,15 @@ scenario needs a seam the redesign introduces (section 6).
 |---|---|---|
 | I1 | Capture never waits on recording. | existing white-box tests; keep |
 | I2 | Every chunk accepted while running ends up in a finalized file, or is counted in `AudioDrops`. | `RoundTrip/*` (normal stop only) |
-| I3 | After a crash of the service, with or without its FFmpeg children, restart finds every recording that holds audio, in every storage mode. After power loss, audio up to the durability watermark survives (section 4.3). | `Durable/*` (s3/both only; local-only retains its file but is unverified; gaps: power loss, more crash points) |
+| I3 | After a crash of the service, with or without its FFmpeg children, restart finds every recording that holds audio, in every storage mode. After power loss, audio up to the durability watermark survives (section 4.3). | `Durable/*` (s3/both); `CrashPoints/*`: a kill or a power cut before every sync of one recording, from startup to delivery, in every storage mode |
 | I4 | Each recording reaches each destination exactly once and never replaces an object it did not write. | `RoundTrip/*`, `ExactlyOnce/*`, `Durable/*` |
 | I5 | Stopping a recorder or the manager is bounded by local work (FFmpeg finalization), never by the network. | `BoundedStop/*` |
 | I6 | Every undelivered recording is counted, including during an upload and after its recorder is removed. All counts derive from one source. | `HonestPending/*` |
 | I7 | After `Manager.Stop` no recorder runs. The saved configuration is what runs. | `ClosedLifecycle/*`, `ConfigApplies/*` |
 | I8 | A failure stays visible until a later success or an operator action clears it. | `ErrorStaysVisible/*` |
-| I9 | Nothing deletes an undelivered recording except the operator. | gap: needs a clock seam |
-| I10 | An undelivered recording is retried until delivered, and is alerted as overdue after a threshold. | gap: needs a clock seam |
-| I11 | An input change or source restart does not cut a recording (R1). | encoder test `TestRestartsKeepRecordingsRunning` |
+| I9 | Nothing deletes an undelivered recording except the operator. | white-box: `TestCleanupLocalFilesDeletesOnlyExpiredOwnedFiles`, `TestOutboxKeepsTicketItCannotRead` (also after a restart) |
+| I10 | An undelivered recording is retried until delivered, and is alerted as overdue after a threshold. | `Overdue/*`; white-box: `TestRecoveredUploadKeepsAgeAndBackoff` (after a restart) |
+| I11 | An input change or source restart does not cut a recording (R1). | encoder tests `TestRestartsKeepRecordingsRunning`, `TestRestartsKeepActiveRecordingInOneFile` |
 | I12 | During an input outage the file keeps pace with wall-clock time (silence), and a segment with only silence is discarded (D1). | `KeepsPace/*` |
 
 About I9: today, in local+S3 mode, retention (`cleanup.go:92–106`) protects
@@ -538,20 +538,21 @@ Mutation checks show that the corpus notices both breakage and fixes:
 | Main before #507 / before #508 | BoundedStop violated / ClosedLifecycle and ConfigApplies violated |
 
 Known limits of the corpus:
-- Power loss is not modelled. The kernel keeps everything written, so the
-  durability watermark is untested until the fault-injection seam exists
-  (6.2).
-- Files are small, so multipart uploads are not exercised.
+- Power loss is modelled, not exercised: `CrashPoints` keeps only what was
+  synced, as the last directory or file sync left it. That is a minimum, not
+  ext4: background writeback and journal ordering can keep more. Crashes
+  during recovery, and the failure paths (`failed` tickets, markers), are not
+  crash points. Real power cuts are for the soak (6.2).
+- Files are small, so multipart uploads are exercised only by white-box
+  tests (`TestCloseAbortsMultipartUpload` and others in `uploader_test.go`).
 - The crash scenarios do not run on Windows.
 
 ### 6.2 Next steps
 
-1. **Close the corpus gaps** as the redesign adds seams:
-   - an injected clock for I9 and I10;
-   - crash checkpoints at every outbox transition and every fsync, using the
-     child-process harness;
-   - an encoder-level scenario for I11;
-   - multipart upload and abort.
+1. **Close the corpus gaps** as the redesign adds seams: I9, I10, I11 and
+   multipart abort have tests; `CrashPoints` covers every sync of the normal
+   path from reservation to delivery. Left: crashes during recovery and on
+   the failure paths.
 2. **Randomized schedules.** A property test generates random sequences of
    start, stop, update, rotate, remove, crash, S3 up and S3 down. It checks
    I2–I8 after every step and logs the seed.
