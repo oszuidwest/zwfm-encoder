@@ -282,9 +282,14 @@ func (s *schedule) feed(tag string, fed []*scheduleRecorder) error {
 	return nil
 }
 
+// want returns err when the call had to succeed, and an error when it had to
+// fail but did not.
 func want(ok bool, err error) error {
-	if (err == nil) != ok {
-		return fmt.Errorf("error %w, want success %t", err, ok)
+	switch {
+	case ok:
+		return err
+	case err == nil:
+		return errors.New("succeeded, want an error")
 	}
 	return nil
 }
