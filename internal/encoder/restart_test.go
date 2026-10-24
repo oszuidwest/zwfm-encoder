@@ -354,7 +354,10 @@ func TestRestartsKeepActiveRecordingInOneFile(t *testing.T) {
 		pcm := bytes.Repeat([]byte{tag, 1, 2, 3}, 200)
 		select {
 		case writer := <-sources:
-			if _, err := writer.Write(pcm); err != nil {
+			stuck := time.AfterFunc(5*time.Second, func() { _ = writer.Close() }) // A source that never reads.
+			_, err := writer.Write(pcm)
+			stuck.Stop()
+			if err != nil {
 				t.Fatal(err)
 			}
 		case <-time.After(5 * time.Second):
