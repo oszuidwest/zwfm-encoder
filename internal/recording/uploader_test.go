@@ -472,6 +472,29 @@ func TestUploadRetrySuffixesOriginalKey(t *testing.T) {
 	}
 }
 
+// A pass tries at most maxS3KeySuffix keys; the next one carries on from the
+// last key tried, so taken keys never strand a recording.
+func TestUploadRetryCarriesOnPastTheLastKeyTried(t *testing.T) {
+	t.Parallel()
+	store, cfg := newIdentityStore(t)
+	store.objects[uploadTestKey] = storedTestUpload{id: "foreign"}
+	for suffix := 2; suffix <= 15; suffix++ {
+		store.objects[withNumericSuffix(uploadTestKey, suffix)] = storedTestUpload{id: "foreign"}
+	}
+	r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
+	tk := readyTestTicket(t, r, []byte("audio"))
+	testUploader(r).process(t.Context(), &tk)
+	if want := withNumericSuffix(uploadTestKey, maxS3KeySuffix); tk.State != ticketReady || tk.Key != want {
+		t.Fatalf("after one pass: %+v, want ready at %s", tk, want)
+	}
+	testUploader(r).process(t.Context(), &tk)
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if got := store.objects[withNumericSuffix(uploadTestKey, 16)]; got.id != tk.ID {
+		t.Fatalf("keys = %v, want the recording at -16", slices.Sorted(maps.Keys(store.objects)))
+	}
+}
+
 func TestUnverifiableConflictKeepsRecordingForRetry(t *testing.T) {
 	t.Parallel()
 	for _, status := range []int{http.StatusForbidden, http.StatusNotFound} {
