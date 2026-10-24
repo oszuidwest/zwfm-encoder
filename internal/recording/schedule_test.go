@@ -71,13 +71,15 @@ type scheduleRecorder struct {
 	cfg              types.Recorder
 	started, removed bool // started: an on-demand recorder was started.
 	moves            int  // LocalPath is <base>/<id>-<moves>.
+	recording        int  // The recording being written; earlier ones are finalized.
 	chunks           []scheduleChunk
 }
 
 // scheduleChunk is a chunk a recorder was fed and where it must end up.
 type scheduleChunk struct {
-	tag, dir string // dir: the local directory, "" in S3-only mode.
-	s3       bool
+	tag, dir  string // dir: the local directory, "" in S3-only mode.
+	s3        bool
+	recording int
 }
 
 func init() {
@@ -148,7 +150,7 @@ func (s *schedule) open() error {
 func (s *schedule) step(i int, exec bool) error { //nolint:gocyclo // One case per kind of step.
 	name := scheduleSteps[s.rng.IntN(len(scheduleSteps))]
 	live := s.live()
-	var r *scheduleRecorder
+	var r, cut *scheduleRecorder // cut: its output changes.
 	if len(live) > 0 {
 		r = live[s.rng.IntN(len(live))]
 	}
@@ -163,7 +165,7 @@ func (s *schedule) step(i int, exec bool) error { //nolint:gocyclo // One case p
 				if r.cfg.StorageMode == types.StorageS3 {
 					dir = ""
 				}
-				r.chunks = append(r.chunks, scheduleChunk{tag, dir, r.cfg.StorageMode != types.StorageLocal})
+				r.chunks = append(r.chunks, scheduleChunk{tag, dir, r.cfg.StorageMode != types.StorageLocal, r.recording})
 				fed = append(fed, r)
 			}
 		}
@@ -185,10 +187,12 @@ func (s *schedule) step(i int, exec bool) error { //nolint:gocyclo // One case p
 	case name == "move" && r != nil:
 		r.moves++
 		r.cfg.LocalPath = filepath.Join(s.base, r.cfg.ID+"-"+strconv.Itoa(r.moves))
+		cut = r
 		do = func() error { return s.apply(r, s.m.UpdateRecorder) }
 	case name == "storage" && r != nil:
 		modes := []types.StorageMode{types.StorageLocal, types.StorageS3, types.StorageBoth}
 		r.cfg.StorageMode = modes[(slices.Index(modes, r.cfg.StorageMode)+1+s.rng.IntN(2))%3]
+		cut = r
 		do = func() error { return s.apply(r, s.m.UpdateRecorder) }
 	case name == "add" && len(live) < 3:
 		r := s.add()
@@ -214,6 +218,11 @@ func (s *schedule) step(i int, exec bool) error { //nolint:gocyclo // One case p
 	if name == "stop-all" || name == "crash" {
 		for _, r := range live {
 			r.started = false
+		}
+	}
+	for _, r := range s.recorders { // Stopping, rotating, new output and a crash finalize.
+		if !s.records(r) || r == cut || name == "crash" || name == "rotate" && r.cfg.RecordingMode == types.RecordingHourly {
+			r.recording++
 		}
 	}
 	if !exec || do == nil {
@@ -361,8 +370,9 @@ func (s *schedule) s3Tags() (map[string]map[string]int, error) {
 
 // check verifies the invariants that hold after every step: each recorder
 // records exactly when its settings and the manager say so (I7), no chunk is
-// in S3 twice or against its settings (I4), and each recorder with finalized
-// audio not in S3 adds to the backlog's lower bound (I6).
+// in S3 twice or against its settings (I4), and every finalized recording
+// with audio not in S3 is counted as undelivered (I6; the backlog is a total,
+// so this bounds it from below).
 func (s *schedule) check() error {
 	statuses := s.m.Statuses()
 	for _, r := range s.live() {
@@ -375,20 +385,16 @@ func (s *schedule) check() error {
 	if err != nil {
 		return err
 	}
-	waiting := 0
+	waiting := map[string]bool{} // Finalized recordings with audio not in S3.
 	for _, r := range s.recorders {
-		lacks := false
 		for _, c := range r.chunks {
-			if inS3[r.cfg.ID][c.tag] == 0 && c.s3 && (!s.records(r) || r.cfg.StorageMode == types.StorageLocal) { // All finalized.
-				lacks = true
+			if inS3[r.cfg.ID][c.tag] == 0 && c.s3 && c.recording < r.recording {
+				waiting[r.cfg.ID+"/"+strconv.Itoa(c.recording)] = true
 			}
 		}
-		if lacks {
-			waiting++
-		}
 	}
-	if backlog < waiting {
-		return fmt.Errorf("%d recorders have recordings not in S3, but %d are undelivered", waiting, backlog)
+	if backlog < len(waiting) {
+		return fmt.Errorf("%d finalized recordings are not in S3, but %d are undelivered", len(waiting), backlog)
 	}
 	return nil
 }
