@@ -185,6 +185,9 @@ func (u *uploader) cleanup(t *ticket) {
 		if err = os.Remove(t.Path); errors.Is(err, os.ErrNotExist) { // #nosec G703 -- The recorder-reserved output of the ticket.
 			err = nil
 		}
+		if err == nil {
+			err = syncDir(filepath.Dir(t.Path))
+		}
 	}
 	if err == nil {
 		err = u.outbox.remove(t)
