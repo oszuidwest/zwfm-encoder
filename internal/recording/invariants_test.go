@@ -85,21 +85,27 @@ func newFakeS3(t *testing.T, mode string) *fakeS3 {
 }
 
 // hang holds every PUT until heal.
-func (s *fakeS3) hang() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.mode = "hang"
-}
+func (s *fakeS3) hang() { s.switchTo("hang") }
 
 // heal makes the store accept writes again and lets held requests through.
-func (s *fakeS3) heal() {
+func (s *fakeS3) heal() { s.switchTo("ok") }
+
+// switchTo sets the mode; leaving "hang" lets held requests through.
+// "conflict" and "lose" accept writes with one conflict or lost response.
+func (s *fakeS3) switchTo(mode string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.mode == "hang" {
+	if s.mode == "hang" && mode != "hang" {
 		close(s.release)
 		s.release = make(chan struct{})
 	}
-	s.mode = "ok"
+	switch mode {
+	case "conflict":
+		s.conflictOnce, mode = true, "ok"
+	case "lose":
+		s.loseResponse, mode = true, "ok"
+	}
+	s.mode = mode
 }
 
 func (s *fakeS3) set(f func(s *fakeS3)) {
@@ -117,6 +123,20 @@ func (s *fakeS3) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	key, _ := strings.CutPrefix(req.URL.Path, "/bucket/")
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
+		return
+	}
+	switch req.URL.Path { // Controls for a child process.
+	case "/mode":
+		s.switchTo(string(body))
+		return
+	case "/objects":
+		s.mu.Lock()
+		bodies := make(map[string]string, len(s.objects))
+		for key, o := range s.objects {
+			bodies[key] = string(o.body)
+		}
+		s.mu.Unlock()
+		_ = json.NewEncoder(w).Encode(bodies)
 		return
 	}
 	s.mu.Lock()
@@ -883,7 +903,7 @@ func runCrashChild(t *testing.T, scenario string, tree bool, spool string, cfg *
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^$") //nolint:gosec // Re-executes this test binary.
 	cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {

@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,7 +31,7 @@ const (
 	// uploaderStopTimeout bounds Close: a cancelled multipart upload is aborted
 	// within the transfer manager's FailTimeout (5s).
 	uploaderStopTimeout = 10 * time.Second
-	// maxS3KeySuffix bounds the suffixed keys an upload tries; each attempt
+	// maxS3KeySuffix bounds the keys tried per upload pass; each attempt
 	// sends the whole file.
 	maxS3KeySuffix = 10
 )
@@ -265,7 +267,7 @@ func (u *uploader) upload(ctx context.Context, t *ticket) error {
 	slog.Info("starting upload", "id", t.RecorderID, "file", filepath.Base(t.Path),
 		"size_mb", size/(1024*1024), "timeout_min", timeoutMinutes)
 
-	for suffix := nextKeySuffix(t); ; suffix++ {
+	for attempt, suffix := 1, nextKeySuffix(t); ; attempt, suffix = attempt+1, suffix+1 {
 		if _, err := file.Seek(0, io.SeekStart); err != nil {
 			return fmt.Errorf("rewind recording for upload: %w", err)
 		}
@@ -292,7 +294,7 @@ func (u *uploader) upload(ctx context.Context, t *ticket) error {
 		if headErr != nil {
 			return fmt.Errorf("verify conflicting S3 object: %w", headErr)
 		}
-		if suffix > maxS3KeySuffix {
+		if attempt >= maxS3KeySuffix {
 			return fmt.Errorf("no free S3 key for %s after %d attempts: %w", t.BaseKey, maxS3KeySuffix, err)
 		}
 		previous := t.Key
@@ -309,9 +311,10 @@ func (u *uploader) upload(ctx context.Context, t *ticket) error {
 // nextKeySuffix is the suffix after t's current key: -2 after the base key,
 // -4 after -3. Suffixing always starts from the base key, never -2-2.
 func nextKeySuffix(t *ticket) int {
-	for candidate := 2; candidate <= maxS3KeySuffix; candidate++ {
-		if t.Key == withNumericSuffix(t.BaseKey, candidate) {
-			return candidate + 1
+	ext := filepath.Ext(t.BaseKey)
+	if tail, ok := strings.CutPrefix(t.Key, strings.TrimSuffix(t.BaseKey, ext)+"-"); ok {
+		if n, err := strconv.Atoi(strings.TrimSuffix(tail, ext)); err == nil && n >= 2 {
+			return n + 1
 		}
 	}
 	return 2
