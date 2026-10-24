@@ -2,8 +2,13 @@ package recording
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"maps"
 	"math"
+	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"testing"
@@ -110,6 +115,108 @@ const CorpusChildEnv = "ZWFM_RECORDING_CORPUS_CHILD"
 // CorpusChildren holds child-process scenarios by name. A scenario runs in a
 // re-executed test binary so the parent can kill it like a crashed service.
 var CorpusChildren = map[string]func() int{}
+
+// SyncRecorder syncs the recording of a running recorder now, as its periodic
+// sync would.
+func SyncRecorder(m *Manager, id string) error {
+	m.mu.RLock()
+	r := m.recorders[id]
+	m.mu.RUnlock()
+	err := errRecorderClosed
+	r.do(func() { err = r.run.seg.output.sync() })
+	return err
+}
+
+// DurableImage is what a power cut leaves of the files a process synced: a
+// directory holds the entries it had at its last sync, and a file the content
+// it had at its last sync, or nothing (also after a rename).
+type DurableImage struct {
+	Syncs int                        // Syncs made before the crash point.
+	Dirs  map[string]map[string]bool // By directory: entry name to whether it is a directory.
+	Files map[string][]byte
+}
+
+// CrashAtSync makes the k-th file or directory sync of this process a crash
+// point: it saves the durable image there to image, prints CRASH-POINT and
+// hangs until killed. The returned end is the crash point after the last sync.
+func CrashAtSync(k int, image string) (end func()) {
+	var mu sync.Mutex
+	img := DurableImage{Dirs: map[string]map[string]bool{}, Files: map[string][]byte{}}
+	crash := func() {
+		data, _ := json.Marshal(&img)
+		_ = os.WriteFile(image, data, 0o600)
+		fmt.Println("CRASH-POINT")
+		select {}
+	}
+	point := func() { // With mu held.
+		img.Syncs++
+		if img.Syncs == k {
+			crash()
+		}
+	}
+	fileSync, dirSync := fsync, syncDir
+	fsync = func(f *os.File) error {
+		mu.Lock()
+		defer mu.Unlock()
+		point()
+		data, err := os.ReadFile(f.Name()) //nolint:gosec // A file this process syncs.
+		if err == nil {
+			err = fileSync(f) // What FFmpeg appends meanwhile is not covered.
+		}
+		if err == nil {
+			img.Files[f.Name()] = data
+		}
+		return err
+	}
+	syncDir = func(dir string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		point()
+		err := dirSync(dir)
+		if entries, readErr := os.ReadDir(dir); err == nil && readErr == nil {
+			img.Dirs[dir] = map[string]bool{}
+			for _, e := range entries {
+				img.Dirs[dir][e.Name()] = e.IsDir()
+			}
+		}
+		return err
+	}
+	return func() {
+		mu.Lock()
+		point()
+		crash()
+	}
+}
+
+// Restore replaces what is under each root with what img kept of it; an
+// empty root is skipped.
+func (img *DurableImage) Restore(roots ...string) error {
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		if err := errors.Join(os.RemoveAll(root), os.Mkdir(root, 0o750), img.restore(root)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (img *DurableImage) restore(dir string) error {
+	for name, isDir := range img.Dirs[dir] {
+		path := filepath.Join(dir, name)
+		var err error
+		if isDir {
+			err = errors.Join(os.Mkdir(path, 0o750), img.restore(path))
+		} else {
+			err = os.WriteFile(path, img.Files[path], 0o600)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // newTestRecorder creates a recorder with an outbox in its spool, as the
 // Manager does; a second one on the same spool models a restart.

@@ -545,7 +545,7 @@ func writeSynced(name string, data []byte) error {
 	}
 	_, err = f.Write(data)
 	// Sync and close even on failure; preserve the first error.
-	err = cmp.Or(err, f.Sync(), f.Close())
+	err = cmp.Or(err, fsync(f), f.Close())
 	if err != nil {
 		_ = os.Remove(name) // #nosec G703 -- The file this call just created.
 	}
@@ -557,9 +557,12 @@ func syncFile(name string) error {
 	if err != nil {
 		return err
 	}
-	err = f.Sync()
+	err = fsync(f)
 	return errors.Join(err, f.Close())
 }
+
+// fsync makes a file's content durable; tests make it fail.
+var fsync = (*os.File).Sync
 
 // syncDir makes directory entries durable. Windows has no directory fsync; a
 // file flushed through its own handle is durable there. Tests make it fail.

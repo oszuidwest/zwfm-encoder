@@ -16,12 +16,14 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -189,6 +191,18 @@ func (s *fakeS3) count(body string) int {
 		}
 	}
 	return n
+}
+
+// bodies returns the stored objects' bodies, sorted.
+func (s *fakeS3) bodies() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var bodies []string
+	for _, o := range s.objects {
+		bodies = append(bodies, string(o.body))
+	}
+	slices.Sort(bodies)
+	return bodies
 }
 
 // committed returns how many PUTs wrote body.
@@ -786,10 +800,84 @@ func TestInvariantDurable(t *testing.T) {
 	}
 }
 
+// I3, I4 at every sync: the service is killed with its FFmpeg, or the power
+// is cut, before any one file or directory sync in a recording's life, from
+// startup through recording and finalization to delivery. After a restart the
+// audio that survived is delivered exactly once, a local copy is kept, and
+// nothing is left undelivered.
+func TestInvariantCrashPoints(t *testing.T) {
+	if !crashTests {
+		t.Skip("crash scenarios need process groups")
+	}
+	for _, storage := range []types.StorageMode{types.StorageLocal, types.StorageS3, types.StorageBoth} {
+		t.Run("CrashPoints/"+string(storage), func(t *testing.T) {
+			t.Parallel()
+			syncs := crashAt(t, storage, math.MaxInt, false)
+			t.Run("end/power-cut=true", func(t *testing.T) {
+				crashAt(t, storage, math.MaxInt, true)
+			})
+			for k := 1; k < syncs; k++ {
+				for _, powerCut := range []bool{false, true} {
+					t.Run(fmt.Sprintf("%d/power-cut=%t", k, powerCut), func(t *testing.T) {
+						t.Parallel()
+						crashAt(t, storage, k, powerCut)
+					})
+				}
+			}
+		})
+	}
+}
+
+// crashAt crashes the sync-crash child at its k-th sync, restarts on what is
+// left, checks the recording and returns the child's crash point.
+func crashAt(t *testing.T, storage types.StorageMode, k int, powerCut bool) int {
+	t.Helper()
+	s3, spool := newFakeS3(t, "ok"), t.TempDir()
+	cfg := corpusRecorder(t, "cp", storage, types.RecordingOnDemand, s3)
+	image := filepath.Join(t.TempDir(), "image.json")
+	runCrashChild(t, "sync-crash", true, spool, cfg, "CORPUS_SYNC="+strconv.Itoa(k), "CORPUS_IMAGE="+image)
+	var img recording.DurableImage
+	data, err := os.ReadFile(image) //nolint:gosec // Test temp dir.
+	if err == nil {
+		err = json.Unmarshal(data, &img)
+	}
+	if err == nil && powerCut {
+		err = img.Restore(spool, cfg.LocalPath)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	withAudio := func(dir string) []string {
+		return slices.DeleteFunc(audioFiles(t, dir), func(audio string) bool { return audio == "" })
+	}
+	local := withAudio(cfg.LocalPath)
+	want := slices.Concat(withAudio(spool), local)
+	if before := s3.bodies(); len(before) > 0 {
+		want = before // Delivered before the crash.
+	}
+	cfg.Enabled = false
+	m := newCorpusManager(t, spool, s3, cfg)
+	waitFor(10*time.Second, func() bool {
+		recording.RetryUploadsNow(m)
+		return undelivered(m) == 0
+	})
+	tickets, _ := filepath.Glob(filepath.Join(spool, "outbox", "*.json"))
+	if undelivered(m) != 0 || len(tickets) != 0 {
+		t.Errorf("after restart: backlog %+v, tickets %v", m.UploadBacklog(), tickets)
+	}
+	if storage != types.StorageLocal && !slices.Equal(s3.bodies(), want) {
+		t.Errorf("S3 holds %d recordings, want %d", len(s3.bodies()), len(want))
+	}
+	if got := withAudio(cfg.LocalPath); !slices.Equal(got, local) || storage == types.StorageS3 && len(withAudio(spool)) > 0 {
+		t.Errorf("local audio %d files, was %d; spool keeps %d", len(got), len(local), len(withAudio(spool)))
+	}
+	return img.Syncs
+}
+
 // runCrashChild runs a corpus child scenario and SIGKILLs it once it reports
 // its crash point: the child alone, or its whole process tree. It returns
 // once every process of the tree has exited.
-func runCrashChild(t *testing.T, scenario string, tree bool, spool string, cfg *types.Recorder) {
+func runCrashChild(t *testing.T, scenario string, tree bool, spool string, cfg *types.Recorder, env ...string) {
 	t.Helper()
 	cfgJSON, err := json.Marshal(cfg)
 	if err != nil {
@@ -803,6 +891,7 @@ func runCrashChild(t *testing.T, scenario string, tree bool, spool string, cfg *
 	})
 	cmd.Env = append(cmd.Env, recording.CorpusChildEnv+"="+scenario, "CORPUS_SPOOL="+spool,
 		"CORPUS_RECORDER="+string(cfgJSON), "ZWFM_RECORDING_FAKE_FFMPEG_STREAM=1")
+	cmd.Env = append(cmd.Env, env...)
 	ownGroup(cmd)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -876,10 +965,48 @@ func init() {
 		fmt.Println("CRASH-POINT")
 		select {}
 	}
+	// Records one recording and delivers it, crashing at the sync CORPUS_SYNC,
+	// or after the last sync.
+	recording.CorpusChildren["sync-crash"] = func() int {
+		var cfg types.Recorder
+		if err := json.Unmarshal([]byte(os.Getenv("CORPUS_RECORDER")), &cfg); err != nil {
+			return 2
+		}
+		k, _ := strconv.Atoi(os.Getenv("CORPUS_SYNC"))
+		end := recording.CrashAtSync(k, os.Getenv("CORPUS_IMAGE"))
+		spool := os.Getenv("CORPUS_SPOOL")
+		m, err := recording.NewManager(os.Args[0], spool, 0, nil)
+		if err != nil {
+			return 2
+		}
+		m.StartUploads()
+		if m.AddRecorder(&cfg) != nil || m.Start() != nil || m.StartRecorder(cfg.ID) != nil {
+			return 2
+		}
+		if !waitFor(10*time.Second, func() bool { return state(m, cfg.ID) == types.ProcessRunning }) {
+			return 3
+		}
+		feed(m, payload("crash"))
+		if !waitFor(10*time.Second, func() bool { return fileHolds([]string{spool, cfg.LocalPath}, payload("crash")) }) {
+			return 4
+		}
+		if recording.SyncRecorder(m, cfg.ID) != nil {
+			return 4
+		}
+		if m.StopRecorder(cfg.ID) != nil || !waitFor(10*time.Second, func() bool {
+			tickets, _ := filepath.Glob(filepath.Join(spool, "outbox", "*.json"))
+			return len(tickets) == 0
+		}) {
+			return 5
+		}
+		m.Close() // Join the uploader before the terminal snapshot.
+		end()
+		return 0
+	}
 }
 
-// fileHolds reports whether a recording file under one of dirs holds exactly
-// want.
+// fileHolds reports whether a recording file under one of dirs holds all of
+// want; an input gap may also have added silence.
 func fileHolds(dirs []string, want string) bool {
 	for _, dir := range dirs {
 		if dir == "" {
@@ -890,7 +1017,7 @@ func fileHolds(dirs []string, want string) bool {
 			if err != nil || d.IsDir() || filepath.Ext(path) != ".mp3" {
 				return nil //nolint:nilerr // Keep looking; the file may still appear.
 			}
-			if data, err := os.ReadFile(path); err == nil && string(data) == want { //nolint:gosec // Test temp dir.
+			if data, err := os.ReadFile(path); err == nil && strings.Contains(string(data), want) { //nolint:gosec // Test temp dir.
 				found = true
 				return fs.SkipAll
 			}
