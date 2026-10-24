@@ -361,8 +361,8 @@ func (s *schedule) s3Tags() (map[string]map[string]int, error) {
 
 // check verifies the invariants that hold after every step: each recorder
 // records exactly when its settings and the manager say so (I7), no chunk is
-// in S3 twice or against its settings (I4), and a recorder that stopped with
-// audio not in S3 has it counted as undelivered (I6).
+// in S3 twice or against its settings (I4), and each recorder with finalized
+// audio not in S3 adds to the backlog's lower bound (I6).
 func (s *schedule) check() error {
 	statuses := s.m.Statuses()
 	for _, r := range s.live() {
@@ -379,7 +379,7 @@ func (s *schedule) check() error {
 	for _, r := range s.recorders {
 		lacks := false
 		for _, c := range r.chunks {
-			if inS3[r.cfg.ID][c.tag] == 0 && c.s3 && !s.records(r) {
+			if inS3[r.cfg.ID][c.tag] == 0 && c.s3 && (!s.records(r) || r.cfg.StorageMode == types.StorageLocal) { // All finalized.
 				lacks = true
 			}
 		}
