@@ -553,9 +553,12 @@ Known limits of the corpus:
    multipart abort have tests; `CrashPoints` covers every sync of the normal
    path from reservation to delivery. Left: crashes during recovery and on
    the failure paths.
-2. **Randomized schedules.** A property test generates random sequences of
-   start, stop, update, rotate, remove, crash, S3 up and S3 down. It checks
-   I2–I8 after every step and logs the seed.
+2. **Randomized schedules:** done. `TestInvariantSchedule` plays 256 seeded
+   steps (feed, start, stop, update, rotate, add, remove, S3 faults, manager
+   stop and start, crash) and checks I4–I7 after every step and I2–I4 at the
+   end; it logs the seed for a replay. It injects no recording failures (I8)
+   and does not time S3 against stops, so the focused scenarios stay. It
+   found the S3 key suffix limit that stranded a recording after a restart.
 3. **Soak on real hardware,** 72 hours on a Raspberry Pi with an SD card and on
    a Windows PC.
    - Inject faults: scripted S3 outages (firewall rule), `kill -9` every few
