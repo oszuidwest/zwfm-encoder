@@ -11,7 +11,6 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -621,32 +620,9 @@ func TestBuildHealthResponseUnhealthyConditions(t *testing.T) {
 	}
 }
 
-// defaultConfigFile is a config created by Load once, so tests do not pay a
-// password hash each.
-var defaultConfigFile = sync.OnceValues(func() ([]byte, error) {
-	dir, err := os.MkdirTemp("", "encoder-default-config")
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = os.RemoveAll(dir) }()
-	path := filepath.Join(dir, "config.json")
-	if err := config.New(path).Load(); err != nil {
-		return nil, err
-	}
-	return os.ReadFile(path) //nolint:gosec // Test-controlled temporary path.
-})
-
 func freshServer(t *testing.T) *Server {
 	t.Helper()
-	data, err := defaultConfigFile()
-	if err != nil {
-		t.Fatalf("create default config: %v", err)
-	}
-	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg := config.New(path)
+	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	if err := cfg.Load(); err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}

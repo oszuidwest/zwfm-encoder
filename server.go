@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
-	"errors"
 	"html/template"
 	"log/slog"
 	"net"
@@ -382,7 +381,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == http.MethodPost {
-		// Room for a 4096-byte password URL-encoded (up to 3x) plus the other fields.
+		// Room for a long password URL-encoded (up to 3x) plus the other fields.
 		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
@@ -404,12 +403,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 		password := r.PostForm.Get("password")
 
-		ok, err := s.sessions.Login(w, r, username, password, cfg.WebUser, cfg.WebPassword, cfg.WebPasswordHash)
-		if err != nil {
-			rejectUnverifiedLogin(w, r, err)
-			return
-		}
-		if ok {
+		if s.sessions.Login(w, r, username, password, cfg.WebUser, cfg.WebPassword) {
 			http.Redirect(w, r, "/", http.StatusFound)
 			return
 		}
@@ -427,17 +421,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if err := loginTmpl.Execute(w, data); err != nil {
 		slog.Error("failed to render login page", "error", err)
 	}
-}
-
-// rejectUnverifiedLogin answers a login whose password hash was not checked.
-func rejectUnverifiedLogin(w http.ResponseWriter, r *http.Request, err error) {
-	if !errors.Is(err, server.ErrLoginBusy) {
-		slog.Info("login abandoned while waiting for password verification", "remote", r.RemoteAddr)
-		return
-	}
-	slog.Warn("login rejected: password verification is busy", "remote", r.RemoteAddr)
-	w.Header().Set("Retry-After", "1")
-	http.Error(w, "Sign-in is busy. Open the sign-in page again in a moment.", http.StatusServiceUnavailable)
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {

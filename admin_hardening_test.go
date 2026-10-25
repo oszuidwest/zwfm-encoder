@@ -130,8 +130,8 @@ func checkAdminLoginMutationAndLogout(t *testing.T, newServer func(http.Handler)
 	configRes := request(http.MethodGet, "/api/config", "", "")
 	defer func() { _ = configRes.Body.Close() }()
 	configBody := readAdminBody(t, configRes)
-	if strings.Contains(configBody, s.config.Snapshot().WebPasswordHash) || strings.Contains(configBody, `"password_hash"`) {
-		t.Fatal("API leaked the admin password hash")
+	if strings.Contains(configBody, `"`+s.config.Snapshot().WebPassword+`"`) {
+		t.Fatal("API leaked the admin password")
 	}
 	checkAdminLogout(t, s, request, token, cookie)
 }
@@ -186,7 +186,6 @@ func checkAdminLogout(t *testing.T, s *Server, request func(string, string, stri
 func TestLoginThrottleAndCrossOriginRejection(t *testing.T) {
 	t.Parallel()
 	s := newRouteTestServer(t)
-	usePlaintextLogin(s)
 	handler := s.SetupRoutes()
 	for attempt := range 6 {
 		token := loginFormToken(t, handler)
@@ -225,7 +224,6 @@ func TestLoginThrottleAndCrossOriginRejection(t *testing.T) {
 func TestInvalidLoginCSRFCannotConsumeLoginBudget(t *testing.T) {
 	t.Parallel()
 	s := newRouteTestServer(t)
-	usePlaintextLogin(s)
 	handler := s.SetupRoutes()
 	for range 20 {
 		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=admin&password=wrong&csrf_token=invalid"))
@@ -250,7 +248,6 @@ func TestInvalidLoginCSRFCannotConsumeLoginBudget(t *testing.T) {
 func TestTrustedProxyDoesNotShareClientIPBudget(t *testing.T) {
 	t.Parallel()
 	s := newRouteTestServer(t)
-	usePlaintextLogin(s)
 	s.config.System.TrustedProxies = []string{"127.0.0.1/32"}
 	handler := s.SetupRoutes()
 	for i := range 6 {
@@ -279,7 +276,6 @@ func TestTrustedProxyDoesNotShareClientIPBudget(t *testing.T) {
 func TestLoginRejectsMalformedOrQueryCredentials(t *testing.T) {
 	t.Parallel()
 	s := newRouteTestServer(t)
-	usePlaintextLogin(s)
 	handler := s.SetupRoutes()
 	for _, tc := range []struct {
 		name, query, body, password string
@@ -338,12 +334,6 @@ func TestServerStartUsesConfiguredBind(t *testing.T) {
 			}
 		})
 	}
-}
-
-// usePlaintextLogin keeps tests of limits and form handling off the shared
-// password-hash slot, which would run their logins one after another.
-func usePlaintextLogin(s *Server) {
-	s.config.System.Password, s.config.System.PasswordHash = config.DefaultWebPassword, ""
 }
 
 // loginFormToken fetches the login page and returns its one-use form token.
