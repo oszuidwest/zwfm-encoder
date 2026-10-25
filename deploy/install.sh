@@ -117,7 +117,6 @@ if [ "$KEEP_CONFIG" != "y" ]; then
 
   # Web password, asked hidden.
   prompt_secret "WEB_PASSWORD" "Enter the web interface password"
-  [[ "$WEB_PASSWORD" != *$'\n'* ]] || { echo "WEB_PASSWORD must be one line" >&2; exit 1; }
 
   # Web port
   prompt_user "WEB_PORT" "8080" "Enter the web interface port" "num"
@@ -341,26 +340,14 @@ else
 
   # Generate configuration file using jq (minimal config, app fills defaults)
   echo -e "${BLUE}►► Generating configuration file...${NC}"
-  WEB_CREDENTIAL_FIELD="password_hash"
-  ENCODER_HELP=$("${INSTALL_DIR}/encoder" -help 2>&1)
-  if printf '%s' "$ENCODER_HELP" | grep -F -- '-hash-password' > /dev/null; then
-    WEB_CREDENTIAL=$(printf '%s' "$WEB_PASSWORD" | "${INSTALL_DIR}/encoder" -hash-password)
-  else
-    # shortcut: older releases lack hashing/bind support, remove after enforcing a newer minimum version.
-    WEB_CREDENTIAL_FIELD="password"
-    WEB_CREDENTIAL="$WEB_PASSWORD"
-    echo -e "${YELLOW}This older release stores plaintext and ignores the bind IP. Firewall its HTTP port; upgrade and migrate using the Admin security guide.${NC}"
-  fi
-  unset WEB_PASSWORD
-  printf '%s' "$WEB_CREDENTIAL" | jq -Rs \
+  printf '%s' "$WEB_PASSWORD" | jq -Rs \
     --arg station_name "$STATION_NAME" \
     --arg username "$WEB_USERNAME" \
-    --arg credential_field "$WEB_CREDENTIAL_FIELD" \
     --arg bind_address "$WEB_BIND_ADDRESS" \
     --arg heartbeat_url "$HEARTBEAT_URL" \
     --argjson port "$WEB_PORT" \
     '{
-      system: ({ port: $port, bind_address: $bind_address, username: $username } + {($credential_field): .}),
+      system: ({ port: $port, bind_address: $bind_address, username: $username, password: . }),
       web: { station_name: $station_name },
       notifications: { heartbeat: { url: $heartbeat_url } }
     }' > "$CONFIG_FILE"
@@ -368,7 +355,7 @@ else
   # Set proper ownership and permissions
   chown encoder:encoder "$CONFIG_FILE"
   chmod 600 "$CONFIG_FILE"
-  unset WEB_CREDENTIAL WEB_CREDENTIAL_FIELD ENCODER_HELP
+  unset WEB_PASSWORD
   echo -e "${GREEN}✓ Configuration saved to ${CONFIG_FILE}${NC}"
 fi
 
@@ -409,7 +396,7 @@ DISPLAY_PORT=$(jq -r '.system.port // 8080' "$CONFIG_FILE" 2>/dev/null || echo "
 
 echo -e "\n${BOLD}Web Interface${NC}"
 DISPLAY_BIND=$(jq -r '.system.bind_address // "0.0.0.0"' "$CONFIG_FILE")
-if [ "$DISPLAY_BIND" == "127.0.0.1" ] && "${INSTALL_DIR}/encoder" -help 2>&1 | grep -F -- '-hash-password' > /dev/null; then
+if [ "$DISPLAY_BIND" == "127.0.0.1" ]; then
   echo -e "  URL:      ${BOLD}http://127.0.0.1:${DISPLAY_PORT}${NC} (local only)"
   echo -e "  Remote access with this local-only bind: use a reverse proxy, or tunnel with:"
   echo -e "  ${BOLD}ssh -L ${DISPLAY_PORT}:127.0.0.1:${DISPLAY_PORT} <user>@${FIRST_IP}${NC}"

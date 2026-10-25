@@ -1,8 +1,6 @@
 package server
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,8 +10,6 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
-
-	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 func TestSessionMutationsRejectMissingOrUnboundCSRF(t *testing.T) {
@@ -75,36 +71,6 @@ func TestSessionCSRFMatchesOnlyItsLiveSession(t *testing.T) {
 	sm.Delete(sessionToken)
 	if sm.CSRFToken(req) != "" {
 		t.Fatal("deleted session retained CSRF")
-	}
-}
-
-func TestHashedLogin(t *testing.T) {
-	t.Parallel()
-	hash, err := util.HashPassword("correct horse")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, tc := range []struct {
-		name, user, password, plaintext, hash string
-		want                                  bool
-	}{
-		{name: "correct", user: "admin", password: "correct horse", hash: hash, want: true},
-		{name: "wrong user", user: "other", password: "correct horse", hash: hash},
-		{name: "wrong password", user: "admin", password: "wrong", hash: hash},
-		{name: "hash is not a password", user: "admin", password: hash, hash: hash},
-		{name: "malformed does not fall back", user: "admin", password: "plaintext", plaintext: "plaintext", hash: "invalid"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			sm := NewSessionManager()
-			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodPost, "/login", http.NoBody)
-			if got, err := sm.Login(rec, req, tc.user, tc.password, "admin", tc.plaintext, tc.hash); got != tc.want || err != nil {
-				t.Fatalf("Login = %t, %v; want %t", got, err, tc.want)
-			}
-			if (len(rec.Result().Cookies()) > 0) != tc.want {
-				t.Fatal("failed login set a session cookie")
-			}
-		})
 	}
 }
 
@@ -236,53 +202,6 @@ func TestLoginCSRFPoolIsBoundedAndRecovers(t *testing.T) {
 		time.Sleep(csrfTokenDuration)
 		if sm.CreateCSRFToken() == "" || len(sm.csrfTokens) != 1 {
 			t.Fatal("expired login tokens were not reclaimed")
-		}
-	})
-}
-
-// Not parallel: the hash slot and waiter count are process-wide.
-func TestVerifyPasswordHashSkipsEndedAndOverflowingLogins(t *testing.T) {
-	hash, err := util.HashPassword("correct horse")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ended, cancel := context.WithCancel(context.Background())
-	cancel()
-	// Repeat: select picks at random between the ended request and a free slot.
-	for range 20 {
-		if ok, err := verifyPasswordHash(ended, "correct horse", hash); ok || !errors.Is(err, context.Canceled) {
-			t.Fatalf("ended request = %t, %v; want context.Canceled without verifying", ok, err)
-		}
-	}
-	hashSlot <- struct{}{}
-	if ok, err := verifyPasswordHash(ended, "correct horse", hash); ok || !errors.Is(err, context.Canceled) {
-		t.Fatalf("ended request behind a taken slot = %t, %v; want context.Canceled", ok, err)
-	}
-	<-hashSlot
-	hashWaiters.Add(maxHashWaiters)
-	t.Cleanup(func() { hashWaiters.Store(0) })
-	ok, err := verifyPasswordHash(context.Background(), "correct horse", hash)
-	hashWaiters.Add(-maxHashWaiters)
-	if ok || !errors.Is(err, ErrLoginBusy) {
-		t.Fatalf("full queue = %t, %v; want ErrLoginBusy", ok, err)
-	}
-	if ok, err := verifyPasswordHash(context.Background(), "correct horse", hash); !ok || err != nil || hashWaiters.Load() != 0 {
-		t.Fatalf("free slot = %t, %v, waiters %d; want verified with an empty queue", ok, err, hashWaiters.Load())
-	}
-}
-
-// Not parallel: it swaps the process-wide hash slot.
-func TestVerifyPasswordHashGivesUpWhenSlotStaysTaken(t *testing.T) {
-	original := hashSlot
-	t.Cleanup(func() { hashSlot = original })
-	synctest.Test(t, func(t *testing.T) {
-		// Created in the bubble, so waiting on it lets fake time advance.
-		hashSlot = make(chan struct{}, 1)
-		hashSlot <- struct{}{}
-		start := time.Now()
-		ok, err := verifyPasswordHash(context.Background(), "password", "not verified")
-		if ok || !errors.Is(err, ErrLoginBusy) || time.Since(start) != hashWaitLimit {
-			t.Fatalf("taken slot = %t, %v after %s; want ErrLoginBusy after %s", ok, err, time.Since(start), hashWaitLimit)
 		}
 	})
 }

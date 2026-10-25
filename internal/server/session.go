@@ -2,21 +2,16 @@
 package server
 
 import (
-	"context"
 	cryptorand "crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"maps"
 	"math/rand/v2"
 	"net/http"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
-
-	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 const (
@@ -190,79 +185,21 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, value string, maxA
 	})
 }
 
-// ErrLoginBusy means a password hash could not be verified in time because
-// other logins hold or queue for the verification slot.
-var ErrLoginBusy = errors.New("password verification is busy")
-
-const (
-	// maxHashWaiters bounds queued logins, including the one verifying.
-	maxHashWaiters = 16
-	// hashWaitLimit leaves room for one verification within the server's
-	// 15-second write timeout, so a queued login still receives its response.
-	hashWaitLimit = 10 * time.Second
-)
-
-// hashSlot and hashWaiters bound password-hash verification across all logins.
-var (
-	hashSlot    = make(chan struct{}, 1)
-	hashWaiters atomic.Int32
-)
-
-// verifyPasswordHash runs one verification at a time: PBKDF2 takes about a
-// second of CPU on a Raspberry Pi 4, and logins must not starve the audio
-// pipeline. It returns ErrLoginBusy when too many logins queue or the slot
-// stays taken too long, and the context's error once the request has ended.
-func verifyPasswordHash(ctx context.Context, password, hash string) (bool, error) {
-	if hashWaiters.Add(1) > maxHashWaiters {
-		hashWaiters.Add(-1)
-		return false, ErrLoginBusy
-	}
-	defer hashWaiters.Add(-1)
-	wait := time.NewTimer(hashWaitLimit)
-	defer wait.Stop()
-	select {
-	case hashSlot <- struct{}{}:
-	case <-wait.C:
-		return false, ErrLoginBusy
-	case <-ctx.Done():
-		return false, ctx.Err()
-	}
-	defer func() { <-hashSlot }()
-	// select picks at random when the request ended as the slot became free.
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-	return util.VerifyPasswordHash(password, hash), nil
-}
-
-// Login reports whether login succeeded and creates a session if valid. It
-// returns ErrLoginBusy or the request's context error when a configured
-// password hash could not be verified.
-func (sm *SessionManager) Login(
-	w http.ResponseWriter, r *http.Request,
-	username, password, configUser, configPass, configHash string,
-) (bool, error) {
+// Login reports whether login succeeded and creates a session if valid.
+func (sm *SessionManager) Login(w http.ResponseWriter, r *http.Request, username, password, configUser, configPass string) bool {
 	userMatch := subtle.ConstantTimeCompare([]byte(username), []byte(configUser)) == 1
-	var passMatch bool
-	if configHash == "" {
-		passMatch = subtle.ConstantTimeCompare([]byte(password), []byte(configPass)) == 1
-	} else {
-		var err error
-		if passMatch, err = verifyPasswordHash(r.Context(), password, configHash); err != nil {
-			return false, err
-		}
-	}
+	passMatch := subtle.ConstantTimeCompare([]byte(password), []byte(configPass)) == 1
 	if !userMatch || !passMatch {
-		return false, nil
+		return false
 	}
 
 	token := sm.Create()
 	if token == "" {
-		return false, nil
+		return false
 	}
 
 	setSessionCookie(w, r, token, int(sessionDuration.Seconds()))
-	return true, nil
+	return true
 }
 
 // Logout clears the session cookie and deletes the session.

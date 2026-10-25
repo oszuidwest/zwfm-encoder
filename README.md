@@ -59,7 +59,7 @@ Configuration is stored in `/etc/encoder/config.json`. For development, use the 
 
 Most settings are made in the web interface. These are not:
 
-- `system`: `port`, `bind_address`, `username`, `password_hash`, `trusted_proxies`, `ffmpeg_path`
+- `system`: `port`, `bind_address`, `username`, `password`, `trusted_proxies`, `ffmpeg_path`
 - `web`: `station_name`, `color_light`, `color_dark`
 - `audio.input` for a [Dante-compatible input](#dante-compatible-input)
 - `notifications.heartbeat.url` for the [heartbeat](#heartbeat)
@@ -231,16 +231,7 @@ The encoder is an internal appliance: manage it by IP on a trusted LAN or throug
 
 ### Changing the admin password
 
-The web interface has no password setting; the installer stores a hash in `system.password_hash`. Generate a new hash with the encoder binary, reading the password from stdin rather than the command line (Bash example):
-
-```bash
-read -r -s -p 'Admin password: ' encoder_password
-printf '\n'
-printf '%s' "$encoder_password" | /usr/local/bin/encoder -hash-password
-unset encoder_password
-```
-
-Replace the `system.password_hash` value in `config.json` with the printed value (older configs: replace `system.password` with `password_hash`), restart the encoder and check that you can log in.
+The web interface has no password setting. Change `system.password` in `config.json` (on Windows next to `encoder.exe`), restart the encoder and check that you can log in. The password is stored as plain text, like the other secrets in that file, so use one you do not use anywhere else.
 
 ### HTTPS reverse proxy
 

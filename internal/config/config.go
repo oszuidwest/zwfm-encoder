@@ -92,9 +92,7 @@ type SystemConfig struct {
 	// Username is the web interface login username.
 	Username string `json:"username"`
 	// Password is the web interface login password.
-	Password string `json:"password,omitempty"` //nolint:gosec // G117: legacy config credential; prefer PasswordHash.
-	// PasswordHash is a salted password hash, mutually exclusive with Password.
-	PasswordHash string `json:"password_hash,omitempty"`
+	Password string `json:"password,omitempty"` //nolint:gosec // G117: config credential.
 }
 
 // WebConfig holds web UI branding settings.
@@ -269,11 +267,6 @@ func (c *Config) Load() error {
 	data, err := os.ReadFile(c.filePath)
 	if os.IsNotExist(err) {
 		cfg := defaultConfig(c.filePath)
-		cfg.System.PasswordHash, err = util.HashPassword(cfg.System.Password)
-		if err != nil {
-			return fmt.Errorf("hash default password: %w", err)
-		}
-		cfg.System.Password = ""
 		if err := cfg.validate(); err != nil {
 			return err
 		}
@@ -545,15 +538,8 @@ func (c *Config) validateSystem() error {
 			return fmt.Errorf("invalid system.bind_address: must be a numeric IPv4 or IPv6 address")
 		}
 	}
-	if c.System.PasswordHash != "" {
-		if c.System.Password != "" {
-			return fmt.Errorf("invalid system.password_hash: remove plaintext system.password")
-		}
-		if err := util.ValidatePasswordHash(c.System.PasswordHash); err != nil {
-			return fmt.Errorf("invalid system.password_hash: %w", err)
-		}
-	} else if c.System.Password == "" {
-		return fmt.Errorf("invalid system.password: is required")
+	if c.System.Password == "" {
+		return fmt.Errorf("invalid system.password: is required (system.password_hash is no longer supported)")
 	}
 	for _, value := range c.System.TrustedProxies {
 		if _, err := validation.TrustedProxyPrefix(value); err != nil {
@@ -1049,8 +1035,6 @@ type Snapshot struct {
 	WebUser string
 	// WebPassword is the web interface login password.
 	WebPassword string
-	// WebPasswordHash is the configured salted password hash, if present.
-	WebPasswordHash string
 
 	// StationName is the station display name shown in the web UI header.
 	StationName string
@@ -1165,12 +1149,11 @@ func (c *Config) Snapshot() Snapshot {
 
 	return Snapshot{
 		// System
-		WebPort:         c.System.Port,
-		WebBindAddress:  c.System.BindAddress,
-		TrustedProxies:  slices.Clone(c.System.TrustedProxies),
-		WebUser:         c.System.Username,
-		WebPassword:     c.System.Password,
-		WebPasswordHash: c.System.PasswordHash,
+		WebPort:        c.System.Port,
+		WebBindAddress: c.System.BindAddress,
+		TrustedProxies: slices.Clone(c.System.TrustedProxies),
+		WebUser:        c.System.Username,
+		WebPassword:    c.System.Password,
 
 		// Web/Branding
 		StationName:       c.Web.StationName,

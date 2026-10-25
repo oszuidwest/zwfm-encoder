@@ -298,9 +298,8 @@ func TestSessionManagerLogin(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/login", http.NoBody)
 			rec := httptest.NewRecorder()
 
-			ok, err := sm.Login(rec, req, tt.username, tt.password, "admin", "secret", "")
-			if ok != tt.wantOK || err != nil {
-				t.Fatalf("Login() = %t, %v; want %t", ok, err, tt.wantOK)
+			if ok := sm.Login(rec, req, tt.username, tt.password, "admin", "secret"); ok != tt.wantOK {
+				t.Fatalf("Login() = %t, want %t", ok, tt.wantOK)
 			}
 
 			cookies := rec.Result().Cookies()

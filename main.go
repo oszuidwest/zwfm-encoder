@@ -10,17 +10,12 @@
 package main
 
 import (
-	"bufio"
 	"context"
-	"errors"
 	"flag"
-	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
@@ -43,15 +38,7 @@ func main() {
 
 	configPath := flag.String("config", "", "Path to config file (default: config.json next to binary)")
 	showVersion := flag.Bool("version", false, "Print version information and exit")
-	hashPassword := flag.Bool("hash-password", false, "Read a password line from stdin, print its hash and exit")
 	flag.Parse()
-	if *hashPassword {
-		if err := printPasswordHash(os.Stdin, os.Stdout); err != nil {
-			slog.Error("cannot hash password", "error", err)
-			os.Exit(1)
-		}
-		return
-	}
 
 	if *showVersion {
 		slog.Info("version info", "version", Version, "commit", Commit, "build_time", BuildTime)
@@ -85,24 +72,6 @@ func main() {
 	slog.Info("shutting down")
 	shutdown(a)
 	slog.Info("shutdown complete")
-}
-
-func printPasswordHash(input io.Reader, output io.Writer) error {
-	// One line, so Enter ends a typed password; room for 4096 bytes and "\r\n".
-	line, err := bufio.NewReader(io.LimitReader(input, 4098)).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return err
-	}
-	password := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-	if password == "" || len(password) > 4096 || strings.ContainsAny(password, "\r\n") {
-		return fmt.Errorf("provide one non-empty password line of at most 4096 bytes")
-	}
-	hash, err := util.HashPassword(password)
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintln(output, hash)
-	return err
 }
 
 // startApp wires config, encoder, and HTTP server. It starts the encoder (if
