@@ -26,6 +26,7 @@ var faviconTmpl = template.Must(template.New("favicon").Parse(faviconSVG))
 
 type loginData struct {
 	Error       bool
+	Expired     bool
 	CSRFToken   string
 	Version     string
 	Year        int
@@ -377,6 +378,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Version:     Version,
 		Year:        time.Now().Year(),
 		StationName: cfg.StationName,
+		Expired:     r.URL.Query().Has("expired"),
 		//nolint:gosec // CSS from validated hex colors
 		PrimaryCSS: template.CSS(generateBrandCSS(cfg.StationColorLight, cfg.StationColorDark)),
 	}
@@ -391,8 +393,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		username := r.PostForm.Get("username")
 		csrfToken := r.PostForm.Get("csrf_token")
 		if !s.sessions.ValidateCSRFToken(csrfToken) {
+			// A form left open too long or from before a restart: offer a fresh one.
 			slog.Warn("login rejected: invalid form token", "remote", r.RemoteAddr)
-			http.Error(w, "Invalid request", http.StatusBadRequest)
+			http.Redirect(w, r, "/login?expired=1", http.StatusSeeOther)
 			return
 		}
 		if !s.sessions.AllowLogin(r, username, cfg.TrustedProxies) {

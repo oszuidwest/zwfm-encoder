@@ -228,15 +228,21 @@ func TestInvalidLoginCSRFCannotConsumeLoginBudget(t *testing.T) {
 	usePlaintextLogin(s)
 	handler := s.SetupRoutes()
 	for range 20 {
-		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=admin&password=wrong&csrf_token=invalid"))
+		// Valid credentials prove the expired form never reaches the credential check.
+		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=admin&password=encoder&csrf_token=invalid"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("invalid CSRF consumed login budget: %d", rec.Code)
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login?expired=1" || len(rec.Result().Cookies()) != 0 {
+			t.Fatalf("invalid CSRF did not send a fresh login form: %d %q", rec.Code, rec.Header().Get("Location"))
 		}
 	}
-	token := loginFormToken(t, handler)
+	page := httptest.NewRecorder()
+	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/login?expired=1", http.NoBody))
+	if !strings.Contains(page.Body.String(), "Sign-in form expired") {
+		t.Fatal("fresh login form omitted the expiry explanation")
+	}
+	token := adminToken(t, page.Body.String(), `name="csrf_token" value="([a-f0-9]+)"`)
 	form := url.Values{"username": {config.DefaultWebUsername}, "password": {config.DefaultWebPassword}, "csrf_token": {token}}
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
