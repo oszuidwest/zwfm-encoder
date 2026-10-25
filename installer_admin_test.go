@@ -143,13 +143,16 @@ prompt_user() {
 	}
 }
 
-// An update keeps the running encoder until the new one is downloaded and runs.
+// An update keeps the running encoder until the new one is downloaded and runs,
+// also when the installed one cannot report its version (#509).
 func TestInstallerReplacesEncoderOnlyWhenNewOneRuns(t *testing.T) {
 	t.Parallel()
 	script, err := os.ReadFile("deploy/install.sh")
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, version, _ := strings.Cut(string(script), "    CURRENT_VERSION=")
+	version, _, _ = strings.Cut(version, "\n  fi")
 	_, fragment, found := strings.Cut(string(script), "# The running encoder stays up until the new one is in place and runs.")
 	fragment, _, found2 := strings.Cut(fragment, "# Create config directory")
 	if !found || !found2 {
@@ -160,20 +163,20 @@ file_download() { [ "$NEW_ENCODER" = missing ] && return 1; printf '#!/bin/sh\ne
 systemctl() { echo "$*" >> "$INSTALL_DIR/calls"; }
 pkill() { return 1; }
 `
-	for _, tc := range []struct{ newEncoder, want string }{{"missing", "old"}, {"1", "old"}, {"0", "new"}} {
+	const installed = "#!/bin/sh\nexit 1\n" // Cannot report its version.
+	for _, tc := range []struct{ newEncoder, want, calls string }{{"missing", installed, ""}, {"1", installed, ""}, {"0", "#!/bin/sh\nexit 0\n", "is-active --quiet encoder\nstop encoder\n"}} {
 		dir := t.TempDir()
-		old := filepath.Join(dir, "encoder")
-		if err := os.WriteFile(old, []byte("old"), 0o600); err != nil {
+		bin := filepath.Join(dir, "encoder")
+		if err := os.WriteFile(bin, []byte(installed), 0o700); err != nil { //nolint:gosec // G306: executable fake binary in an isolated test directory.
 			t.Fatal(err)
 		}
-		cmd := util.CommandContext(t.Context(), "bash", "-c", stubs+fragment)
-		cmd.Env = append(os.Environ(), "INSTALL_DIR="+dir, "SERVICE_PATH="+filepath.Join(dir, "unit"), "NEW_ENCODER="+tc.newEncoder, "ENCODER_BINARY_URL=", "ENCODER_SERVICE_URL=", "RED=", "BLUE=", "YELLOW=", "NC=")
+		cmd := util.CommandContext(t.Context(), "bash", "-c", stubs+"CURRENT_VERSION="+version+"\n"+fragment)
+		cmd.Env = append(os.Environ(), "INSTALL_DIR="+dir, "SERVICE_PATH="+filepath.Join(dir, "unit"), "NEW_ENCODER="+tc.newEncoder, "ENCODER_BINARY_URL=", "ENCODER_SERVICE_URL=", "BOLD=", "RED=", "BLUE=", "YELLOW=", "NC=")
 		out, runErr := cmd.CombinedOutput()
-		data, _ := os.ReadFile(old)                          //nolint:gosec // G304: isolated fixture under t.TempDir.
+		data, _ := os.ReadFile(bin)                          //nolint:gosec // G304: isolated fixture under t.TempDir.
 		calls, _ := os.ReadFile(filepath.Join(dir, "calls")) //nolint:gosec // G304: isolated fixture under t.TempDir.
-		replaced := strings.HasPrefix(string(data), "#!/bin/sh")
-		if replaced != (tc.want == "new") || (runErr == nil) != (tc.want == "new") || (len(calls) > 0) != (tc.want == "new") {
-			t.Errorf("new encoder %s: replaced %t, stop calls %q, err %v\n%s", tc.newEncoder, replaced, calls, runErr, out)
+		if string(data) != tc.want || string(calls) != tc.calls || (runErr == nil) != (tc.calls != "") || !strings.Contains(string(out), "(unknown)") {
+			t.Errorf("new encoder %s: binary %q, calls %q, err %v\n%s", tc.newEncoder, data, calls, runErr, out)
 		}
 	}
 }
