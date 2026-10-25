@@ -22,7 +22,7 @@ Audio streaming software for [ZuidWest FM](https://www.zuidwestfm.nl/) (Linux), 
 | macOS | Development only | FFmpeg (AVFoundation) |
 | Windows | Experimental | FFmpeg (DirectShow) |
 
-On Windows the encoder runs as a tray application and writes its log to `%PROGRAMDATA%\encoder\encoder.log`; Show Logs Folder opens the event log.
+On Windows the encoder runs as a tray application and writes its log to `%PROGRAMDATA%\encoder\encoder.log`; Show Logs Folder opens the event log. Its recording spool, the upload queue and S3-only recordings, is `%PROGRAMDATA%\encoder\recordings`.
 
 ## Requirements
 

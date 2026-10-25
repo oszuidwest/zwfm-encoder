@@ -3,9 +3,11 @@ package recording
 
 import (
 	"errors"
+	"path/filepath"
 	"runtime"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
+	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
 
 // Sentinel errors for recording operations.
@@ -38,7 +40,7 @@ type S3Config struct {
 }
 
 const (
-	// DefaultTempDir is the fallback temporary directory for non-systemd platforms.
+	// DefaultTempDir is the spool on macOS, a development platform.
 	DefaultTempDir = "/tmp/encoder-recordings"
 	// LinuxStateRecordingDir is the systemd StateDirectory-backed recording spool path.
 	LinuxStateRecordingDir = "/var/lib/encoder/recordings"
@@ -46,8 +48,11 @@ const (
 
 // DefaultSpoolDir returns the platform default directory for recording spool state.
 func DefaultSpoolDir() string {
-	if runtime.GOOS == "linux" {
+	switch runtime.GOOS {
+	case "linux":
 		return LinuxStateRecordingDir
+	case "windows":
+		return filepath.Join(util.WindowsDataDir(), "recordings")
 	}
 	return DefaultTempDir
 }
