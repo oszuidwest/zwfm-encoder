@@ -10,7 +10,9 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -86,12 +88,12 @@ func main() {
 }
 
 func printPasswordHash(input io.Reader, output io.Writer) error {
-	// Room for a 4096-byte password, its line ending and one byte to detect more.
-	data, err := io.ReadAll(io.LimitReader(input, 4099))
-	if err != nil {
+	// One line, so Enter ends a typed password; room for 4096 bytes and "\r\n".
+	line, err := bufio.NewReader(io.LimitReader(input, 4098)).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
 		return err
 	}
-	password := strings.TrimSuffix(strings.TrimSuffix(string(data), "\n"), "\r")
+	password := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
 	if password == "" || len(password) > 4096 || strings.ContainsAny(password, "\r\n") {
 		return fmt.Errorf("provide one non-empty password line of at most 4096 bytes")
 	}

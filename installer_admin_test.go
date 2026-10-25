@@ -142,3 +142,38 @@ prompt_user() {
 		})
 	}
 }
+
+// An update keeps the running encoder until the new one is downloaded and runs.
+func TestInstallerReplacesEncoderOnlyWhenNewOneRuns(t *testing.T) {
+	t.Parallel()
+	script, err := os.ReadFile("deploy/install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, fragment, found := strings.Cut(string(script), "# The running encoder stays up until the new one is in place and runs.")
+	fragment, _, found2 := strings.Cut(fragment, "# Create config directory")
+	if !found || !found2 {
+		t.Fatal("installer update block not found")
+	}
+	stubs := `set -euo pipefail
+file_download() { [ "$NEW_ENCODER" = missing ] && return 1; printf '#!/bin/sh\nexit %s\n' "$NEW_ENCODER" > "$2"; }
+systemctl() { echo "$*" >> "$INSTALL_DIR/calls"; }
+pkill() { return 1; }
+`
+	for _, tc := range []struct{ newEncoder, want string }{{"missing", "old"}, {"1", "old"}, {"0", "new"}} {
+		dir := t.TempDir()
+		old := filepath.Join(dir, "encoder")
+		if err := os.WriteFile(old, []byte("old"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cmd := util.CommandContext(t.Context(), "bash", "-c", stubs+fragment)
+		cmd.Env = append(os.Environ(), "INSTALL_DIR="+dir, "SERVICE_PATH="+filepath.Join(dir, "unit"), "NEW_ENCODER="+tc.newEncoder, "ENCODER_BINARY_URL=", "ENCODER_SERVICE_URL=", "RED=", "BLUE=", "YELLOW=", "NC=")
+		out, runErr := cmd.CombinedOutput()
+		data, _ := os.ReadFile(old)                          //nolint:gosec // G304: isolated fixture under t.TempDir.
+		calls, _ := os.ReadFile(filepath.Join(dir, "calls")) //nolint:gosec // G304: isolated fixture under t.TempDir.
+		replaced := strings.HasPrefix(string(data), "#!/bin/sh")
+		if replaced != (tc.want == "new") || (runErr == nil) != (tc.want == "new") || (len(calls) > 0) != (tc.want == "new") {
+			t.Errorf("new encoder %s: replaced %t, stop calls %q, err %v\n%s", tc.newEncoder, replaced, calls, runErr, out)
+		}
+	}
+}

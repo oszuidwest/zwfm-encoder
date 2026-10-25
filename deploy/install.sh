@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export -n WEB_PASSWORD # A password from the environment is not passed on to the commands below.
 
 # Configuration
 GITHUB_REPO="oszuidwest/zwfm-encoder"
@@ -89,7 +90,7 @@ if [ -f "$CONFIG_FILE" ] || [ -f "${INSTALL_DIR}/encoder" ]; then
     echo -e "Found configuration at: ${BOLD}${CONFIG_FILE}${NC}"
   fi
   if [ -f "${INSTALL_DIR}/encoder" ]; then
-    CURRENT_VERSION=$("${INSTALL_DIR}/encoder" -version 2>&1 | sed -n 's/.*version=\([^ ]*\).*/\1/p')
+    CURRENT_VERSION=$("${INSTALL_DIR}/encoder" -version 2>&1 | sed -n 's/.*version=\([^ ]*\).*/\1/p' || true)
     CURRENT_VERSION="${CURRENT_VERSION:-unknown}"
     echo -e "Found encoder binary:   ${BOLD}${INSTALL_DIR}/encoder${NC} (${CURRENT_VERSION})"
   fi
@@ -114,8 +115,9 @@ if [ "$KEEP_CONFIG" != "y" ]; then
   # Web username
   prompt_user "WEB_USERNAME" "admin" "Enter the web interface username" "str"
 
-  # Web password
-  prompt_user "WEB_PASSWORD" "encoder" "Enter the web interface password" "str"
+  # Web password, asked hidden.
+  prompt_secret "WEB_PASSWORD" "Enter the web interface password"
+  [[ "$WEB_PASSWORD" != *$'\n'* ]] || { echo "WEB_PASSWORD must be one line" >&2; exit 1; }
 
   # Web port
   prompt_user "WEB_PORT" "8080" "Enter the web interface port" "num"
@@ -220,17 +222,6 @@ fi
 echo -e "${BLUE}►► Installing FFmpeg, alsa-utils, and jq...${NC}"
 apt_install --silent ffmpeg alsa-utils jq
 
-# Stop existing service if running
-if systemctl is-active --quiet encoder 2>/dev/null; then
-  echo -e "${BLUE}►► Stopping existing encoder service...${NC}"
-  systemctl stop encoder
-fi
-
-# Kill any rogue encoder processes not managed by systemd
-if pkill -x encoder 2>/dev/null; then
-  echo -e "${YELLOW}Killed orphaned encoder process(es)${NC}"
-fi
-
 # Create dedicated service user
 if ! id -u encoder &>/dev/null; then
   echo -e "${BLUE}►► Creating encoder service user...${NC}"
@@ -300,8 +291,27 @@ if [ -z "$ENCODER_ASSET_INFO" ]; then
 fi
 IFS=$'\t' read -r ENCODER_ASSET_NAME ENCODER_BINARY_URL <<< "$ENCODER_ASSET_INFO"
 echo -e "${GREEN}✓ Asset: ${ENCODER_ASSET_NAME}${NC}"
-file_download "$ENCODER_BINARY_URL" "${INSTALL_DIR}/encoder" "encoder binary"
-chmod +x "${INSTALL_DIR}/encoder"
+# The running encoder stays up until the new one is in place and runs.
+file_download "$ENCODER_BINARY_URL" "${INSTALL_DIR}/encoder.new" "encoder binary"
+chmod 0755 "${INSTALL_DIR}/encoder.new"
+if ! "${INSTALL_DIR}/encoder.new" -version > /dev/null 2>&1; then
+  rm -f "${INSTALL_DIR}/encoder.new"
+  echo -e "${RED}Error: the downloaded encoder does not run; the installed one is unchanged.${NC}" >&2
+  exit 1
+fi
+file_download "$ENCODER_SERVICE_URL" "$SERVICE_PATH" "systemd service" --backup
+mv "${INSTALL_DIR}/encoder.new" "${INSTALL_DIR}/encoder"
+
+# Stop existing service if running
+if systemctl is-active --quiet encoder 2>/dev/null; then
+  echo -e "${BLUE}►► Stopping existing encoder service...${NC}"
+  systemctl stop encoder
+fi
+
+# Kill any rogue encoder processes not managed by systemd
+if pkill -x encoder 2>/dev/null; then
+  echo -e "${YELLOW}Killed orphaned encoder process(es)${NC}"
+fi
 
 # Create config directory with proper ownership
 echo -e "${BLUE}►► Setting up configuration directory...${NC}"
@@ -361,9 +371,6 @@ else
   unset WEB_CREDENTIAL WEB_CREDENTIAL_FIELD ENCODER_HELP
   echo -e "${GREEN}✓ Configuration saved to ${CONFIG_FILE}${NC}"
 fi
-
-# Download and install systemd service
-file_download "$ENCODER_SERVICE_URL" "$SERVICE_PATH" "systemd service" --backup
 
 # Reload systemd and enable service
 systemctl daemon-reload

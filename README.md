@@ -43,7 +43,7 @@ sudo su
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/oszuidwest/zwfm-encoder/main/deploy/install.sh)"
 ```
 
-The installer asks for the station name, admin username and password (default `admin` / `encoder`), web port (default 8080) and whether to allow access from the LAN. The web interface is then available at `http://<raspberry-pi-ip>:8080`. See [Admin security](#admin-security) before connecting the device to a shared network.
+The installer asks for the station name, admin username (default `admin`) and password, web port (default 8080) and whether to allow access from the LAN. The web interface is then available at `http://<raspberry-pi-ip>:8080`. See [Admin security](#admin-security) before connecting the device to a shared network.
 
 ## Updating
 
@@ -257,7 +257,7 @@ Keep the proxy restricted to your management network too; with a proxy on anothe
 
 ### Login limits and API clients
 
-Each client IPv4 address or IPv6 `/64` gets five login attempts per minute and each username ten, successful logins included. Beyond that the server answers `429` with `Retry-After: 60`; reload the login form before retrying. Login forms expire after ten minutes. Limits and sessions are reset when the service restarts, but a restart interrupts streams and recordings: wait 60 seconds instead.
+Each client IPv4 address or IPv6 `/64` gets five login attempts per minute and each username ten, successful logins included. Beyond that the server answers `429` with `Retry-After: 60`; reload the login form before retrying. Login forms expire after ten minutes. Limits and sessions are reset when the service restarts, but a restart interrupts streams and recordings: wait 60 seconds instead. The username limit is shared by every client, also through an SSH tunnel, so someone guessing at it can lock you out for that minute: block their access and wait. A trusted proxy that forwards an unusable client address also gets `429`; check its `X-Forwarded-For`.
 
 Session-based API clients must send `X-CSRF-Token` with every POST, PUT, PATCH and DELETE, using the token from `<meta name="csrf-token">` on the authenticated page; logout is `POST /logout`. The [Recording API](#recording-api) uses `X-API-Key` instead and needs no CSRF token.
 
