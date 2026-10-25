@@ -2,11 +2,7 @@ package server
 
 import (
 	"io"
-	"log/slog"
-	"net"
 	"net/http"
-	"net/netip"
-	"net/url"
 
 	"github.com/gorilla/websocket"
 )
@@ -25,50 +21,9 @@ type WebSocketConn interface {
 	ReadMessage() (messageType int, p []byte, err error)
 }
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: checkOrigin,
-}
-
-// checkOrigin reports whether the WebSocket connection origin is allowed.
-func checkOrigin(r *http.Request) bool {
-	origin := r.Header.Get("Origin")
-	// Allow clients that omit Origin, including non-browser clients.
-	if origin == "" {
-		return true
-	}
-
-	u, err := url.Parse(origin)
-	if err != nil {
-		//nolint:gosec // G706: origin is logged as a structured slog value for security auditing
-		slog.Warn("rejected WebSocket connection: invalid origin URL", "origin", origin)
-		return false
-	}
-
-	host := u.Hostname()
-
-	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-		return true
-	}
-
-	// Match hostnames without requiring the origin's scheme or port to match.
-	requestHost := r.Host
-	if h, _, err := net.SplitHostPort(requestHost); err == nil {
-		requestHost = h
-	}
-	if host == requestHost {
-		return true
-	}
-
-	if addr, err := netip.ParseAddr(host); err == nil {
-		if addr.IsLoopback() || addr.IsPrivate() {
-			return true
-		}
-	}
-
-	//nolint:gosec // G706: origin/host are logged as structured slog values for security auditing
-	slog.Warn("rejected WebSocket connection", "origin", origin, "host", host)
-	return false
-}
+// upgrader uses Gorilla's default origin check: Origin must match Host,
+// including the port.
+var upgrader = websocket.Upgrader{}
 
 // UpgradeConnection upgrades an HTTP connection to WebSocket.
 func UpgradeConnection(w http.ResponseWriter, r *http.Request) (*websocket.Conn, error) {

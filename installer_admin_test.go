@@ -142,3 +142,44 @@ prompt_user() {
 		})
 	}
 }
+
+// An update keeps the running encoder until the new binary and service file are
+// in and the binary runs, also when the old one cannot report its version (#509).
+func TestInstallerReplacesEncoderOnlyWhenNewOneRuns(t *testing.T) {
+	t.Parallel()
+	script, err := os.ReadFile("deploy/install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, version, _ := strings.Cut(string(script), "    CURRENT_VERSION=")
+	version, _, _ = strings.Cut(version, "\n  fi")
+	_, fragment, found := strings.Cut(string(script), "# The running encoder stays up until the new one is in place and runs.")
+	fragment, _, found2 := strings.Cut(fragment, "# Create config directory")
+	if !found || !found2 {
+		t.Fatal("installer update block not found")
+	}
+	stubs := `set -euo pipefail
+file_download() {
+  [ "$NEW_ENCODER" = missing ] || [ "$2:$UNIT" = "$SERVICE_PATH:missing" ] && return 1
+  printf '#!/bin/sh\nexit %s\n' "$NEW_ENCODER" > "$2"
+}
+systemctl() { echo "$*" >> "$INSTALL_DIR/calls"; }
+pkill() { return 1; }
+`
+	const installed = "#!/bin/sh\nexit 1\n" // Cannot report its version.
+	for _, tc := range []struct{ newEncoder, unit, want, calls string }{{"missing", "", installed, ""}, {"1", "", installed, ""}, {"0", "missing", installed, ""}, {"0", "", "#!/bin/sh\nexit 0\n", "is-active --quiet encoder\nstop encoder\n"}} {
+		dir := t.TempDir()
+		bin := filepath.Join(dir, "encoder")
+		if err := os.WriteFile(bin, []byte(installed), 0o700); err != nil { //nolint:gosec // G306: executable fake binary in an isolated test directory.
+			t.Fatal(err)
+		}
+		cmd := util.CommandContext(t.Context(), "bash", "-c", stubs+"CURRENT_VERSION="+version+"\n"+fragment)
+		cmd.Env = append(os.Environ(), "INSTALL_DIR="+dir, "SERVICE_PATH="+filepath.Join(dir, "unit"), "NEW_ENCODER="+tc.newEncoder, "UNIT="+tc.unit, "ENCODER_BINARY_URL=", "ENCODER_SERVICE_URL=", "BOLD=", "RED=", "BLUE=", "YELLOW=", "NC=")
+		out, runErr := cmd.CombinedOutput()
+		data, _ := os.ReadFile(bin)                          //nolint:gosec // G304: isolated fixture under t.TempDir.
+		calls, _ := os.ReadFile(filepath.Join(dir, "calls")) //nolint:gosec // G304: isolated fixture under t.TempDir.
+		if string(data) != tc.want || string(calls) != tc.calls || (runErr == nil) != (tc.calls != "") || !strings.Contains(string(out), "(unknown)") {
+			t.Errorf("new encoder %s, unit %q: binary %q, calls %q, err %v\n%s", tc.newEncoder, tc.unit, data, calls, runErr, out)
+		}
+	}
+}
