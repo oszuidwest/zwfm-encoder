@@ -293,10 +293,7 @@ func TestListenerFanoutStartFailureRemovesPlaceholder(t *testing.T) {
 }
 func TestStartListenerWithFFmpegDoesNotRequireSRTProtocol(t *testing.T) {
 	ffmpegPath, err := exec.LookPath("ffmpeg")
-	if err != nil {
-		if os.Getenv("REQUIRE_FFMPEG") != "" {
-			t.Fatal(err)
-		}
+	if err != nil && os.Getenv("REQUIRE_FFMPEG") == "" { // Required in CI: run and fail.
 		t.Skip("ffmpeg not available")
 	}
 	port := freeUDPPort(t)
