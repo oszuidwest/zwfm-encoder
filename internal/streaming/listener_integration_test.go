@@ -11,6 +11,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"io"
 	"net"
+	"os"
 	"os/exec"
 	"strconv"
 	"testing"
@@ -19,7 +20,7 @@ import (
 
 func TestListenerPipeFanoutLateSubscriberReceivesMPEGTSBytes(t *testing.T) {
 	ffmpegPath, err := exec.LookPath("ffmpeg")
-	if err != nil {
+	if err != nil && os.Getenv("REQUIRE_FFMPEG") == "" { // Required in CI: run and fail.
 		t.Skip("ffmpeg not available")
 	}
 	tests := []struct {
@@ -32,7 +33,7 @@ func TestListenerPipeFanoutLateSubscriberReceivesMPEGTSBytes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if !ffmpegHasEncoder(t, ffmpegPath, tt.encoder) {
+			if !ffmpegHasEncoder(t, ffmpegPath, tt.encoder) && os.Getenv("REQUIRE_FFMPEG") == "" {
 				t.Skipf("ffmpeg encoder %s not available", tt.encoder)
 			}
 			port := freeUDPPort(t)
