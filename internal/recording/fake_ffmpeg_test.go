@@ -25,9 +25,6 @@ const (
 	// fakeFFmpegStreamEnv makes the fake write each chunk as it arrives, like
 	// a real encoder's muxer, so a killed fake leaves what it had written.
 	fakeFFmpegStreamEnv = "ZWFM_RECORDING_FAKE_FFMPEG_STREAM"
-	// fakeFFmpegDropSilenceEnv makes a streaming fake leave out silence, so
-	// long outages do not grow the file.
-	fakeFFmpegDropSilenceEnv = "ZWFM_RECORDING_FAKE_FFMPEG_DROP_SILENCE"
 	// fakeFFmpegFinalize is how long the fake takes to exit after stdin closes,
 	// like a real encoder flushing and finalizing its file.
 	fakeFFmpegFinalize = 100 * time.Millisecond
@@ -126,16 +123,13 @@ func runFakeFFmpeg(args []string) int {
 }
 
 // streamFakeFFmpeg writes stdin to the output as it arrives and exits at EOF.
+// It leaves out silence, so a long outage cannot grow a file to multipart size.
 func streamFakeFFmpeg(output string) int {
 	file, err := os.OpenFile(output, os.O_WRONLY|os.O_TRUNC, 0o600) //nolint:gosec // G304: path comes from the recorder under test.
 	if err != nil {
 		return 1
 	}
-	var stdin io.Reader = os.Stdin
-	if os.Getenv(fakeFFmpegDropSilenceEnv) == "1" {
-		stdin = dropZeros{os.Stdin}
-	}
-	if _, err := io.Copy(file, stdin); err != nil {
+	if _, err := io.Copy(file, dropZeros{os.Stdin}); err != nil {
 		_ = file.Close()
 		return 1
 	}
