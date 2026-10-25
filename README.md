@@ -240,7 +240,7 @@ printf '%s' "$encoder_password" | /usr/local/bin/encoder -hash-password
 unset encoder_password
 ```
 
-Replace the `system.password_hash` value in `config.json` with the printed value (older configs: replace `system.password` with `password_hash`), restart the encoder and check that you can log in. The Windows release build has no console, so `-hash-password` may show no output: make the hash with the Linux or macOS build instead (a hash works on every platform) and put it in the `config.json` next to `encoder.exe`.
+Replace the `system.password_hash` value in `config.json` with the printed value (older configs: replace `system.password` with `password_hash`), restart the encoder and check that you can log in.
 
 ### HTTPS reverse proxy
 
