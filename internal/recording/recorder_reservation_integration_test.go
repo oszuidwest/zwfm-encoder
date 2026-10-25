@@ -15,6 +15,9 @@ import (
 func TestRealFFmpegWritesReservedOutputForEveryCodec(t *testing.T) {
 	ffmpegPath, err := exec.LookPath("ffmpeg")
 	if err != nil {
+		if os.Getenv("REQUIRE_FFMPEG") != "" { // CI installs FFmpeg; a skip would hide its absence.
+			t.Fatal(err)
+		}
 		t.Skip("ffmpeg not available")
 	}
 	for _, codec := range []types.Codec{types.CodecPCM, types.CodecMP3, types.CodecOpus} {

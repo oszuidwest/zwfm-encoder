@@ -11,6 +11,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"io"
 	"net"
+	"os"
 	"os/exec"
 	"strconv"
 	"testing"
@@ -20,6 +21,9 @@ import (
 func TestListenerPipeFanoutLateSubscriberReceivesMPEGTSBytes(t *testing.T) {
 	ffmpegPath, err := exec.LookPath("ffmpeg")
 	if err != nil {
+		if os.Getenv("REQUIRE_FFMPEG") != "" { // CI installs FFmpeg; a skip would hide its absence.
+			t.Fatal(err)
+		}
 		t.Skip("ffmpeg not available")
 	}
 	tests := []struct {
