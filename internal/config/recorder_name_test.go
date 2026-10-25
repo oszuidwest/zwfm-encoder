@@ -17,10 +17,7 @@ func newNamedRecorder(t *testing.T, name string) *types.Recorder {
 
 func TestRecorderNameCollisions(t *testing.T) {
 	t.Parallel()
-	for _, names := range [][2]string{
-		{"Studio", "Studio!"}, {"Studio B", "Studio-B"},
-		{"日本", "中文"}, {"studio", "Studio"},
-	} {
+	for _, names := range [][2]string{{"studio", "Studio"}, {"Studio B", "studio b"}} {
 		for _, operation := range []string{"add", "update"} {
 			t.Run(operation+" "+names[0]+" and "+names[1], func(t *testing.T) {
 				t.Parallel()
@@ -46,7 +43,7 @@ func TestRecorderNameCollisions(t *testing.T) {
 					err = cfg.AddRecorder(candidate)
 				}
 				if !errors.Is(err, ErrInvalidRecorderConfig) || !strings.Contains(err.Error(), names[0]) {
-					t.Fatalf("%s error = %v, want a name conflict identifying %q", operation, err, names[0])
+					t.Fatalf("%s error = %v, want a duplicate-name error naming %q", operation, err, names[0])
 				}
 				if !reflect.DeepEqual(cfg.Snapshot().Recorders, before) {
 					t.Fatal("rejected change modified in-memory recorders")
@@ -61,10 +58,10 @@ func TestRecorderNameCollisions(t *testing.T) {
 	}
 }
 
-func TestRecorderNameAllowsOwnNameAndDistinctPrefixes(t *testing.T) {
+func TestRecorderNameAllowsOwnNameAndDistinctNames(t *testing.T) {
 	t.Parallel()
 	cfg, path := newLoadedConfig(t)
-	for _, name := range []string{"Studio", "Studio-B"} {
+	for _, name := range []string{"Studio", "Studio ", "Studio!", "Studio B", "Studio-B", "日本", "中文"} {
 		recorder := newNamedRecorder(t, name)
 		if err := cfg.AddRecorder(recorder); err != nil {
 			t.Fatal(err)
