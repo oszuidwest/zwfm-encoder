@@ -34,7 +34,8 @@ jobs:
 
   # The shared template builds and tests on linux only; this job makes sure
   # the //go:build windows files (systray, slog fallback) at least compile
-  # and vet on every PR instead of breaking at release time.
+  # and vet on every PR instead of breaking at release time. It also runs the
+  # tests that need a real FFmpeg, which the shared job does not install.
   go-windows:
     name: Go (windows cross-compile)
     runs-on: ubuntu-latest
@@ -57,6 +58,14 @@ jobs:
         run: |
           go build ./...
           go vet ./...
+
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Test with a real FFmpeg
+        env:
+          REQUIRE_FFMPEG: '1'
+        run: go test -race -count=1 -v -run 'FFmpeg|MPEGTS' ./internal/recording ./internal/streaming
 
   dante-windows:
     name: Dante (windows native)
@@ -93,31 +102,6 @@ jobs:
           CGO_ENABLED: '1'
           REQUIRE_FFMPEG: '1'
         run: go test -race -count=1 -v -run 'FFmpeg|MPEGTS' ./internal/streaming
-
-  # The shared template's Linux job has no FFmpeg; these tests need a real one.
-  ffmpeg-linux:
-    name: Real FFmpeg (linux)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
-
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-
-      - name: Install FFmpeg
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
-
-      - name: Test with a real FFmpeg
-        env:
-          REQUIRE_FFMPEG: '1'
-        run: go test -race -count=1 -v -run 'FFmpeg|MPEGTS' ./internal/recording ./internal/streaming
 
   frontend:
     name: Frontend
