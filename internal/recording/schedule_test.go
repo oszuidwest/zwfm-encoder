@@ -50,8 +50,6 @@ func TestInvariantSchedule(t *testing.T) {
 	m.Close()
 	got := map[string]int{}
 	audit := func(dir, body string) {
-		// The real writer inserts silence during input outages.
-		body = strings.ReplaceAll(body, "\x00", "")
 		for body != "" {
 			tag, _, _ := strings.Cut(body, "|")
 			chunk := payload(tag)

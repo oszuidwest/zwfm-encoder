@@ -123,12 +123,13 @@ func runFakeFFmpeg(args []string) int {
 }
 
 // streamFakeFFmpeg writes stdin to the output as it arrives and exits at EOF.
+// It leaves out silence, so a long outage cannot grow a file to multipart size.
 func streamFakeFFmpeg(output string) int {
 	file, err := os.OpenFile(output, os.O_WRONLY|os.O_TRUNC, 0o600) //nolint:gosec // G304: path comes from the recorder under test.
 	if err != nil {
 		return 1
 	}
-	if _, err := io.Copy(file, os.Stdin); err != nil {
+	if _, err := io.Copy(file, dropZeros{os.Stdin}); err != nil {
 		_ = file.Close()
 		return 1
 	}
@@ -136,4 +137,19 @@ func streamFakeFFmpeg(output string) int {
 		return 1
 	}
 	return 0
+}
+
+// dropZeros reads r without its zero bytes.
+type dropZeros struct{ r io.Reader }
+
+func (d dropZeros) Read(p []byte) (int, error) {
+	n, err := d.r.Read(p)
+	kept := 0
+	for _, b := range p[:n] {
+		if b != 0 {
+			p[kept] = b
+			kept++
+		}
+	}
+	return kept, err
 }
