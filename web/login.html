@@ -25,12 +25,17 @@
                         <p class="subtitle">Sign in to continue</p>
                     </div>
 
-                    {{if .Error}}
+                    {{if or .Error .Expired}}
                     <div class="alert" data-variant="danger" role="alert" tabindex="-1" id="login-error">
                         <span id="warning-icon" class="icon-container" aria-hidden="true"></span>
                         <div>
+                            {{if .Expired}}
+                            <strong>Sign-in form expired</strong>
+                            <p>Please try again.</p>
+                            {{else}}
                             <strong>Sign in failed</strong>
                             <p>Please check your username and password.</p>
+                            {{end}}
                         </div>
                     </div>
                     {{end}}
