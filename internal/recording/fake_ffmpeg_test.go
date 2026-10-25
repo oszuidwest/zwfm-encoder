@@ -25,9 +25,6 @@ const (
 	// fakeFFmpegStreamEnv makes the fake write each chunk as it arrives, like
 	// a real encoder's muxer, so a killed fake leaves what it had written.
 	fakeFFmpegStreamEnv = "ZWFM_RECORDING_FAKE_FFMPEG_STREAM"
-	// fakeFFmpegDropSilenceEnv makes a streaming fake leave out silence, so
-	// long outages do not grow the file.
-	fakeFFmpegDropSilenceEnv = "ZWFM_RECORDING_FAKE_FFMPEG_DROP_SILENCE"
 	// fakeFFmpegFinalize is how long the fake takes to exit after stdin closes,
 	// like a real encoder flushing and finalizing its file.
 	fakeFFmpegFinalize = 100 * time.Millisecond
@@ -131,11 +128,7 @@ func streamFakeFFmpeg(output string) int {
 	if err != nil {
 		return 1
 	}
-	var stdin io.Reader = os.Stdin
-	if os.Getenv(fakeFFmpegDropSilenceEnv) == "1" {
-		stdin = dropZeros{os.Stdin}
-	}
-	if _, err := io.Copy(file, stdin); err != nil {
+	if _, err := io.Copy(file, os.Stdin); err != nil {
 		_ = file.Close()
 		return 1
 	}
@@ -143,19 +136,4 @@ func streamFakeFFmpeg(output string) int {
 		return 1
 	}
 	return 0
-}
-
-// dropZeros reads r without its zero bytes.
-type dropZeros struct{ r io.Reader }
-
-func (d dropZeros) Read(p []byte) (int, error) {
-	n, err := d.r.Read(p)
-	kept := 0
-	for _, b := range p[:n] {
-		if b != 0 {
-			p[kept] = b
-			kept++
-		}
-	}
-	return kept, err
 }
