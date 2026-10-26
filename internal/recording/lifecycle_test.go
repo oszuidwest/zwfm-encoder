@@ -11,6 +11,7 @@ func localOnDemandRecorder(t *testing.T, id string) *types.Recorder {
 	return &types.Recorder{
 		ID:            id,
 		Name:          id,
+		FilePrefix:    id,
 		Enabled:       true,
 		Codec:         types.CodecPCM,
 		RecordingMode: types.RecordingOnDemand,

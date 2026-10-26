@@ -21,7 +21,7 @@ import (
 
 const recordingTimestampLayout = "2006-01-02-15-04"
 
-// recordingNameTail matches what follows the ownership prefix in a recording
+// recordingNameTail matches what follows the file prefix in a recording
 // filename: the start minute, an optional collision suffix and the extension of
 // a current (mp3, ts) or removed (ogg, mkv, mp2) codec. Keep it in sync with
 // types.codecPresets, or files of a new codec never expire.
@@ -83,7 +83,7 @@ func (m *Manager) cleanupLocalFiles(recorder *GenericRecorder) {
 		name := entry.Name()
 
 		// Only process files matching this recorder's pattern.
-		fileDate, ok := recorderFileTime(&cfg, name)
+		fileDate, ok := recordingFileTime(cfg.FilePrefix, name)
 		if !ok {
 			continue
 		}
@@ -141,13 +141,9 @@ func (m *Manager) cleanupS3Files(recorder *GenericRecorder) {
 	)
 	defer cancel()
 
-	var deleted int
-	for _, filePrefix := range ownedFilePrefixes(&cfg) {
-		n, err := cleanupS3Namespace(ctx, client, &cfg, s3Namespace(filePrefix), cutoff)
-		deleted += n
-		if err != nil {
-			slog.Warn("cleanup: failed to list S3 objects", "id", cfg.ID, "bucket", cfg.S3Bucket, "prefix", s3Namespace(filePrefix), "error", err)
-		}
+	deleted, err := cleanupS3Namespace(ctx, client, &cfg, s3Namespace(cfg.FilePrefix), cutoff)
+	if err != nil {
+		slog.Warn("cleanup: failed to list S3 objects", "id", cfg.ID, "bucket", cfg.S3Bucket, "prefix", s3Namespace(cfg.FilePrefix), "error", err)
 	}
 	if deleted > 0 {
 		slog.Info("cleanup: deleted S3 objects", "id", cfg.ID, "count", deleted)
@@ -173,8 +169,7 @@ func cleanupS3Namespace(ctx context.Context, client *s3.Client, cfg *types.Recor
 			if !ok || strings.Contains(filename, "/") {
 				continue // Never delete outside the recorder's exact namespace.
 			}
-			// Spool recovery can upload legacy-named files into the ID namespace, so match only the timestamp.
-			fileDate, ok := util.FilenameTime(filename)
+			fileDate, ok := recordingFileTime(cfg.FilePrefix, filename)
 			// Delete if older than retention, by name and by upload time (a
 			// missing LastModified falls back to the name alone).
 			if !ok || !fileDate.Before(cutoff) || !aws.ToTime(obj.LastModified).Before(cutoff) {
@@ -191,25 +186,8 @@ func cleanupS3Namespace(ctx context.Context, client *s3.Client, cfg *types.Recor
 	return deleted, nil
 }
 
-// ownedFilePrefixes lists the ID namespace and, for pre-upgrade recorders, the captured legacy prefix.
-func ownedFilePrefixes(cfg *types.Recorder) []string {
-	if cfg.LegacyFilePrefix == "" {
-		return []string{cfg.RecordingFilePrefix()}
-	}
-	return []string{cfg.RecordingFilePrefix(), cfg.LegacyFilePrefix}
-}
-
-func recorderFileTime(cfg *types.Recorder, filename string) (time.Time, bool) {
-	for _, prefix := range ownedFilePrefixes(cfg) {
-		if at, ok := recordingFileTime(prefix, filename); ok {
-			return at, true
-		}
-	}
-	return time.Time{}, false
-}
-
 // recordingFileTime parses "<safeName>-YYYY-MM-DD-HH-MM[-N].<ext>" only when
-// safeName matches the complete ownership prefix (ID-based or legacy).
+// safeName matches the complete file prefix.
 func recordingFileTime(safeName, filename string) (time.Time, bool) {
 	tail, ok := strings.CutPrefix(filename, safeName)
 	if !ok {

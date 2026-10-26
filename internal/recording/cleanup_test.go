@@ -113,10 +113,9 @@ func TestRecordingFileTimeMatchesGeneratedNames(t *testing.T) {
 
 	start := time.Date(2026, time.September, 28, 14, 37, 0, 0, time.Local)
 	for _, codec := range []types.Codec{types.CodecMP3, types.CodecOpus, types.CodecPCM} {
-		cfg := types.Recorder{ID: "stable", Name: "Studio B!", Codec: codec}
-		cfg.InitializeFileIdentity()
+		cfg := types.Recorder{ID: "stable", Name: "Studio B!", FilePrefix: "Studio-B", Codec: codec}
 		name := recordingFilename(&cfg, start)
-		if got, ok := recordingFileTime(cfg.RecordingFilePrefix(), name); !ok || !got.Equal(start) {
+		if got, ok := recordingFileTime(cfg.FilePrefix, name); !ok || !got.Equal(start) {
 			t.Errorf("recordingFileTime(%q) = %v, %t; want %v, true", name, got, ok, start)
 		}
 	}
@@ -153,6 +152,12 @@ func TestCleanupLocalFilesDeletesOnlyExpiredOwnedFiles(t *testing.T) {
 	}
 
 	recorder := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg})
+	// A rename keeps the file prefix, so the old files stay owned.
+	updated := *cfg
+	updated.Name = "After"
+	if err := recorder.UpdateConfig(&updated); err != nil {
+		t.Fatal(err)
+	}
 	tk := ticket{Path: filepath.Join(directory, "Studio-2000-01-01-00-06.mp3"), Dest: "s3"}
 	if err := recorder.outbox.newTicket(&tk); err != nil {
 		t.Fatal(err)
@@ -195,21 +200,29 @@ func TestCleanupS3FilesDeletesOnlyObjectsExpiredByNameAndUploadTime(t *testing.T
 	old := time.Now().AddDate(0, 0, -2).UTC().Format(time.RFC3339)
 	recent := time.Now().UTC().Format(time.RFC3339)
 	var (
-		mu      sync.Mutex
-		deleted []string
+		mu              sync.Mutex
+		listed, deleted []string
 	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
 		switch r.Method {
 		case http.MethodGet:
+			listed = append(listed, r.URL.Query().Get("prefix"))
 			w.Header().Set("Content-Type", "application/xml")
+			// The second object has an old name but was uploaded just now, the third
+			// has no upload time. The last three are outside the exact namespace or
+			// file prefix.
 			_, _ = fmt.Fprintf(w, `<ListBucketResult><Name>bucket</Name><IsTruncated>false</IsTruncated>
 <Contents><Key>recordings/Test/Test-2000-01-01-00-00.mp3</Key><LastModified>%s</LastModified></Contents>
 <Contents><Key>recordings/Test/Test-2000-01-01-01-00.mp3</Key><LastModified>%s</LastModified></Contents>
+<Contents><Key>recordings/Test/Test-2000-01-01-02-00.mp3</Key></Contents>
+<Contents><Key>recordings/Test-B/Test-B-2000-01-01-00-00.mp3</Key></Contents>
+<Contents><Key>recordings/Test/nested/Test-2000-01-01-00-00.mp3</Key></Contents>
+<Contents><Key>recordings/Test/Other-2000-01-01-00-00.mp3</Key></Contents>
 </ListBucketResult>`, old, recent)
 		case http.MethodDelete:
-			mu.Lock()
 			deleted = append(deleted, strings.TrimPrefix(r.URL.Path, "/bucket/"))
-			mu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			http.Error(w, "unexpected request", http.StatusBadRequest)
@@ -220,12 +233,19 @@ func TestCleanupS3FilesDeletesOnlyObjectsExpiredByNameAndUploadTime(t *testing.T
 	cfg := testS3Recorder()
 	cfg.S3Endpoint = server.URL
 	cfg.RetentionDays = 1
-	(&Manager{}).cleanupS3Files(newTestRecorder(t, GenericRecorderConfig{Recorder: cfg}))
+	recorder := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg})
+	// A rename keeps the file prefix, so the old objects stay owned.
+	updated := *cfg
+	updated.Name = "After"
+	if err := recorder.UpdateConfig(&updated); err != nil {
+		t.Fatal(err)
+	}
+	(&Manager{}).cleanupS3Files(recorder)
 
 	mu.Lock()
 	defer mu.Unlock()
-	// The second object has an old name but was uploaded just now.
-	if want := []string{"recordings/Test/Test-2000-01-01-00-00.mp3"}; !slices.Equal(deleted, want) {
-		t.Fatalf("deleted = %v, want %v", deleted, want)
+	want := []string{"recordings/Test/Test-2000-01-01-00-00.mp3", "recordings/Test/Test-2000-01-01-02-00.mp3"}
+	if !slices.Equal(listed, []string{"recordings/Test/"}) || !slices.Equal(deleted, want) {
+		t.Fatalf("listed = %v, deleted = %v; want [recordings/Test/], %v", listed, deleted, want)
 	}
 }

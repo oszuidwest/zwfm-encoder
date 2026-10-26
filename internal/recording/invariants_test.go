@@ -214,6 +214,7 @@ func corpusRecorder(t *testing.T, id string, storage types.StorageMode, mode typ
 	cfg := &types.Recorder{
 		ID:            id,
 		Name:          id,
+		FilePrefix:    id,
 		Enabled:       true,
 		Codec:         types.CodecMP3,
 		RecordingMode: mode,

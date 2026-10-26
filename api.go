@@ -548,7 +548,7 @@ func (s *Server) handleUpdateRecorder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Full replacement; ID, CreatedAt and (in config) internal file ownership are preserved.
+	// Full replacement; ID, CreatedAt and (in config) FilePrefix are preserved.
 	// For S3 secret: empty string means keep existing unless clear_s3_secret is true.
 	updated := &types.Recorder{
 		ID:                id,

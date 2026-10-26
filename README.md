@@ -64,7 +64,7 @@ Most settings are made in the web interface. These are not:
 - `audio.input` for a [Dante-compatible input](#dante-compatible-input)
 - `notifications.heartbeat.url` for the [heartbeat](#heartbeat)
 
-Back up the file before editing and restart with `sudo systemctl restart encoder`. An invalid file keeps the encoder, and every stream, down; check `journalctl -u encoder` after the restart. Never change a recorder's `id`, `id_based_files` or `legacy_file_prefix`: file names and retention depend on them.
+Back up the file before editing and restart with `sudo systemctl restart encoder`. An invalid file keeps the encoder, and every stream, down; check `journalctl -u encoder` after the restart. Never change a recorder's `id` (used by the API and the upload queue) or `file_prefix` (file names and retention).
 
 ## Audio Input
 
@@ -149,10 +149,10 @@ The template has triggers for silence, input loss, channel imbalance, overdue up
 
 Each recorder writes to local disk, S3, or both, with retention cleanup. Configure recorders in the web interface.
 
-- **Hourly** recorders start a new file on every whole hour with no gap between files, named after the local time, such as `<id-prefix>-YYYY-MM-DD-HH-00.<ext>`; the first file is named after its start minute. A repeated hour at the end of daylight saving time gets a `-2` suffix.
+- **Hourly** recorders start a new file on every whole hour with no gap between files, named after the local time, such as `<prefix>-YYYY-MM-DD-HH-00.<ext>`; the first file is named after its start minute. A repeated hour at the end of daylight saving time gets a `-2` suffix.
 - **On-demand** recorders are started and stopped from the web interface or the [Recording API](#recording-api).
 
-File names and S3 keys (`recordings/<id-prefix>/<filename>`) use the recorder ID, not its name, so renaming a recorder does not move its files. For a generated ID the prefix is that ID behind an `@`, such as `@recorder-<hex>`. Existing files are never overwritten.
+File names and S3 keys (`recordings/<prefix>/<filename>`) use the recorder's `file_prefix`: its name with only letters, digits, `-` and `_` (spaces become `-`), cut to 64 characters, plus `-2`, `-3` and so on when another recorder already has it, ignoring case. It is set once, so renaming a recorder does not move its files. Existing files are never overwritten.
 
 Saving a recorder applies it right away. Enabling or disabling it and switching it to hourly take effect at once; a change of codec, bitrate, storage mode, local path, S3 endpoint or bucket starts a new file without a gap. If that file cannot start, recording continues in the current one and `status.error` shows why. After fixing the cause of a failed hourly recorder, save it to restart it; otherwise it retries at the next hour. Saving a failed on-demand recorder clears the error; start it again to record.
 
@@ -160,7 +160,7 @@ On Linux a recorder waits for an NTP-synchronized clock before its first file, b
 
 ### Recording API
 
-On-demand recordings can be started and stopped via the REST API, for automation. Generate the API key and set the maximum recording duration (0 = no limit) under Settings -> Audio -> Recording API. The `recorder_id` is the recorder's `id` in `config.json` (`recording.recorders`), without the `@`; the web interface does not show it.
+On-demand recordings can be started and stopped via the REST API, for automation. Generate the API key and set the maximum recording duration (0 = no limit) under Settings -> Audio -> Recording API. The `recorder_id` is the recorder's `id` in `config.json` (`recording.recorders`), not its `file_prefix`; the web interface does not show it.
 
 ```bash
 # Start recording

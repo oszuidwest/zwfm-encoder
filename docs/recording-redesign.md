@@ -259,9 +259,7 @@ outbox.
 
 - **One ticket per recording** in `<spool>/outbox/`, a flat directory; the
   ticket names its recorder.
-  - S3-only recordings are spooled under `<spool>/recordings/<prefix>/`,
-    with the prefix from `RecordingFilePrefix()` instead of the raw ID
-    (#495).
+  - S3-only recordings are spooled under `<spool>/recordings/recorder-<file_prefix>/` (#495).
   - A ticket holds the recorder ID, the local path, the destination
     (endpoint, bucket, base key and a destination ID), the upload ID, the
     state, the attempt count, when it became ready, the next attempt and the
@@ -443,7 +441,7 @@ failure classes have different guarantees.
 
 Mechanisms that proved themselves and stay:
 - the O_EXCL reservation with the SameFile ownership check (#479);
-- ID-based file prefixes (#481);
+- stored file prefixes, kept across recorder renames;
 - the persisted upload identity with `If-None-Match: *` and HEAD verification
   (#443);
 - the clock-sync gate (#431);
@@ -472,7 +470,7 @@ If-None-Match cover name reuse after an S3-only spool file is deleted.
 |---|---|
 | #486 event I/O under lock | 4.1 status snapshot, no I/O in the loop |
 | #488 pending is 0 during upload | 4.2 counts from the outbox index |
-| #495 spool dirs use the raw ID | 4.2 recorder key from `RecordingFilePrefix()`; recorder names now only have to be unique, ignoring case |
+| #495 spool dirs use the raw ID | 4.2 recorder key from `file_prefix`; recorder names now only have to be unique, ignoring case |
 | #496 S3-only quarantine invisible | 4.2 failed tickets counted and alerted |
 | #502 removed recorder's uploads invisible | 4.2 removed recorders keep delivering and counting |
 | #511 storage probe error and hysteresis | 4.6 storage health |

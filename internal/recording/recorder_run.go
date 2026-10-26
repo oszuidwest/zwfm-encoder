@@ -166,7 +166,6 @@ func (r *GenericRecorder) applyConfig(cfg *types.Recorder) <-chan struct{} {
 	l := &r.run
 	old := l.cfg
 	l.cfg = *cfg
-	l.cfg.IDBasedFiles, l.cfg.LegacyFilePrefix = true, old.LegacyFilePrefix
 	updated := l.cfg
 	r.config.Store(&updated)
 
@@ -215,7 +214,7 @@ func (r *GenericRecorder) prepare(at time.Time) {
 	l := &r.run
 	dir := l.cfg.LocalPath
 	if l.cfg.StorageMode == types.StorageS3 {
-		dir = filepath.Join(r.spoolDir, "recordings", l.cfg.RecordingFilePrefix())
+		dir = filepath.Join(r.spoolDir, "recordings", "recorder-"+l.cfg.FilePrefix) // Never a bare Windows device name such as AUX.
 	}
 	lock := l.prepareLocks[dir]
 	if lock == nil {

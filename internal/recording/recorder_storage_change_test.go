@@ -82,7 +82,7 @@ func TestChangedStorageIsPreparedBeforeEncoderLaunch(t *testing.T) {
 			<-done
 			waitForRecorderState(t, r, types.ProcessRunning)
 			current := r.Config()
-			dir := filepath.Join(r.spoolDir, "recordings", current.RecordingFilePrefix())
+			dir := filepath.Join(r.spoolDir, "recordings", "recorder-"+current.FilePrefix)
 			if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 				t.Fatalf("new S3 output directory was not prepared: %v, %v", info, err)
 			}

@@ -133,7 +133,7 @@ func TestFilenamePreparationRevalidatesConfigAndRun(t *testing.T) {
 			release()
 			waitForEmptyDir(t, cfg.LocalPath)
 			seg, state := r.currentSegment(), r.Status().State
-			if state != types.ProcessRunning || !strings.HasPrefix(seg.file, filepath.Join(updated.LocalPath, updated.RecordingFilePrefix()+"-")) || seg.cfg.Name != updated.Name {
+			if state != types.ProcessRunning || !strings.HasPrefix(seg.file, filepath.Join(updated.LocalPath, updated.FilePrefix+"-")) || seg.cfg.Name != updated.Name {
 				t.Fatalf("prepared output used stale state: state=%s, file=%s", state, seg.file)
 			}
 			if seg != newSegment {
