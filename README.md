@@ -64,7 +64,7 @@ Most settings are made in the web interface. These are not:
 - `audio.input` for a [Dante-compatible input](#dante-compatible-input)
 - `notifications.heartbeat.url` for the [heartbeat](#heartbeat)
 
-Back up the file before editing and restart with `sudo systemctl restart encoder`. An invalid file keeps the encoder, and every stream, down; check `journalctl -u encoder` after the restart. Never change a recorder's `id` or `file_prefix`: file names and retention depend on them.
+Back up the file before editing and restart with `sudo systemctl restart encoder`. An invalid file keeps the encoder, and every stream, down; check `journalctl -u encoder` after the restart. Never change a recorder's `id` (used by the API and the upload queue) or `file_prefix` (file names and retention).
 
 ## Audio Input
 
@@ -152,7 +152,7 @@ Each recorder writes to local disk, S3, or both, with retention cleanup. Configu
 - **Hourly** recorders start a new file on every whole hour with no gap between files, named after the local time, such as `<prefix>-YYYY-MM-DD-HH-00.<ext>`; the first file is named after its start minute. A repeated hour at the end of daylight saving time gets a `-2` suffix.
 - **On-demand** recorders are started and stopped from the web interface or the [Recording API](#recording-api).
 
-File names and S3 keys (`recordings/<prefix>/<filename>`) use the recorder's `file_prefix`: its name with only letters, digits, `-` and `_` (spaces become `-`), plus `-2`, `-3` and so on when another recorder already has it. It is set once, so renaming a recorder does not move its files. Existing files are never overwritten.
+File names and S3 keys (`recordings/<prefix>/<filename>`) use the recorder's `file_prefix`: its name with only letters, digits, `-` and `_` (spaces become `-`), cut to 64 characters, plus `-2`, `-3` and so on when another recorder already has it, ignoring case. It is set once, so renaming a recorder does not move its files. Existing files are never overwritten.
 
 Saving a recorder applies it right away. Enabling or disabling it and switching it to hourly take effect at once; a change of codec, bitrate, storage mode, local path, S3 endpoint or bucket starts a new file without a gap. If that file cannot start, recording continues in the current one and `status.error` shows why. After fixing the cause of a failed hourly recorder, save it to restart it; otherwise it retries at the next hour. Saving a failed on-demand recorder clears the error; start it again to record.
 
