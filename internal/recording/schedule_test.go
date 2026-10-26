@@ -98,7 +98,7 @@ func runSchedule(t *testing.T, execute bool) map[string]int {
 	rng := rand.New(rand.NewPCG(seed, seed)) //nolint:gosec // Replayable schedule.
 	from, _ := strconv.Atoi(os.Getenv("CORPUS_FROM"))
 	base, spool := os.Getenv("CORPUS_BASE"), os.Getenv("CORPUS_SPOOL")
-	cfg := types.Recorder{ID: "schedule", Name: "schedule", Enabled: true, Codec: types.CodecMP3, RecordingMode: types.RecordingHourly, StorageMode: types.StorageBoth, LocalPath: base,
+	cfg := types.Recorder{ID: "schedule", Name: "schedule", FilePrefix: "schedule", Enabled: true, Codec: types.CodecMP3, RecordingMode: types.RecordingHourly, StorageMode: types.StorageBoth, LocalPath: base,
 		S3Endpoint: os.Getenv("CORPUS_S3"), S3Bucket: "bucket", S3AccessKeyID: "access", S3SecretAccessKey: "secret"}
 	want := map[string]int{}
 	var m *recording.Manager
@@ -146,13 +146,13 @@ func runSchedule(t *testing.T, execute bool) map[string]int {
 			want[cfg.LocalPath+"/"+tag]++
 		}
 		if cfg.StorageMode != types.StorageLocal {
-			want["recordings/"+cfg.RecordingFilePrefix()+"/"+tag]++
+			want["recordings/"+cfg.FilePrefix+"/"+tag]++
 		}
 		if active {
 			m.WriteAudio([]byte(payload(tag)))
 			dir := cfg.LocalPath
 			if cfg.StorageMode == types.StorageS3 {
-				dir = filepath.Join(spool, "recordings", cfg.RecordingFilePrefix())
+				dir = filepath.Join(spool, "recordings", "recorder-"+cfg.FilePrefix)
 			}
 			if !waitFor(5*time.Second, func() bool { return fileHolds([]string{dir}, payload(tag)) }) {
 				t.Fatalf("step %d never wrote audio", i)

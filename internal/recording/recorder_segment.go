@@ -246,7 +246,7 @@ func (r *GenericRecorder) reserveRecordingOutput(path string, cfg *types.Recorde
 	}
 	if cfg.StorageMode != types.StorageLocal && cfg.HasS3Credentials() {
 		t.Dest = destinationID(cfg.ID, cfg.S3Endpoint, cfg.S3Bucket)
-		t.BaseKey = s3Namespace(cfg.RecordingFilePrefix()) + filepath.Base(path)
+		t.BaseKey = s3Namespace(cfg.FilePrefix) + filepath.Base(path)
 		t.Key = t.BaseKey
 		t.DeleteAfterUpload = cfg.StorageMode == types.StorageS3
 		if err := r.outbox.ensureDestination(t.Dest, *RecorderToS3Config(cfg)); err != nil {

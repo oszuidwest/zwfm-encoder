@@ -48,6 +48,7 @@ func testS3Recorder() *types.Recorder {
 	return &types.Recorder{
 		ID:                "r1",
 		Name:              "Test",
+		FilePrefix:        "Test",
 		Enabled:           true,
 		Codec:             types.CodecMP3,
 		RecordingMode:     types.RecordingHourly,

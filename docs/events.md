@@ -467,10 +467,10 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
 ```json
 {
   "recorder_name": "Archive",
-  "filename": "@recorder-1a2b3c4d-2024-01-15-14-00.mp3",
+  "filename": "Archive-2024-01-15-14-00.mp3",
   "codec": "mp3",
   "storage_mode": "both",
-  "s3_key": "recordings/@recorder-1a2b3c4d/@recorder-1a2b3c4d-2024-01-15-14-00.mp3",
+  "s3_key": "recordings/Archive/Archive-2024-01-15-14-00.mp3",
   "error": "",
   "retry": 0,
   "files_deleted": 5,
@@ -565,7 +565,7 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
   "type": "recorder_file",
   "details": {
     "recorder_name": "Archive",
-    "filename": "@recorder-1a2b3c4d-2024-01-15-14-00.mp3",
+    "filename": "Archive-2024-01-15-14-00.mp3",
     "codec": "mp3",
     "storage_mode": "both"
   }
@@ -586,10 +586,10 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
   "type": "upload_queued",
   "details": {
     "recorder_name": "Archive",
-    "filename": "@recorder-1a2b3c4d-2024-01-15-14-00.mp3",
+    "filename": "Archive-2024-01-15-14-00.mp3",
     "codec": "mp3",
     "storage_mode": "both",
-    "s3_key": "recordings/@recorder-1a2b3c4d/@recorder-1a2b3c4d-2024-01-15-14-00.mp3"
+    "s3_key": "recordings/Archive/Archive-2024-01-15-14-00.mp3"
   }
 }
 ```
@@ -608,10 +608,10 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
   "type": "upload_completed",
   "details": {
     "recorder_name": "Archive",
-    "filename": "@recorder-1a2b3c4d-2024-01-15-14-00.mp3",
+    "filename": "Archive-2024-01-15-14-00.mp3",
     "codec": "mp3",
     "storage_mode": "both",
-    "s3_key": "recordings/@recorder-1a2b3c4d/@recorder-1a2b3c4d-2024-01-15-14-00.mp3"
+    "s3_key": "recordings/Archive/Archive-2024-01-15-14-00.mp3"
   }
 }
 ```
@@ -630,10 +630,10 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
   "type": "upload_failed",
   "details": {
     "recorder_name": "Archive",
-    "filename": "@recorder-1a2b3c4d-2024-01-15-14-00.mp3",
+    "filename": "Archive-2024-01-15-14-00.mp3",
     "codec": "mp3",
     "storage_mode": "s3",
-    "s3_key": "recordings/@recorder-1a2b3c4d/@recorder-1a2b3c4d-2024-01-15-14-00.mp3",
+    "s3_key": "recordings/Archive/Archive-2024-01-15-14-00.mp3",
     "error": "AccessDenied: Access Denied",
     "retry": 0
   }
@@ -654,10 +654,10 @@ Recorder events track the lifecycle of audio recording, file uploads, and cleanu
   "type": "upload_retry",
   "details": {
     "recorder_name": "Archive",
-    "filename": "@recorder-1a2b3c4d-2024-01-15-14-00.mp3",
+    "filename": "Archive-2024-01-15-14-00.mp3",
     "codec": "mp3",
     "storage_mode": "s3",
-    "s3_key": "recordings/@recorder-1a2b3c4d/@recorder-1a2b3c4d-2024-01-15-14-00.mp3",
+    "s3_key": "recordings/Archive/Archive-2024-01-15-14-00.mp3",
     "retry": 1
   }
 }

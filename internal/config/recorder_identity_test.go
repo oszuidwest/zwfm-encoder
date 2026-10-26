@@ -3,108 +3,60 @@ package config
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
 
-func TestLegacyRecorderIdentityPersistsThroughReplacementAndReload(t *testing.T) {
+func TestRecorderFilePrefixPersistsThroughRenameAndReload(t *testing.T) {
 	t.Parallel()
-	legacy := fullyPopulatedConfigData(t)
-	data, err := json.Marshal(legacy)
+	data, err := json.Marshal(fullyPopulatedConfigData(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	path := writeConfig(t, string(data))
 	cfg := New(path)
 	mustLoad(t, cfg)
-	// The capture is on disk before anything else saves, so a later hand edit
-	// of the name cannot move the legacy claim.
 	saved, err := os.ReadFile(path) //nolint:gosec // Test temp config.
-	if err != nil || !strings.Contains(string(saved), `"legacy_file_prefix": "Archive"`) {
-		t.Fatalf("captured legacy prefix not persisted on load: %v\n%s", err, saved)
+	if err != nil || !strings.Contains(string(saved), `"file_prefix": "Archive"`) {
+		t.Fatalf("assigned file prefix not persisted on load: %v\n%s", err, saved)
 	}
-	id := legacy.Recording.Recorders[0].ID
-	prefix := cfg.Recorder(id).RecordingFilePrefix()
-	for _, name := range []string{"After", "Again"} {
-		updated := *cfg.Recorder(id)
-		updated.Name = name
-		// A full API replacement cannot erase or forge internal ownership.
-		updated.IDBasedFiles, updated.LegacyFilePrefix = false, "OtherRecorder"
-		if err := cfg.UpdateRecorder(&updated); err != nil {
-			t.Fatal(err)
-		}
-		cfg = New(path)
-		mustLoad(t, cfg)
-		saved := cfg.Recorder(id)
-		if !saved.IDBasedFiles || saved.LegacyFilePrefix != "Archive" || saved.RecordingFilePrefix() != prefix || saved.Name != name {
-			t.Fatalf("rename or reload changed ownership: %+v", saved)
-		}
-	}
-	newRecorder := newNamedRecorder(t, "Archive")
-	if err := cfg.AddRecorder(newRecorder); err != nil {
+	updated := *cfg.Recorder("recorder-1")
+	updated.Name, updated.FilePrefix = "After", "Other"
+	if err := cfg.UpdateRecorder(&updated); err != nil {
 		t.Fatal(err)
 	}
-	if !newRecorder.IDBasedFiles || newRecorder.LegacyFilePrefix != "" || newRecorder.RecordingFilePrefix() == prefix {
-		t.Fatal("a new ID adopted the earlier recorder's legacy prefix")
+	if updated.FilePrefix != "Archive" {
+		t.Fatalf("caller file prefix = %q, want Archive", updated.FilePrefix)
 	}
-	if len(strings.TrimPrefix(newRecorder.ID, "recorder-")) != 32 {
-		t.Fatal("persistent recorder ownership needs a 128-bit random ID")
+	cfg = New(path)
+	mustLoad(t, cfg)
+	if got := cfg.Recorder("recorder-1"); got.FilePrefix != "Archive" || got.Name != "After" {
+		t.Fatalf("rename or reload changed the file prefix: %+v", got)
 	}
-	mustLoad(t, New(path))
+	for _, names := range [][2]string{{"Studio B", "Studio-B"}, {"Studio-B", "Studio-B-2"}, {"studio b!", "studio-b-3"}, {strings.Repeat("a", 99), strings.Repeat("a", 64)}} {
+		recorder := newNamedRecorder(t, names[0])
+		recorder.FilePrefix = "Archive" // A client-sent prefix is replaced.
+		if err := cfg.AddRecorder(recorder); err != nil {
+			t.Fatal(err)
+		}
+		if got := cfg.Recorder(recorder.ID).FilePrefix; got != names[1] || recorder.FilePrefix != got {
+			t.Fatalf("file prefix of %q = %q (caller sees %q), want %q", names[0], got, recorder.FilePrefix, names[1])
+		}
+	}
 }
 
-func TestLegacyRecorderClaimsCannotOverlapOrUseIDNamespace(t *testing.T) {
+func TestRecorderFilePrefixesMustDifferIgnoringCase(t *testing.T) {
 	t.Parallel()
-	for _, invalid := range []string{"duplicate claim", "ID namespace"} {
-		t.Run(invalid, func(t *testing.T) {
-			t.Parallel()
-			data := fullyPopulatedConfigData(t)
-			first := &data.Recording.Recorders[0]
-			first.InitializeFileIdentity()
-			if invalid == "duplicate claim" {
-				second := *first
-				second.ID, second.Name = "another-id", "Another name"
-				data.Recording.Recorders = append(data.Recording.Recorders, second)
-			} else {
-				first.LegacyFilePrefix = first.RecordingFilePrefix()
-			}
-			encoded, err := json.Marshal(data)
-			if err != nil {
-				t.Fatal(err)
-			}
-			err = New(writeConfig(t, string(encoded))).Load()
-			if err == nil || !strings.Contains(err.Error(), "legacy_file_prefix") {
-				t.Fatalf("invalid ownership accepted: %v", err)
-			}
-		})
-	}
-}
-
-func TestLoadKeepsCapturedPrefixWhenConfigIsReadOnly(t *testing.T) {
-	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
-		t.Skip("needs POSIX permissions as a regular user")
-	}
-	data, err := json.Marshal(fullyPopulatedConfigData(t))
+	data := fullyPopulatedConfigData(t)
+	second := data.Recording.Recorders[0]
+	data.Recording.Recorders[0].FilePrefix = "Archive"
+	second.ID, second.Name, second.FilePrefix = "another-id", "Another name", "archive"
+	data.Recording.Recorders = append(data.Recording.Recorders, second)
+	encoded, err := json.Marshal(data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := writeConfig(t, string(data))
-	dir := filepath.Dir(path)
-	if err := os.Chmod(path, 0o400); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(dir, 0o500); err != nil { //nolint:gosec // A read-only test directory is the point.
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) }) //nolint:gosec // Restore the test directory for cleanup.
-	cfg := New(path)
-	if err := cfg.Load(); err != nil {
-		t.Fatalf("an unwritable config must still load: %v", err)
-	}
-	id := fullyPopulatedConfigData(t).Recording.Recorders[0].ID
-	if got := cfg.Recorder(id).LegacyFilePrefix; got != "Archive" {
-		t.Fatalf("legacy prefix = %q, want the in-memory capture", got)
+	if err := New(writeConfig(t, string(encoded))).Load(); err == nil || !strings.Contains(err.Error(), "used twice") {
+		t.Fatalf("Load() error = %v, want a duplicate file_prefix error", err)
 	}
 }

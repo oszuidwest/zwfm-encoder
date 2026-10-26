@@ -289,16 +289,15 @@ func (c *Config) Load() error {
 		return util.WrapError("parse config", err)
 	}
 
-	captured := slices.ContainsFunc(cfg.Recording.Recorders, func(r types.Recorder) bool { return !r.IDBasedFiles })
+	captured := slices.ContainsFunc(cfg.Recording.Recorders, func(r types.Recorder) bool { return r.FilePrefix == "" })
 	if err := cfg.validate(); err != nil {
 		return err
 	}
 	c.copyFrom(cfg)
 	if captured {
-		// Persist the pre-upgrade prefixes now: a later hand edit of a name
-		// must not move the legacy claim before anything else saves.
+		// Persist before a hand-edited name can change the assigned prefix.
 		if err := c.saveLocked(); err != nil {
-			slog.Warn("could not persist captured recorder file prefixes; they are kept in memory", "error", err)
+			slog.Warn("could not persist recorder file prefixes; they are kept in memory", "error", err)
 		}
 	}
 	return nil
@@ -591,7 +590,7 @@ func normalizeStreamDefaults(stream *types.Stream) {
 func (c *Config) validateRecorders() error {
 	seen := make(map[string]int, len(c.Recording.Recorders))
 	names := make(map[string]int, len(c.Recording.Recorders))
-	legacyPrefixes := make(map[string]int, len(c.Recording.Recorders))
+	prefixes := make(map[string]bool, len(c.Recording.Recorders))
 	for i := range c.Recording.Recorders {
 		recorder := &c.Recording.Recorders[i]
 		if strings.TrimSpace(recorder.ID) == "" {
@@ -604,7 +603,6 @@ func (c *Config) validateRecorders() error {
 		if err := recorder.Validate(); err != nil {
 			return fmt.Errorf("invalid recording.recorders[%d]: %w", i, err)
 		}
-		recorder.InitializeFileIdentity()
 		// Operators, alerts and the event history tell recorders apart by name.
 		name := strings.ToLower(recorder.Name)
 		if first, ok := names[name]; ok {
@@ -612,12 +610,20 @@ func (c *Config) validateRecorders() error {
 				i, recorder.Name, c.Recording.Recorders[first].Name)
 		}
 		names[name] = i
-		if legacy := strings.ToLower(recorder.LegacyFilePrefix); legacy != "" {
-			if first, ok := legacyPrefixes[legacy]; ok {
-				return fmt.Errorf("invalid recording.recorders[%d].legacy_file_prefix: shared with recorder %q", i, c.Recording.Recorders[first].ID)
+		if recorder.FilePrefix == "" {
+			base := util.SanitizeFilename(recorder.Name)
+			base = base[:min(len(base), 64)] // Keep file names well under 255 bytes.
+			recorder.FilePrefix = base
+			for n := 2; prefixes[strings.ToLower(recorder.FilePrefix)]; n++ {
+				recorder.FilePrefix = fmt.Sprintf("%s-%d", base, n)
 			}
-			legacyPrefixes[legacy] = i
 		}
+		// Case-insensitive filesystems must not merge two recorders' files.
+		prefix := strings.ToLower(recorder.FilePrefix)
+		if prefixes[prefix] {
+			return fmt.Errorf("invalid recording.recorders[%d].file_prefix: %q is used twice", i, recorder.FilePrefix)
+		}
+		prefixes[prefix] = true
 	}
 	return nil
 }
@@ -914,14 +920,12 @@ func (c *Config) AddRecorder(recorder *types.Recorder) (err error) {
 	defer c.mu.Unlock()
 	defer c.restoreUnlessCommitted(&err, c.cloneDataLocked())
 
-	// Recorder IDs also own files left after deletion, so use 128 random bits.
 	idBytes := make([]byte, 16)
 	if _, err := rand.Read(idBytes); err != nil {
 		return fmt.Errorf("failed to generate ID: %w", err)
 	}
 	recorder.ID = "recorder-" + hex.EncodeToString(idBytes)
-	// A new ID must never adopt recordings left by a deleted recorder's name.
-	recorder.IDBasedFiles, recorder.LegacyFilePrefix = true, ""
+	recorder.FilePrefix = ""
 
 	// Apply retention days default if not specified
 	recorder.RetentionDays = cmp.Or(recorder.RetentionDays, types.DefaultRetentionDays)
@@ -933,6 +937,7 @@ func (c *Config) AddRecorder(recorder *types.Recorder) (err error) {
 	if err := c.validateRecorders(); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidRecorderConfig, err)
 	}
+	recorder.FilePrefix = c.Recording.Recorders[len(c.Recording.Recorders)-1].FilePrefix
 	return c.saveLocked()
 }
 
@@ -965,8 +970,7 @@ func (c *Config) UpdateRecorder(recorder *types.Recorder) (err error) {
 		return fmt.Errorf("%w: %s", ErrRecorderNotFound, recorder.ID)
 	}
 	defer c.restoreUnlessCommitted(&err, c.cloneDataLocked())
-	old := c.Recording.Recorders[i]
-	recorder.IDBasedFiles, recorder.LegacyFilePrefix = true, old.LegacyFilePrefix
+	recorder.FilePrefix = c.Recording.Recorders[i].FilePrefix
 	c.Recording.Recorders[i] = *recorder
 	if err := c.validateRecorders(); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidRecorderConfig, err)

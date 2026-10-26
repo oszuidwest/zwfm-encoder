@@ -2,8 +2,6 @@
 package types
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -453,41 +451,8 @@ type Recorder struct {
 
 	RetentionDays int   `json:"retention_days"` // 0 = forever
 	CreatedAt     int64 `json:"created_at"`     // Unix ms
-	// Internal ownership metadata, preserved across API replacements.
-	IDBasedFiles     bool   `json:"id_based_files"`
-	LegacyFilePrefix string `json:"legacy_file_prefix,omitempty"`
-}
-
-// generatedRecorderID reports whether id has the generated recorder-<hex> form.
-func generatedRecorderID(id string) bool {
-	suffix, ok := strings.CutPrefix(id, "recorder-")
-	return ok && suffix != "" && len(id) <= 80 && strings.Trim(suffix, "0123456789abcdef") == ""
-}
-
-// InitializeFileIdentity captures the pre-upgrade prefix once, before any rename.
-// A prefix restored by hand after a downgrade is kept.
-func (r *Recorder) InitializeFileIdentity() {
-	if !r.IDBasedFiles {
-		if r.LegacyFilePrefix == "" {
-			r.LegacyFilePrefix = util.SanitizeFilename(r.Name)
-		}
-		r.IDBasedFiles = true
-	}
-}
-
-// RecordingFilePrefix keeps ID ownership stable on case-insensitive filesystems.
-// Separate @/@h namespaces avoid legacy names and bound very long IDs. Generated
-// IDs (recorder-<lowercase hex>) stay readable: "r" is no hex digit, so they
-// cannot meet a hex-encoded ID, and lowercase-only keeps case variants apart.
-func (r *Recorder) RecordingFilePrefix() string {
-	if generatedRecorderID(r.ID) {
-		return "@" + r.ID
-	}
-	if len(r.ID) > 80 {
-		sum := sha256.Sum256([]byte(r.ID))
-		return "@h" + hex.EncodeToString(sum[:])
-	}
-	return "@" + hex.EncodeToString([]byte(r.ID))
+	// FilePrefix is assigned once from the name and preserved across renames and API replacements.
+	FilePrefix string `json:"file_prefix,omitempty"`
 }
 
 // HasS3Credentials reports whether the bucket and both credential fields are set.
@@ -497,8 +462,8 @@ func (r *Recorder) HasS3Credentials() bool {
 
 // Validate reports an error if the recorder configuration is invalid.
 func (r *Recorder) Validate() error {
-	if r.LegacyFilePrefix != "" && r.LegacyFilePrefix != util.SanitizeFilename(r.LegacyFilePrefix) {
-		return fmt.Errorf("legacy_file_prefix: must be a sanitized filename prefix")
+	if r.FilePrefix != "" && r.FilePrefix != util.SanitizeFilename(r.FilePrefix) {
+		return fmt.Errorf("file_prefix: must contain only letters, digits, - and _")
 	}
 	if strings.TrimSpace(r.Name) == "" {
 		return fmt.Errorf("name: is required")

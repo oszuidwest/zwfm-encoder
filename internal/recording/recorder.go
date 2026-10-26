@@ -62,7 +62,6 @@ type GenericRecorderConfig struct {
 // NewGenericRecorder creates a recorder and starts its loop; close ends it.
 func NewGenericRecorder(cfg GenericRecorderConfig) *GenericRecorder {
 	recorder := *cfg.Recorder
-	recorder.InitializeFileIdentity()
 	r := &GenericRecorder{
 		id:         cfg.Recorder.ID,
 		ffmpegPath: cfg.FFmpegPath,
@@ -293,7 +292,7 @@ func (r *GenericRecorder) setAudio(ch chan []byte) {
 }
 
 func recordingFilename(cfg *types.Recorder, t time.Time) string {
-	return fmt.Sprintf("%s-%s.%s", cfg.RecordingFilePrefix(), t.Format(recordingTimestampLayout), cfg.Codec.FileExtension())
+	return fmt.Sprintf("%s-%s.%s", cfg.FilePrefix, t.Format(recordingTimestampLayout), cfg.Codec.FileExtension())
 }
 
 // nextRecordingFilename returns name, or the first of name-2, name-3, ...
