@@ -472,7 +472,7 @@ If-None-Match cover name reuse after an S3-only spool file is deleted.
 |---|---|
 | #486 event I/O under lock | 4.1 status snapshot, no I/O in the loop |
 | #488 pending is 0 during upload | 4.2 counts from the outbox index |
-| #495 spool dirs use the raw ID | 4.2 recorder key from `RecordingFilePrefix()`; the name-collision validation needs its own fix |
+| #495 spool dirs use the raw ID | 4.2 recorder key from `RecordingFilePrefix()`; recorder names now only have to be unique, ignoring case |
 | #496 S3-only quarantine invisible | 4.2 failed tickets counted and alerted |
 | #502 removed recorder's uploads invisible | 4.2 removed recorders keep delivering and counting |
 | #511 storage probe error and hysteresis | 4.6 storage health |

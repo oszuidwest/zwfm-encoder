@@ -590,7 +590,7 @@ func normalizeStreamDefaults(stream *types.Stream) {
 
 func (c *Config) validateRecorders() error {
 	seen := make(map[string]int, len(c.Recording.Recorders))
-	prefixes := make(map[string]int, len(c.Recording.Recorders))
+	names := make(map[string]int, len(c.Recording.Recorders))
 	legacyPrefixes := make(map[string]int, len(c.Recording.Recorders))
 	for i := range c.Recording.Recorders {
 		recorder := &c.Recording.Recorders[i]
@@ -605,13 +605,13 @@ func (c *Config) validateRecorders() error {
 			return fmt.Errorf("invalid recording.recorders[%d]: %w", i, err)
 		}
 		recorder.InitializeFileIdentity()
-		// Keep the existing display-name collision policy for compatibility.
-		prefix := strings.ToLower(util.SanitizeFilename(recorder.Name))
-		if first, ok := prefixes[prefix]; ok {
-			return fmt.Errorf("invalid recording.recorders[%d].name: %q has the same filename prefix as recorder %q",
+		// Operators, alerts and the event history tell recorders apart by name.
+		name := strings.ToLower(recorder.Name)
+		if first, ok := names[name]; ok {
+			return fmt.Errorf("invalid recording.recorders[%d].name: %q is already used by recorder %q",
 				i, recorder.Name, c.Recording.Recorders[first].Name)
 		}
-		prefixes[prefix] = i
+		names[name] = i
 		if legacy := strings.ToLower(recorder.LegacyFilePrefix); legacy != "" {
 			if first, ok := legacyPrefixes[legacy]; ok {
 				return fmt.Errorf("invalid recording.recorders[%d].legacy_file_prefix: shared with recorder %q", i, c.Recording.Recorders[first].ID)
