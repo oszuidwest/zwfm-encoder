@@ -160,7 +160,7 @@ On Linux a recorder waits for an NTP-synchronized clock before its first file, b
 
 ### Recording API
 
-On-demand recordings can be started and stopped via the REST API, for automation. Generate the API key and set the maximum recording duration (0 = no limit) under Settings -> Audio -> Recording API. The `recorder_id` is the recorder's `id` in `config.json` (`recording.recorders`), without the `@`; the web interface does not show it.
+On-demand recordings can be started and stopped via the REST API, for automation. Generate the API key and set the maximum recording duration (0 = no limit) under Settings -> Audio -> Recording API. The `recorder_id` is the recorder's `id` in `config.json` (`recording.recorders`), not its `file_prefix`; the web interface does not show it.
 
 ```bash
 # Start recording
