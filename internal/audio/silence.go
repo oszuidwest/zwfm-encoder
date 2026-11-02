@@ -31,8 +31,9 @@ type SilenceEvent struct {
 // SilenceDetector tracks audio silence state and generates detection events.
 // It is safe for concurrent use.
 type SilenceDetector struct {
-	mu       sync.Mutex
-	debounce debouncer
+	mu        sync.Mutex
+	debounce  debouncer
+	threshold float64 // threshold of the previous update
 }
 
 // NewSilenceDetector creates a new silence detector.
@@ -45,6 +46,11 @@ func (d *SilenceDetector) Update(dbL, dbR float64, cfg SilenceConfig, now time.T
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	// Time measured against another threshold must not count toward this one.
+	if cfg.Threshold != d.threshold {
+		d.debounce.restartTimers()
+		d.threshold = cfg.Threshold
+	}
 	audioIsSilent := dbL < cfg.Threshold && dbR < cfg.Threshold
 	r := d.debounce.update(audioIsSilent, cfg.DurationMs, cfg.RecoveryMs, now)
 

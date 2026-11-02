@@ -417,6 +417,48 @@ func TestCloseIdempotent(t *testing.T) {
 		t.Fatalf("second Close() failed: %v", err)
 	}
 }
+
+func TestApplySettingsEffectsKeepsOpenIncidents(t *testing.T) {
+	t.Parallel()
+
+	silenceCfg := audio.SilenceConfig{Threshold: -40}
+	imbalanceCfg := audio.ImbalanceConfig{ThresholdDB: 6, PresenceFloorDB: -40}
+	tests := []struct {
+		name   string
+		update func(e *Encoder) (justEntered bool, id audio.IncidentID)
+	}{
+		{name: "silence", update: func(e *Encoder) (bool, audio.IncidentID) {
+			ev := e.silenceDetect.Update(-90, -90, silenceCfg, time.Now())
+			return ev.JustEntered, ev.IncidentID
+		}},
+		{name: "channel imbalance", update: func(e *Encoder) (bool, audio.IncidentID) {
+			ev := e.imbalanceDetect.Update(-10, -90, imbalanceCfg, time.Now())
+			return ev.JustEntered, ev.IncidentID
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			e := &Encoder{
+				silenceDetect:   audio.NewSilenceDetector(),
+				imbalanceDetect: audio.NewImbalanceDetector(),
+			}
+			entered, firstID := tt.update(e)
+			if !entered {
+				t.Fatal("first update did not open an incident")
+			}
+
+			e.ApplySettingsEffects()
+
+			// A second start without an end would leave receivers with two open incidents.
+			if entered, id := tt.update(e); entered || id != firstID {
+				t.Fatalf("after settings save: JustEntered = %v, IncidentID = %d; want false, %d", entered, id, firstID)
+			}
+		})
+	}
+}
 func TestStreamStatusesReportsSRTUnsupported(t *testing.T) {
 	cfg := config.New(filepath.Join(t.TempDir(), "config.json"))
 	stream := types.Stream{

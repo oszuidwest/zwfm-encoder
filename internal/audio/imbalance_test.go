@@ -139,3 +139,32 @@ func TestImbalanceDetectorResetClearsState(t *testing.T) {
 		t.Fatalf("state leaked after Reset: %+v", e)
 	}
 }
+
+func TestImbalanceDetectorConditionChangeRestartsPendingEntry(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		before, next [2]float64 // L/R levels before and after the change
+		change       func(*ImbalanceConfig)
+	}{
+		{name: "threshold", before: [2]float64{-10, -25}, next: [2]float64{-10, -35},
+			change: func(c *ImbalanceConfig) { c.ThresholdDB = 20 }},
+		{name: "presence floor", before: [2]float64{-35, -60}, next: [2]float64{-25, -60},
+			change: func(c *ImbalanceConfig) { c.PresenceFloorDB = -30 }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			d := NewImbalanceDetector()
+			cfg := testImbalanceConfig()
+			base := time.Now()
+			d.Update(tt.before[0], tt.before[1], cfg, base) // Imbalanced only under the old condition.
+			tt.change(&cfg)
+			d.Update(tt.next[0], tt.next[1], cfg, base.Add(14*time.Second))
+			if e := d.Update(tt.next[0], tt.next[1], cfg, base.Add(15*time.Second)); e.JustEntered {
+				t.Fatalf("entered after 1 s under the new condition: %+v", e)
+			}
+		})
+	}
+}
