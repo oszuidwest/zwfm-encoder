@@ -24,6 +24,8 @@ Audio streaming software for [ZuidWest FM](https://www.zuidwestfm.nl/) (Linux), 
 
 On Windows the encoder runs as a tray application and writes its log to `%PROGRAMDATA%\encoder\encoder.log`; Show Logs Folder opens the event log. Its recording spool, the upload queue and S3-only recordings, is `%PROGRAMDATA%\encoder\recordings`.
 
+On macOS the recording spool is `~/Library/Application Support/encoder/recordings`.
+
 ## Requirements
 
 - Raspberry Pi 4 or 5
@@ -55,7 +57,7 @@ The service unit is replaced on update, so put local changes in a drop-in (`syst
 
 ## Configuration
 
-Configuration is stored in `/etc/encoder/config.json`. For development, use the `-config` flag to specify a custom path, or place `config.json` next to the binary; a missing file is created with defaults. The file contains secrets, so keep it owner-only (`0600`).
+Configuration is stored in `/etc/encoder/config.json`. For development, use the `-config` flag to specify a custom path, or place `config.json` next to the binary; a missing file is created with defaults and a random admin password (see [Changing the admin password](#changing-the-admin-password)). The file contains secrets, so keep it owner-only (`0600`).
 
 Most settings are made in the web interface. These are not:
 
@@ -231,7 +233,7 @@ The encoder is an internal appliance: manage it by IP on a trusted LAN or throug
 
 ### Changing the admin password
 
-The web interface has no password setting. Change `system.password` in `config.json` (on Windows next to `encoder.exe`), restart the encoder and check that you can log in. The password is stored as plain text, like the other secrets in that file, so use one you do not use anywhere else.
+When the encoder creates `config.json` itself, for example on the first start on Windows, the admin username is `admin` and the password is a random value in `system.password`. The web interface has no password setting. Change `system.password` in `config.json` (on Windows next to `encoder.exe`), restart the encoder and check that you can log in. The password is stored as plain text, like the other secrets in that file, so use one you do not use anywhere else.
 
 ### HTTPS reverse proxy
 

@@ -22,7 +22,7 @@ var darwinDevicePattern = regexp.MustCompile(`\[AVFoundation[^\]]*\]\s*\[(\d+)\]
 // Devices lists AVFoundation audio inputs without using the device cache.
 func (cfg *CaptureConfig) Devices() []Device {
 	return parseDeviceList(DeviceListConfig{
-		Command:          []string{"ffmpeg", "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""},
+		Command:          []string{cfg.Command, "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""},
 		AudioStartMarker: "AVFoundation audio devices:",
 		AudioStopMarker:  "AVFoundation video devices:",
 		DevicePattern:    darwinDevicePattern,

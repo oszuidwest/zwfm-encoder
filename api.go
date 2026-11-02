@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -198,6 +199,10 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, resp)
 }
 
+// listAudioDevices is a variable so tests can set the devices a settings save
+// may choose from.
+var listAudioDevices = audio.RefreshDevices
+
 // handleAPIDevices returns available audio devices, bypassing the device
 // cache so an explicit refresh sees just-connected hardware.
 func (s *Server) handleAPIDevices(w http.ResponseWriter, r *http.Request) {
@@ -218,7 +223,13 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 
 	preserveHiddenSettings(&req, &cfg)
 
-	if errs := req.Validate(); len(errs) > 0 {
+	errs := req.Validate()
+	// ALSA runs a command for a device like file:"|cmd", so a new input must be
+	// a listed device; an unchanged one (Dante, set in config.json) stays valid.
+	if audioInputChanged && !slices.ContainsFunc(listAudioDevices(), func(d audio.Device) bool { return d.ID == req.AudioInput }) {
+		errs = append(errs, "audio_input: must be a listed audio device")
+	}
+	if len(errs) > 0 {
 		s.writeJSON(w, http.StatusBadRequest, map[string]any{
 			"errors": errs,
 		})
@@ -863,13 +874,19 @@ func (s *Server) handleAPITestZabbix(w http.ResponseWriter, r *http.Request) {
 // handleAPIRegenerateKey generates a new recording API key.
 func (s *Server) handleAPIRegenerateKey(w http.ResponseWriter, r *http.Request) {
 	newKey := config.GenerateAPIKey()
-	if err := s.config.SetRecordingAPIKey(newKey); err != nil {
+	err := s.config.SetRecordingAPIKey(newKey)
+	if err != nil && !errors.Is(err, config.ErrSaveCommitted) {
 		s.writeConfigError(w, err)
 		return
 	}
 
 	s.broadcastConfigChanged()
-	s.writeJSON(w, http.StatusOK, map[string]string{"api_key": newKey})
+	response := map[string]string{"api_key": newKey}
+	if err != nil {
+		// The new key is live and /api/config never returns it, so return it with the error.
+		response["warning"] = err.Error() + "; resolve the error and restart the encoder application"
+	}
+	s.writeJSON(w, http.StatusOK, response)
 }
 
 // HealthResponse is the response body for the health endpoint.

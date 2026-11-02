@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
 	"github.com/oszuidwest/zwfm-encoder/internal/notify"
@@ -90,6 +91,7 @@ func startApp(configPath string) (*app, error) {
 	} else {
 		slog.Info("FFmpeg found", "path", ffmpegPath)
 	}
+	audio.SetFFmpegPath(ffmpegPath)
 
 	enc, err := encoder.New(cfg, ffmpegPath)
 	if err != nil {

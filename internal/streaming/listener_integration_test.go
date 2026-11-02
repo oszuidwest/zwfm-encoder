@@ -87,15 +87,11 @@ func TestListenerPipeFanoutLateSubscriberReceivesMPEGTSBytes(t *testing.T) {
 				pcm := make([]byte, audio.BytesPerSecond/10)
 				ticker := time.NewTicker(100 * time.Millisecond)
 				defer ticker.Stop()
-				deadline := time.After(3 * time.Second)
-				for {
-					select {
-					case <-deadline:
+				// Feed until cleanup closes stdin: FFmpeg 7.1 and 8.0 probe about
+				// 4.3 s of PCM input before they write any output.
+				for range ticker.C {
+					if _, err := result.WriteStdin(pcm); err != nil {
 						return
-					case <-ticker.C:
-						if _, err := result.WriteStdin(pcm); err != nil {
-							return
-						}
 					}
 				}
 			}()
@@ -141,9 +137,9 @@ func dialTestSubscriber(t *testing.T, addr string) srt.Conn {
 }
 func readAtLeastOneSRTByte(t *testing.T, conn srt.Conn) int {
 	t.Helper()
-	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
-		t.Fatalf("SetReadDeadline() error = %v", err)
-	}
+	// gosrt ignores read deadlines; closing the conn ends a blocked Read with io.EOF.
+	timer := time.AfterFunc(15*time.Second, func() { _ = conn.Close() })
+	defer timer.Stop()
 	buf := make([]byte, 2048)
 	n, err := conn.Read(buf)
 	if err != nil && !errors.Is(err, io.EOF) {
