@@ -739,7 +739,7 @@ func TestHandleChannelImbalanceEventLogsAndKeepsDetails(t *testing.T) {
 	}
 }
 
-func TestDispatchSilenceStartGivesEachGoroutineItsOwnSnapshotCopy(t *testing.T) {
+func TestSilenceStartGivesEachChannelItsOwnSnapshotCopy(t *testing.T) {
 	t.Parallel()
 	mutated := make(chan struct{})
 	releaseMutator := make(chan struct{})
@@ -754,9 +754,11 @@ func TestDispatchSilenceStartGivesEachGoroutineItsOwnSnapshotCopy(t *testing.T) 
 		observed:  observed,
 		releaseMu: releaseObserver,
 	}
-	dispatcher := NewDispatcher(mutator, observer)
-	cfg := config.Snapshot{SilenceThreshold: -40}
-	dispatcher.DispatchSilenceStart(context.Background(), []AlertChannel{mutator, observer}, cfg, 0, 0)
+	cfg := config.New("")
+	cfg.SilenceDetection.ThresholdDB = -40
+	o := NewAlertOrchestrator(cfg, NewDispatcher(mutator, observer))
+	t.Cleanup(o.Close)
+	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
 	select {
 	case got := <-observed:
 		if got != -40 {
@@ -767,6 +769,36 @@ func TestDispatchSilenceStartGivesEachGoroutineItsOwnSnapshotCopy(t *testing.T) 
 	}
 	<-releaseObserver
 	close(releaseMutator)
+}
+
+// configChangingChannel changes the config while silence start picks its channels.
+type configChangingChannel struct {
+	silenceStartChannel
+	cfg      *config.Config
+	observed chan float64
+}
+
+func (c *configChangingChannel) IsConfiguredForSilence(_ *config.Snapshot) bool {
+	c.cfg.SilenceDetection.ThresholdDB = -20
+	return true
+}
+func (c *configChangingChannel) SendSilenceStart(_ context.Context, cfg *config.Snapshot, _, _ float64) error {
+	c.observed <- cfg.SilenceThreshold
+	return nil
+}
+
+func TestSilenceStartSendsSnapshotFromEvent(t *testing.T) {
+	t.Parallel()
+	cfg := config.New("")
+	cfg.SilenceDetection.ThresholdDB = -40
+	ch := &configChangingChannel{cfg: cfg, observed: make(chan float64, 1)}
+	o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
+	t.Cleanup(o.Close)
+
+	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
+	if got := awaitCall(t, ch.observed, "SendSilenceStart"); got != -40 {
+		t.Fatalf("sent SilenceThreshold = %.1f, want -40.0 from the event's snapshot", got)
+	}
 }
 
 func TestLogWriteOrder(t *testing.T) {
@@ -982,6 +1014,80 @@ func TestInputRestoredNeverOvertakesSlowInputLost(t *testing.T) {
 	if got := awaitCall(t, ch.calls, "SendInputRestored"); got != "restored" {
 		t.Fatalf("second delivery = %q, want restored", got)
 	}
+}
+
+// gatedSilenceChannel blocks silence-start and input-loss delivery until released.
+type gatedSilenceChannel struct {
+	silenceStartChannel
+	calls   chan string
+	release chan struct{}
+}
+
+func (c *gatedSilenceChannel) SubscribesSilenceEnd(_ *config.Snapshot) bool { return true }
+func (c *gatedSilenceChannel) SendSilenceStart(_ context.Context, _ *config.Snapshot, _, _ float64) error {
+	c.calls <- "start"
+	<-c.release
+	return nil
+}
+func (c *gatedSilenceChannel) SendSilenceEnd(_ context.Context, _ *config.Snapshot, _ int64, _, _ float64) error {
+	c.calls <- "end"
+	return nil
+}
+func (c *gatedSilenceChannel) SendInputLost(_ context.Context, _ *config.Snapshot, _ InputData) error {
+	c.calls <- "lost"
+	<-c.release
+	return nil
+}
+
+func TestSilenceEndNeverOvertakesSlowSilenceStart(t *testing.T) {
+	t.Parallel()
+	ch := &gatedSilenceChannel{calls: make(chan string, 2), release: make(chan struct{})}
+	o := NewAlertOrchestrator(config.New(""), NewDispatcher(ch))
+	t.Cleanup(o.Close)
+
+	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true, IncidentID: 1})
+	if got := awaitCall(t, ch.calls, "SendSilenceStart"); got != "start" {
+		t.Fatalf("first delivery = %q, want start", got)
+	}
+	o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, IncidentID: 1, TotalDurationMs: 1000})
+	assertNoCall(t, ch.calls, "SendSilenceEnd while SendSilenceStart is still in flight")
+
+	close(ch.release)
+	if got := awaitCall(t, ch.calls, "SendSilenceEnd"); got != "end" {
+		t.Fatalf("second delivery = %q, want end", got)
+	}
+}
+
+// Silence alerts have their own queue, so they cannot evict a queued input restoration.
+func TestSilenceStartDoesNotWaitBehindSlowInputLost(t *testing.T) {
+	t.Parallel()
+	ch := &gatedSilenceChannel{calls: make(chan string, 2), release: make(chan struct{})}
+	o := NewAlertOrchestrator(config.New(""), NewDispatcher(ch))
+	t.Cleanup(func() { close(ch.release); o.Close() })
+
+	o.HandleInputLost(InputData{})
+	awaitCall(t, ch.calls, "SendInputLost")
+	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
+	if got := awaitCall(t, ch.calls, "SendSilenceStart"); got != "start" {
+		t.Fatalf("delivery = %q, want start", got)
+	}
+}
+
+func TestSilenceEndUsesActiveSubscribedChannelsFromStart(t *testing.T) {
+	t.Parallel()
+	active, late, unsubscribed := newTestChannel(false), newTestChannel(false), newTestChannel(false)
+	late.configuredSilence.Store(false)
+	unsubscribed.subscribesEnd = false
+	o := NewAlertOrchestrator(config.New(""), NewDispatcher(active, late, unsubscribed))
+	t.Cleanup(o.Close)
+
+	o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true})
+	awaitCall(t, active.silenceStartCalled, "active SendSilenceStart")
+	late.configuredSilence.Store(true)
+	o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, TotalDurationMs: 1000})
+	awaitCall(t, active.silenceEndCalled, "active SendSilenceEnd")
+	assertNoCall(t, late.silenceEndCalled, "late-configured SendSilenceEnd")
+	assertNoCall(t, unsubscribed.silenceEndCalled, "unsubscribed SendSilenceEnd")
 }
 
 // recordingInputChannel records input deliveries; the first one blocks until released.

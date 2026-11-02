@@ -161,30 +161,6 @@ func dispatch(
 	}
 }
 
-// DispatchSilenceStart sends silence-start notifications to subscribed channels from the active set.
-//
-//nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
-func (d *Dispatcher) DispatchSilenceStart(
-	ctx context.Context, active []AlertChannel, cfg config.Snapshot, levelL, levelR float64,
-) {
-	dispatch(active, cfg, "silence_start", AlertChannel.SubscribesSilenceStart,
-		func(ch AlertChannel, cfg *config.Snapshot) error {
-			return ch.SendSilenceStart(ctx, cfg, levelL, levelR)
-		})
-}
-
-// DispatchSilenceEnd sends silence-end notifications to the active channel subset.
-//
-//nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
-func (d *Dispatcher) DispatchSilenceEnd(
-	ctx context.Context, active []AlertChannel, cfg config.Snapshot, durationMS int64, levelL, levelR float64,
-) {
-	dispatch(active, cfg, "silence_end", AlertChannel.SubscribesSilenceEnd,
-		func(ch AlertChannel, cfg *config.Snapshot) error {
-			return ch.SendSilenceEnd(ctx, cfg, durationMS, levelL, levelR)
-		})
-}
-
 // DispatchChannelImbalanceStart sends imbalance-start notifications to subscribed channels.
 //
 //nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy

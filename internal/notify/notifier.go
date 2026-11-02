@@ -50,6 +50,8 @@ type AlertOrchestrator struct {
 	logMu       sync.RWMutex
 	logQueue    chan logJob   // serialized log writes; single worker guarantees JSONL write order
 	inputQueues []chan func() // per-channel input alert deliveries, index-aligned with dispatcher.Channels()
+	// silenceQueues keep each channel's silence start and end in order.
+	silenceQueues []chan func()
 	// storageQueues hold each channel's newest storage state, so input alerts
 	// cannot evict a storage transition that is only sent once.
 	storageQueues []chan func()
@@ -87,12 +89,15 @@ func NewAlertOrchestrator(cfg *config.Config, dispatcher *Dispatcher) *AlertOrch
 	// One FIFO worker per channel delivers input alerts in the order they were
 	// raised, so a restoration never lands before its loss and an old
 	// restoration never lands after a newer loss and clears a live outage.
+	// Silence alerts get their own worker for the same reason.
 	for range dispatcher.Channels() {
 		input, storage, upload := make(chan func(), inputQueueDepth), make(chan func(), 1), make(chan func(), 1)
+		silence := make(chan func(), inputQueueDepth)
 		o.inputQueues = append(o.inputQueues, input)
+		o.silenceQueues = append(o.silenceQueues, silence)
 		o.storageQueues = append(o.storageQueues, storage)
 		o.uploadQueues = append(o.uploadQueues, upload)
-		for _, queue := range []chan func(){input, storage, upload} {
+		for _, queue := range []chan func(){input, storage, upload, silence} {
 			go func() {
 				for deliver := range queue {
 					deliver()
@@ -160,11 +165,13 @@ func (o *AlertOrchestrator) handleSilenceStart(incidentID audio.IncidentID, leve
 		o.activeChannels = active
 	}
 	active := o.activeChannels
-	ctx := o.notifyCtx
 	o.mu.Unlock()
 
 	now := time.Now()
-	o.dispatcher.DispatchSilenceStart(ctx, active, cfg, levelL, levelR)
+	o.enqueueOrdered(o.silenceQueues, cfg, "silence_start", subscribedActive(active, AlertChannel.SubscribesSilenceStart),
+		func(ch AlertChannel, ctx context.Context, cfg *config.Snapshot) error {
+			return ch.SendSilenceStart(ctx, cfg, levelL, levelR)
+		})
 	o.enqueueLog("silence_start", func() { o.logSilenceStart(now, &cfg, incidentID, levelL, levelR) })
 }
 
@@ -190,11 +197,22 @@ func (o *AlertOrchestrator) handleSilenceEnd(
 		activeChannels: active,
 		recoveredAt:    now,
 	})
-	ctx := o.notifyCtx
 	o.mu.Unlock()
 
-	o.dispatcher.DispatchSilenceEnd(ctx, active, cfg, durationMS, levelL, levelR)
+	o.enqueueOrdered(o.silenceQueues, cfg, "silence_end", subscribedActive(active, AlertChannel.SubscribesSilenceEnd),
+		func(ch AlertChannel, ctx context.Context, cfg *config.Snapshot) error {
+			return ch.SendSilenceEnd(ctx, cfg, durationMS, levelL, levelR)
+		})
 	o.enqueueLog("silence_end", func() { o.logSilenceEnd(now, &cfg, incidentID, durationMS, levelL, levelR) })
+}
+
+// subscribedActive limits ordered silence delivery to the incident's channel set.
+func subscribedActive(
+	active []AlertChannel, subscribes func(AlertChannel, *config.Snapshot) bool,
+) func(AlertChannel, *config.Snapshot) bool {
+	return func(ch AlertChannel, cfg *config.Snapshot) bool {
+		return slices.Contains(active, ch) && subscribes(ch, cfg)
+	}
 }
 
 // HandleChannelImbalanceEvent translates detector transitions into imbalance notifications.
@@ -332,7 +350,7 @@ func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
 func (o *AlertOrchestrator) HandleUploadsOverdue(state *UploadsOverdueData) {
 	data := *state
 	data.Recorders = slices.Clone(state.Recorders)
-	o.enqueueOrdered(o.uploadQueues, "upload_overdue", AlertChannel.IsConfiguredForUpload,
+	o.enqueueOrdered(o.uploadQueues, o.cfg.Snapshot(), "upload_overdue", AlertChannel.IsConfiguredForUpload,
 		func(ch AlertChannel, ctx context.Context, cfg *config.Snapshot) error {
 			return ch.SendUploadsOverdue(ctx, cfg, &data)
 		})
@@ -342,7 +360,7 @@ func (o *AlertOrchestrator) HandleUploadsOverdue(state *UploadsOverdueData) {
 // so a delayed low-space notification cannot arrive after its recovery.
 func (o *AlertOrchestrator) HandleRecordingStorage(paths []types.RecordingStorageStatus) {
 	paths = slices.Clone(paths)
-	o.enqueueOrdered(o.storageQueues, "recording_storage", AlertChannel.IsConfiguredForUpload,
+	o.enqueueOrdered(o.storageQueues, o.cfg.Snapshot(), "recording_storage", AlertChannel.IsConfiguredForUpload,
 		func(ch AlertChannel, ctx context.Context, cfg *config.Snapshot) error {
 			return ch.SendRecordingStorage(ctx, cfg, paths)
 		})
@@ -368,7 +386,7 @@ func (o *AlertOrchestrator) handleInputEvent(
 	write func(*eventlog.Logger, time.Time, *eventlog.InputDetails) error,
 ) {
 	now := time.Now()
-	o.enqueueOrdered(o.inputQueues, eventType, AlertChannel.IsConfiguredForSilence,
+	o.enqueueOrdered(o.inputQueues, o.cfg.Snapshot(), eventType, AlertChannel.IsConfiguredForSilence,
 		func(ch AlertChannel, ctx context.Context, cfg *config.Snapshot) error {
 			return send(ch, ctx, cfg, data)
 		})
@@ -386,11 +404,12 @@ func (o *AlertOrchestrator) handleInputEvent(
 
 // enqueueOrdered queues send on each configured channel's FIFO worker.
 // Each channel gets its own Snapshot copy.
+//
+//nolint:gocritic // hugeParam: intentional; callers pass the snapshot their event was raised with
 func (o *AlertOrchestrator) enqueueOrdered(
-	queues []chan func(), eventType string, configured func(AlertChannel, *config.Snapshot) bool,
+	queues []chan func(), cfg config.Snapshot, eventType string, configured func(AlertChannel, *config.Snapshot) bool,
 	send func(AlertChannel, context.Context, *config.Snapshot) error,
 ) {
-	cfg := o.cfg.Snapshot()
 	o.mu.Lock()
 	ctx := o.notifyCtx
 	o.mu.Unlock()
@@ -472,7 +491,7 @@ func (o *AlertOrchestrator) Close() {
 		o.logMu.Lock()
 		o.closed = true
 		queue := o.logQueue
-		for _, queue := range slices.Concat(o.inputQueues, o.storageQueues, o.uploadQueues) {
+		for _, queue := range slices.Concat(o.inputQueues, o.storageQueues, o.uploadQueues, o.silenceQueues) {
 			close(queue)
 		}
 		o.logMu.Unlock()
