@@ -3,6 +3,7 @@ package eventlog
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -197,6 +198,57 @@ func TestReadLastHandlesLineLongerThanChunk(t *testing.T) {
 	}
 	assertMessages(t, got, []string{"short", longMessage})
 }
+
+func TestReadLastReadsVeryLongLineInLinearMemory(t *testing.T) {
+	// Keep this test serial: it measures process-wide allocation.
+	const lineSize = 4 << 20
+	path := filepath.Join(t.TempDir(), "encoder.jsonl")
+	// Unique content per position, so chunks joined out of order do not match.
+	var long strings.Builder
+	for i := 0; long.Len() < lineSize; i++ {
+		fmt.Fprintf(&long, "%07d ", i)
+	}
+	writeEvents(t, path, []Event{
+		{Type: StreamStarted, Message: "first"},
+		{Type: UploadFailed, Message: long.String()},
+		{Type: StreamStable, Message: "last"},
+	})
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	got, _, err := ReadLast(path, 3, 0, FilterAll)
+	runtime.ReadMemStats(&after)
+	if err != nil {
+		t.Fatalf("ReadLast() error = %v", err)
+	}
+	assertMessages(t, got, []string{"last", long.String(), "first"})
+	// Rejoining the line for every chunk allocates about 64 times its size.
+	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 8*lineSize {
+		t.Errorf("ReadLast() allocated %d bytes for a %d-byte line", alloc, lineSize)
+	}
+}
+
+func TestReadLinesReverseSplitsChunkThatStartsWithNewline(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "encoder.jsonl")
+	// The last chunk starts with the newline that ends the first line.
+	long := strings.Repeat("x", int(tailReadChunkSize)-1)
+	if err := os.WriteFile(path, []byte("first\n"+long), 0o600); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+	var got []string
+	err := readLinesReverse(path, func(line []byte) (bool, error) {
+		got = append(got, string(line))
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("readLinesReverse() error = %v", err)
+	}
+	if len(got) != 2 || got[0] != long || got[1] != "first" {
+		t.Fatalf("readLinesReverse() returned %d lines, want the long line and then %q", len(got), "first")
+	}
+}
+
 func TestLoggerRotatesWhenSizeLimitIsReached(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "encoder.jsonl")
