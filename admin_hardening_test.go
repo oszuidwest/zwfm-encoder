@@ -70,7 +70,7 @@ func checkAdminLoginMutationAndLogout(t *testing.T, newServer func(http.Handler)
 	defer func() { _ = get.Body.Close() }()
 	page := readAdminBody(t, get)
 	csrf := adminToken(t, page, `name="csrf_token" value="([a-f0-9]+)"`)
-	form := url.Values{"username": {config.DefaultWebUsername}, "password": {config.DefaultWebPassword}, "csrf_token": {csrf}}
+	form := url.Values{"username": {config.DefaultWebUsername}, "password": {s.config.Snapshot().WebPassword}, "csrf_token": {csrf}}
 	login, err := client.PostForm(ts.URL+"/login", form)
 	if err != nil {
 		t.Fatal(err)
@@ -191,7 +191,7 @@ func TestLoginThrottleAndCrossOriginRejection(t *testing.T) {
 		token := loginFormToken(t, handler)
 		password := "wrong"
 		if attempt == 5 {
-			password = config.DefaultWebPassword
+			password = s.config.Snapshot().WebPassword
 		}
 		form := url.Values{"username": {config.DefaultWebUsername}, "password": {password}, "csrf_token": {token}}
 		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
@@ -227,7 +227,8 @@ func TestInvalidLoginCSRFCannotConsumeLoginBudget(t *testing.T) {
 	handler := s.SetupRoutes()
 	for range 20 {
 		// Valid credentials prove the expired form never reaches the credential check.
-		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=admin&password=encoder&csrf_token=invalid"))
+		form := url.Values{"username": {config.DefaultWebUsername}, "password": {s.config.Snapshot().WebPassword}, "csrf_token": {"invalid"}}
+		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
@@ -241,7 +242,7 @@ func TestInvalidLoginCSRFCannotConsumeLoginBudget(t *testing.T) {
 		t.Fatal("fresh login form omitted the expiry explanation")
 	}
 	token := adminToken(t, page.Body.String(), `name="csrf_token" value="([a-f0-9]+)"`)
-	form := url.Values{"username": {config.DefaultWebUsername}, "password": {config.DefaultWebPassword}, "csrf_token": {token}}
+	form := url.Values{"username": {config.DefaultWebUsername}, "password": {s.config.Snapshot().WebPassword}, "csrf_token": {token}}
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
@@ -261,7 +262,7 @@ func TestTrustedProxyDoesNotShareClientIPBudget(t *testing.T) {
 		password, ip := "wrong", "198.51.100.1" //nolint:gosec // G101: intentionally wrong login fixture, not an application credential.
 		want := http.StatusOK
 		if i == 5 {
-			password, ip, want = config.DefaultWebPassword, "198.51.100.2", http.StatusFound //nolint:gosec // G101: testing the documented default login in a temporary config.
+			password, ip, want = s.config.Snapshot().WebPassword, "198.51.100.2", http.StatusFound //nolint:gosec // G101: the configured login from a temporary config.
 		}
 		form := url.Values{"username": {config.DefaultWebUsername}, "password": {password}, "csrf_token": {token}}
 		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
@@ -287,7 +288,7 @@ func TestLoginRejectsMalformedOrQueryCredentials(t *testing.T) {
 		name, query, body, password string
 		wantStatus                  int
 	}{
-		{name: "query credentials", query: "?username=admin&password=encoder", wantStatus: http.StatusOK},
+		{name: "query credentials", query: "?" + url.Values{"username": {"admin"}, "password": {s.config.Snapshot().WebPassword}}.Encode(), wantStatus: http.StatusOK},
 		{name: "invalid encoding", body: "username=admin&password=%xx", wantStatus: http.StatusBadRequest},
 		// Both carry a valid form token, so only the body limit decides.
 		{name: "oversized body", password: strings.Repeat("p", 16<<10), wantStatus: http.StatusBadRequest},
