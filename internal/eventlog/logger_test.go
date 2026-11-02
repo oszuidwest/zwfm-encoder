@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -327,6 +328,81 @@ func TestLoggerToleratesRotationFailure(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("active log has %d lines, want 2:\n%s", len(lines), data)
 	}
+}
+
+// A rotation between reading the active and the rotated file must not repeat
+// one generation and skip the one before it.
+func TestReadLastRereadsWhenTheLogRotatesBetweenReads(t *testing.T) {
+	// Keep this test serial: the injected readEventLogReverse is package-wide.
+	if runtime.GOOS == "windows" {
+		t.Skip("an open log cannot be renamed on Windows, so the rotation fails")
+	}
+	original := readEventLogReverse
+	t.Cleanup(func() { readEventLogReverse = original })
+	for _, tc := range []struct {
+		name      string
+		rotations int
+		want      []string
+		wantErr   error
+	}{
+		{name: "once", rotations: 1, want: []string{"after 1", "before"}},
+		{name: "every read", rotations: maxReadAttempts, wantErr: errLogRotating},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "encoder.jsonl")
+			logger, err := newLogger(path, 1)
+			if err != nil {
+				t.Fatalf("newLogger() error = %v", err)
+			}
+			defer func() { _ = logger.Close() }()
+			if err := logger.Log(&Event{Type: StreamStarted, Message: "before"}); err != nil {
+				t.Fatal(err)
+			}
+			rotations := 0
+			readEventLogReverse = func(filePath string, handle func([]byte) (bool, error)) error {
+				err := original(filePath, handle)
+				if filePath == path && rotations < tc.rotations {
+					// With a 1-byte cap, every event rotates the previous one out.
+					rotations++
+					if err := logger.Log(&Event{Type: StreamStarted, Message: "after " + strconv.Itoa(rotations)}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return err
+			}
+			events, _, err := ReadLast(path, 2, 0, FilterAll)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("ReadLast() error = %v, want %v", err, tc.wantErr)
+			}
+			assertMessages(t, events, tc.want)
+		})
+	}
+}
+
+// A rotated file that cannot be opened is not a rotation: ReadLast must still
+// return the newest events, which the active file holds.
+func TestReadLastReadsAroundUnreadableRotatedLog(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("file modes do not block reads on Windows")
+	}
+	path := filepath.Join(t.TempDir(), "encoder.jsonl")
+	// Two active events answer a read of one, plus the one that sets hasMore.
+	writeEvents(t, path, []Event{{Type: StreamStarted, Message: "older"}, {Type: StreamStarted, Message: "newer"}})
+	rotated := util.RotatedPath(path)
+	writeEvents(t, rotated, []Event{{Type: StreamStarted, Message: "rotated"}})
+	if err := os.Chmod(rotated, 0o200); err != nil {
+		t.Fatal(err)
+	}
+	if f, err := os.Open(rotated); err == nil { //nolint:gosec // Test-controlled temporary log path.
+		_ = f.Close()
+		t.Skip("file modes do not restrict reads for this user")
+	}
+	events, _, err := ReadLast(path, 1, 0, FilterAll)
+	if err != nil {
+		t.Fatalf("ReadLast() error = %v", err)
+	}
+	assertMessages(t, events, []string{"newer"})
 }
 
 func TestLoggerSeqDoesNotIncrementOnFailedWrite(t *testing.T) {

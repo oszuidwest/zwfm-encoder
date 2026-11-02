@@ -5,6 +5,7 @@ package eventlog
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -423,10 +424,51 @@ const (
 // MaxReadLimit caps the number of events returned by [ReadLast].
 const MaxReadLimit = 500
 
+// maxReadAttempts caps how often [ReadLast] reads after a rotation.
+const maxReadAttempts = 3
+
+// readEventLogReverse lets tests rotate the log between the two reads of [ReadLast].
+var readEventLogReverse = readLinesReverse
+
+// errLogRotating reports that the log rotated during every read attempt.
+var errLogRotating = errors.New("event log rotated during every read attempt")
+
 // ReadLast returns up to n events starting from offset, filtered by type.
 // Events are returned in reverse append order (newest first).
 // The second return value reports whether more events are available.
 func ReadLast(filePath string, n, offset int, filter TypeFilter) ([]Event, bool, error) {
+	rotatedPath := util.RotatedPath(filePath)
+	for range maxReadAttempts {
+		// A rotation between reading the active and the rotated file repeats
+		// one generation and skips the one before it, so read again if either
+		// path changed. The open handles keep a replaced file's inode from
+		// being reused by a new one.
+		rotated, rotatedErr := os.Open(rotatedPath) //nolint:gosec // Event log paths come from trusted application state, not request input.
+		active, activeErr := os.Open(filePath)      //nolint:gosec // Event log paths come from trusted application state, not request input.
+		events, hasMore, err := readLast(filePath, n, offset, filter)
+		rotatedSame := stillNames(rotated, rotatedErr, rotatedPath)
+		activeSame := stillNames(active, activeErr, filePath)
+		if rotatedSame && activeSame {
+			return events, hasMore, err
+		}
+	}
+	return nil, false, errLogRotating
+}
+
+// stillNames reports whether path still names the file f was opened from, or
+// is still missing if opening it failed for that reason. A file that could not
+// be opened for another reason is not checked. It closes f.
+func stillNames(f *os.File, openErr error, path string) bool {
+	now, _ := os.Stat(path)
+	if f == nil {
+		return now == nil || !os.IsNotExist(openErr)
+	}
+	defer f.Close() //nolint:errcheck // Read-only operation, close error not critical
+	opened, _ := f.Stat()
+	return os.SameFile(opened, now)
+}
+
+func readLast(filePath string, n, offset int, filter TypeFilter) ([]Event, bool, error) {
 	// Cap n to prevent excessive memory allocation (defense in depth)
 	n = min(n, MaxReadLimit)
 	if n <= 0 {
@@ -441,7 +483,7 @@ func ReadLast(filePath string, n, offset int, filter TypeFilter) ([]Event, bool,
 	skipped := 0
 
 	for _, path := range []string{filePath, util.RotatedPath(filePath)} {
-		err := readLinesReverse(path, func(line []byte) (bool, error) {
+		err := readEventLogReverse(path, func(line []byte) (bool, error) {
 			if len(events) > n {
 				return false, nil
 			}
