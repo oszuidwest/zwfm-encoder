@@ -24,6 +24,8 @@ Audio streaming software for [ZuidWest FM](https://www.zuidwestfm.nl/) (Linux), 
 
 On Windows the encoder runs as a tray application and writes its log to `%PROGRAMDATA%\encoder\encoder.log`; Show Logs Folder opens the event log. Its recording spool, the upload queue and S3-only recordings, is `%PROGRAMDATA%\encoder\recordings`.
 
+On macOS the recording spool is `~/Library/Application Support/encoder/recordings`.
+
 ## Requirements
 
 - Raspberry Pi 4 or 5

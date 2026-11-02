@@ -3,6 +3,7 @@ package recording
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"runtime"
 
@@ -40,8 +41,6 @@ type S3Config struct {
 }
 
 const (
-	// DefaultTempDir is the spool on macOS, a development platform.
-	DefaultTempDir = "/tmp/encoder-recordings"
 	// LinuxStateRecordingDir is the systemd StateDirectory-backed recording spool path.
 	LinuxStateRecordingDir = "/var/lib/encoder/recordings"
 )
@@ -49,12 +48,16 @@ const (
 // DefaultSpoolDir returns the platform default directory for recording spool state.
 func DefaultSpoolDir() string {
 	switch runtime.GOOS {
-	case "linux":
-		return LinuxStateRecordingDir
 	case "windows":
 		return filepath.Join(util.WindowsDataDir(), "recordings")
+	case "darwin":
+		// Per user, not the shared /tmp where another user could plant upload
+		// tickets. Without a home directory it falls through to a root-only path.
+		if configDir, err := os.UserConfigDir(); err == nil {
+			return filepath.Join(configDir, "encoder", "recordings")
+		}
 	}
-	return DefaultTempDir
+	return LinuxStateRecordingDir
 }
 
 // RecorderToS3Config extracts S3 configuration from a Recorder.
