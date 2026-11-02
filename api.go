@@ -863,13 +863,19 @@ func (s *Server) handleAPITestZabbix(w http.ResponseWriter, r *http.Request) {
 // handleAPIRegenerateKey generates a new recording API key.
 func (s *Server) handleAPIRegenerateKey(w http.ResponseWriter, r *http.Request) {
 	newKey := config.GenerateAPIKey()
-	if err := s.config.SetRecordingAPIKey(newKey); err != nil {
+	err := s.config.SetRecordingAPIKey(newKey)
+	if err != nil && !errors.Is(err, config.ErrSaveCommitted) {
 		s.writeConfigError(w, err)
 		return
 	}
 
 	s.broadcastConfigChanged()
-	s.writeJSON(w, http.StatusOK, map[string]string{"api_key": newKey})
+	response := map[string]string{"api_key": newKey}
+	if err != nil {
+		// The new key is live and /api/config never returns it, so return it with the error.
+		response["warning"] = err.Error() + "; resolve the error and restart the encoder application"
+	}
+	s.writeJSON(w, http.StatusOK, response)
 }
 
 // HealthResponse is the response body for the health endpoint.

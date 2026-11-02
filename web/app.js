@@ -1849,7 +1849,11 @@ document.addEventListener('alpine:init', () => {
                         this.settingsForm.recordingApiKey = result.api_key;
                     }
                     this.config.recording_has_api_key = true;
-                    this.showToast('API key regenerated', 'success');
+                    if (result.warning) {
+                        this.showToast(`API key regenerated: ${result.warning}`, 'error');
+                    } else {
+                        this.showToast('API key regenerated', 'success');
+                    }
                 }
             } catch (err) {
                 this.showToast(`Failed to regenerate API key: ${err.message}`, 'error');
