@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -502,18 +503,24 @@ func readLinesReverse(filePath string, handle func([]byte) (bool, error)) error 
 	}
 
 	offset := info.Size()
-	var tail []byte
+	// The chunks of the line whose start is not read yet, newest first. They are
+	// joined only once that start is found, so a long line costs linear time.
+	var tail [][]byte
 	for offset > 0 {
 		size := min(tailReadChunkSize, offset)
 		offset -= size
 
-		chunk := make([]byte, int(size), int(size)+len(tail))
+		chunk := make([]byte, int(size))
 		if _, err := file.ReadAt(chunk, offset); err != nil && err != io.EOF {
 			return err
 		}
 
-		chunk = append(chunk, tail...)
-		parts := bytes.Split(chunk, []byte{'\n'})
+		tail = append(tail, chunk)
+		if bytes.IndexByte(chunk, '\n') < 0 {
+			continue
+		}
+		slices.Reverse(tail)
+		parts := bytes.Split(bytes.Join(tail, nil), []byte{'\n'})
 		for i := len(parts) - 1; i >= 1; i-- {
 			cont, err := handle(parts[i])
 			if err != nil {
@@ -523,14 +530,16 @@ func readLinesReverse(filePath string, handle func([]byte) (bool, error)) error 
 				return nil
 			}
 		}
-		tail = append([]byte(nil), parts[0]...)
+		tail = [][]byte{bytes.Clone(parts[0])}
 	}
 
-	if len(tail) == 0 {
+	slices.Reverse(tail)
+	line := bytes.Join(tail, nil)
+	if len(line) == 0 {
 		return nil
 	}
 
-	_, err = handle(tail)
+	_, err = handle(line)
 	return err
 }
 
