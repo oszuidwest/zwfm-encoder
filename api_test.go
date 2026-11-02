@@ -964,7 +964,8 @@ func seededSensitiveServer(t *testing.T) sensitiveFixture {
 }
 
 func TestSettingsRoundTripThroughAPIEveryField(t *testing.T) {
-	t.Parallel()
+	// Keep this test serial: the injected device list is package-wide.
+	listAudioDevice(t, validAPISettingsString("AudioInput"))
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	cfg := config.New(configPath)
 	if err := cfg.Load(); err != nil {
@@ -1595,6 +1596,45 @@ func TestHandleAPISettingsClearHiddenValueConflictsWithNewValue(t *testing.T) {
 			assertStatus(t, rec, http.StatusBadRequest)
 			if !strings.Contains(rec.Body.String(), tt.want) {
 				t.Fatalf("body = %s, want to contain %q", rec.Body.String(), tt.want)
+			}
+		})
+	}
+}
+
+// listAudioDevice makes id the only device a settings save may choose.
+func listAudioDevice(t *testing.T, id string) {
+	t.Helper()
+	listAudioDevices = func() []audio.Device { return []audio.Device{{ID: id}} }
+	t.Cleanup(func() { listAudioDevices = audio.RefreshDevices })
+}
+
+func TestHandleAPISettingsOnlyAcceptsListedNewAudioInput(t *testing.T) {
+	// Keep this test serial: the injected device list is package-wide.
+	listAudioDevice(t, "default:CARD=listed")
+	tests := []struct {
+		name, saved, posted string
+		wantStatus          int
+	}{
+		{name: "new unlisted input", saved: "default:CARD=listed", posted: `file:"|id"`, wantStatus: http.StatusBadRequest},
+		{name: "new listed input", saved: "dante://tx/L/R", posted: "default:CARD=listed", wantStatus: http.StatusNoContent},
+		{name: "unchanged unlisted input", saved: "dante://tx/L/R", posted: "dante://tx/L/R", wantStatus: http.StatusNoContent},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := seededServer(t, &config.SettingsUpdate{AudioInput: tt.saved})
+			update := validBaselineSettings(s.config)
+			update.AudioInput = tt.posted
+			body, err := json.Marshal(update)
+			if err != nil {
+				t.Fatalf("marshal settings update: %v", err)
+			}
+			assertStatus(t, postSettingsBody(t, s, string(body)), tt.wantStatus)
+			want := tt.posted
+			if tt.wantStatus != http.StatusNoContent {
+				want = tt.saved
+			}
+			if got := s.config.AudioInput(); got != want {
+				t.Fatalf("AudioInput() = %q, want %q", got, want)
 			}
 		})
 	}
