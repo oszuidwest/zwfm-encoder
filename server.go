@@ -242,6 +242,15 @@ func (s *Server) buildWSRuntime() types.WSRuntimeStatus {
 func (s *Server) SetupRoutes() http.Handler {
 	mux := http.NewServeMux()
 	auth := s.sessions.AuthMiddleware()
+	// Connection tests can wait on a remote endpoint longer than WriteTimeout.
+	// Lift the write deadline so the result still reaches the page; each test
+	// has its own timeouts.
+	connectionTest := func(next http.HandlerFunc) http.HandlerFunc {
+		return auth(func(w http.ResponseWriter, r *http.Request) {
+			_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+			next(w, r)
+		})
+	}
 
 	// Public routes (no auth required)
 	mux.HandleFunc("/login", s.handleLogin)
@@ -275,16 +284,16 @@ func (s *Server) SetupRoutes() http.Handler {
 	// Recorder CRUD routes
 	mux.HandleFunc("GET /api/recorders", auth(s.handleListRecorders))
 	mux.HandleFunc("POST /api/recorders", auth(s.handleCreateRecorder))
-	mux.HandleFunc("POST /api/recorders/test-s3", auth(s.handleTestS3))
+	mux.HandleFunc("POST /api/recorders/test-s3", connectionTest(s.handleTestS3))
 	mux.HandleFunc("GET /api/recorders/{id}", auth(s.handleGetRecorder))
 	mux.HandleFunc("PUT /api/recorders/{id}", auth(s.handleUpdateRecorder))
 	mux.HandleFunc("DELETE /api/recorders/{id}", auth(s.handleDeleteRecorder))
 	mux.HandleFunc("POST /api/recorders/{id}/{action}", auth(s.handleRecorderAction))
 
 	// Notification test routes
-	mux.HandleFunc("POST /api/notifications/test/webhook", auth(s.handleAPITestWebhook))
-	mux.HandleFunc("POST /api/notifications/test/email", auth(s.handleAPITestEmail))
-	mux.HandleFunc("POST /api/notifications/test/zabbix", auth(s.handleAPITestZabbix))
+	mux.HandleFunc("POST /api/notifications/test/webhook", connectionTest(s.handleAPITestWebhook))
+	mux.HandleFunc("POST /api/notifications/test/email", connectionTest(s.handleAPITestEmail))
+	mux.HandleFunc("POST /api/notifications/test/zabbix", connectionTest(s.handleAPITestZabbix))
 
 	// Recording API key management
 	mux.HandleFunc("POST /api/recording/regenerate-key", auth(s.handleAPIRegenerateKey))
