@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/oszuidwest/zw-graphmail"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
@@ -84,7 +85,11 @@ func (c *SecretExpiryChecker) refresh() {
 
 // fetchExpiryInfo looks up when the configured client secret expires.
 func fetchExpiryInfo(cfg *types.GraphConfig) (types.SecretExpiryInfo, error) {
-	client, err := newMailClient(cfg)
+	// The lookup needs no sender, so only the credentials are checked.
+	if err := formatGraphRuntimeError(cfg.CredentialsIssues()); err != nil {
+		return types.SecretExpiryInfo{}, err
+	}
+	client, err := graphmail.New(graphmail.Config{TenantID: cfg.TenantID, ClientID: cfg.ClientID, ClientSecret: cfg.ClientSecret})
 	if err != nil {
 		return types.SecretExpiryInfo{}, err
 	}
