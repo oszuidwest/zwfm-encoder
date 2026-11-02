@@ -53,8 +53,6 @@ const (
 	DefaultWebBindAddress = "0.0.0.0"
 	// DefaultWebUsername is the default web interface username (admin).
 	DefaultWebUsername = "admin"
-	// DefaultWebPassword is the default web interface password (encoder).
-	DefaultWebPassword = "encoder"
 	// DefaultSilenceThreshold is the default silence detection threshold (-40 dB).
 	DefaultSilenceThreshold = -40.0
 	// DefaultSilenceDurationMs is the default silence duration before alert (15 seconds).
@@ -230,7 +228,7 @@ func defaultConfig(filePath string) *Config {
 			Port:        DefaultWebPort,
 			BindAddress: DefaultWebBindAddress,
 			Username:    DefaultWebUsername,
-			Password:    DefaultWebPassword,
+			Password:    GenerateAPIKey(), // Random, so a new config has no shared login.
 		},
 		Web: WebConfig{
 			StationName: DefaultStationName,

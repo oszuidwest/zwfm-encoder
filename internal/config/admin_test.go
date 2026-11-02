@@ -65,11 +65,12 @@ func TestAdminPasswordAndBindAddress(t *testing.T) {
 	}
 }
 
-func TestNewConfigUsesDefaultPasswordAndLANAccess(t *testing.T) {
+func TestNewConfigUsesRandomPasswordAndLANAccess(t *testing.T) {
 	t.Parallel()
-	cfg, _ := newLoadedConfig(t)
-	if snapshot := cfg.Snapshot(); snapshot.WebBindAddress != "0.0.0.0" || snapshot.WebPassword != DefaultWebPassword {
-		t.Fatal("new config must allow direct LAN access with the default password")
+	first, _ := newLoadedConfig(t)
+	second, _ := newLoadedConfig(t)
+	if snapshot := first.Snapshot(); snapshot.WebBindAddress != "0.0.0.0" || snapshot.WebPassword == second.Snapshot().WebPassword {
+		t.Fatal("new configs must allow direct LAN access, each with its own password")
 	}
 }
 
