@@ -10,7 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.5
 	github.com/datarhei/gosrt v0.13.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/oszuidwest/zw-graphmail v0.0.1
+	github.com/oszuidwest/zw-graphmail v0.0.2
 	golang.org/x/mod v0.42.0
 	golang.org/x/net v0.61.0
 	golang.org/x/sys v0.49.0
