@@ -88,6 +88,11 @@ jobs:
           CGO_ENABLED: '1'
         run: go test -race -shuffle=on -count=1 -v ./internal/dante
 
+      - name: Test the DirectShow device list with a fake FFmpeg
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race -shuffle=on -count=1 -v ./internal/audio
+
       - name: Install FFmpeg
         run: choco install ffmpeg -y --no-progress
 

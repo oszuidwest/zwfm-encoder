@@ -26,7 +26,7 @@ var windowsDevicePattern = regexp.MustCompile(`\[dshow[^\]]*\]\s*"([^"]+)"\s*\(a
 // Devices lists DirectShow audio inputs without using the device cache.
 func (cfg *CaptureConfig) Devices() []Device {
 	return parseDeviceList(DeviceListConfig{
-		Command: []string{"ffmpeg", "-hide_banner", "-f", "dshow", "-list_devices", "true", "-i", "dummy"},
+		Command: []string{cfg.Command, "-hide_banner", "-f", "dshow", "-list_devices", "true", "-i", "dummy"},
 		// Match "(audio)" lines: FFmpeg's section headers vary by version.
 		AudioStartMarker: "",
 		AudioStopMarker:  "",

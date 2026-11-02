@@ -17,7 +17,17 @@ var (
 	devicesMu       sync.Mutex
 	devicesCached   []Device
 	devicesCachedAt time.Time
+	// listFFmpegPath is the resolved FFmpeg binary, so the list runs the same
+	// binary as capture instead of the first ffmpeg on PATH.
+	listFFmpegPath string
 )
+
+// SetFFmpegPath sets the FFmpeg binary that lists devices on macOS and Windows.
+func SetFFmpegPath(path string) {
+	devicesMu.Lock()
+	defer devicesMu.Unlock()
+	listFFmpegPath = path
+}
 
 // Devices returns available audio inputs, cached for devicesCacheTTL.
 func Devices() []Device {
@@ -38,6 +48,9 @@ func RefreshDevices() []Device {
 
 func refreshDevicesLocked() []Device {
 	cfg := getPlatformConfig()
+	if cfg.UsesFFmpeg && listFFmpegPath != "" {
+		cfg.Command = listFFmpegPath
+	}
 	devicesCached = cfg.Devices()
 	devicesCachedAt = time.Now()
 	return devicesCached
