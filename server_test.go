@@ -4,12 +4,16 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
 	serverpkg "github.com/oszuidwest/zwfm-encoder/internal/server"
@@ -170,6 +174,95 @@ func TestSecurityHeadersOnPublicResponse(t *testing.T) {
 		if got := rec.Result().Header.Get(name); got != want {
 			t.Errorf("header %s = %q, want %q", name, got, want)
 		}
+	}
+}
+
+func TestConnectionTestsOutlastWriteTimeout(t *testing.T) {
+	// Keep this test serial: the swapped http.DefaultTransport is process-wide.
+
+	// Every endpoint answers only after the web server's write timeout.
+	const writeTimeout = 100 * time.Millisecond
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(3 * writeTimeout)
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(slow.Close)
+	// The Graph hosts are fixed, so send the email test through the slow server as a proxy.
+	proxy, err := url.Parse(slow.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultTransport := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = defaultTransport })
+	http.DefaultTransport = &http.Transport{Proxy: http.ProxyURL(proxy)}
+	zabbix, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = zabbix.Close() })
+	go func() {
+		for {
+			conn, err := zabbix.Accept()
+			if err != nil {
+				return
+			}
+			time.AfterFunc(3*writeTimeout, func() { _ = conn.Close() })
+		}
+	}()
+	zabbixPort := strconv.Itoa(zabbix.Addr().(*net.TCPAddr).Port)
+
+	const graphID = "12345678-1234-1234-1234-123456789abc"
+	tests := []struct{ path, body, wantError string }{
+		{
+			path:      "/api/recorders/test-s3",
+			body:      `{"s3_endpoint":"` + slow.URL + `","s3_bucket":"b","s3_access_key_id":"k","s3_secret_access_key":"s"}`,
+			wantError: "upload test file",
+		},
+		{
+			path:      "/api/notifications/test/webhook",
+			body:      `{"webhook_url":"` + slow.URL + `"}`,
+			wantError: "webhook returned status 403",
+		},
+		{
+			path:      "/api/notifications/test/email",
+			body:      `{"graph_tenant_id":"` + graphID + `","graph_client_id":"` + graphID + `","graph_client_secret":"s","graph_from_address":"a@example.com","graph_recipients":"b@example.com"}`,
+			wantError: "authenticate",
+		},
+		{
+			path:      "/api/notifications/test/zabbix",
+			body:      `{"zabbix_server":"127.0.0.1","zabbix_port":` + zabbixPort + `,"zabbix_host":"h","zabbix_silence_key":"k"}`,
+			wantError: "read zabbix reply header",
+		},
+	}
+	for _, tt := range tests {
+		t.Run("POST "+tt.path, func(t *testing.T) {
+			t.Parallel()
+
+			s := newRouteTestServer(t)
+			ts := httptest.NewUnstartedServer(s.SetupRoutes())
+			ts.Config.WriteTimeout = writeTimeout
+			ts.Start()
+			t.Cleanup(ts.Close)
+
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+tt.path, strings.NewReader(tt.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.AddCookie(&http.Cookie{Name: "encoder_session", Value: s.sessions.Create()}) //nolint:gosec // G124: request cookie only.
+			req.Header.Set("X-CSRF-Token", s.sessions.CSRFToken(req))
+			res, err := ts.Client().Do(req)
+			if err != nil {
+				t.Fatalf("test result lost after the write timeout: %v", err)
+			}
+			defer func() { _ = res.Body.Close() }()
+			body, err := io.ReadAll(res.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := decodeError(t, body); res.StatusCode != http.StatusBadGateway || !strings.Contains(got, tt.wantError) {
+				t.Fatalf("status = %d, error = %q, want 502 containing %q", res.StatusCode, got, tt.wantError)
+			}
+		})
 	}
 }
 
