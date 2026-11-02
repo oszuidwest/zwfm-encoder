@@ -45,7 +45,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.head_ref }}
           persist-credentials: false
 
       - uses: actions/setup-go@v7
@@ -112,7 +111,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.head_ref }}
           persist-credentials: false
 
       - uses: oven-sh/setup-bun@v2
