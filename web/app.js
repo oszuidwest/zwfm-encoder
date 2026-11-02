@@ -1385,9 +1385,10 @@ document.addEventListener('alpine:init', () => {
 
                 // Optimistic UI update for immediate feedback
                 if (this.isRecorderEditMode) {
-                    // Update status
-                    if (this.recorderStatuses[this.recorderForm.id]) {
-                        this.recorderStatuses[this.recorderForm.id].state = this.recorderForm.enabled ? 'stopped' : 'disabled';
+                    // Only disabling has a known outcome; a save can start or keep a
+                    // recording, so other states wait for the next status push.
+                    if (!this.recorderForm.enabled && this.recorderStatuses[this.recorderForm.id]) {
+                        this.recorderStatuses[this.recorderForm.id].state = 'disabled';
                     }
                     // Update recorder data in local array
                     const index = this.recorders.findIndex(r => r.id === this.recorderForm.id);
