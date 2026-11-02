@@ -62,8 +62,9 @@ func TestSendDumpReadyEmailAttachesRecording(t *testing.T) {
 				t.Fatalf("sent %d messages, want 1", len(client.sent))
 			}
 			m := client.sent[0]
-			if strings.Join(m.To, ",") != "a@example.com,b@example.com" || m.Subject != "[DUMP] Audio Recording - Station" {
-				t.Fatalf("message to=%v subject=%q", m.To, m.Subject)
+			if strings.Join(m.To, ",") != "a@example.com,b@example.com" || m.Subject != "[DUMP] Audio Recording - Station" ||
+				!strings.HasPrefix(m.Body, "Audio dump ready at") || m.HTML {
+				t.Fatalf("message = %+v", m)
 			}
 			if len(m.Attachments) != tt.want {
 				t.Fatalf("attachments = %d, want %d", len(m.Attachments), tt.want)
