@@ -35,8 +35,15 @@ func TestCommittedSaveReportsSavedState(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("needs POSIX directory permissions as a regular user")
 	}
-	for _, name := range []string{"settings", "regenerate-key"} {
-		t.Run(name, func(t *testing.T) {
+	for _, tt := range []struct {
+		name, field string
+		status      int
+	}{
+		{"settings", "error", http.StatusInternalServerError},
+		// The new key is live and /api/config never returns it.
+		{"regenerate-key", "warning", http.StatusOK},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			cfg := config.New(filepath.Join(dir, "config.json"))
 			if err := cfg.Load(); err != nil {
@@ -49,7 +56,7 @@ func TestCommittedSaveReportsSavedState(t *testing.T) {
 			updates := make(chan any, 1)
 			s := &Server{config: cfg, wsClients: map[chan any]struct{}{updates: {}}}
 			handler := s.handleAPISettings
-			if name == "regenerate-key" {
+			if tt.name == "regenerate-key" {
 				handler = s.handleAPIRegenerateKey
 			}
 			// The rename into dir works; opening dir to sync it does not.
@@ -57,9 +64,13 @@ func TestCommittedSaveReportsSavedState(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = os.Chmod(dir, 0o700) }) //nolint:gosec // Restore for cleanup.
-			rec := runJSONHandler(t, handler, http.MethodPost, "/api/"+name, string(body))
-			assertStatus(t, rec, http.StatusInternalServerError)
-			if !strings.Contains(rec.Body.String(), "was saved") || !strings.Contains(rec.Body.String(), "restart") {
+			rec := runJSONHandler(t, handler, http.MethodPost, "/api/"+tt.name, string(body))
+			assertStatus(t, rec, tt.status)
+			response := decodeJSON[map[string]string](t, rec.Body.Bytes())
+			if got := response["api_key"]; tt.name == "regenerate-key" && (got == "" || got != cfg.RecordingAPIKey()) {
+				t.Fatalf("api_key = %q, want the live key %q", got, cfg.RecordingAPIKey())
+			}
+			if !strings.Contains(response[tt.field], "was saved") || !strings.Contains(response[tt.field], "restart") {
 				t.Fatalf("committed save response = %s, want saved state and recovery guidance", rec.Body.String())
 			}
 			select {
@@ -68,6 +79,29 @@ func TestCommittedSaveReportsSavedState(t *testing.T) {
 				t.Fatal("committed configuration did not notify dashboard clients to reload")
 			}
 		})
+	}
+}
+
+func TestRegenerateKeyFailedSaveKeepsOldKey(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg := config.New(path)
+	if err := cfg.Load(); err != nil {
+		t.Fatal(err)
+	}
+	oldKey := cfg.RecordingAPIKey()
+	// A directory in place of the file makes the rename fail, so nothing commits.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(path, "blocked"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{config: cfg}
+	rec := runJSONHandler(t, s.handleAPIRegenerateKey, http.MethodPost, "/api/regenerate-key", "")
+	assertStatus(t, rec, http.StatusInternalServerError)
+	if got := decodeJSON[map[string]string](t, rec.Body.Bytes())["api_key"]; got != "" || cfg.RecordingAPIKey() != oldKey {
+		t.Fatalf("api_key = %q, live key %q; want no key and the old key %q kept", got, cfg.RecordingAPIKey(), oldKey)
 	}
 }
 
