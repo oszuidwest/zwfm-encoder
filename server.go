@@ -92,7 +92,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Writer goroutine - sole writer to the connection
-	go s.runWebSocketWriter(conn, send)
+	go s.runWebSocketWriter(conn, r, send)
 
 	// Reader goroutine - keeps connection alive
 	go s.runWebSocketReader(conn, done)
@@ -136,14 +136,23 @@ func (s *Server) broadcastConfigChanged() {
 	}
 }
 
+// wsWriteTimeout bounds one write, so a client that stops reading cannot keep
+// the writer from its next session check.
+var wsWriteTimeout = 10 * time.Second
+
 // runWebSocketWriter is the sole writer goroutine for a WebSocket connection.
-func (s *Server) runWebSocketWriter(conn server.WebSocketConn, send <-chan any) {
+func (s *Server) runWebSocketWriter(conn server.WebSocketConn, r *http.Request, send <-chan any) {
 	defer func() {
 		if err := conn.Close(); err != nil {
 			slog.Debug("WebSocket close error", "error", err)
 		}
 	}()
 	for msg := range send {
+		// The upgrade checked the session once; stop when it is logged out or expired.
+		if s.sessions.CSRFToken(r) == "" {
+			return
+		}
+		_ = conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) // Gorilla always returns nil.
 		var err error
 		if raw, ok := msg.(rawWSMessage); ok {
 			err = conn.WriteMessage(server.TextMessage, raw)
