@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -15,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
 	serverpkg "github.com/oszuidwest/zwfm-encoder/internal/server"
 )
@@ -318,4 +320,73 @@ func setupRoutePatterns(t *testing.T) []string {
 		t.Fatal("no route registrations found")
 	}
 	return patterns
+}
+
+func TestWebSocketWriterStopsAfterLogout(t *testing.T) {
+	t.Parallel()
+
+	s := newRouteTestServer(t)
+	session := s.sessions.Create()
+	send := make(chan any, 1)
+	t.Cleanup(func() { close(send) })
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if conn, err := serverpkg.UpgradeConnection(w, r); err == nil {
+			s.runWebSocketWriter(conn, r, send)
+		}
+	}))
+	t.Cleanup(ts.Close)
+	header := http.Header{"Cookie": {"encoder_session=" + session}}
+	conn, resp, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(ts.URL, "http"), header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	t.Cleanup(func() { _ = conn.Close() })
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+
+	send <- rawWSMessage(`"live"`)
+	if _, msg, err := conn.ReadMessage(); err != nil || string(msg) != `"live"` {
+		t.Fatalf("message during session = %q, %v", msg, err)
+	}
+	s.sessions.Delete(session)
+	send <- rawWSMessage(`"after logout"`)
+	var closed *websocket.CloseError
+	if _, msg, err := conn.ReadMessage(); !errors.As(err, &closed) {
+		t.Fatalf("after logout got %q, %v; want closed connection", msg, err)
+	}
+}
+
+func TestWebSocketWriterGivesUpOnStalledClient(t *testing.T) {
+	// Keep this test serial: the shortened wsWriteTimeout is package-wide.
+	old := wsWriteTimeout
+	wsWriteTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { wsWriteTimeout = old })
+
+	s := newRouteTestServer(t)
+	session := s.sessions.Create()
+	send := make(chan any, 1)
+	t.Cleanup(func() { close(send) })
+	returned := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if conn, err := serverpkg.UpgradeConnection(w, r); err == nil {
+			s.runWebSocketWriter(conn, r, send)
+			close(returned)
+		}
+	}))
+	t.Cleanup(ts.Close)
+	header := http.Header{"Cookie": {"encoder_session=" + session}}
+	conn, resp, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(ts.URL, "http"), header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	t.Cleanup(func() { _ = conn.Close() })
+
+	// The client never reads, so a message far beyond the socket buffers blocks.
+	send <- make(rawWSMessage, 64<<20)
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("writer still blocked on a client that stopped reading")
+	}
 }

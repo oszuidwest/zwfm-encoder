@@ -3,6 +3,7 @@ package server
 import (
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -19,6 +20,8 @@ type WebSocketConn interface {
 	WriteMessage(messageType int, data []byte) error
 	// ReadMessage reads the next message from the connection.
 	ReadMessage() (messageType int, p []byte, err error)
+	// SetWriteDeadline sets the deadline for later writes.
+	SetWriteDeadline(t time.Time) error
 }
 
 // upgrader uses Gorilla's default origin check: Origin must match Host,
