@@ -2,11 +2,13 @@ package notify
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"sync"
 
+	"github.com/oszuidwest/zw-graphmail"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
@@ -19,17 +21,17 @@ type GraphConfig = types.GraphConfig
 // EmailChannel delivers AlertChannel events through Microsoft Graph.
 type EmailChannel struct {
 	mu           sync.Mutex
-	cachedClient *GraphClient
+	cachedClient *graphmail.Client
 	cachedKey    string
 }
 
-func sendEmailWithClient(ctx context.Context, cfg *GraphConfig, client *GraphClient, subject, body string) error {
+func sendEmailWithClient(ctx context.Context, cfg *GraphConfig, client mailer, subject, body string) error {
 	recipients := ParseRecipients(cfg.Recipients)
 	if len(recipients) == 0 {
 		return fmt.Errorf("no valid recipients")
 	}
 
-	if err := client.SendMail(ctx, recipients, subject, body); err != nil {
+	if err := client.Send(ctx, &graphmail.Message{To: recipients, Subject: subject, Body: body}); err != nil {
 		return util.WrapError("send email via Graph", err)
 	}
 
@@ -37,7 +39,7 @@ func sendEmailWithClient(ctx context.Context, cfg *GraphConfig, client *GraphCli
 }
 
 func sendSilenceEmailWithClient(
-	ctx context.Context, cfg *GraphConfig, client *GraphClient, stationName string, e silenceEventData,
+	ctx context.Context, cfg *GraphConfig, client mailer, stationName string, e silenceEventData,
 ) error {
 	subject := "[ALERT] Silence Detected - " + stationName
 	body := fmt.Sprintf(
@@ -51,7 +53,7 @@ func sendSilenceEmailWithClient(
 }
 
 func sendSilenceEndEmailWithClient(
-	ctx context.Context, cfg *GraphConfig, client *GraphClient, stationName string, e silenceEventData,
+	ctx context.Context, cfg *GraphConfig, client mailer, stationName string, e silenceEventData,
 ) error {
 	subject := "[OK] Audio Restored - " + stationName
 	body := fmt.Sprintf(
@@ -184,7 +186,7 @@ func buildDumpReadyEmail(stationName, eventTime string, data *AudioDumpData) (su
 }
 
 func sendDumpReadyEmailWithClient(
-	ctx context.Context, cfg *GraphConfig, client *GraphClient, stationName string, data *AudioDumpData,
+	ctx context.Context, cfg *GraphConfig, client mailer, stationName string, data *AudioDumpData,
 ) error {
 	subject, body := buildDumpReadyEmail(stationName, util.HumanTime(), data)
 
@@ -197,14 +199,12 @@ func sendDumpReadyEmailWithClient(
 		return fmt.Errorf("no valid recipients")
 	}
 
-	var attachment *EmailAttachment
+	var attachments []graphmail.Attachment
 	if data.Result != nil && data.Result.Error == nil && data.Result.FilePath != "" {
 		fileData, err := os.ReadFile(data.Result.FilePath)
 		if err == nil {
-			attachment = &EmailAttachment{
-				Filename:    data.Result.Filename,
-				ContentType: "audio/mpeg",
-				Data:        fileData,
+			if len(fileData) > 0 { // An empty file is not attached.
+				attachments = []graphmail.Attachment{{Name: data.Result.Filename, ContentType: "audio/mpeg", Data: fileData}}
 			}
 			body += fmt.Sprintf("\n\nAudio recording attached (15s before and after the %s).", incidentNoun(data.Trigger))
 		} else {
@@ -214,7 +214,8 @@ func sendDumpReadyEmailWithClient(
 		}
 	}
 
-	if err := client.SendMailWithAttachment(ctx, recipients, subject, body, attachment); err != nil {
+	msg := &graphmail.Message{To: recipients, Subject: subject, Body: body, Attachments: attachments}
+	if err := client.Send(ctx, msg); err != nil {
 		return util.WrapError("send email via Graph", err)
 	}
 
@@ -264,7 +265,7 @@ func (c *EmailChannel) SubscribesAudioDump(cfg *config.Snapshot) bool {
 
 // sendEvent builds the Graph config and cached client shared by every Send* method,
 // then delegates delivery to send.
-func (c *EmailChannel) sendEvent(cfg *config.Snapshot, send func(graphCfg *GraphConfig, client *GraphClient) error) error {
+func (c *EmailChannel) sendEvent(cfg *config.Snapshot, send func(graphCfg *GraphConfig, client mailer) error) error {
 	graphCfg := BuildGraphConfig(cfg)
 	client, err := c.getOrCreateClient(graphCfg)
 	if err != nil {
@@ -276,7 +277,7 @@ func (c *EmailChannel) sendEvent(cfg *config.Snapshot, send func(graphCfg *Graph
 // getOrCreateClient returns a cached Graph client for the given config, creating one only when the
 // config changes. Caching avoids repeated token fetches during silence events where start and
 // recovery emails are sent in quick succession.
-func (c *EmailChannel) getOrCreateClient(graphCfg *GraphConfig) (*GraphClient, error) {
+func (c *EmailChannel) getOrCreateClient(graphCfg *GraphConfig) (*graphmail.Client, error) {
 	key := graphConfigKeyFrom(graphCfg)
 
 	c.mu.Lock()
@@ -286,7 +287,7 @@ func (c *EmailChannel) getOrCreateClient(graphCfg *GraphConfig) (*GraphClient, e
 		return c.cachedClient, nil
 	}
 
-	client, err := NewGraphClient(graphCfg)
+	client, err := newMailClient(graphCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -298,7 +299,7 @@ func (c *EmailChannel) getOrCreateClient(graphCfg *GraphConfig) (*GraphClient, e
 
 // SendSilenceStart sends a Microsoft Graph email for a newly detected silence event.
 func (c *EmailChannel) SendSilenceStart(ctx context.Context, cfg *config.Snapshot, levelL, levelR float64) error {
-	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client *GraphClient) error {
+	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client mailer) error {
 		return sendSilenceEmailWithClient(ctx, graphCfg, client, cfg.StationName, silenceEventData{
 			LevelL:    levelL,
 			LevelR:    levelR,
@@ -311,7 +312,7 @@ func (c *EmailChannel) SendSilenceStart(ctx context.Context, cfg *config.Snapsho
 func (c *EmailChannel) SendSilenceEnd(
 	ctx context.Context, cfg *config.Snapshot, durationMs int64, levelL, levelR float64,
 ) error {
-	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client *GraphClient) error {
+	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client mailer) error {
 		return sendSilenceEndEmailWithClient(ctx, graphCfg, client, cfg.StationName, silenceEventData{
 			DurationMs: durationMs,
 			LevelL:     levelL,
@@ -325,7 +326,7 @@ func (c *EmailChannel) SendSilenceEnd(
 func (c *EmailChannel) SendChannelImbalanceStart(
 	ctx context.Context, cfg *config.Snapshot, data ChannelImbalanceData,
 ) error {
-	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client *GraphClient) error {
+	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client mailer) error {
 		subject, body := buildChannelImbalanceStartEmail(cfg.StationName, util.HumanTime(), data)
 		return sendEmailWithClient(ctx, graphCfg, client, subject, body)
 	})
@@ -335,7 +336,7 @@ func (c *EmailChannel) SendChannelImbalanceStart(
 func (c *EmailChannel) SendChannelImbalanceEnd(
 	ctx context.Context, cfg *config.Snapshot, data ChannelImbalanceData,
 ) error {
-	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client *GraphClient) error {
+	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client mailer) error {
 		subject, body := buildChannelImbalanceEndEmail(cfg.StationName, util.HumanTime(), data)
 		return sendEmailWithClient(ctx, graphCfg, client, subject, body)
 	})
@@ -345,14 +346,14 @@ func (c *EmailChannel) SendChannelImbalanceEnd(
 func (c *EmailChannel) SendAudioDump(
 	ctx context.Context, cfg *config.Snapshot, data *AudioDumpData,
 ) error {
-	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client *GraphClient) error {
+	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client mailer) error {
 		return sendDumpReadyEmailWithClient(ctx, graphCfg, client, cfg.StationName, data)
 	})
 }
 
 // SendUploadsOverdue emails an overdue alert or its recovery.
 func (c *EmailChannel) SendUploadsOverdue(ctx context.Context, cfg *config.Snapshot, data *UploadsOverdueData) error {
-	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client *GraphClient) error {
+	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client mailer) error {
 		_, body := data.message()
 		subject := "[OK] Recording Uploads Delivered - " + cfg.StationName
 		if data.Count > 0 {
@@ -365,7 +366,7 @@ func (c *EmailChannel) SendUploadsOverdue(ctx context.Context, cfg *config.Snaps
 
 // SendInputLost sends a Microsoft Graph email when audio capture from the input stops.
 func (c *EmailChannel) SendInputLost(ctx context.Context, cfg *config.Snapshot, data InputData) error {
-	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client *GraphClient) error {
+	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client mailer) error {
 		subject, body := buildInputLostEmail(cfg.StationName, util.HumanTime(), data)
 		return sendEmailWithClient(ctx, graphCfg, client, subject, body)
 	})
@@ -373,26 +374,21 @@ func (c *EmailChannel) SendInputLost(ctx context.Context, cfg *config.Snapshot, 
 
 // SendInputRestored sends a Microsoft Graph email when audio capture runs stably again.
 func (c *EmailChannel) SendInputRestored(ctx context.Context, cfg *config.Snapshot, data InputData) error {
-	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client *GraphClient) error {
+	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client mailer) error {
 		subject, body := buildInputRestoredEmail(cfg.StationName, util.HumanTime(), data)
 		return sendEmailWithClient(ctx, graphCfg, client, subject, body)
 	})
 }
 
-// SendTestEmail validates Microsoft Graph credentials before sending a test email.
+// SendTestEmail validates the Microsoft Graph configuration and sends a test email.
 func SendTestEmail(cfg *GraphConfig, stationName string) error {
 	if err := ValidateConfig(cfg); err != nil {
 		return util.WrapError("validate configuration", err)
 	}
 
-	client, err := NewGraphClient(cfg)
+	client, err := newMailClient(cfg)
 	if err != nil {
 		return util.WrapError("create Graph client", err)
-	}
-
-	// Validate authentication first
-	if err := client.ValidateAuth(); err != nil {
-		return util.WrapError("authenticate", err)
 	}
 
 	subject := "[TEST] " + stationName
@@ -404,7 +400,10 @@ func SendTestEmail(cfg *GraphConfig, stationName string) error {
 	)
 
 	recipients := ParseRecipients(cfg.Recipients)
-	if err := client.SendMail(context.Background(), recipients, subject, body); err != nil {
+	if len(recipients) == 0 {
+		return util.WrapError("send email", errors.New("no recipients specified"))
+	}
+	if err := client.Send(context.Background(), &graphmail.Message{To: recipients, Subject: subject, Body: body}); err != nil {
 		return util.WrapError("send email", err)
 	}
 

@@ -34,9 +34,8 @@ var graphGUIDPattern = regexp.MustCompile(
 )
 
 // CredentialsIssues reports validation issues for tenant_id, client_id, and
-// client_secret. GUID format is not enforced (preserves the historical
-// behavior of validateCredentials(cfg, false), used by NewGraphClient and
-// TokenSourceContext, where Azure tenant domain names are accepted).
+// client_secret. GUID format is not enforced, so Azure tenant domain names
+// are accepted.
 func (c *GraphConfig) CredentialsIssues() validation.Issues {
 	var issues validation.Issues
 	if c.TenantID == "" {
@@ -52,8 +51,8 @@ func (c *GraphConfig) CredentialsIssues() validation.Issues {
 }
 
 // ClientIssues reports validation issues for the credentials plus from_address.
-// Matches the historical preflight in NewGraphClient: credentials required
-// (non-strict GUID) and from_address required.
+// The notify package checks these before it creates a mail client:
+// credentials required (non-strict GUID) and from_address required.
 func (c *GraphConfig) ClientIssues() validation.Issues {
 	issues := c.CredentialsIssues()
 	if c.FromAddress == "" {

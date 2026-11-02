@@ -10,9 +10,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.5
 	github.com/datarhei/gosrt v0.13.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/oszuidwest/zw-graphmail v0.0.1
 	golang.org/x/mod v0.42.0
 	golang.org/x/net v0.61.0
-	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sys v0.49.0
 )
 
@@ -30,6 +30,7 @@ require (
 	github.com/benburkert/openpgp v0.0.0-20160410205803-c2471f86866c // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20231108232855-2478ac86f678 // indirect
+	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260924152758-ed294f943157 // indirect
 	golang.org/x/tools v0.51.0 // indirect
