@@ -504,6 +504,60 @@ func TestGroupEventsSeparatesAudioIncidentsAfterDetectorReset(t *testing.T) {
 	}
 }
 
+func TestGroupEventsDoesNotMergeAudioIncidentLeftOpenByRestart(t *testing.T) {
+	t.Parallel()
+
+	// Incident IDs restart at 1 in every process. The first run stopped
+	// during silence, so its incident 1 never ended.
+	base := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
+	events := decorateNewestFirst(
+		testEvent(base, 600, SilenceEnd, map[string]any{"incident_id": 1, "duration_ms": 60000}),
+		testEvent(base, 540, SilenceStart, map[string]any{"incident_id": 1}),
+		testEvent(base, 0, SilenceStart, map[string]any{"incident_id": 1}),
+	)
+
+	groups := GroupEvents(events, nil)
+	if len(groups.Attention) != 0 || len(groups.Resolved) != 2 {
+		t.Fatalf("groups = %+v, want two separate ended incidents", groups)
+	}
+	secondStart := base.Add(540 * time.Second)
+	if got := groups.Resolved[0]; got.StatusText != "Resolved" || len(got.Events) != 2 ||
+		!got.Events[0].Timestamp.Equal(secondStart) || !slices.Contains(got.Chips, "1m") {
+		t.Fatalf("newest incident = %+v, want the second run's 1m silence", got)
+	}
+	if got := groups.Resolved[1]; got.StatusText != "Stopped" || len(got.Events) != 1 || !got.Events[0].Timestamp.Equal(base) {
+		t.Fatalf("oldest incident = %+v, want the first run's silence stopped", got)
+	}
+	assertPartition(t, events, &groups)
+}
+
+func TestGroupEventsKeepsLaterRunsDumpOffEarlierIncidents(t *testing.T) {
+	t.Parallel()
+
+	// Three runs each had a silence with incident ID 1. The second stopped
+	// during it, and the third run's silence_end was dropped but its dump
+	// was logged.
+	base := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
+	events := decorateNewestFirst(
+		testEvent(base, 600, AudioDumpReady, map[string]any{"trigger": "silence", "incident_id": 1, "duration_ms": 60000}),
+		testEvent(base, 540, SilenceStart, map[string]any{"incident_id": 1}),
+		testEvent(base, 0, SilenceStart, map[string]any{"incident_id": 1}),
+		testEvent(base, -590, SilenceEnd, map[string]any{"incident_id": 1, "duration_ms": 10000}),
+		testEvent(base, -600, SilenceStart, map[string]any{"incident_id": 1}),
+	)
+
+	groups := GroupEvents(events, nil)
+	if len(groups.Resolved) != 2 {
+		t.Fatalf("resolved = %+v, want the first run's and the stopped incident", groups.Resolved)
+	}
+	for _, item := range groups.Resolved {
+		if slices.Contains(item.Chips, "audio dump") {
+			t.Fatalf("%s incident = %+v, want no dump from a later run", item.StatusText, item)
+		}
+	}
+	assertPartition(t, events, &groups)
+}
+
 func TestGroupEventsHandlesZeroTimestamp(t *testing.T) {
 	t.Parallel()
 

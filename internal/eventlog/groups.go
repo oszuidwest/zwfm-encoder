@@ -226,8 +226,16 @@ func (s *groupingState) process(event groupedEvent) {
 	}
 
 	if open := s.openByKey[key]; open != nil && event.view.Reason == ReasonProblem {
-		open.add(event)
-		return
+		if key.incidentID == 0 {
+			open.add(event)
+			return
+		}
+		// A process logs one start per incident ID, and IDs restart at 1 in
+		// every process: this start comes from a later run, so the open
+		// incident ended when its process stopped.
+		open.stopped = true
+		s.closed = append(s.closed, open)
+		delete(s.openByKey, key)
 	}
 
 	if event.view.Type == AudioDumpReady {
@@ -336,6 +344,10 @@ func audioIncidentForDump(incidents []*historicalIncident, trigger string, incid
 	}
 	for _, incident := range slices.Backward(incidents) {
 		if incident.firstType == firstType && (incidentID == 0 || incident.incidentID == incidentID) {
+			// A restart stopped this incident, so the dump is from a later run.
+			if incident.stopped {
+				return nil
+			}
 			return incident
 		}
 	}
