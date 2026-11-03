@@ -126,8 +126,7 @@ func TestManagerStartWaitsForPreviousStop(t *testing.T) {
 	select {
 	case err := <-started:
 		release()
-		<-stopped
-		t.Fatalf("Start completed before previous Stop finished: %v", err)
+		t.Fatalf("Start completed before previous Stop finished: %v (Stop: %v)", err, <-stopped)
 	case <-time.After(30 * time.Millisecond):
 	}
 	release()

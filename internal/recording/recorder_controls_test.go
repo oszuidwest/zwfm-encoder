@@ -68,9 +68,8 @@ func TestBlockedFilenameCheckDoesNotBlockRecorderControls(t *testing.T) {
 						t.Fatal(err)
 					}
 				case <-time.After(3 * time.Second):
-					t.Errorf("%s waited for the blocked filename check", operation.name)
 					release()
-					<-result
+					t.Errorf("%s waited for the blocked filename check: %v", operation.name, <-result)
 				}
 			}
 			release()

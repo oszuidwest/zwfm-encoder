@@ -93,6 +93,14 @@ func TestStopWaitsOutCaptureForcedKill(t *testing.T) {
 	}
 }
 
+// waitNoError waits for an operation that must succeed.
+func waitNoError(t *testing.T, result <-chan error) {
+	t.Helper()
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRestartWaitsForAnAlreadyRunningStop(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e, opens := startDanteEncoder(t, slowTeardown(types.ShutdownTimeout+50*time.Millisecond))
@@ -102,7 +110,7 @@ func TestRestartWaitsForAnAlreadyRunningStop(t *testing.T) {
 		if err := e.Restart(); err != nil {
 			t.Fatalf("Restart during Stop: %v", err)
 		}
-		<-stopped
+		waitNoError(t, stopped)
 		synctest.Wait()
 		if e.State() != types.StateRunning || opens.Load() != 2 {
 			t.Fatalf("state=%s, opens=%d; want one replacement", e.State(), opens.Load())
@@ -136,14 +144,14 @@ func TestExplicitStopSupersedesRestartsWaitingForTeardown(t *testing.T) {
 		go func() { stopped <- e.Stop() }()
 		synctest.Wait()
 		select {
-		case <-stopped:
-			t.Fatal("Stop during a stop returned before the source finished its teardown")
+		case err := <-stopped:
+			t.Fatalf("Stop during a stop returned before the source finished its teardown: %v", err)
 		default:
 		}
 		close(release)
-		<-stopped
-		<-first
-		<-queued
+		waitNoError(t, stopped)
+		waitNoError(t, first)
+		waitNoError(t, queued)
 		synctest.Wait()
 		if e.State() != types.StateStopped || opens.Load() != 1 {
 			t.Fatalf("state=%s, opens=%d; explicit Stop must supersede both pending restarts", e.State(), opens.Load())
@@ -261,7 +269,7 @@ func TestSlowRestartIsReportedWhileItWaits(t *testing.T) {
 			t.Fatalf("last error while the restart waits = %q, want it to say so", got)
 		}
 		close(release)
-		<-done
+		waitNoError(t, done)
 	})
 }
 
@@ -478,8 +486,8 @@ func TestStallNoticeEndsWithTheRestart(t *testing.T) {
 		go func() { stopped <- e.Stop() }()
 		synctest.Wait() // Stop has invalidated the restart before teardown ends.
 		close(release)
-		<-done
-		<-stopped
+		waitNoError(t, done)
+		waitNoError(t, stopped)
 		synctest.Wait()
 		if got := e.Status().LastError; got != "" || opens.Load() != 1 {
 			t.Fatalf("after a superseded restart: last error %q, source opens %d; want none and 1", got, opens.Load())
