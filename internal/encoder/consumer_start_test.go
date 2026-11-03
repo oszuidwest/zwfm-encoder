@@ -84,8 +84,7 @@ func TestStopCancelsDelayedProductionConsumerStarts(t *testing.T) {
 				}
 			case <-time.After(types.ShutdownTimeout):
 				release()
-				<-stopped
-				t.Fatal("Stop waited for a delayed consumer operation instead of canceling it")
+				t.Fatalf("Stop waited for a delayed consumer operation instead of canceling it: %v", <-stopped)
 			}
 			select {
 			case <-canceled:
@@ -156,7 +155,9 @@ func TestStopCancelsSourceBeforeStoppingConsumers(t *testing.T) {
 	stopped := make(chan error, 1)
 	t.Cleanup(func() {
 		release()
-		<-stopped
+		if err := <-stopped; err != nil {
+			t.Error(err)
+		}
 		slog.SetDefault(previous)
 		log.SetOutput(previousOutput)
 		log.SetFlags(previousFlags)
