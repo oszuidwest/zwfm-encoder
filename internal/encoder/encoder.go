@@ -498,7 +498,7 @@ func (e *Encoder) start(expectedGeneration *uint64) error {
 
 // Stop shuts down all processes, recordings included.
 func (e *Encoder) Stop() error {
-	return errors.Join(e.stop(nil), e.syncRecording())
+	return e.stop(nil)
 }
 
 // syncRecording makes the recording manager follow recordingWanted, so
@@ -520,11 +520,18 @@ func (e *Encoder) syncRecording() error {
 	return e.recordingManager.Stop()
 }
 
-func (e *Encoder) stop(expectedGeneration *uint64) error {
+// stop ends the source and streams. An explicit Stop (nil expectedGeneration)
+// also ends recordings, alongside them: finalizing a recording does not wait
+// for the source or streams to go.
+func (e *Encoder) stop(expectedGeneration *uint64) (err error) {
 	e.mu.Lock()
 	if expectedGeneration == nil {
 		e.lifecycleGeneration++
 		e.operatorStopped, e.recordingWanted = true, false
+		// Started after the wish is set; it reads the wish once e.mu is released.
+		recordingsStopped := make(chan error, 1)
+		go func() { recordingsStopped <- e.syncRecording() }()
+		defer func() { err = errors.Join(err, <-recordingsStopped) }()
 	} else if e.lifecycleGeneration != *expectedGeneration {
 		e.mu.Unlock()
 		return nil

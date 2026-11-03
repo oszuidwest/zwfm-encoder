@@ -442,12 +442,16 @@ func (r *GenericRecorder) startSync(seg *segment) func() {
 // cancelled instead of taking stdinMu.
 func (r *GenericRecorder) finishEncoder(seg *segment, writeErr error) error {
 	if writeErr != nil {
-		seg.stopSync()
+		// A sync in progress must not delay the drain; the failed file is
+		// quarantined, so no further syncs are needed meanwhile.
+		var syncStopped sync.WaitGroup
+		syncStopped.Go(seg.stopSync)
 		// The failing write released stdinMu; CloseStdin cannot deadlock.
 		seg.result.CloseStdin()
 		if err := r.drainProcess(seg.result); err != nil {
 			writeErr = err
 		}
+		syncStopped.Wait()
 		return r.finishOutput(seg, writeErr)
 	}
 

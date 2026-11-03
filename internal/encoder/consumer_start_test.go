@@ -174,6 +174,50 @@ func TestStopCancelsSourceBeforeStoppingConsumers(t *testing.T) {
 	}
 }
 
+// Recordings finalize while the source tears down, not after it.
+func TestStopEndsRecordingsWhileSourceStops(t *testing.T) {
+	e := newSourceLifecycleTestEncoder(t, "exit")
+	t.Cleanup(e.alertOrchestrator.Close)
+	loopDone := make(chan struct{})
+	e.state, e.sourceRunID, e.sourceLoopDone = types.StateRunning, 1, loopDone
+	e.stopChan, e.sourceStdout = make(chan struct{}), strings.NewReader("")
+	if err := e.recordingManager.Start(); err != nil {
+		t.Fatal(err)
+	}
+	previous := slog.Default()
+	previousOutput, previousFlags := log.Writer(), log.Flags()
+	entered, blocked := make(chan struct{}), make(chan struct{})
+	release := sync.OnceFunc(func() { close(blocked) })
+	finishSource := sync.OnceFunc(func() { close(loopDone) })
+	slog.SetDefault(slog.New(&delayedStartLog{Handler: slog.NewTextHandler(io.Discard, nil), message: "recording manager stopped", entered: entered, blocked: blocked}))
+	var stopErr error
+	stopped := make(chan struct{})
+	t.Cleanup(func() {
+		finishSource()
+		release()
+		<-stopped
+		slog.SetDefault(previous)
+		log.SetOutput(previousOutput)
+		log.SetFlags(previousFlags)
+	})
+	go func() { stopErr = e.Stop(); close(stopped) }()
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("recordings waited for the source to stop")
+	}
+	finishSource()
+	release()
+	select {
+	case <-stopped:
+		if stopErr != nil {
+			t.Fatalf("Stop() = %v", stopErr)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Stop did not return after the source and recordings stopped")
+	}
+}
+
 type delayedStartLog struct {
 	slog.Handler
 	message          string
