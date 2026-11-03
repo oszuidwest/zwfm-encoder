@@ -628,7 +628,7 @@ func TestInvariantConfigApplies(t *testing.T) {
 		if err := m.UpdateRecorder(&updated); err != nil {
 			t.Fatal(err)
 		}
-		if !waitFor(stopBound, func() bool { return state(m, cfg.ID) == types.ProcessStopped }) {
+		if !waitFor(stopBound, func() bool { return state(m, cfg.ID) == types.ProcessDisabled }) {
 			t.Errorf("disabled hourly recorder is still %s", state(m, cfg.ID))
 		}
 	})

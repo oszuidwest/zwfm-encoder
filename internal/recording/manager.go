@@ -418,7 +418,11 @@ func (m *Manager) Statuses() map[string]types.ProcessStatus {
 
 	statuses := make(map[string]types.ProcessStatus, len(m.recorders))
 	for id, recorder := range m.recorders {
-		statuses[id] = recorder.Status()
+		status := recorder.Status()
+		if status.State == types.ProcessStopped && !recorder.Config().Enabled {
+			status.State = types.ProcessDisabled
+		}
+		statuses[id] = status
 	}
 	return statuses
 }

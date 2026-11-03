@@ -376,6 +376,29 @@ func TestStopJoinsTeardownOfDisabledRecorder(t *testing.T) {
 	}
 }
 
+// A disabled recorder reports stopping until its last file is finalized.
+func TestStatusesReportsDisabledOnceStopped(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		enabled     bool
+		state, want types.ProcessState
+	}{
+		{"disabled", false, types.ProcessStopped, types.ProcessDisabled},
+		{"disabled and finalizing", false, types.ProcessStopping, types.ProcessStopping},
+		{"enabled", true, types.ProcessStopped, types.ProcessStopped},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := localOnDemandRecorder(t, "rec")
+			cfg.Enabled = tc.enabled
+			m, r := newTestManager(t, cfg)
+			r.status.Store(&types.ProcessStatus{State: tc.state, Error: "kept"})
+			if got := m.Statuses()[cfg.ID]; got.State != tc.want || got.Error != "kept" {
+				t.Fatalf("status = %+v, want state %s and the error kept", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestUpdateTearsDownFailedRecorder(t *testing.T) {
 	for _, tc := range []struct {
 		name string
