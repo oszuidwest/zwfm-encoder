@@ -127,7 +127,7 @@ Configure notifications under Settings -> Notifications. Channels can be combine
 | Email (Microsoft Graph) | Same as webhook |
 | Zabbix (trapper items) | Same, except `audio_dump` |
 
-Recovery events are sent as soon as recovery is confirmed; the MP3 follows as a separate `audio_dump_ready` event. Input loss and restore, overdue uploads and low recording storage always go to every configured channel, regardless of the toggles (on Zabbix, input events need the silence key and the others the upload key). Every event is also written to the [event log](#event-log).
+Recovery events are sent as soon as recovery is confirmed; the MP3 follows as a separate `audio_dump_ready` event. Both use the destination, toggles and credentials from the start of the incident, so a settings change during an open incident applies from the next one. Input loss and restore, overdue uploads and low recording storage always go to every configured channel, regardless of the toggles (on Zabbix, input events need the silence key and the others the upload key). Every event is also written to the [event log](#event-log).
 
 ### Microsoft 365 Email Setup
 

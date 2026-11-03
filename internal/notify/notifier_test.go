@@ -1142,6 +1142,93 @@ func TestEndAndDumpNeverOvertakeSlowStart(t *testing.T) {
 	}
 }
 
+// A settings change during an incident moves the thresholds in the log and dump
+// data, but not where the incident's end and dump go.
+func TestIncidentEndAndDumpUseStartSnapshot(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		trigger    silencedump.Trigger
+		start, end func(*AlertOrchestrator)
+		endCfg     func(*testing.T, *testChannel) *config.Snapshot
+		threshold  float64
+	}{
+		{
+			name:    "silence",
+			trigger: silencedump.TriggerSilence,
+			start:   func(o *AlertOrchestrator) { o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true, IncidentID: 1}) },
+			end: func(o *AlertOrchestrator) {
+				o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, IncidentID: 1})
+			},
+			endCfg: func(t *testing.T, ch *testChannel) *config.Snapshot {
+				snap := awaitCall(t, ch.silenceEndCalled, "silence end")
+				if snap.SilenceThreshold != -30 {
+					t.Errorf("end threshold = %.1f, want the current -30", snap.SilenceThreshold)
+				}
+				return snap
+			},
+			threshold: -30,
+		},
+		{
+			name:    "imbalance",
+			trigger: silencedump.TriggerChannelImbalance,
+			start: func(o *AlertOrchestrator) {
+				o.HandleChannelImbalanceEvent(&audio.ImbalanceEvent{JustEntered: true, IncidentID: 1})
+			},
+			end: func(o *AlertOrchestrator) {
+				o.HandleChannelImbalanceEvent(&audio.ImbalanceEvent{JustRecovered: true, IncidentID: 1})
+			},
+			endCfg: func(t *testing.T, ch *testChannel) *config.Snapshot {
+				return awaitCall(t, ch.imbalanceEndCalled, "imbalance end").snap
+			},
+			threshold: 20,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			logPath := filepath.Join(t.TempDir(), "encoder.jsonl")
+			logger, err := eventlog.NewLogger(logPath)
+			if err != nil {
+				t.Fatalf("create logger: %v", err)
+			}
+			defer logger.Close() //nolint:errcheck // Test teardown.
+			ch := newTestChannel(true)
+			ch.configuredImbalance.Store(true)
+			ch.subscribesImbalanceEnd = true
+			cfg := config.New("")
+			cfg.Notifications.Webhook.URL = "http://start"
+			o := NewAlertOrchestrator(cfg, NewDispatcher(ch))
+			t.Cleanup(o.Close)
+			o.SetEventLogger(logger)
+
+			tc.start(o)
+			cfg.Notifications.Webhook.URL = "http://end"
+			cfg.SilenceDetection.ThresholdDB = -30
+			cfg.ChannelImbalanceDetection.ThresholdDB = 20
+			tc.end(o)
+			o.OnDumpReady(&silencedump.EncodeResult{Trigger: tc.trigger, IncidentID: 1})
+
+			if got := tc.endCfg(t, ch).WebhookURL; got != "http://start" {
+				t.Errorf("end sent to %q, want the start's http://start", got)
+			}
+			dump := awaitCall(t, ch.audioDumpCalled, "audio dump")
+			if dump.snap.WebhookURL != "http://start" {
+				t.Errorf("dump sent to %q, want the start's http://start", dump.snap.WebhookURL)
+			}
+			if dump.data.ThresholdDB != tc.threshold {
+				t.Errorf("dump threshold = %.1f, want the current %.1f", dump.data.ThresholdDB, tc.threshold)
+			}
+			o.DrainLogs()
+			events, _, err := eventlog.ReadLast(logPath, 10, 0, eventlog.FilterAudio)
+			if err != nil || len(events) != 3 {
+				t.Fatalf("read log: %d events, err %v; want dump, end and start", len(events), err)
+			}
+			assertDetailFloat(t, eventDetailsMap(t, events[0].Details), "threshold_db", tc.threshold)
+			assertDetailFloat(t, eventDetailsMap(t, events[1].Details), "threshold_db", tc.threshold)
+		})
+	}
+}
+
 // Silence alerts have their own queue, so they cannot evict a queued input restoration.
 func TestSilenceStartDoesNotWaitBehindSlowInputLost(t *testing.T) {
 	t.Parallel()
