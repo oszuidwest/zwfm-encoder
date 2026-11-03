@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -241,5 +242,34 @@ func TestRecorderIDCannotBeReaddedWhileItsRemovalStops(t *testing.T) {
 	}
 	if len(m.removing) != 0 {
 		t.Fatalf("finished removal still blocks its ID: %v", m.removing)
+	}
+}
+
+// After a failed write, a sync in progress does not hold up the FFmpeg drain.
+func TestFailedWriteDrainDoesNotWaitForSync(t *testing.T) {
+	cfg := localOnDemandRecorder(t, "failed-drain")
+	r := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, FFmpegPath: os.Args[0]})
+	seg, _, err := r.openSegment(&prepareJob{cfg: *cfg, at: time.Now(), dir: cfg.LocalPath, lock: new(sync.Mutex)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopSync := r.startSync(seg)
+	drained := false
+	seg.stopSync = func() {
+		exited := make(chan struct{})
+		go func() { _ = seg.result.Wait(); close(exited) }()
+		select {
+		case <-exited:
+			drained = true
+		case <-time.After(time.Second):
+		}
+		stopSync()
+	}
+	writeErr := errors.New("write failed")
+	if err := r.finishEncoder(seg, writeErr); !errors.Is(err, writeErr) {
+		t.Fatalf("finishEncoder() = %v, want %v", err, writeErr)
+	}
+	if !drained {
+		t.Fatal("FFmpeg drain waited for the sync to stop")
 	}
 }
