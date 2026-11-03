@@ -28,6 +28,7 @@ const (
 type mediaPacket struct {
 	position uint64
 	payload  []byte
+	arrived  time.Time
 }
 
 type mediaProcessor struct {
@@ -62,6 +63,7 @@ func (p *mediaProcessor) receive(datagram []byte, now time.Time) (bool, error) {
 	if _, duplicate := p.pending[packet.position]; duplicate {
 		return false, p.advance(now)
 	}
+	packet.arrived = now
 	p.pending[packet.position] = packet
 	return true, p.advance(now)
 }
@@ -102,9 +104,12 @@ func (p *mediaProcessor) advance(now time.Time) error {
 		p.gapStarted = time.Time{}
 		return nil
 	}
-	if p.gapStarted.IsZero() {
-		p.gapStarted = now
-		return nil
+	// Base the gap deadline on the oldest pending arrival.
+	p.gapStarted = now
+	for _, packet := range p.pending {
+		if packet.arrived.Before(p.gapStarted) {
+			p.gapStarted = packet.arrived
+		}
 	}
 	if now.Sub(p.gapStarted) < gapWait {
 		return nil

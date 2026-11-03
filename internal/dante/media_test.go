@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"slices"
 	"testing"
 	"time"
 )
@@ -156,6 +157,88 @@ func TestMediaGapTimerSurvivesForwardProgress(t *testing.T) {
 	want = append(want, sampleOutput(4)...)
 	if !bytes.Equal(output.Bytes(), want) {
 		t.Fatalf("output = %x, want %x", output.Bytes(), want)
+	}
+}
+
+func TestMediaGapTimerFollowsLongestWaitingPacket(t *testing.T) {
+	t.Parallel()
+	const packetFrames = 32
+	packet := func(index uint32, value byte) []byte {
+		return mediaDatagram(index*packetFrames, bytes.Repeat([]byte{value, 0, value, 0}, packetFrames))
+	}
+	type step struct {
+		at       time.Duration
+		datagram []byte // nil only advances the clock
+	}
+	var everySecondLost []step
+	for index := uint32(0); index < sampleRate/packetFrames; index += 2 {
+		at := time.Duration(index) * packetFrames * time.Second / sampleRate
+		everySecondLost = append(everySecondLost, step{at, packet(index, 1)})
+	}
+	var burstOutput []byte
+	for value := byte(1); value <= 5; value++ {
+		burstOutput = append(burstOutput, bytes.Repeat(sampleOutput(value), packetFrames)...)
+	}
+	silence := make([]byte, packetFrames*outputFrameSize)
+	oldestArrivalOutput := slices.Concat(
+		bytes.Repeat(sampleOutput(1), packetFrames), silence,
+		bytes.Repeat(sampleOutput(2), packetFrames), silence,
+		bytes.Repeat(sampleOutput(3), packetFrames),
+	)
+	tests := []struct {
+		name  string
+		steps []step
+		want  []byte // nil when only the bounds matter
+	}{
+		{
+			name: "burst keeps the reordered packet",
+			steps: []step{
+				{0, packet(0, 1)},
+				{100 * time.Microsecond, packet(2, 3)},
+				{3 * time.Millisecond, packet(4, 5)},
+				{3500 * time.Microsecond, packet(1, 2)},
+				{4200 * time.Microsecond, nil},
+				{4500 * time.Microsecond, packet(3, 4)},
+			},
+			want: burstOutput,
+		},
+		{
+			name: "oldest arrival decides, not the lowest position",
+			steps: []step{
+				{0, packet(0, 1)},
+				{time.Millisecond, packet(4, 3)},
+				{3 * time.Millisecond, packet(2, 2)},
+				{5 * time.Millisecond, nil},
+			},
+			want: oldestArrivalOutput,
+		},
+		{name: "sustained loss stays bounded", steps: everySecondLost},
+	}
+	const gapFrames = int(gapWait * sampleRate / time.Second)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			start := time.Now()
+			var output bytes.Buffer
+			processor := newMediaProcessor(16, &output)
+			for _, step := range test.steps {
+				now := start.Add(step.at)
+				if step.datagram == nil {
+					if err := processor.advance(now); err != nil {
+						t.Fatal(err)
+					}
+				} else if valid, err := processor.receive(step.datagram, now); err != nil || !valid {
+					t.Fatalf("receive at %v = (%t, %v), want (true, nil)", step.at, valid, err)
+				}
+				lag := int(step.at*sampleRate/time.Second) - output.Len()/outputFrameSize
+				if lag > gapFrames+packetFrames {
+					t.Fatalf("at %v the output lags %d frames", step.at, lag)
+				}
+			}
+			if test.want != nil && !bytes.Equal(output.Bytes(), test.want) {
+				t.Fatalf("output = %x, want %x", output.Bytes(), test.want)
+			}
+		})
 	}
 }
 
