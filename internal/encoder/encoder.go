@@ -767,9 +767,9 @@ func (e *Encoder) RestartStream(streamID string) {
 }
 
 // ApplySettingsEffects synchronizes runtime services with saved settings.
+// Detectors are not reset: they read their settings every metering window, and
+// a reset would open a second incident without ending the one in progress.
 func (e *Encoder) ApplySettingsEffects() {
-	e.UpdateSilenceConfig()
-	e.UpdateChannelImbalanceConfig()
 	e.UpdateSilenceDumpConfig()
 	e.UpdateRecordingMaxDuration()
 	e.InvalidateGraphSecretExpiryCache()
@@ -828,22 +828,6 @@ func (e *Encoder) InvalidateGraphSecretExpiryCache() {
 	if e.secretExpiryChecker != nil {
 		graphCfg := e.config.GraphConfig()
 		e.secretExpiryChecker.UpdateConfig(&graphCfg)
-	}
-}
-
-// UpdateSilenceConfig resets silence detection after config changes.
-func (e *Encoder) UpdateSilenceConfig() {
-	if e.silenceDetect != nil {
-		e.silenceDetect.Reset()
-	}
-}
-
-// UpdateChannelImbalanceConfig resets imbalance timing after detector settings change.
-// It also runs when the silence threshold changes because that threshold is the
-// presence floor.
-func (e *Encoder) UpdateChannelImbalanceConfig() {
-	if e.imbalanceDetect != nil {
-		e.imbalanceDetect.Reset()
 	}
 }
 

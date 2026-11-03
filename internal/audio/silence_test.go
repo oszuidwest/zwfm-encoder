@@ -85,3 +85,48 @@ func TestSilenceDetectorResetClearsState(t *testing.T) {
 		t.Fatalf("state leaked after Reset: %+v", e)
 	}
 }
+
+func TestSilenceDetectorThresholdChangeRestartsPendingEntry(t *testing.T) {
+	t.Parallel()
+	d := NewSilenceDetector()
+	cfg := testSilenceConfig()
+	stricter := cfg
+	stricter.Threshold = -50
+	base := time.Now()
+	d.Update(-45, -45, cfg, base) // Silent only under the old threshold.
+	d.Update(-55, -55, stricter, base.Add(14*time.Second))
+	if e := d.Update(-55, -55, stricter, base.Add(15*time.Second)); e.JustEntered {
+		t.Fatalf("entered after 1 s below the new threshold: %+v", e)
+	}
+}
+
+func TestSilenceDetectorThresholdChangeRestartsRecovery(t *testing.T) {
+	t.Parallel()
+	d := NewSilenceDetector()
+	cfg := testSilenceConfig()
+	looser := cfg
+	looser.Threshold = -50
+	base := time.Now()
+	d.Update(-60, -60, looser, base)
+	d.Update(-60, -60, looser, base.Add(15*time.Second)) // Enters confirmed silence.
+	d.Update(-45, -45, looser, base.Add(20*time.Second)) // Recovers only under the old threshold.
+	d.Update(-35, -35, cfg, base.Add(24*time.Second))
+	if e := d.Update(-35, -35, cfg, base.Add(25*time.Second)); e.JustRecovered {
+		t.Fatalf("recovered after 1 s above the new threshold: %+v", e)
+	}
+}
+
+func TestSilenceDetectorThresholdChangeKeepsConfirmedIncident(t *testing.T) {
+	t.Parallel()
+	d := NewSilenceDetector()
+	cfg := testSilenceConfig()
+	stricter := cfg
+	stricter.Threshold = -50
+	base := time.Now()
+	d.Update(-60, -60, cfg, base)
+	entered := d.Update(-60, -60, cfg, base.Add(15*time.Second))
+	e := d.Update(-60, -60, stricter, base.Add(16*time.Second))
+	if !e.InSilence || e.IncidentID != entered.IncidentID || e.DurationMs != 16000 {
+		t.Fatalf("threshold change replaced incident %d: %+v", entered.IncidentID, e)
+	}
+}

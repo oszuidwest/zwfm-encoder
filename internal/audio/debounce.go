@@ -86,6 +86,15 @@ func (d *debouncer) update(conditionActive bool, durationMs, recoveryMs int64, n
 	return r
 }
 
+// restartTimers drops entry and recovery time measured under an older
+// condition. A confirmed incident keeps its start and ID.
+func (d *debouncer) restartTimers() {
+	if !d.active {
+		d.start = time.Time{}
+	}
+	d.recoveryStart = time.Time{}
+}
+
 // reset clears detection state while preserving the incident sequence.
 func (d *debouncer) reset() {
 	d.start = time.Time{}

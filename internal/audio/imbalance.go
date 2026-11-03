@@ -36,8 +36,10 @@ type ImbalanceEvent struct {
 // ImbalanceDetector detects sustained L/R level differences.
 // It is safe for concurrent use.
 type ImbalanceDetector struct {
-	mu       sync.Mutex
-	debounce debouncer
+	mu        sync.Mutex
+	debounce  debouncer
+	threshold float64 // threshold of the previous update
+	floor     float64 // presence floor of the previous update
 }
 
 // NewImbalanceDetector creates a new channel imbalance detector.
@@ -50,6 +52,11 @@ func (d *ImbalanceDetector) Update(dbL, dbR float64, cfg ImbalanceConfig, now ti
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	// Time measured against another threshold or floor must not count toward these.
+	if cfg.ThresholdDB != d.threshold || cfg.PresenceFloorDB != d.floor {
+		d.debounce.restartTimers()
+		d.threshold, d.floor = cfg.ThresholdDB, cfg.PresenceFloorDB
+	}
 	balanceDB := dbL - dbR
 	imbalanceDB := math.Abs(balanceDB)
 	// Presence gate keeps double-silence in the silence detector's domain.
