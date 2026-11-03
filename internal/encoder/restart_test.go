@@ -287,6 +287,8 @@ func TestRestartsKeepRecordingsRunning(t *testing.T) {
 		if err := e.Restart(); err != nil {
 			t.Fatal(err)
 		}
+		// The replacement source reads the input as it opens; change it after.
+		synctest.Wait()
 		e.config.Audio.Input = ""
 		if err := e.Restart(); !errors.Is(err, ErrNoAudioInput) {
 			t.Fatalf("Restart without input = %v, want ErrNoAudioInput", err)
