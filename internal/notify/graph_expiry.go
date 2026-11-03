@@ -2,15 +2,11 @@ package notify
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
-	"net/http"
-	"net/url"
 	"sync"
 	"time"
 
+	"github.com/oszuidwest/zw-graphmail"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
 
@@ -19,6 +15,8 @@ const (
 	expiryWarningDays = 30
 	// expiryCacheTTL is how long to cache the expiry info before re-checking.
 	expiryCacheTTL = 1 * time.Hour
+	// expiryTimeout bounds one secret expiry lookup.
+	expiryTimeout = 30 * time.Second
 )
 
 // SecretExpiryChecker checks client secret expiration.
@@ -28,15 +26,11 @@ type SecretExpiryChecker struct {
 	cached     types.SecretExpiryInfo
 	lastCheck  time.Time
 	refreshing bool
-	httpClient *http.Client
 }
 
 // NewSecretExpiryChecker creates a new expiry checker for the given config.
 func NewSecretExpiryChecker(cfg *types.GraphConfig) *SecretExpiryChecker {
-	return &SecretExpiryChecker{
-		cfg:        cfg,
-		httpClient: &http.Client{Timeout: httpTimeout},
-	}
+	return &SecretExpiryChecker{cfg: cfg}
 }
 
 // Info returns the cached secret expiry information. When the cache is stale it
@@ -74,7 +68,7 @@ func (c *SecretExpiryChecker) refresh() {
 		info = types.SecretExpiryInfo{Error: "Graph API not configured"}
 	} else {
 		var err error
-		info, err = c.fetchExpiryInfo(cfg)
+		info, err = fetchExpiryInfo(cfg)
 		if err != nil {
 			info = types.SecretExpiryInfo{Error: err.Error()}
 		}
@@ -89,80 +83,27 @@ func (c *SecretExpiryChecker) refresh() {
 	c.mu.Unlock()
 }
 
-// applicationResponse represents an application response.
-type applicationResponse struct {
-	PasswordCredentials []passwordCredential `json:"passwordCredentials"`
-}
+// fetchExpiryInfo looks up when the configured client secret expires.
+func fetchExpiryInfo(cfg *types.GraphConfig) (types.SecretExpiryInfo, error) {
+	// The lookup needs no sender, so only the credentials are checked.
+	if err := formatGraphRuntimeError(cfg.CredentialsIssues()); err != nil {
+		return types.SecretExpiryInfo{}, err
+	}
+	client, err := graphmail.New(graphmail.Config{TenantID: cfg.TenantID, ClientID: cfg.ClientID, ClientSecret: cfg.ClientSecret})
+	if err != nil {
+		return types.SecretExpiryInfo{}, err
+	}
 
-type passwordCredential struct {
-	EndDateTime string `json:"endDateTime"`
-}
-
-// fetchExpiryInfo queries for credential expiry information.
-func (c *SecretExpiryChecker) fetchExpiryInfo(cfg *types.GraphConfig) (types.SecretExpiryInfo, error) {
 	ctx, cancel := context.WithTimeoutCause(
 		context.Background(),
-		httpTimeout,
+		expiryTimeout,
 		errors.New("graph API request timeout"),
 	)
 	defer cancel()
 
-	ts, err := TokenSourceContext(ctx, cfg)
+	earliest, err := client.SecretExpiry(ctx)
 	if err != nil {
-		return types.SecretExpiryInfo{}, fmt.Errorf("create token source: %w", err)
-	}
-
-	token, err := ts.Token()
-	if err != nil {
-		return types.SecretExpiryInfo{}, fmt.Errorf("acquire token: %w", err)
-	}
-
-	apiURL := fmt.Sprintf("%s/applications(appId='%s')", graphBaseURL, url.PathEscape(cfg.ClientID))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, http.NoBody)
-	if err != nil {
-		return types.SecretExpiryInfo{}, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
-
-	//nolint:gosec // G704: URL is constructed from constant Graph API base URL + config values
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return types.SecretExpiryInfo{}, fmt.Errorf("request failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		return types.SecretExpiryInfo{}, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	var appResp applicationResponse
-	if err := json.Unmarshal(body, &appResp); err != nil {
-		return types.SecretExpiryInfo{}, fmt.Errorf("parse response: %w", err)
-	}
-
-	// Find the earliest non-expired credential
-	now := time.Now()
-	var earliest time.Time
-	for _, cred := range appResp.PasswordCredentials {
-		if cred.EndDateTime == "" {
-			continue
-		}
-		expiry, err := time.Parse(time.RFC3339, cred.EndDateTime)
-		if err != nil {
-			continue
-		}
-		if expiry.Before(now) {
-			continue // Skip already-expired credentials
-		}
-		if earliest.IsZero() || expiry.Before(earliest) {
-			earliest = expiry
-		}
-	}
-
-	if earliest.IsZero() {
-		return types.SecretExpiryInfo{Error: "no valid (non-expired) credentials found"}, nil
+		return types.SecretExpiryInfo{}, err
 	}
 
 	daysLeft := max(int(time.Until(earliest).Hours()/24), 0)

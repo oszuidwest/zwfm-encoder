@@ -228,7 +228,7 @@ func TestConnectionTestsOutlastWriteTimeout(t *testing.T) {
 		{
 			path:      "/api/notifications/test/email",
 			body:      `{"graph_tenant_id":"` + graphID + `","graph_client_id":"` + graphID + `","graph_client_secret":"s","graph_from_address":"a@example.com","graph_recipients":"b@example.com"}`,
-			wantError: "authenticate",
+			wantError: "send email",
 		},
 		{
 			path:      "/api/notifications/test/zabbix",

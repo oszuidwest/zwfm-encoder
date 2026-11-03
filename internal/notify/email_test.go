@@ -1,11 +1,83 @@
 package notify
 
 import (
+	"bytes"
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/oszuidwest/zw-graphmail"
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 )
+
+type fakeMailer struct{ sent []*graphmail.Message }
+
+func (f *fakeMailer) Send(_ context.Context, m *graphmail.Message) error {
+	f.sent = append(f.sent, m)
+	return nil
+}
+
+func TestSendEmailWithClientBuildsMessage(t *testing.T) {
+	t.Parallel()
+	client := &fakeMailer{}
+	cfg := &GraphConfig{Recipients: "a@example.com, ,b@example.com"}
+	if err := sendEmailWithClient(context.Background(), cfg, client, "subject", "body"); err != nil {
+		t.Fatalf("sendEmailWithClient() error = %v", err)
+	}
+	if len(client.sent) != 1 {
+		t.Fatalf("sent %d messages, want 1", len(client.sent))
+	}
+	m := client.sent[0]
+	if strings.Join(m.To, ",") != "a@example.com,b@example.com" || m.Subject != "subject" || m.Body != "body" || m.HTML {
+		t.Fatalf("message = %+v", m)
+	}
+}
+
+func TestSendDumpReadyEmailAttachesRecording(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		data []byte
+		want int
+	}{
+		{name: "recording attached", data: []byte("mp3"), want: 1},
+		{name: "empty file skipped", data: nil, want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "dump.mp3")
+			if err := os.WriteFile(path, tt.data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			client := &fakeMailer{}
+			cfg := &GraphConfig{Recipients: "a@example.com, b@example.com"}
+			data := &AudioDumpData{Result: &silencedump.EncodeResult{FilePath: path, Filename: "dump.mp3"}}
+			if err := sendDumpReadyEmailWithClient(context.Background(), cfg, client, "Station", data); err != nil {
+				t.Fatalf("sendDumpReadyEmailWithClient() error = %v", err)
+			}
+			if len(client.sent) != 1 {
+				t.Fatalf("sent %d messages, want 1", len(client.sent))
+			}
+			m := client.sent[0]
+			if strings.Join(m.To, ",") != "a@example.com,b@example.com" || m.Subject != "[DUMP] Audio Recording - Station" ||
+				!strings.HasPrefix(m.Body, "Audio dump ready at") || m.HTML {
+				t.Fatalf("message = %+v", m)
+			}
+			if len(m.Attachments) != tt.want {
+				t.Fatalf("attachments = %d, want %d", len(m.Attachments), tt.want)
+			}
+			if tt.want == 1 {
+				a := m.Attachments[0]
+				if a.Name != "dump.mp3" || a.ContentType != "audio/mpeg" || !bytes.Equal(a.Data, tt.data) {
+					t.Fatalf("attachment = %+v", a)
+				}
+			}
+		})
+	}
+}
 
 func TestBuildChannelImbalanceEmails(t *testing.T) {
 	t.Parallel()

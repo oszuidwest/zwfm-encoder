@@ -53,7 +53,7 @@ func recordingStorageEmail(station string, paths []types.RecordingStorageStatus)
 func (c *EmailChannel) SendRecordingStorage(
 	ctx context.Context, cfg *config.Snapshot, paths []types.RecordingStorageStatus,
 ) error {
-	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client *GraphClient) error {
+	return c.sendEvent(cfg, func(graphCfg *GraphConfig, client mailer) error {
 		subject, body := recordingStorageEmail(cfg.StationName, paths)
 		return sendEmailWithClient(ctx, graphCfg, client, subject, body)
 	})
