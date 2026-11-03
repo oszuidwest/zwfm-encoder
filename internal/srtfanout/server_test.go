@@ -347,9 +347,9 @@ func dialSubscriberErr(addr, streamID string) (srt.Conn, error) {
 }
 func readSRT(t *testing.T, conn srt.Conn) string {
 	t.Helper()
-	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
-		t.Fatalf("SetReadDeadline() error = %v", err)
-	}
+	// gosrt ignores read deadlines; closing the conn ends a blocked Read with io.EOF.
+	timer := time.AfterFunc(2*time.Second, func() { _ = conn.Close() })
+	defer timer.Stop()
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
 	if err != nil {
