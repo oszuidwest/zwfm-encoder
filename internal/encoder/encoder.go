@@ -738,19 +738,26 @@ func (e *Encoder) StartStream(streamID string) error {
 }
 
 // RestartStream restarts a stream only if its current source run remains active.
+// While the input is being reopened it only stops the stream, so the old
+// process cannot outlive the edit; the next source run starts it again.
 func (e *Encoder) RestartStream(streamID string) {
 	e.mu.RLock()
-	running := e.state == types.StateRunning
-	runID := e.sourceRunID
-	stopChan := e.stopChan
+	active := e.state == types.StateRunning || e.state == types.StateStarting
 	e.mu.RUnlock()
-	if !running {
+	if !active {
 		return
 	}
 
 	if err := e.StopStream(streamID); err != nil {
 		slog.Warn("failed to stop stream for restart", "stream_id", streamID, "error", err)
 	}
+
+	// Bind the restart to the run after the stop: a run published before it
+	// skipped the stream while the old process still ran.
+	e.mu.RLock()
+	runID := e.sourceRunID
+	stopChan := e.stopChan
+	e.mu.RUnlock()
 
 	go func() {
 		timer := time.NewTimer(types.StreamRestartDelay)
