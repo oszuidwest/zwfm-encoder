@@ -4,6 +4,7 @@ package eventlog
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -95,6 +96,7 @@ const (
 type Event struct {
 	Timestamp time.Time `json:"ts"` // RFC3339
 	Type      EventType `json:"type"`
+	Run       string    `json:"run,omitempty"` // differs per process; absent in older logs
 	StreamID  string    `json:"stream_id,omitempty"`
 	Message   string    `json:"msg,omitempty"`
 	Details   any       `json:"details,omitempty"`
@@ -175,6 +177,7 @@ type Logger struct {
 	mu       sync.Mutex // serializes Log: timestamp fill, marshal, write, seq
 	filePath string
 	writer   *util.RollingWriter
+	run      string
 	seq      atomic.Uint64 // incremented on each written event; a change signal for live views
 }
 
@@ -225,6 +228,7 @@ func newLogger(filePath string, maxSizeBytes int64) (*Logger, error) {
 	return &Logger{
 		filePath: filePath,
 		writer:   writer,
+		run:      rand.Text()[:8],
 	}, nil
 }
 
@@ -270,6 +274,7 @@ func (l *Logger) Log(event *Event) error {
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now()
 	}
+	event.Run = l.run
 
 	data, err := json.Marshal(event)
 	if err != nil {

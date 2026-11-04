@@ -3,6 +3,7 @@ package eventlog
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -310,6 +311,7 @@ func FuzzGroupEvents(f *testing.F) {
 		for i, value := range data {
 			events = append(events, Event{
 				Timestamp: base.Add(time.Duration(i) * time.Nanosecond),
+				Run:       fmt.Sprintf("%d", value/64),
 				Type:      eventTypes[int(value)%len(eventTypes)],
 				StreamID:  fmt.Sprintf("stream-%d", value%3),
 				Details: map[string]any{
@@ -556,6 +558,57 @@ func TestGroupEventsKeepsLaterRunsDumpOffEarlierIncidents(t *testing.T) {
 		}
 	}
 	assertPartition(t, events, &groups)
+}
+
+func TestGroupEventsKeepsRunsApart(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		firstRun   []EventType
+		laterRun   EventType
+		wantStatus string
+		wantEvents int
+	}{
+		{"later end whose start was dropped", []EventType{SilenceStart}, SilenceEnd, "Stopped", 1},
+		{"later dump after a resolved incident", []EventType{SilenceStart, SilenceEnd}, AudioDumpReady, "Resolved", 2},
+		{"any later event ends a crash-left incident", []EventType{SilenceStart}, StreamStarted, "Stopped", 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "encoder.jsonl")
+			logRun := func(types ...EventType) {
+				logger, err := NewLogger(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer logger.Close() //nolint:errcheck // Test teardown.
+				for _, eventType := range types {
+					details := map[string]any{"incident_id": 1, "trigger": "silence"}
+					if err := logger.Log(&Event{Type: eventType, Details: details}); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			logRun(tt.firstRun...)
+			logRun(tt.laterRun)
+
+			read, _, err := ReadLast(path, 10, 0, FilterAll)
+			if err != nil {
+				t.Fatal(err)
+			}
+			events := DecorateEvents(read)
+			groups := GroupEvents(events, nil)
+			if len(groups.Attention) != 0 || len(groups.Resolved) != 1 {
+				t.Fatalf("groups = %+v, want one ended incident", groups)
+			}
+			if got := groups.Resolved[0]; got.StatusText != tt.wantStatus || len(got.Events) != tt.wantEvents {
+				t.Fatalf("incident = %+v, want %s with %d events", got, tt.wantStatus, tt.wantEvents)
+			}
+			assertPartition(t, events, &groups)
+		})
+	}
 }
 
 func TestGroupEventsHandlesZeroTimestamp(t *testing.T) {
@@ -840,7 +893,8 @@ func TestGroupEventsInputLossOngoingThenResolved(t *testing.T) {
 		"error": "audio open error: No such device",
 	})
 
-	ongoing := decorateNewestFirst(lost)
+	lost.Run = "before"
+	ongoing := decorateNewestFirst(Event{Type: StreamStarted, Run: "after"}, lost)
 	groups := GroupEvents(ongoing, nil)
 	if len(groups.Attention) != 1 {
 		t.Fatalf("attention len = %d, want 1", len(groups.Attention))
