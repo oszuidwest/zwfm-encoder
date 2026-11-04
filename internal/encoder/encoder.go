@@ -774,7 +774,9 @@ func (e *Encoder) RestartStream(streamID string) {
 		case <-stopChan:
 			return
 		}
-		if err := e.startStream(streamID, runID); err != nil && !errors.Is(err, ErrNotRunning) {
+		err := e.startStream(streamID, runID)
+		// A save that disables a stream comes through here too.
+		if err != nil && !errors.Is(err, ErrNotRunning) && !errors.Is(err, ErrStreamDisabled) {
 			slog.Warn("failed to restart stream", "stream_id", streamID, "error", err)
 		}
 	}()
