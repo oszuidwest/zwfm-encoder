@@ -313,6 +313,9 @@ func audioFiles(t *testing.T, dir string) []string {
 			return err
 		}
 		data, err := os.ReadFile(path) //nolint:gosec // Test temp dir.
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil // The uploader removed it after the walk listed it.
+		}
 		files = append(files, string(data))
 		return err
 	})
