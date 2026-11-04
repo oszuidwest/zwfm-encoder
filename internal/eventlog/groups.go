@@ -219,7 +219,7 @@ func (s *groupingState) process(event groupedEvent) {
 
 	if open := s.openByKey[key]; open != nil && eventClosesIncident(open, event) {
 		open.add(event)
-		open.stopped = event.view.Type == StreamStopped
+		open.stopped = event.view.Type == StreamStopped || isStoppedEnd(event.details)
 		s.closed = append(s.closed, open)
 		delete(s.openByKey, key)
 		return
@@ -276,6 +276,10 @@ func eventClosesIncident(open *historicalIncident, event groupedEvent) bool {
 	}
 	// Listener starts resolve incidents even without a StreamStable event.
 	return event.view.Type == StreamStarted && isListenerStreamEvent(event)
+}
+
+func isStoppedEnd(details map[string]any) bool {
+	return detailString(details, "reason") == endReasonStopped
 }
 
 // isRemovedStreamIncident reports whether incident belongs to a stream ID that
@@ -358,7 +362,8 @@ func incidentItem(incident *historicalIncident, status string) EventGroupItem {
 	events := groupedEventViews(incident.events)
 	display := incidentDisplayEvent(incident, status)
 	duration := incident.durationMs
-	if duration == 0 {
+	// A stopped audio incident has no measured duration: its start is logged after confirmation.
+	if duration == 0 && (status != "stopped" || incident.first.view.Category != CategoryAudio) {
 		duration = max(0, incident.endTs-incident.startTs)
 	}
 
@@ -622,13 +627,16 @@ func activityTitle(event groupedEvent) string {
 	case RecorderStopped:
 		return "Recorder stopped"
 	default:
-		return eventLabel(event.view.Type)
+		return event.view.Label
 	}
 }
 
 func activityStatusText(event groupedEvent) string {
 	if isListenerStreamStart(event) {
 		return "Listening"
+	}
+	if isStoppedEnd(event.details) {
+		return "Stopped"
 	}
 	switch event.view.Type {
 	case StreamStarted:

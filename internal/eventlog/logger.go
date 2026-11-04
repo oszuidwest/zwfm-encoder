@@ -118,6 +118,9 @@ type SilenceDetails struct {
 	DurationMs   int64   `json:"duration_ms,omitempty"`
 }
 
+// endReasonStopped marks an audio incident end written because capture stopped.
+const endReasonStopped = "stopped"
+
 // AudioDumpDetails holds the incident measurements and encoded dump metadata.
 type AudioDumpDetails struct {
 	Trigger       string   `json:"trigger"`
@@ -352,6 +355,12 @@ func (l *Logger) LogChannelImbalanceEnd(t time.Time, details *ImbalanceDetails) 
 		Type:      ChannelImbalanceEnd,
 		Details:   details,
 	})
+}
+
+// LogIncidentStopped records an audio incident end caused by a stop; nothing recovered, so no levels or duration.
+func (l *Logger) LogIncidentStopped(t time.Time, end EventType, incidentID uint32) error {
+	details := map[string]any{"incident_id": incidentID, "reason": endReasonStopped}
+	return l.Log(&Event{Timestamp: t, Type: end, Details: details})
 }
 
 // LogInputLost records when audio capture from the configured input stops.
