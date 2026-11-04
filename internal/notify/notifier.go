@@ -50,8 +50,10 @@ type AlertOrchestrator struct {
 	logMu       sync.RWMutex
 	logQueue    chan logJob   // serialized log writes; single worker guarantees JSONL write order
 	inputQueues []chan func() // per-channel input alert deliveries, index-aligned with dispatcher.Channels()
-	// silenceQueues keep each channel's silence start and end in order.
+	// silenceQueues keep each channel's silence start, end and dump in order.
 	silenceQueues []chan func()
+	// imbalanceQueues keep each channel's imbalance start, end and dump in order.
+	imbalanceQueues []chan func()
 	// storageQueues hold each channel's newest storage state, so input alerts
 	// cannot evict a storage transition that is only sent once.
 	storageQueues []chan func()
@@ -89,15 +91,17 @@ func NewAlertOrchestrator(cfg *config.Config, dispatcher *Dispatcher) *AlertOrch
 	// One FIFO worker per channel delivers input alerts in the order they were
 	// raised, so a restoration never lands before its loss and an old
 	// restoration never lands after a newer loss and clears a live outage.
-	// Silence alerts get their own worker for the same reason.
+	// Silence and imbalance alerts each get their own worker for the same reason,
+	// so a blocked delivery for one does not stall the other.
 	for range dispatcher.Channels() {
 		input, storage, upload := make(chan func(), inputQueueDepth), make(chan func(), 1), make(chan func(), 1)
-		silence := make(chan func(), inputQueueDepth)
+		silence, imbalance := make(chan func(), inputQueueDepth), make(chan func(), inputQueueDepth)
 		o.inputQueues = append(o.inputQueues, input)
 		o.silenceQueues = append(o.silenceQueues, silence)
+		o.imbalanceQueues = append(o.imbalanceQueues, imbalance)
 		o.storageQueues = append(o.storageQueues, storage)
 		o.uploadQueues = append(o.uploadQueues, upload)
-		for _, queue := range []chan func(){input, storage, upload, silence} {
+		for _, queue := range []chan func(){input, storage, upload, silence, imbalance} {
 			go func() {
 				for deliver := range queue {
 					deliver()
@@ -206,7 +210,7 @@ func (o *AlertOrchestrator) handleSilenceEnd(
 	o.enqueueLog("silence_end", func() { o.logSilenceEnd(now, &cfg, incidentID, durationMS, levelL, levelR) })
 }
 
-// subscribedActive limits ordered silence delivery to the incident's channel set.
+// subscribedActive limits ordered incident delivery to the incident's channel set.
 func subscribedActive(
 	active []AlertChannel, subscribes func(AlertChannel, *config.Snapshot) bool,
 ) func(AlertChannel, *config.Snapshot) bool {
@@ -248,7 +252,6 @@ func (o *AlertOrchestrator) handleChannelImbalanceStart(
 		o.imbalanceActiveChannels = active
 	}
 	active := o.imbalanceActiveChannels
-	ctx := o.notifyCtx
 	o.mu.Unlock()
 
 	data := ChannelImbalanceData{
@@ -259,7 +262,11 @@ func (o *AlertOrchestrator) handleChannelImbalanceStart(
 		ThresholdDB: cfg.ChannelImbalanceThreshold,
 	}
 	now := time.Now()
-	o.dispatcher.DispatchChannelImbalanceStart(ctx, active, cfg, data)
+	o.enqueueOrdered(o.imbalanceQueues, cfg, "channel_imbalance_start",
+		subscribedActive(active, AlertChannel.SubscribesChannelImbalanceStart),
+		func(ch AlertChannel, ctx context.Context, cfg *config.Snapshot) error {
+			return ch.SendChannelImbalanceStart(ctx, cfg, data)
+		})
 	o.enqueueLog("channel_imbalance_start", func() {
 		o.logChannelImbalanceStart(now, &cfg, incidentID, levelL, levelR, balanceDB, imbalanceDB)
 	})
@@ -289,7 +296,6 @@ func (o *AlertOrchestrator) handleChannelImbalanceEnd(
 		activeChannels: active,
 		recoveredAt:    now,
 	})
-	ctx := o.notifyCtx
 	o.mu.Unlock()
 
 	data := ChannelImbalanceData{
@@ -300,7 +306,11 @@ func (o *AlertOrchestrator) handleChannelImbalanceEnd(
 		ThresholdDB: cfg.ChannelImbalanceThreshold,
 		DurationMs:  durationMS,
 	}
-	o.dispatcher.DispatchChannelImbalanceEnd(ctx, active, cfg, data)
+	o.enqueueOrdered(o.imbalanceQueues, cfg, "channel_imbalance_end",
+		subscribedActive(active, AlertChannel.SubscribesChannelImbalanceEnd),
+		func(ch AlertChannel, ctx context.Context, cfg *config.Snapshot) error {
+			return ch.SendChannelImbalanceEnd(ctx, cfg, data)
+		})
 	o.enqueueLog("channel_imbalance_end", func() {
 		o.logChannelImbalanceEnd(now, &cfg, incidentID, durationMS, levelL, levelR, balanceDB, imbalanceDB)
 	})
@@ -329,7 +339,6 @@ func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
 	o.mu.Lock()
 	pending := o.pendingRecoveries[key]
 	delete(o.pendingRecoveries, key)
-	ctx := o.notifyCtx
 	o.mu.Unlock()
 
 	if pending == nil || now.Sub(pending.recoveredAt) > pendingRecoveryTTL {
@@ -339,7 +348,15 @@ func (o *AlertOrchestrator) OnDumpReady(result *silencedump.EncodeResult) {
 	}
 
 	pending.dumpData.Result = result
-	o.dispatcher.DispatchAudioDump(ctx, pending.activeChannels, pending.cfg, pending.dumpData)
+	queues := o.silenceQueues
+	if key.trigger == silencedump.TriggerChannelImbalance {
+		queues = o.imbalanceQueues
+	}
+	o.enqueueOrdered(queues, pending.cfg, "audio_dump_ready",
+		subscribedActive(pending.activeChannels, AlertChannel.SubscribesAudioDump),
+		func(ch AlertChannel, ctx context.Context, cfg *config.Snapshot) error {
+			return ch.SendAudioDump(ctx, cfg, &pending.dumpData)
+		})
 	o.enqueueLog("audio_dump_ready", func() {
 		o.logAudioDumpReady(now, &pending.dumpData)
 	})
@@ -491,7 +508,7 @@ func (o *AlertOrchestrator) Close() {
 		o.logMu.Lock()
 		o.closed = true
 		queue := o.logQueue
-		for _, queue := range slices.Concat(o.inputQueues, o.storageQueues, o.uploadQueues, o.silenceQueues) {
+		for _, queue := range slices.Concat(o.inputQueues, o.storageQueues, o.uploadQueues, o.silenceQueues, o.imbalanceQueues) {
 			close(queue)
 		}
 		o.logMu.Unlock()

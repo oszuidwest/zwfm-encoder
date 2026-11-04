@@ -127,7 +127,7 @@ type silenceEventData struct {
 	DurationMs int64   // ms; zero for silence-start events
 }
 
-// Dispatcher routes alert events to alert channels.
+// Dispatcher holds the alert channels that alert events are delivered to.
 type Dispatcher struct {
 	channels []AlertChannel
 }
@@ -140,60 +140,4 @@ func NewDispatcher(channels ...AlertChannel) *Dispatcher {
 // Channels returns the full channel list.
 func (d *Dispatcher) Channels() []AlertChannel {
 	return d.channels
-}
-
-// dispatch sends to subscribed channels in separate goroutines. Each receives a
-// shallow Snapshot copy; channels must not mutate its shared slice contents.
-//
-//nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
-func dispatch(
-	list []AlertChannel, cfg config.Snapshot, kind string,
-	subscribes func(AlertChannel, *config.Snapshot) bool,
-	send func(ch AlertChannel, cfg *config.Snapshot) error,
-) {
-	for _, ch := range list {
-		if !subscribes(ch, &cfg) {
-			continue
-		}
-		go func(ch AlertChannel, cfg config.Snapshot) {
-			logNotifyResult(func() error { return send(ch, &cfg) }, ch.Name(), kind)
-		}(ch, cfg)
-	}
-}
-
-// DispatchChannelImbalanceStart sends imbalance-start notifications to subscribed channels.
-//
-//nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
-func (d *Dispatcher) DispatchChannelImbalanceStart(
-	ctx context.Context, active []AlertChannel, cfg config.Snapshot, data ChannelImbalanceData,
-) {
-	dispatch(active, cfg, "channel_imbalance_start", AlertChannel.SubscribesChannelImbalanceStart,
-		func(ch AlertChannel, cfg *config.Snapshot) error {
-			return ch.SendChannelImbalanceStart(ctx, cfg, data)
-		})
-}
-
-// DispatchChannelImbalanceEnd sends imbalance-end notifications to the active channel subset.
-//
-//nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
-func (d *Dispatcher) DispatchChannelImbalanceEnd(
-	ctx context.Context, active []AlertChannel, cfg config.Snapshot, data ChannelImbalanceData,
-) {
-	dispatch(active, cfg, "channel_imbalance_end", AlertChannel.SubscribesChannelImbalanceEnd,
-		func(ch AlertChannel, cfg *config.Snapshot) error {
-			return ch.SendChannelImbalanceEnd(ctx, cfg, data)
-		})
-}
-
-// DispatchAudioDump sends audio-dump notifications to the active channel subset.
-//
-//nolint:gocritic // hugeParam: intentional; Snapshot is a value type and each goroutine receives its own copy
-func (d *Dispatcher) DispatchAudioDump(
-	ctx context.Context, active []AlertChannel, cfg config.Snapshot, data AudioDumpData,
-) {
-	dispatch(active, cfg, "audio_dump_ready", AlertChannel.SubscribesAudioDump,
-		func(ch AlertChannel, cfg *config.Snapshot) error {
-			data := data // Give each channel its own struct value.
-			return ch.SendAudioDump(ctx, cfg, &data)
-		})
 }

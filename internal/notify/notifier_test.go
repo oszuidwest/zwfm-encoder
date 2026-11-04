@@ -1058,6 +1058,90 @@ func TestSilenceEndNeverOvertakesSlowSilenceStart(t *testing.T) {
 	}
 }
 
+// gatedIncidentChannel adds imbalance alerts and dumps to gatedSilenceChannel.
+type gatedIncidentChannel struct {
+	gatedSilenceChannel
+	subscribesEnd bool
+}
+
+func (c *gatedIncidentChannel) IsConfiguredForImbalance(_ *config.Snapshot) bool        { return true }
+func (c *gatedIncidentChannel) SubscribesChannelImbalanceStart(_ *config.Snapshot) bool { return true }
+func (c *gatedIncidentChannel) SubscribesAudioDump(_ *config.Snapshot) bool             { return true }
+func (c *gatedIncidentChannel) SubscribesSilenceEnd(_ *config.Snapshot) bool            { return c.subscribesEnd }
+func (c *gatedIncidentChannel) SubscribesChannelImbalanceEnd(_ *config.Snapshot) bool {
+	return c.subscribesEnd
+}
+func (c *gatedIncidentChannel) SendChannelImbalanceStart(
+	_ context.Context, _ *config.Snapshot, _ ChannelImbalanceData,
+) error {
+	c.calls <- "start"
+	<-c.release
+	return nil
+}
+func (c *gatedIncidentChannel) SendChannelImbalanceEnd(
+	_ context.Context, _ *config.Snapshot, _ ChannelImbalanceData,
+) error {
+	c.calls <- "end"
+	return nil
+}
+func (c *gatedIncidentChannel) SendAudioDump(_ context.Context, _ *config.Snapshot, _ *AudioDumpData) error {
+	c.calls <- "dump"
+	return nil
+}
+
+// A slow start holds back its own end and dump, but not the other incident type.
+func TestEndAndDumpNeverOvertakeSlowStart(t *testing.T) {
+	t.Parallel()
+	silenceStart := func(o *AlertOrchestrator) {
+		o.HandleSilenceEvent(audio.SilenceEvent{JustEntered: true, IncidentID: 1})
+	}
+	silenceEnd := func(o *AlertOrchestrator) {
+		o.HandleSilenceEvent(audio.SilenceEvent{JustRecovered: true, IncidentID: 1})
+	}
+	imbalanceStart := func(o *AlertOrchestrator) {
+		o.HandleChannelImbalanceEvent(&audio.ImbalanceEvent{JustEntered: true, IncidentID: 1})
+	}
+	imbalanceEnd := func(o *AlertOrchestrator) {
+		o.HandleChannelImbalanceEvent(&audio.ImbalanceEvent{JustRecovered: true, IncidentID: 1})
+	}
+	for _, tc := range []struct {
+		name              string
+		trigger           silencedump.Trigger
+		start, end, other func(*AlertOrchestrator)
+		want              []string
+	}{
+		{"silence", silencedump.TriggerSilence, silenceStart, silenceEnd, imbalanceStart, []string{"end", "dump"}},
+		{"imbalance", silencedump.TriggerChannelImbalance, imbalanceStart, imbalanceEnd, silenceStart, []string{"end", "dump"}},
+		{"silence dump only", silencedump.TriggerSilence, silenceStart, silenceEnd, imbalanceStart, []string{"dump"}},
+		{"imbalance dump only", silencedump.TriggerChannelImbalance, imbalanceStart, imbalanceEnd, silenceStart, []string{"dump"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ch := &gatedIncidentChannel{subscribesEnd: tc.want[0] == "end"}
+			ch.calls, ch.release = make(chan string, 4), make(chan struct{})
+			o := NewAlertOrchestrator(config.New(""), NewDispatcher(ch))
+			t.Cleanup(o.Close)
+
+			tc.start(o)
+			awaitCall(t, ch.calls, "slow start")
+			tc.end(o)
+			o.OnDumpReady(&silencedump.EncodeResult{Trigger: tc.trigger, IncidentID: 1})
+			assertNoCall(t, ch.calls, "end or dump while the start is in flight")
+			tc.other(o)
+			if got := awaitCall(t, ch.calls, "start of the other incident type"); got != "start" {
+				t.Fatalf("delivery = %q, want start", got)
+			}
+
+			close(ch.release)
+			for _, want := range tc.want {
+				if got := awaitCall(t, ch.calls, want); got != want {
+					t.Fatalf("delivery = %q, want %q", got, want)
+				}
+			}
+		})
+	}
+}
+
 // Silence alerts have their own queue, so they cannot evict a queued input restoration.
 func TestSilenceStartDoesNotWaitBehindSlowInputLost(t *testing.T) {
 	t.Parallel()
