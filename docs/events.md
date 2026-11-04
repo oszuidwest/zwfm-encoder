@@ -254,7 +254,7 @@ are returned by the `audio` type filter.
 }
 ```
 
-When capture stops during a silence (an audio input change, a stop from the tray, or a shutdown), the encoder writes a `silence_end` with the marker `"reason": "stopped"`. The audio did not recover, so this event has only `incident_id` and `reason`. It has no levels, threshold or duration, so a consumer of the log must not expect those fields. It is shown with the label `Stopped`, severity `info` and reason `lifecycle`. No alert is sent for it. If the silence continues, a later `silence_start` opens a new incident with a new ID.
+When the encoder stops capture during a silence (an audio input change, a stop from the tray, or a shutdown), it writes a `silence_end` with the marker `"reason": "stopped"`. The audio did not recover, so this event has only `incident_id` and `reason`. It has no levels, threshold or duration, so a consumer of the log must not expect those fields. It is shown with the label `Stopped`, severity `info` and reason `lifecycle`. No alert is sent for it. If the silence continues, a later `silence_start` opens a new incident. IDs differ within a process and can repeat after a restart. A source failure that the encoder retries does not end an open incident. A full log queue can drop this event.
 
 ```json
 {
@@ -395,7 +395,7 @@ and recovery settings.
 }
 ```
 
-When capture stops during an imbalance, the encoder writes a `channel_imbalance_end` with only `incident_id` and `"reason": "stopped"`, in the same way and with the same display as a stopped `silence_end`.
+When the encoder stops capture during an imbalance, it writes a `channel_imbalance_end` with only `incident_id` and `"reason": "stopped"`, in the same way and with the same display as a stopped `silence_end`.
 
 ---
 

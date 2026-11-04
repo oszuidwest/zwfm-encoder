@@ -443,7 +443,13 @@ func TestResetLogsStoppedEndForOpenIncident(t *testing.T) {
 
 			o.Reset() // Nothing open.
 			tc.start(o, 1)
+			blocked, release := make(chan struct{}), make(chan struct{})
+			o.enqueueLog("block", func() { close(blocked); <-release })
+			<-blocked
+			resetStarted := time.Now()
 			o.Reset()
+			resetReturned := time.Now()
+			close(release)
 			o.Reset() // Stop then Start.
 			tc.start(o, 2)
 			tc.end(o, 2)
@@ -459,6 +465,9 @@ func TestResetLogsStoppedEndForOpenIncident(t *testing.T) {
 			}
 			if events[2].Type != tc.endType {
 				t.Fatalf("logged events = %+v, want a stopped end of type %s", events, tc.endType)
+			}
+			if ts := events[2].Timestamp; ts.Before(resetStarted) || ts.After(resetReturned) {
+				t.Fatalf("stopped timestamp = %v, want within Reset [%v, %v]", ts, resetStarted, resetReturned)
 			}
 			want := map[string]any{"incident_id": float64(1), "reason": "stopped"}
 			if got := eventDetailsMap(t, events[2].Details); !maps.Equal(got, want) {

@@ -358,9 +358,9 @@ func (l *Logger) LogChannelImbalanceEnd(t time.Time, details *ImbalanceDetails) 
 }
 
 // LogIncidentStopped records an audio incident end caused by a stop; nothing recovered, so no levels or duration.
-func (l *Logger) LogIncidentStopped(end EventType, incidentID uint32) error {
+func (l *Logger) LogIncidentStopped(t time.Time, end EventType, incidentID uint32) error {
 	details := map[string]any{"incident_id": incidentID, "reason": endReasonStopped}
-	return l.Log(&Event{Type: end, Details: details})
+	return l.Log(&Event{Timestamp: t, Type: end, Details: details})
 }
 
 // LogInputLost records when audio capture from the configured input stops.

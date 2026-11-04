@@ -482,6 +482,7 @@ func enqueueInputAlert(queue chan func(), deliver func(), channel, eventType str
 // a still-pending silence_start delivery. The notify context is cancelled only on Close.
 // An incident still open ends as stopped in the event log; receivers get no alert for it.
 func (o *AlertOrchestrator) Reset() {
+	now := time.Now()
 	o.mu.Lock()
 	silence, imbalance := o.silenceIncident, o.imbalanceIncident
 	o.silenceIncident, o.imbalanceIncident = 0, 0
@@ -492,17 +493,17 @@ func (o *AlertOrchestrator) Reset() {
 	clear(o.pendingRecoveries)
 	o.mu.Unlock()
 
-	o.logIncidentStopped(eventlog.SilenceEnd, silence)
-	o.logIncidentStopped(eventlog.ChannelImbalanceEnd, imbalance)
+	o.logIncidentStopped(now, eventlog.SilenceEnd, silence)
+	o.logIncidentStopped(now, eventlog.ChannelImbalanceEnd, imbalance)
 }
 
 // logIncidentStopped queues the end of an incident left open by a stop; ID 0 means none is open.
-func (o *AlertOrchestrator) logIncidentStopped(end eventlog.EventType, incidentID audio.IncidentID) {
+func (o *AlertOrchestrator) logIncidentStopped(t time.Time, end eventlog.EventType, incidentID audio.IncidentID) {
 	if incidentID == 0 {
 		return
 	}
 	o.enqueueLog(string(end), func() {
-		if err := o.eventLogger.LogIncidentStopped(end, uint32(incidentID)); err != nil {
+		if err := o.eventLogger.LogIncidentStopped(t, end, uint32(incidentID)); err != nil {
 			slog.Warn("failed to log stopped incident", "event_type", end, "error", err)
 		}
 	})
