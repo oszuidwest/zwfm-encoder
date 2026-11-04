@@ -87,9 +87,10 @@ func TestListenerPipeFanoutLateSubscriberReceivesMPEGTSBytes(t *testing.T) {
 				pcm := make([]byte, audio.BytesPerSecond/10)
 				ticker := time.NewTicker(100 * time.Millisecond)
 				defer ticker.Stop()
-				// Feed until cleanup closes stdin: FFmpeg 7.1 and 8.0 probe about
-				// 4.3 s of PCM input before they write any output.
-				for range ticker.C {
+				// Less than the 4.3 s that FFmpeg 7.1 and 8.0 read by default before
+				// they write any output. Stdin stays open until cleanup.
+				for range 20 {
+					<-ticker.C
 					if _, err := result.WriteStdin(pcm); err != nil {
 						return
 					}

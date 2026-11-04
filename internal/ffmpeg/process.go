@@ -45,6 +45,7 @@ func BaseInputArgs() []string {
 		"-f", "s16le",
 		"-ar", strconv.Itoa(audio.SampleRate),
 		"-ac", strconv.Itoa(audio.Channels),
+		"-probesize", "32", // The options above describe the input, so skip FFmpeg's wait for more of it.
 		"-i", "pipe:0",
 	}
 }
