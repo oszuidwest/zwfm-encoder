@@ -22,6 +22,7 @@ All events share this base structure:
 {
   "ts": "2024-01-15T14:30:00.123Z",
   "type": "event_type",
+  "run": "H4KD7QZA",
   "stream_id": "stream-abc123",
   "msg": "Optional message",
   "details": { }
@@ -32,6 +33,7 @@ All events share this base structure:
 |-------|------|-------------|
 | `ts` | string | ISO 8601 timestamp |
 | `type` | string | Event type identifier |
+| `run` | string | Differs per encoder process; absent in logs from older versions |
 | `stream_id` | string | Stream identifier (stream events only) |
 | `msg` | string | Optional human-readable message |
 | `details` | object | Type-specific details (see below) |

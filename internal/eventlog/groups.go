@@ -53,6 +53,8 @@ type groupingState struct {
 	openByKey map[incidentGroupKey]*historicalIncident
 	closed    []*historicalIncident
 	failed    []*historicalIncident
+	run       string
+	runStart  int // index in closed of the current run's first incident
 }
 
 type historicalIncident struct {
@@ -204,6 +206,7 @@ func GroupEvents(events []EventView, streamExists func(streamID string) bool) Ev
 }
 
 func (s *groupingState) process(event groupedEvent) {
+	s.enterRun(event.view.Run)
 	key := incidentGroupKeyForEvent(event)
 	if event.view.Type == UploadAbandoned {
 		incident := s.openByKey[key]
@@ -240,7 +243,7 @@ func (s *groupingState) process(event groupedEvent) {
 
 	if event.view.Type == AudioDumpReady {
 		if target := audioIncidentForDump(
-			s.closed,
+			s.closed[s.runStart:],
 			detailString(event.details, "trigger"),
 			detailInt64(event.details, "incident_id"),
 		); target != nil {
@@ -260,6 +263,23 @@ func (s *groupingState) process(event groupedEvent) {
 		s.openByKey[key] = incident
 	}
 	incident.add(event)
+}
+
+// enterRun separates runs: incident IDs restart in every process, and an
+// identified incident cannot outlive its process.
+func (s *groupingState) enterRun(run string) {
+	if run == s.run {
+		return
+	}
+	s.run = run
+	for key, open := range s.openByKey {
+		if key.incidentID != 0 {
+			open.stopped = true
+			s.closed = append(s.closed, open)
+			delete(s.openByKey, key)
+		}
+	}
+	s.runStart = len(s.closed)
 }
 
 func eventClosesIncident(open *historicalIncident, event groupedEvent) bool {
