@@ -43,6 +43,8 @@ type AlertOrchestrator struct {
 	mu                      sync.Mutex
 	activeChannels          []AlertChannel
 	imbalanceActiveChannels []AlertChannel
+	activeCfg               config.Snapshot // taken with activeChannels; delivers the incident's end and dump
+	imbalanceActiveCfg      config.Snapshot // taken with imbalanceActiveChannels; delivers its end and dump
 	pendingRecoveries       map[incidentKey]*pendingRecoveryData
 	notifyCtx               context.Context
 	notifyCancel            context.CancelFunc
@@ -66,7 +68,7 @@ type AlertOrchestrator struct {
 // pendingRecoveryData holds recovery event data while waiting for the audio dump.
 type pendingRecoveryData struct {
 	dumpData       AudioDumpData
-	cfg            config.Snapshot // captured at recovery time; reused for dump dispatch
+	cfg            config.Snapshot // captured at incident start; reused for dump delivery
 	activeChannels []AlertChannel
 	recoveredAt    time.Time
 }
@@ -167,6 +169,7 @@ func (o *AlertOrchestrator) handleSilenceStart(incidentID audio.IncidentID, leve
 			}
 		}
 		o.activeChannels = active
+		o.activeCfg = cfg
 	}
 	active := o.activeChannels
 	o.mu.Unlock()
@@ -185,7 +188,7 @@ func (o *AlertOrchestrator) handleSilenceEnd(
 	cfg := o.cfg.Snapshot()
 
 	o.mu.Lock()
-	active := o.activeChannels
+	active, startCfg := o.activeChannels, o.activeCfg
 	o.activeChannels = nil
 	now := time.Now()
 	o.addPendingRecoveryLocked(&pendingRecoveryData{
@@ -197,13 +200,14 @@ func (o *AlertOrchestrator) handleSilenceEnd(
 			LevelR:      levelR,
 			ThresholdDB: cfg.SilenceThreshold,
 		},
-		cfg:            cfg,
+		cfg:            startCfg,
 		activeChannels: active,
 		recoveredAt:    now,
 	})
 	o.mu.Unlock()
 
-	o.enqueueOrdered(o.silenceQueues, cfg, "silence_end", subscribedActive(active, AlertChannel.SubscribesSilenceEnd),
+	startCfg.SilenceThreshold = cfg.SilenceThreshold // The end reports the threshold it recovered against.
+	o.enqueueOrdered(o.silenceQueues, startCfg, "silence_end", subscribedActive(active, AlertChannel.SubscribesSilenceEnd),
 		func(ch AlertChannel, ctx context.Context, cfg *config.Snapshot) error {
 			return ch.SendSilenceEnd(ctx, cfg, durationMS, levelL, levelR)
 		})
@@ -250,6 +254,7 @@ func (o *AlertOrchestrator) handleChannelImbalanceStart(
 			}
 		}
 		o.imbalanceActiveChannels = active
+		o.imbalanceActiveCfg = cfg
 	}
 	active := o.imbalanceActiveChannels
 	o.mu.Unlock()
@@ -278,7 +283,7 @@ func (o *AlertOrchestrator) handleChannelImbalanceEnd(
 	cfg := o.cfg.Snapshot()
 
 	o.mu.Lock()
-	active := o.imbalanceActiveChannels
+	active, startCfg := o.imbalanceActiveChannels, o.imbalanceActiveCfg
 	o.imbalanceActiveChannels = nil
 	now := time.Now()
 	o.addPendingRecoveryLocked(&pendingRecoveryData{
@@ -292,7 +297,7 @@ func (o *AlertOrchestrator) handleChannelImbalanceEnd(
 			ImbalanceDB: &imbalanceDB,
 			ThresholdDB: cfg.ChannelImbalanceThreshold,
 		},
-		cfg:            cfg,
+		cfg:            startCfg,
 		activeChannels: active,
 		recoveredAt:    now,
 	})
@@ -306,7 +311,7 @@ func (o *AlertOrchestrator) handleChannelImbalanceEnd(
 		ThresholdDB: cfg.ChannelImbalanceThreshold,
 		DurationMs:  durationMS,
 	}
-	o.enqueueOrdered(o.imbalanceQueues, cfg, "channel_imbalance_end",
+	o.enqueueOrdered(o.imbalanceQueues, startCfg, "channel_imbalance_end",
 		subscribedActive(active, AlertChannel.SubscribesChannelImbalanceEnd),
 		func(ch AlertChannel, ctx context.Context, cfg *config.Snapshot) error {
 			return ch.SendChannelImbalanceEnd(ctx, cfg, data)
@@ -473,6 +478,8 @@ func (o *AlertOrchestrator) Reset() {
 	o.mu.Lock()
 	o.activeChannels = nil
 	o.imbalanceActiveChannels = nil
+	o.activeCfg = config.Snapshot{}
+	o.imbalanceActiveCfg = config.Snapshot{}
 	clear(o.pendingRecoveries)
 	o.mu.Unlock()
 }
