@@ -153,6 +153,38 @@ func TestGroupEventsStreamStoppedClosesIncidentAsStopped(t *testing.T) {
 	}
 }
 
+func TestGroupEventsShowsAudioEndFromStopAsStopped(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC)
+	events := decorateNewestFirst(
+		testEvent(base, 100, SilenceEnd, map[string]any{"incident_id": 2}), // Recovered, without a logged duration.
+		testEvent(base, 90, SilenceStart, map[string]any{"incident_id": 2}),
+		testEvent(base, 40, ChannelImbalanceEnd, map[string]any{"incident_id": 9, "reason": "stopped"}), // Start outside the window.
+		testEvent(base, 30, SilenceEnd, map[string]any{"incident_id": 1, "reason": "stopped"}),
+		testEvent(base, 0, SilenceStart, map[string]any{"incident_id": 1}),
+	)
+
+	groups := GroupEvents(events, nil)
+	if len(groups.Attention) != 0 || len(groups.Resolved) != 2 || len(groups.Activity) != 1 {
+		t.Fatalf("groups = %+v, want a resolved and a stopped incident and one activity row", groups)
+	}
+	if got := groups.Resolved[0]; got.StatusText != "Resolved" || !slices.Equal(got.Chips, []string{"10s"}) {
+		t.Fatalf("recovered incident = %+v, want Resolved with the elapsed time", got)
+	}
+	item := groups.Resolved[1]
+	if item.StatusText != "Stopped" || len(item.Chips) != 0 {
+		t.Fatalf("incident = %+v, want Stopped and no duration chip", item)
+	}
+	end := item.Events[1]
+	if end.Label != "Stopped" || end.Severity != SeverityInfo || end.Reason != ReasonLifecycle {
+		t.Fatalf("end in trail = %+v, want a neutral Stopped row", end)
+	}
+	if row := groups.Activity[0]; row.Title != "Stopped" || row.StatusText != "Stopped" {
+		t.Fatalf("activity row = %+v, want a Stopped row", row)
+	}
+}
+
 func TestGroupEventsCleanExitKeepsRetryingIncidentOpen(t *testing.T) {
 	t.Parallel()
 

@@ -45,6 +45,8 @@ type AlertOrchestrator struct {
 	imbalanceActiveChannels []AlertChannel
 	activeCfg               config.Snapshot // taken with activeChannels; delivers the incident's end and dump
 	imbalanceActiveCfg      config.Snapshot // taken with imbalanceActiveChannels; delivers its end and dump
+	silenceIncident         audio.IncidentID
+	imbalanceIncident       audio.IncidentID
 	pendingRecoveries       map[incidentKey]*pendingRecoveryData
 	notifyCtx               context.Context
 	notifyCancel            context.CancelFunc
@@ -171,6 +173,7 @@ func (o *AlertOrchestrator) handleSilenceStart(incidentID audio.IncidentID, leve
 		o.activeChannels = active
 		o.activeCfg = cfg
 	}
+	o.silenceIncident = incidentID
 	active := o.activeChannels
 	o.mu.Unlock()
 
@@ -190,6 +193,7 @@ func (o *AlertOrchestrator) handleSilenceEnd(
 	o.mu.Lock()
 	active, startCfg := o.activeChannels, o.activeCfg
 	o.activeChannels = nil
+	o.silenceIncident = 0
 	now := time.Now()
 	o.addPendingRecoveryLocked(&pendingRecoveryData{
 		dumpData: AudioDumpData{
@@ -256,6 +260,7 @@ func (o *AlertOrchestrator) handleChannelImbalanceStart(
 		o.imbalanceActiveChannels = active
 		o.imbalanceActiveCfg = cfg
 	}
+	o.imbalanceIncident = incidentID
 	active := o.imbalanceActiveChannels
 	o.mu.Unlock()
 
@@ -285,6 +290,7 @@ func (o *AlertOrchestrator) handleChannelImbalanceEnd(
 	o.mu.Lock()
 	active, startCfg := o.imbalanceActiveChannels, o.imbalanceActiveCfg
 	o.imbalanceActiveChannels = nil
+	o.imbalanceIncident = 0
 	now := time.Now()
 	o.addPendingRecoveryLocked(&pendingRecoveryData{
 		dumpData: AudioDumpData{
@@ -474,14 +480,32 @@ func enqueueInputAlert(queue chan func(), deliver func(), channel, eventType str
 // In-flight notifications are intentionally NOT cancelled here: Reset runs on encoder
 // start and stop, and a short silence followed by a Stop would otherwise abort
 // a still-pending silence_start delivery. The notify context is cancelled only on Close.
+// An incident still open ends as stopped in the event log; receivers get no alert for it.
 func (o *AlertOrchestrator) Reset() {
 	o.mu.Lock()
+	silence, imbalance := o.silenceIncident, o.imbalanceIncident
+	o.silenceIncident, o.imbalanceIncident = 0, 0
 	o.activeChannels = nil
 	o.imbalanceActiveChannels = nil
 	o.activeCfg = config.Snapshot{}
 	o.imbalanceActiveCfg = config.Snapshot{}
 	clear(o.pendingRecoveries)
 	o.mu.Unlock()
+
+	o.logIncidentStopped(eventlog.SilenceEnd, silence)
+	o.logIncidentStopped(eventlog.ChannelImbalanceEnd, imbalance)
+}
+
+// logIncidentStopped queues the end of an incident left open by a stop; ID 0 means none is open.
+func (o *AlertOrchestrator) logIncidentStopped(end eventlog.EventType, incidentID audio.IncidentID) {
+	if incidentID == 0 {
+		return
+	}
+	o.enqueueLog(string(end), func() {
+		if err := o.eventLogger.LogIncidentStopped(end, uint32(incidentID)); err != nil {
+			slog.Warn("failed to log stopped incident", "event_type", end, "error", err)
+		}
+	})
 }
 
 // DrainLogs blocks until all log jobs currently in the queue have been executed.

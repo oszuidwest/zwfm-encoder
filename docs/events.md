@@ -209,6 +209,7 @@ are returned by the `audio` type filter.
 | `level_right_db` | float | Right channel RMS level in dB |
 | `threshold_db` | float | Configured silence threshold in dB |
 | `duration_ms` | int | Silence duration in milliseconds (`silence_end` and its `audio_dump_ready` event) |
+| `reason` | string | `stopped` on a `silence_end` written because capture stopped (see below) |
 
 ---
 
@@ -249,6 +250,19 @@ are returned by the `audio` type filter.
     "level_right_db": -14.1,
     "threshold_db": -40.0,
     "duration_ms": 65000
+  }
+}
+```
+
+When capture stops during a silence (an audio input change, a stop from the tray, or a shutdown), the encoder writes a `silence_end` with the marker `"reason": "stopped"`. The audio did not recover, so this event has only `incident_id` and `reason`. It has no levels, threshold or duration, so a consumer of the log must not expect those fields. It is shown with the label `Stopped`, severity `info` and reason `lifecycle`. No alert is sent for it. If the silence continues, a later `silence_start` opens a new incident with a new ID.
+
+```json
+{
+  "ts": "2024-01-15T14:32:05.000Z",
+  "type": "silence_end",
+  "details": {
+    "incident_id": 42,
+    "reason": "stopped"
   }
 }
 ```
@@ -332,6 +346,7 @@ and recovery settings.
 | `imbalance_db` | float | Absolute L/R difference in dB (the alarm magnitude) |
 | `threshold_db` | float | Configured channel imbalance threshold in dB |
 | `duration_ms` | int | Imbalance duration in milliseconds (`channel_imbalance_end` and its `audio_dump_ready` event) |
+| `reason` | string | `stopped` on a `channel_imbalance_end` written because capture stopped (see below) |
 
 ---
 
@@ -379,6 +394,8 @@ and recovery settings.
   }
 }
 ```
+
+When capture stops during an imbalance, the encoder writes a `channel_imbalance_end` with only `incident_id` and `"reason": "stopped"`, in the same way and with the same display as a stopped `silence_end`.
 
 ---
 
@@ -827,6 +844,10 @@ under `attention` with status `Ongoing` until it ends:
   as `Stopped`. This covers logs written before deletions emitted
   `stream_stopped`.
 
+A silence or channel imbalance incident ends the same way: a normal end shows it
+as `Resolved`, and an end with `"reason": "stopped"` shows it as `Stopped` with
+severity `info`, without a duration chip or an audio dump.
+
 ---
 
 ## Event Summary Table
@@ -839,10 +860,10 @@ under `attention` with status `Ongoing` until it ends:
 | `stream_retry` | stream | warning | problem | Retry | Caller stream or listener encoder retrying after failure |
 | `stream_stopped` | stream | info | lifecycle | Stopped | Stream stopped, updated, or deleted |
 | `silence_start` | audio | warning | problem | Silence | Audio below threshold |
-| `silence_end` | audio | success | recovery | Recovered | Audio returns above threshold |
+| `silence_end` | audio | success | recovery | Recovered | Audio returns above threshold; `info`, `lifecycle`, `Stopped` when capture stopped |
 | `audio_dump_ready` | audio | info | lifecycle | Audio Dump | MP3 context file ready after silence or channel imbalance |
 | `channel_imbalance_start` | audio | warning | problem | Imbalance | L/R level difference above threshold |
-| `channel_imbalance_end` | audio | success | recovery | Balanced | L/R channels balanced again |
+| `channel_imbalance_end` | audio | success | recovery | Balanced | L/R channels balanced again; `info`, `lifecycle`, `Stopped` when capture stopped |
 | `input_lost` | audio | error | problem | Input Lost | Audio capture from the input stopped |
 | `input_restored` | audio | success | recovery | Input Restored | Input delivered audio for 10s again after a loss |
 | `recorder_started` | recorder | info | lifecycle | Started | Recorder begins recording |

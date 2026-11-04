@@ -23,6 +23,9 @@ func DecorateEvents(events []Event) []EventView {
 			Label:    eventLabel(event.Type),
 			Detail:   eventDetailFor(event.Type, details),
 		}
+		if isStoppedEnd(details) {
+			views[i].Severity, views[i].Reason, views[i].Label = SeverityInfo, ReasonLifecycle, "Stopped"
+		}
 	}
 	return views
 }

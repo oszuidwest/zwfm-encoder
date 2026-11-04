@@ -10,6 +10,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/silencedump"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 	"log/slog"
+	"maps"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -398,6 +399,75 @@ func TestResetDoesNotCancelInFlightNotification(t *testing.T) {
 	ch.releaseSend()
 	awaitCall(t, ch.done, "blocked notification send to finish")
 }
+func TestResetLogsStoppedEndForOpenIncident(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		endType eventlog.EventType
+		start   func(*AlertOrchestrator, audio.IncidentID)
+		end     func(*AlertOrchestrator, audio.IncidentID)
+	}{
+		{
+			name:    "silence",
+			endType: eventlog.SilenceEnd,
+			start: func(o *AlertOrchestrator, id audio.IncidentID) {
+				o.HandleSilenceEvent(audio.SilenceEvent{IncidentID: id, JustEntered: true})
+			},
+			end: func(o *AlertOrchestrator, id audio.IncidentID) {
+				o.HandleSilenceEvent(audio.SilenceEvent{IncidentID: id, JustRecovered: true, TotalDurationMs: 1000})
+			},
+		},
+		{
+			name:    "imbalance",
+			endType: eventlog.ChannelImbalanceEnd,
+			start: func(o *AlertOrchestrator, id audio.IncidentID) {
+				o.HandleChannelImbalanceEvent(&audio.ImbalanceEvent{IncidentID: id, JustEntered: true})
+			},
+			end: func(o *AlertOrchestrator, id audio.IncidentID) {
+				o.HandleChannelImbalanceEvent(&audio.ImbalanceEvent{IncidentID: id, JustRecovered: true, TotalDurationMs: 1000})
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			o := newTestOrchestrator(t, noopAlertChannel{})
+			logPath := filepath.Join(t.TempDir(), "encoder.jsonl")
+			logger, err := eventlog.NewLogger(logPath)
+			if err != nil {
+				t.Fatalf("create logger: %v", err)
+			}
+			defer logger.Close() //nolint:errcheck // Test teardown.
+			o.SetEventLogger(logger)
+
+			o.Reset() // Nothing open.
+			tc.start(o, 1)
+			o.Reset()
+			o.Reset() // Stop then Start.
+			tc.start(o, 2)
+			tc.end(o, 2)
+			o.Reset() // Already recovered.
+			o.DrainLogs()
+
+			events, _, err := eventlog.ReadLast(logPath, 10, 0, eventlog.FilterAudio)
+			if err != nil {
+				t.Fatalf("read log: %v", err)
+			}
+			if len(events) != 4 {
+				t.Fatalf("logged events = %+v, want start 1, stopped end 1, start 2, end 2", events)
+			}
+			if events[2].Type != tc.endType {
+				t.Fatalf("logged events = %+v, want a stopped end of type %s", events, tc.endType)
+			}
+			want := map[string]any{"incident_id": float64(1), "reason": "stopped"}
+			if got := eventDetailsMap(t, events[2].Details); !maps.Equal(got, want) {
+				t.Fatalf("stopped end details = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
 func TestCloseCancelsInFlightNotification(t *testing.T) {
 	t.Parallel()
 	ch := newContextCapturingChannel()
