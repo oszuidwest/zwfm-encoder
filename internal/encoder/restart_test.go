@@ -257,6 +257,34 @@ func TestBackgroundRestartRequestsCollapseIntoOne(t *testing.T) {
 	})
 }
 
+func TestRestartOfDisabledStreamLogsNoFailure(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e, _ := startDanteEncoder(t, slowTeardown(0))
+		failures := &countingLog{Handler: slog.NewTextHandler(io.Discard, nil), message: "failed to restart stream"}
+		previous, previousOutput, previousFlags := slog.Default(), log.Writer(), log.Flags()
+		slog.SetDefault(slog.New(failures))
+		defer func() {
+			slog.SetDefault(previous)
+			log.SetOutput(previousOutput)
+			log.SetFlags(previousFlags)
+		}()
+		stream := types.Stream{Host: "127.0.0.1", Port: 9000, Codec: types.CodecMP3}
+		if err := e.config.AddStream(&stream); err != nil {
+			t.Fatal(err)
+		}
+		stream.Enabled = false
+		if err := e.config.UpdateStream(&stream); err != nil {
+			t.Fatal(err)
+		}
+		e.RestartStream(stream.ID)
+		time.Sleep(types.StreamRestartDelay)
+		synctest.Wait()
+		if failures.count.Load() != 0 {
+			t.Fatalf("restart of a disabled stream logged %d failures", failures.count.Load())
+		}
+	})
+}
+
 func TestSlowRestartIsReportedWhileItWaits(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		release := make(chan struct{})
