@@ -855,6 +855,42 @@ func TestDetailNumberCoercionHandlesJSONNumber(t *testing.T) {
 	}
 }
 
+func TestGroupEventsKeepsKeysUniqueWhenTheClockRepeats(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
+	silence := func(run string, second int, eventType EventType) Event {
+		event := testEvent(base, second, eventType, map[string]any{"incident_id": 1})
+		event.Run = run
+		return event
+	}
+	abandoned := testEvent(base, 0, UploadAbandoned, map[string]any{"recorder_name": "hourly", "filename": "hourly.mp3"})
+	events := decorateNewestFirst(
+		abandoned,
+		abandoned,
+		abandoned,
+		silence("c", 9, SilenceEnd),
+		silence("c", 0, SilenceStart),
+		silence("b", 7, SilenceEnd),
+		silence("b", 0, SilenceStart),
+		silence("a", 5, SilenceEnd),
+		silence("a", 0, SilenceStart),
+	)
+
+	groups := GroupEvents(events, nil)
+	for name, items := range map[string][]EventGroupItem{"attention": groups.Attention, "resolved": groups.Resolved} {
+		if len(items) != 3 {
+			t.Fatalf("%s len = %d, want 3", name, len(items))
+		}
+		for i := 1; i < len(items); i++ {
+			if want := fmt.Sprintf("%s#%d", items[0].Key, i+1); items[i].Key != want {
+				t.Errorf("%s key %d = %q, want %q", name, i, items[i].Key, want)
+			}
+		}
+	}
+	assertPartition(t, events, &groups)
+}
+
 func testEvent(base time.Time, second int, eventType EventType, details map[string]any) Event {
 	return Event{
 		Timestamp: base.Add(time.Duration(second) * time.Second),

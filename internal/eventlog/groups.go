@@ -202,7 +202,22 @@ func GroupEvents(events []EventView, streamExists func(streamID string) bool) Ev
 
 	sortItemsDesc(groups.Attention)
 	sortItemsDesc(groups.Resolved)
+	uniqueItemKeys(groups.Attention)
+	uniqueItemKeys(groups.Resolved)
 	return groups
+}
+
+// uniqueItemKeys numbers repeated keys. The UI keys its lists on them, and a
+// repeat can stop a list from rendering. Incidents share a key when their
+// start falls in the same millisecond, for example after a clock step.
+func uniqueItemKeys(items []EventGroupItem) {
+	seen := make(map[string]int, len(items))
+	for i := range items {
+		seen[items[i].Key]++
+		if n := seen[items[i].Key]; n > 1 {
+			items[i].Key += fmt.Sprintf("#%d", n)
+		}
+	}
 }
 
 func (s *groupingState) process(event groupedEvent) {
