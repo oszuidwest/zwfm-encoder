@@ -47,7 +47,10 @@ type identityStore struct {
 	stripIdentity   bool
 	foreignIdentity bool
 	inBodyConflict  bool
-	noConditional   bool // Like Backblaze B2: If-None-Match is NotImplemented, a plain write replaces.
+	noConditional   bool     // Like Backblaze B2: If-None-Match is NotImplemented, a plain write replaces.
+	versionID       string   // Returned by HEAD, like a versioned bucket.
+	deletedVersions []string // The versionId of each object DELETE.
+	denyVersions    bool     // DELETE of a version is AccessDenied, as on AWS without s3:DeleteObjectVersion.
 	beforeWrite     func(string)
 	keys            []string
 }
@@ -87,6 +90,9 @@ func (s *identityStore) serveHTTP(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set(testUploadIDHeader, object.id)
 		w.Header().Set("Content-Length", strconv.Itoa(len(object.body)))
 		w.Header().Set("ETag", `"object"`)
+		if s.versionID != "" {
+			w.Header().Set("X-Amz-Version-Id", s.versionID)
+		}
 	case req.Method == http.MethodPost && query.Has("uploads"):
 		if s.beforeWrite != nil {
 			s.beforeWrite(req.Header.Get(testUploadIDHeader))
@@ -114,15 +120,25 @@ func (s *identityStore) serveHTTP(w http.ResponseWriter, req *http.Request) {
 			w.Header().Set("ETag", `"object"`)
 		}
 	case req.Method == http.MethodDelete:
-		if query.Has("uploadId") {
-			delete(s.multipart, query.Get("uploadId"))
-		} else {
-			delete(s.objects, key)
-		}
-		w.WriteHeader(http.StatusNoContent)
+		s.deleteObject(w, req, key)
 	default:
 		http.Error(w, "unexpected operation", http.StatusBadRequest)
 	}
+}
+
+func (s *identityStore) deleteObject(w http.ResponseWriter, req *http.Request, key string) {
+	query := req.URL.Query()
+	if query.Has("uploadId") {
+		delete(s.multipart, query.Get("uploadId"))
+	} else {
+		s.deletedVersions = append(s.deletedVersions, query.Get("versionId"))
+		if s.denyVersions && query.Has("versionId") {
+			writeS3Error(w, http.StatusForbidden, "AccessDenied")
+			return
+		}
+		delete(s.objects, key)
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *identityStore) completeMultipart(w http.ResponseWriter, req *http.Request, key string) {
@@ -845,6 +861,36 @@ func TestS3ConnectionLostPutResponseCleansOnlyOwnedProbe(t *testing.T) {
 			}
 			if store.headRequests != 1 {
 				t.Fatalf("HEAD requests = %d, want reuse of the fresh verification result", store.headRequests)
+			}
+		})
+	}
+}
+
+// TestS3ConnectionDeletesProbeVersion keeps a versioned bucket, such as B2,
+// from holding on to the probe as a hidden version, and never deletes a
+// version that is not known to be ours.
+func TestS3ConnectionDeletesProbeVersion(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name         string
+		strip, deny  bool
+		wantVersions []string
+	}{
+		{name: "own probe", wantVersions: []string{"v1"}},
+		{name: "unidentified object", strip: true, wantVersions: []string{""}},
+		{name: "version delete denied", deny: true, wantVersions: []string{"v1", ""}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store, cfg := newIdentityStore(t)
+			store.versionID, store.stripIdentity, store.denyVersions = "v1", tc.strip, tc.deny
+			if err := TestRecorderS3Connection(cfg); (err != nil) != tc.strip {
+				t.Errorf("TestRecorderS3Connection() error = %v", err)
+			}
+			store.mu.Lock()
+			defer store.mu.Unlock()
+			if !slices.Equal(store.deletedVersions, tc.wantVersions) {
+				t.Errorf("deleted versions = %q, want %q", store.deletedVersions, tc.wantVersions)
 			}
 		})
 	}
