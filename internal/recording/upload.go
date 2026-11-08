@@ -77,24 +77,11 @@ func TestRecorderS3Connection(recorder *types.Recorder) error {
 	if err != nil && !owned {
 		return fmt.Errorf("upload test file: %w", err)
 	}
-	defer func() {
-		// The PUT may have used up the probe's deadline; clean up with a fresh one.
-		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancelCleanup()
-		// Delete our probe by version: with versioning enabled (every B2
-		// bucket) a plain delete only hides it.
-		var version *string
-		if owned {
-			version = head.VersionId
-		}
-		if _, err := client.DeleteObject(cleanupCtx, &s3.DeleteObjectInput{
-			Bucket:    aws.String(cfg.Bucket),
-			Key:       aws.String(testKey),
-			VersionId: version,
-		}); err != nil {
-			slog.Warn("failed to delete test file", "key", testKey, "error", err)
-		}
-	}()
+	var version *string // Only our own probe is deleted by version.
+	if owned {
+		version = head.VersionId
+	}
+	defer deleteProbe(client, cfg.Bucket, testKey, version)
 	if headErr != nil {
 		return fmt.Errorf("read test object metadata (HeadObject permission is required for idempotent uploads): %w", headErr)
 	}
@@ -103,4 +90,27 @@ func TestRecorderS3Connection(recorder *types.Recorder) error {
 	}
 
 	return nil
+}
+
+// deleteProbe removes the connection test's probe on a fresh deadline, as the
+// PUT may have used up the probe's. A known version is deleted: with
+// versioning enabled (every B2 bucket) a plain delete only hides the probe.
+// AWS needs s3:DeleteObjectVersion for that, so a refused version delete
+// falls back to hiding it.
+func deleteProbe(client *s3.Client, bucket, key string, version *string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	del := func(version *string) error {
+		_, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
+			Bucket: aws.String(bucket), Key: aws.String(key), VersionId: version,
+		})
+		return err
+	}
+	err := del(version)
+	if err != nil && version != nil {
+		err = del(nil)
+	}
+	if err != nil {
+		slog.Warn("failed to delete test file", "key", key, "error", err)
+	}
 }
