@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/types"
 )
@@ -53,6 +54,11 @@ type uploader struct {
 	refresh     func() // Stores current credentials again; runs hourly.
 
 	overdueMu sync.Mutex // Serializes overdue transitions, so a clear never overtakes its alert.
+
+	// unconditional holds destinations that refused If-None-Match (Backblaze
+	// B2), so later uploads do not send a whole file only to have it refused.
+	// Only the deliver goroutine uses it, so it needs no lock.
+	unconditional map[string]bool
 
 	mu          sync.Mutex
 	now         func() time.Time // Tests replace it.
@@ -214,9 +220,10 @@ func (u *uploader) save(t *ticket) {
 var errRecordingLost = errors.New("recording file is gone and not in S3")
 
 // upload sends t's recording with If-None-Match: * so an existing object is
-// never replaced. When the key is taken it moves on to -2, -3, ... from the
-// base key; each key is persisted before it is written. The ticket ID is the
-// upload identity, so a commit whose response was lost is recognized.
+// never replaced; a store that refuses that header gets a HEAD check first.
+// When the key is taken it moves on to -2, -3, ... from the base key; each key
+// is persisted before it is written. The ticket ID is the upload identity, so
+// a commit whose response was lost is recognized.
 func (u *uploader) upload(ctx context.Context, t *ticket) error {
 	dest, err := u.outbox.loadDestination(t.Dest)
 	if err != nil {
@@ -267,20 +274,24 @@ func (u *uploader) upload(ctx context.Context, t *ticket) error {
 	slog.Info("starting upload", "id", t.RecorderID, "file", filepath.Base(t.Path),
 		"size_mb", size/(1024*1024), "timeout_min", timeoutMinutes)
 
-	for attempt, suffix := 1, nextKeySuffix(t); ; attempt, suffix = attempt+1, suffix+1 {
+	put := func(ifNoneMatch *string) error {
 		if _, err := file.Seek(0, io.SeekStart); err != nil {
 			return fmt.Errorf("rewind recording for upload: %w", err)
 		}
-		_, err = tm.UploadObject(ctx, &transfermanager.UploadObjectInput{
+		_, err := tm.UploadObject(ctx, &transfermanager.UploadObjectInput{
 			Bucket:        aws.String(dest.Bucket),
 			Key:           aws.String(t.Key),
 			Body:          file,
 			ContentLength: aws.Int64(size),
 			ContentType:   aws.String(types.Codec(t.Codec).ContentType()),
-			IfNoneMatch:   aws.String("*"),
+			IfNoneMatch:   ifNoneMatch,
 			Metadata:      map[string]string{"zwfm-upload-id": t.ID},
 		})
-		if err == nil {
+		return err
+	}
+
+	for attempt, suffix := 1, nextKeySuffix(t); ; attempt, suffix = attempt+1, suffix+1 {
+		if err = u.write(ctx, t.Dest, put, head); err == nil {
 			return nil
 		}
 		// CompleteMultipartUpload can be committed even if an SDK retry returns NoSuchUpload.
@@ -306,6 +317,33 @@ func (u *uploader) upload(ctx context.Context, t *ticket) error {
 		}
 		slog.Warn("S3 key taken, using suffixed key", "id", t.RecorderID, "taken_key", previous, "new_key", t.Key)
 	}
+}
+
+// write puts the current key once: with If-None-Match: * while dest takes it,
+// otherwise only after a HEAD found the key free. The worker uploads one
+// recording at a time, so none of ours races that check.
+func (u *uploader) write(
+	ctx context.Context, dest string, put func(ifNoneMatch *string) error, head func(context.Context) (bool, error),
+) error {
+	if !u.unconditional[dest] {
+		err := put(aws.String("*"))
+		if !isS3NotImplemented(err) {
+			return err
+		}
+		if u.unconditional == nil {
+			u.unconditional = make(map[string]bool)
+		}
+		u.unconditional[dest] = true
+	}
+	var notFound *s3types.NotFound
+	_, err := head(ctx)
+	switch {
+	case err == nil:
+		return errS3KeyTaken
+	case errors.As(err, &notFound):
+		return put(nil)
+	}
+	return err
 }
 
 // nextKeySuffix is the suffix after t's current key: -2 after the base key,
@@ -336,11 +374,24 @@ func openRecording(path string) (*os.File, os.FileInfo, error) {
 	return file, info, nil
 }
 
+// errS3KeyTaken reports a key that a HEAD found taken before an unconditional upload.
+var errS3KeyTaken = errors.New("S3 key is taken")
+
+// isS3NotImplemented reports a store that refuses a request feature, such as
+// If-None-Match on Backblaze B2.
+func isS3NotImplemented(err error) bool {
+	var apiErr interface{ ErrorCode() string }
+	return errors.As(err, &apiErr) && apiErr.ErrorCode() == "NotImplemented"
+}
+
 // isS3KeyConflict reports whether a conditional upload failed because the key
 // is taken or another conditional write to it is in progress. The code also
 // covers CompleteMultipartUpload, which reports errors in an HTTP 200 body;
 // the status covers a 412 whose body has no parsable code.
 func isS3KeyConflict(err error) bool {
+	if errors.Is(err, errS3KeyTaken) {
+		return true
+	}
 	var apiErr interface{ ErrorCode() string }
 	if errors.As(err, &apiErr) {
 		if code := apiErr.ErrorCode(); code == "PreconditionFailed" || code == "ConditionalRequestConflict" {
