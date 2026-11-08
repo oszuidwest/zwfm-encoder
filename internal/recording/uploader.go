@@ -57,6 +57,7 @@ type uploader struct {
 
 	// unconditional holds destinations that refused If-None-Match (Backblaze
 	// B2), so later uploads do not send a whole file only to have it refused.
+	// Only the deliver goroutine uses it, so it needs no lock.
 	unconditional map[string]bool
 
 	mu          sync.Mutex
