@@ -47,6 +47,7 @@ type identityStore struct {
 	stripIdentity   bool
 	foreignIdentity bool
 	inBodyConflict  bool
+	noConditional   bool // Like Backblaze B2: If-None-Match is NotImplemented, a plain write replaces.
 	beforeWrite     func(string)
 	keys            []string
 }
@@ -147,11 +148,16 @@ func (s *identityStore) completeMultipart(w http.ResponseWriter, req *http.Reque
 // commit returns false when a response has already been written, including lost success.
 func (s *identityStore) commit(w http.ResponseWriter, req *http.Request, key string, object storedTestUpload) bool {
 	s.keys = append(s.keys, key)
-	if req.Header.Get("If-None-Match") != "*" {
+	conditional := req.Header.Get("If-None-Match") == "*"
+	switch {
+	case s.noConditional && conditional:
+		writeS3Error(w, http.StatusNotImplemented, "NotImplemented")
+		return false
+	case !s.noConditional && !conditional:
 		writeS3Error(w, http.StatusBadRequest, "MissingIfNoneMatch")
 		return false
 	}
-	if _, exists := s.objects[key]; exists {
+	if _, exists := s.objects[key]; exists && conditional {
 		status := http.StatusPreconditionFailed
 		if s.inBodyConflict && req.Method == http.MethodPost {
 			status = http.StatusOK
@@ -602,8 +608,8 @@ func TestS3UploadUsesSuffixedKeyWhenKeyIsTaken(t *testing.T) {
 		writeS3Error(w, http.StatusPreconditionFailed, "PreconditionFailed")
 		return true
 	}
-	notImplemented := func(w http.ResponseWriter, _ string) bool {
-		writeS3Error(w, http.StatusNotImplemented, "NotImplemented")
+	denied := func(w http.ResponseWriter, _ string) bool {
+		writeS3Error(w, http.StatusForbidden, "AccessDenied")
 		return true
 	}
 
@@ -616,7 +622,7 @@ func TestS3UploadUsesSuffixedKeyWhenKeyIsTaken(t *testing.T) {
 	}{
 		{name: "taken and in-progress keys are skipped", respond: taken, wantKey: uploadTestKey3, wantKeys: 3},
 		{name: "attempts are bounded", respond: allTaken, wantErr: true, wantKey: withNumericSuffix(uploadTestKey, maxS3KeySuffix), wantKeys: maxS3KeySuffix},
-		{name: "other errors are not retried", respond: notImplemented, wantErr: true, wantKey: uploadTestKey, wantKeys: 1},
+		{name: "other errors are not retried", respond: denied, wantErr: true, wantKey: uploadTestKey, wantKeys: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -643,6 +649,57 @@ func TestS3UploadUsesSuffixedKeyWhenKeyIsTaken(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestS3UploadWithoutConditionalWrites covers Backblaze B2, which refuses
+// If-None-Match: the uploader checks the key with HEAD and writes without it.
+func TestS3UploadWithoutConditionalWrites(t *testing.T) {
+	t.Parallel()
+
+	store, cfg := newIdentityStore(t)
+	store.noConditional = true
+	recorder := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
+	u := testUploader(recorder)
+	first := readyTestTicket(t, recorder, make([]byte, 17<<20))
+	if err := u.upload(t.Context(), &first); err != nil {
+		t.Fatalf("first upload() error = %v", err)
+	}
+	second := readyTestTicket(t, recorder, []byte("audio"))
+	if err := u.upload(t.Context(), &second); err != nil {
+		t.Fatalf("second upload() error = %v", err)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if got := store.objects[uploadTestKey].id; got != first.ID {
+		t.Errorf("object at the base key is from %q, want the first recording %q", got, first.ID)
+	}
+	if second.Key != uploadTestKey2 || store.objects[uploadTestKey2].id != second.ID {
+		t.Errorf("second recording at %q, want %q", second.Key, uploadTestKey2)
+	}
+	// One refused conditional write, then plain writes only.
+	if want := []string{uploadTestKey, uploadTestKey, uploadTestKey2}; !slices.Equal(store.keys, want) {
+		t.Errorf("written keys = %v, want %v", store.keys, want)
+	}
+}
+
+// TestS3UploadWithoutConditionalWritesNeedsHead keeps an object that a failing
+// HEAD could not rule out.
+func TestS3UploadWithoutConditionalWritesNeedsHead(t *testing.T) {
+	t.Parallel()
+
+	store, cfg := newIdentityStore(t)
+	store.noConditional = true
+	store.headStatus = http.StatusForbidden
+	recorder := newTestRecorder(t, GenericRecorderConfig{Recorder: cfg, SpoolDir: t.TempDir()})
+	tk := readyTestTicket(t, recorder, []byte("audio"))
+	if err := testUploader(recorder).upload(t.Context(), &tk); err == nil {
+		t.Fatal("upload() succeeded without a HEAD check")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if want := []string{uploadTestKey}; !slices.Equal(store.keys, want) {
+		t.Errorf("written keys = %v, want only the refused conditional write %v", store.keys, want)
 	}
 }
 
@@ -793,19 +850,13 @@ func TestS3ConnectionLostPutResponseCleansOnlyOwnedProbe(t *testing.T) {
 	}
 }
 
-func TestS3ConnectionRejectsStoreWithoutConditionalWrites(t *testing.T) {
+func TestS3ConnectionAcceptsStoreWithoutConditionalWrites(t *testing.T) {
 	t.Parallel()
 
-	url, _ := conditionalPutServer(t, "", func(w http.ResponseWriter, _ string) bool {
-		writeS3Error(w, http.StatusNotImplemented, "NotImplemented")
-		return true
-	})
-	cfg := testS3Recorder()
-	cfg.S3Endpoint = url
-
-	err := TestRecorderS3Connection(cfg)
-	if err == nil || !strings.Contains(err.Error(), "conditional writes") {
-		t.Fatalf("TestRecorderS3Connection() error = %v, want conditional writes error", err)
+	store, cfg := newIdentityStore(t)
+	store.noConditional = true
+	if err := TestRecorderS3Connection(cfg); err != nil {
+		t.Fatalf("TestRecorderS3Connection() error = %v", err)
 	}
 }
 

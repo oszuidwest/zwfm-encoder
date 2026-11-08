@@ -48,18 +48,22 @@ func TestRecorderS3Connection(recorder *types.Recorder) error {
 	testContent := []byte("ZuidWest FM encoder connection test")
 	uploadID := rand.Text()
 
-	// Recordings are uploaded with If-None-Match, so test that the store supports it.
-	_, err := client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket:        aws.String(cfg.Bucket),
-		Key:           aws.String(testKey),
-		Body:          bytes.NewReader(testContent),
-		ContentLength: aws.Int64(int64(len(testContent))),
-		IfNoneMatch:   aws.String("*"),
-		Metadata:      map[string]string{"zwfm-upload-id": uploadID},
-	})
-	var apiErr interface{ ErrorCode() string }
-	if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NotImplemented" {
-		return fmt.Errorf("storage does not support conditional writes (If-None-Match), which recordings need to never overwrite each other: %w", err)
+	put := func(ifNoneMatch *string) error {
+		_, err := client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:        aws.String(cfg.Bucket),
+			Key:           aws.String(testKey),
+			Body:          bytes.NewReader(testContent),
+			ContentLength: aws.Int64(int64(len(testContent))),
+			IfNoneMatch:   ifNoneMatch,
+			Metadata:      map[string]string{"zwfm-upload-id": uploadID},
+		})
+		return err
+	}
+	// Recordings are uploaded like this: a store that refuses If-None-Match
+	// (Backblaze B2) gets a plain PUT after a HEAD check.
+	err := put(aws.String("*"))
+	if isS3NotImplemented(err) {
+		err = put(nil)
 	}
 	// A committed PUT can lose its response and retry as 412, so read the
 	// probe's identity either way: only our unique ID makes it ours to accept
