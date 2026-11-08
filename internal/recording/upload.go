@@ -81,9 +81,16 @@ func TestRecorderS3Connection(recorder *types.Recorder) error {
 		// The PUT may have used up the probe's deadline; clean up with a fresh one.
 		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancelCleanup()
+		// Delete our probe by version: with versioning enabled (every B2
+		// bucket) a plain delete only hides it.
+		var version *string
+		if owned {
+			version = head.VersionId
+		}
 		if _, err := client.DeleteObject(cleanupCtx, &s3.DeleteObjectInput{
-			Bucket: aws.String(cfg.Bucket),
-			Key:    aws.String(testKey),
+			Bucket:    aws.String(cfg.Bucket),
+			Key:       aws.String(testKey),
+			VersionId: version,
 		}); err != nil {
 			slog.Warn("failed to delete test file", "key", testKey, "error", err)
 		}

@@ -47,7 +47,9 @@ type identityStore struct {
 	stripIdentity   bool
 	foreignIdentity bool
 	inBodyConflict  bool
-	noConditional   bool // Like Backblaze B2: If-None-Match is NotImplemented, a plain write replaces.
+	noConditional   bool     // Like Backblaze B2: If-None-Match is NotImplemented, a plain write replaces.
+	versionID       string   // Returned by HEAD, like a versioned bucket.
+	deletedVersions []string // The versionId of each object DELETE.
 	beforeWrite     func(string)
 	keys            []string
 }
@@ -87,6 +89,9 @@ func (s *identityStore) serveHTTP(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set(testUploadIDHeader, object.id)
 		w.Header().Set("Content-Length", strconv.Itoa(len(object.body)))
 		w.Header().Set("ETag", `"object"`)
+		if s.versionID != "" {
+			w.Header().Set("X-Amz-Version-Id", s.versionID)
+		}
 	case req.Method == http.MethodPost && query.Has("uploads"):
 		if s.beforeWrite != nil {
 			s.beforeWrite(req.Header.Get(testUploadIDHeader))
@@ -118,6 +123,7 @@ func (s *identityStore) serveHTTP(w http.ResponseWriter, req *http.Request) {
 			delete(s.multipart, query.Get("uploadId"))
 		} else {
 			delete(s.objects, key)
+			s.deletedVersions = append(s.deletedVersions, query.Get("versionId"))
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
@@ -845,6 +851,33 @@ func TestS3ConnectionLostPutResponseCleansOnlyOwnedProbe(t *testing.T) {
 			}
 			if store.headRequests != 1 {
 				t.Fatalf("HEAD requests = %d, want reuse of the fresh verification result", store.headRequests)
+			}
+		})
+	}
+}
+
+// TestS3ConnectionDeletesProbeVersion keeps a versioned bucket, such as B2,
+// from holding on to the probe as a hidden version, and never deletes a
+// version that is not known to be ours.
+func TestS3ConnectionDeletesProbeVersion(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		strip bool
+		want  string
+	}{
+		{name: "own probe", want: "v1"},
+		{name: "unidentified object", strip: true, want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store, cfg := newIdentityStore(t)
+			store.versionID, store.stripIdentity = "v1", tc.strip
+			_ = TestRecorderS3Connection(cfg) // TestS3ConnectionRequiresReadableIdentityMetadata checks the result.
+			store.mu.Lock()
+			defer store.mu.Unlock()
+			if want := []string{tc.want}; !slices.Equal(store.deletedVersions, want) {
+				t.Errorf("deleted versions = %q, want %q", store.deletedVersions, want)
 			}
 		})
 	}
