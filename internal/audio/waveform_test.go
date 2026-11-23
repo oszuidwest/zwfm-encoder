@@ -50,8 +50,12 @@ func TestWaveformPauseReadsAsGapAndKeepsSequenceNumbers(t *testing.T) {
 
 	// The returning point follows the gap clients already saw.
 	w.Write(framesPCM(waveformBucketFrames, -512, -512))
-	*now = now.Add(400 * time.Millisecond) // Read jitter, not a gap.
-	w.Write(framesPCM(waveformBucketFrames, 512, 512))
+	// Audio that keeps arriving within the limit is no gap, even when a point
+	// takes longer than that to fill.
+	*now = now.Add(400 * time.Millisecond)
+	w.Write(framesPCM(waveformBucketFrames/2, 512, 512))
+	*now = now.Add(400 * time.Millisecond)
+	w.Write(framesPCM(waveformBucketFrames/2, 512, 512))
 	want = bytes.Join([][]byte{want, point(0xfe), point(2)}, nil)
 	if end, points := w.Read(WaveformPoints); end != 56 || !bytes.Equal(points, want) {
 		t.Fatalf("Read after pause = %d, %v; want 56, %v", end, points, want)

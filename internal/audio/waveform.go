@@ -32,29 +32,37 @@ var gapPoint = [waveformPointSize]byte{4: gapFlag}
 
 // Waveform keeps the min and max sample per channel per 10 ms of the last
 // minute. Values are signed 8-bit: the 16-bit sample divided by 256, like
-// audiowaveform -b 8. Writes must be serialized; Read may run concurrently.
+// audiowaveform -b 8. It is safe for concurrent use; a Write holds the lock
+// throughout, so a Read never sees half of one.
 type Waveform struct {
-	// The point being filled; only the writer touches these.
+	mu sync.Mutex
+	// The point being filled.
 	frames                 int
 	minL, maxL, minR, maxR int16
 	flags                  byte
-	lastWrite              time.Time
 
-	mu     sync.Mutex
 	ring   [WaveformPoints][waveformPointSize]byte
 	end    int       // sequence number after the newest point
-	lastAt time.Time // when the newest point was stored
+	lastAt time.Time // when audio last arrived
 	clock  func() time.Time
 }
 
 // Write adds whole S16LE stereo frames; a point can span several writes.
 func (w *Waveform) Write(buf []byte) {
-	// An unfinished point from before a pause would show up after the gap.
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	// Store the gap that Read has been reporting, so sequence numbers that
+	// clients saw during the pause keep their meaning.
 	now := w.now()
-	if now.Sub(w.lastWrite) > waveformMaxPause {
-		w.frames = 0
+	if gap := w.pendingGap(now); gap > 0 {
+		w.frames = 0 // The unfinished point is from before the pause.
+		w.end += max(gap-WaveformPoints, 0)
+		for range min(gap, WaveformPoints) {
+			w.put(gapPoint)
+		}
 	}
-	w.lastWrite = now
+	w.lastAt = now
+
 	for i := 0; i+bytesPerFrame <= len(buf); i += bytesPerFrame {
 		//nolint:gosec // Intentional reinterpretation of unsigned PCM to signed
 		left := int16(binary.LittleEndian.Uint16(buf[i:]))
@@ -77,7 +85,7 @@ func (w *Waveform) Write(buf []byte) {
 		w.frames++
 		if w.frames == waveformBucketFrames {
 			w.frames = 0
-			w.store([waveformPointSize]byte{to8(w.minL), to8(w.maxL), to8(w.minR), to8(w.maxR), w.flags})
+			w.put([waveformPointSize]byte{to8(w.minL), to8(w.maxL), to8(w.minR), to8(w.maxR), w.flags})
 		}
 	}
 }
@@ -88,26 +96,10 @@ func to8(v int16) byte {
 	return byte(v / 256) //nolint:gosec // v/256 fits in int8; the byte keeps its two's complement.
 }
 
-func (w *Waveform) store(point [waveformPointSize]byte) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	// Store the gap that Read has been reporting, so sequence numbers that
-	// clients saw during the pause keep their meaning. Taking the time under
-	// the lock keeps it at or after the time of any earlier Read.
-	now := w.now()
-	gap := w.pendingGap(now)
-	w.end += max(gap-WaveformPoints, 0)
-	for range min(gap, WaveformPoints) {
-		w.put(gapPoint)
-	}
-	w.put(point)
-	w.lastAt = now
-}
-
-// pendingGap is the number of 10 ms points since the last point, once the
-// pause exceeds waveformMaxPause. The gap runs until the first complete point
-// after the pause is stored, so it also covers that audio: up to one read
-// (100 ms) too long, more if audio arrives in a burst.
+// pendingGap is the number of 10 ms points since audio last arrived, once the
+// pause exceeds waveformMaxPause. A read holds audio captured before it
+// arrived, so a gap can run up to one read (100 ms) too long, more if audio
+// arrives in a burst.
 func (w *Waveform) pendingGap(now time.Time) int {
 	pause := now.Sub(w.lastAt)
 	if w.lastAt.IsZero() || pause <= waveformMaxPause {
