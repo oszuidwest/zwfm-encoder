@@ -38,6 +38,7 @@ type Waveform struct {
 	frames                 int
 	minL, maxL, minR, maxR int16
 	flags                  byte
+	lastWrite              time.Time
 
 	mu     sync.Mutex
 	ring   [WaveformPoints][waveformPointSize]byte
@@ -48,6 +49,12 @@ type Waveform struct {
 
 // Write adds whole S16LE stereo frames; a point can span several writes.
 func (w *Waveform) Write(buf []byte) {
+	// An unfinished point from before a pause would show up after the gap.
+	now := w.now()
+	if now.Sub(w.lastWrite) > waveformMaxPause {
+		w.frames = 0
+	}
+	w.lastWrite = now
 	for i := 0; i+bytesPerFrame <= len(buf); i += bytesPerFrame {
 		//nolint:gosec // Intentional reinterpretation of unsigned PCM to signed
 		left := int16(binary.LittleEndian.Uint16(buf[i:]))
@@ -98,9 +105,9 @@ func (w *Waveform) store(point [waveformPointSize]byte) {
 }
 
 // pendingGap is the number of 10 ms points since the last point, once the
-// pause exceeds waveformMaxPause. The first read after a pause is stored at
-// once, so the gap also covers that read's audio: it runs up to 100 ms long,
-// more if audio arrives in a burst.
+// pause exceeds waveformMaxPause. The gap runs until the first complete point
+// after the pause is stored, so it also covers that audio: up to one read
+// (100 ms) too long, more if audio arrives in a burst.
 func (w *Waveform) pendingGap(now time.Time) int {
 	pause := now.Sub(w.lastAt)
 	if w.lastAt.IsZero() || pause <= waveformMaxPause {

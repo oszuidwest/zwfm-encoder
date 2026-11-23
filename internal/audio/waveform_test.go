@@ -41,6 +41,7 @@ func TestWaveformPauseReadsAsGapAndKeepsSequenceNumbers(t *testing.T) {
 	gap := []byte{0, 0, 0, 0, gapFlag}
 
 	w.Write(framesPCM(waveformBucketFrames, 512, 512))
+	w.Write(framesPCM(waveformBucketFrames/2, 32767, 32767)) // Unfinished; dropped at the pause.
 	*now = now.Add(530 * time.Millisecond)
 	want := bytes.Join([][]byte{point(2), bytes.Repeat(gap, 53)}, nil)
 	if end, points := w.Read(WaveformPoints); end != 54 || !bytes.Equal(points, want) {
