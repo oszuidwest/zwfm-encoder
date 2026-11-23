@@ -158,6 +158,10 @@
                         <span class="mark" data-db="-6">-6</span>
                         <span class="mark" data-db="0">0</span>
                     </div>
+                    <div class="waveform">
+                        <div class="labels" aria-hidden="true"><span class="label">L</span><span class="label">R</span></div>
+                        <canvas x-ref="waveform" role="img" aria-label="Waveform of the last 60 seconds, left channel above right"></canvas>
+                    </div>
                 </div>
 
                 <!-- Source retry/error alert -->
@@ -1292,6 +1296,7 @@
 
     <script src="/icons.js"></script>
     <script src="/eventHelpers.js"></script>
+    <script src="/waveform.js"></script>
     <script src="/app.js"></script>
 </body>
 </html>

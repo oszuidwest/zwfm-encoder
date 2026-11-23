@@ -56,6 +56,9 @@ const API = {
 };
 
 const EVENT_HELPERS = window.eventUIHelpers;
+const WAVEFORM = window.liveWaveform;
+// Outside Alpine's reactive state: every wave.data read in draw() would go through a proxy.
+let liveWave = null;
 
 // Keys must match eventGroups() and the status filter pills.
 const EVENT_GROUP_FILTERS = [
@@ -631,6 +634,10 @@ document.addEventListener('alpine:init', () => {
                 }
                 if (msg.type === 'levels') {
                     this.handleLevels(msg.levels);
+                } else if (msg.type === 'waveform') {
+                    liveWave ??= WAVEFORM.create();
+                    WAVEFORM.merge(liveWave, msg);
+                    WAVEFORM.draw(liveWave, this.$refs.waveform);
                 } else if (msg.type === 'status') {
                     this.handleStatus(msg);
                 } else if (msg.type === 'config_changed') {
@@ -649,6 +656,8 @@ document.addEventListener('alpine:init', () => {
             this.ws.onclose = () => {
                 this.encoder.state = 'connecting';
                 this.resetVuMeter();
+                // The server sends the whole waveform again on connect.
+                liveWave = null;
                 setTimeout(() => this.connectWebSocket(), WS_RECONNECT_MS);
             };
 

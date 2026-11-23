@@ -610,6 +610,13 @@ type WSLevelsResponse struct {
 	Levels audio.AudioLevels `json:"levels"`
 }
 
+// WSWaveformResponse carries the newest live waveform points.
+type WSWaveformResponse struct {
+	Type   string `json:"type"`   // Always "waveform"
+	End    int    `json:"end"`    // Sequence number after the last point; one per 10 ms, also through outages
+	Points []byte `json:"points"` // Base64; per point int8 min L, max L, min R, max R, then flags (1 clip L, 2 clip R, 4 gap); oldest first
+}
+
 // GraphConfig holds credentials for Microsoft Graph email notifications.
 type GraphConfig struct {
 	TenantID     string `json:"tenant_id,omitempty"`

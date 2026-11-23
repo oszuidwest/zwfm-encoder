@@ -50,15 +50,19 @@ func ProcessSamples(buf []byte, data *LevelData) {
 			data.PeakR = absR
 		}
 
-		if leftSample >= ClipThreshold || leftSample <= -ClipThreshold {
+		if clipped(leftSample) {
 			data.ClipCountL++
 		}
-		if rightSample >= ClipThreshold || rightSample <= -ClipThreshold {
+		if clipped(rightSample) {
 			data.ClipCountR++
 		}
 
 		data.SampleCount++
 	}
+}
+
+func clipped(sample int16) bool {
+	return sample >= ClipThreshold || sample <= -ClipThreshold
 }
 
 // Levels contains calculated audio levels in dB.

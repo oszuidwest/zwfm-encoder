@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
 	"github.com/oszuidwest/zwfm-encoder/internal/server"
@@ -82,6 +83,11 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	send := make(chan any, 16)
 	done := make(chan struct{})
 
+	// The initial status and the whole waveform go first, so every broadcast
+	// follows them; the empty buffer takes both without blocking.
+	send <- s.buildWSRuntime()
+	send <- s.waveformMessage(audio.WaveformPoints)
+
 	// Register this client for broadcasts.
 	// Cleanup: unregister before closing so the channel is removed from the map
 	// while broadcastConfigChanged holds RLock during sends, preventing send-on-closed-channel.
@@ -100,12 +106,8 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// One process-wide broadcaster feeds all clients; started on first use.
 	s.wsBroadcastOnce.Do(func() { go s.runWSBroadcaster() })
 
-	// Send an initial status snapshot, then block until the reader detects
-	// disconnect; the broadcaster delivers all further periodic updates.
-	select {
-	case send <- s.buildWSRuntime():
-	case <-done:
-	}
+	// Block until the reader detects disconnect; the broadcaster delivers all
+	// further periodic updates.
 	<-done
 }
 
@@ -193,6 +195,7 @@ func (s *Server) runWSBroadcaster() {
 			s.broadcastShared(func() any {
 				return types.WSLevelsResponse{Type: "levels", Levels: s.encoder.AudioLevels()}
 			})
+			s.broadcastShared(func() any { return s.waveformMessage(waveformBroadcastPoints) })
 		case <-statusTicker.C:
 			s.broadcastShared(func() any { return s.buildWSRuntime() })
 		}
@@ -225,6 +228,15 @@ func (s *Server) broadcastShared(build func() any) {
 			// Channel full, skip this client
 		}
 	}
+}
+
+// waveformBroadcastPoints is 300 ms of points, so one or two dropped
+// broadcasts heal; points a client still misses draw as a gap.
+const waveformBroadcastPoints = 30
+
+func (s *Server) waveformMessage(n int) types.WSWaveformResponse {
+	end, points := s.encoder.Waveform(n)
+	return types.WSWaveformResponse{Type: "waveform", End: end, Points: points}
 }
 
 func (s *Server) buildWSRuntime() types.WSRuntimeStatus {
@@ -460,6 +472,7 @@ var staticFiles = map[string]staticFile{
 	"/style.css":       {contentType: "text/css", content: []byte(styleCSS)},
 	"/app.js":          {contentType: "application/javascript", content: []byte(appJS)},
 	"/eventHelpers.js": {contentType: "application/javascript", content: []byte(eventHelpersJS)},
+	"/waveform.js":     {contentType: "application/javascript", content: []byte(waveformJS)},
 	"/icons.js":        {contentType: "application/javascript", content: []byte(iconsJS)},
 	"/alpine.min.js":   {contentType: "application/javascript", content: []byte(alpineJS)},
 	// favicon.svg is served dynamically via handleFavicon

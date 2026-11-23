@@ -998,6 +998,26 @@
         .mark[data-db="-12"] { left: 80%; }
         .mark[data-db="-6"] { left: 90%; }
         .mark[data-db="0"] { left: 100%; }
+
+        /* Live waveform, aligned with the meter tracks. */
+        .waveform {
+            display: flex;
+            gap: 0.5rem;
+            margin: 0.75rem 4rem 0 0;
+        }
+
+        .labels {
+            display: flex;
+            flex-direction: column;
+            justify-content: space-around;
+        }
+
+        canvas {
+            flex: 1;
+            min-width: 0;
+            height: 4rem;
+            color: var(--brand);
+        }
     }
 
 
