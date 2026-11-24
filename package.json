@@ -11,5 +11,8 @@
   "devDependencies": {
     "@biomejs/biome": "2.6.7",
     "htmlhint": "1.9.2"
+  },
+  "overrides": {
+    "glob": "^14.0.6"
   }
 }
