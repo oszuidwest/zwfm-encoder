@@ -10,6 +10,7 @@ const MS_PER_MINUTE = 60 * MS_PER_SECOND;
 const MS_PER_DAY = 24 * 60 * MS_PER_MINUTE;
 const CLIP_TIMEOUT_MS = 1500;
 const WS_RECONNECT_MS = 1000;
+const SESSION_CHECK_TIMEOUT_MS = 5000;
 const TEST_FEEDBACK_MS = 2000;
 const TOAST_DURATION_SUCCESS = 3000;
 const TOAST_DURATION_ERROR = 5000;
@@ -650,6 +651,12 @@ document.addEventListener('alpine:init', () => {
                 this.encoder.state = 'connecting';
                 this.resetVuMeter();
                 setTimeout(() => this.connectWebSocket(), WS_RECONNECT_MS);
+                // A refused handshake hides its status; only an API request tells that the session is gone.
+                fetch(API.STREAMS, { method: 'HEAD', signal: AbortSignal.timeout(SESSION_CHECK_TIMEOUT_MS) })
+                    .then(response => {
+                        if (response.status === 401) window.location.assign('/login');
+                    })
+                    .catch(() => {}); // Server away: the reconnect goes on.
             };
 
             // onclose owns reconnection, including after errors.
