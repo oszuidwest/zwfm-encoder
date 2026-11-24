@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"html/template"
 	"log/slog"
 	"net"
@@ -74,9 +74,11 @@ func NewServer(cfg *config.Config, enc *encoder.Encoder) *Server {
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	conn, err := server.UpgradeConnection(w, r)
+	// The default origin check applies: Origin must match Host, including the port.
+	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
-		slog.Error("WebSocket upgrade failed", "error", err)
+		// The error repeats request headers, so cap it.
+		slog.Error("WebSocket upgrade failed", "error", fmt.Sprintf("%.200s", err))
 		return
 	}
 
@@ -145,19 +147,13 @@ var wsWriteTimeout = 10 * time.Second
 
 // runWebSocketWriter is the sole writer goroutine for a WebSocket connection.
 func (s *Server) runWebSocketWriter(conn *websocket.Conn, r *http.Request, send <-chan any) {
-	defer func() {
-		// net.ErrClosed means a close frame from the client already closed it.
-		if err := conn.CloseNow(); err != nil && !errors.Is(err, net.ErrClosed) {
-			slog.Debug("WebSocket close error", "error", err)
-		}
-	}()
+	defer func() { _ = conn.CloseNow() }()
 	for msg := range send {
 		// The upgrade checked the session once; stop when it is logged out or expired.
 		if s.sessions.CSRFToken(r) == "" {
 			return
 		}
-		// Not r.Context(): it ends when the handler returns.
-		ctx, cancel := context.WithTimeout(context.Background(), wsWriteTimeout)
+		ctx, cancel := context.WithTimeout(r.Context(), wsWriteTimeout)
 		var err error
 		if raw, ok := msg.(rawWSMessage); ok {
 			err = conn.Write(ctx, websocket.MessageText, raw)
@@ -176,7 +172,8 @@ func (s *Server) runWebSocketReader(conn *websocket.Conn, done chan<- struct{}) 
 
 	for {
 		// Read messages to keep connection alive and detect disconnects.
-		// Not CloseRead: after a data message it can wait on the client without a deadline.
+		// Not CloseRead: it closes the connection on any data message, and may
+		// then wait on the client without a deadline.
 		if _, _, err := conn.Read(context.Background()); err != nil {
 			return
 		}

@@ -323,11 +323,38 @@ func setupRoutePatterns(t *testing.T) []string {
 	return patterns
 }
 
-// dialWebSocket connects to wsURL with the session cookie.
-func dialWebSocket(t *testing.T, wsURL, session string) *websocket.Conn {
+func TestHandleWebSocketRequiresSameOrigin(t *testing.T) {
+	t.Parallel()
+
+	s := newRouteTestServer(t)
+	for origin, want := range map[string]int{
+		// Past the origin check, the recorder cannot be hijacked.
+		"":                    http.StatusNotImplemented, // A non-browser client.
+		"http://encoder:8080": http.StatusNotImplemented,
+		"http://encoder:8081": http.StatusForbidden, // Another port of the same host.
+		"http://192.168.1.20": http.StatusForbidden, // Another device on the LAN.
+	} {
+		req := httptest.NewRequest(http.MethodGet, "http://encoder:8080/ws", http.NoBody)
+		req.Header.Set("Connection", "Upgrade")
+		req.Header.Set("Upgrade", "websocket")
+		req.Header.Set("Sec-WebSocket-Version", "13")
+		req.Header.Set("Sec-WebSocket-Key", "AAAAAAAAAAAAAAAAAAAAAA==")
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		rec := httptest.NewRecorder()
+		s.handleWebSocket(rec, req)
+		if rec.Code != want {
+			t.Errorf("origin %q: status %d, want %d", origin, rec.Code, want)
+		}
+	}
+}
+
+// dialWebSocket connects to serverURL with the session cookie.
+func dialWebSocket(t *testing.T, serverURL, session string) *websocket.Conn {
 	t.Helper()
 	opts := &websocket.DialOptions{HTTPHeader: http.Header{"Cookie": {"encoder_session=" + session}}}
-	conn, _, err := websocket.Dial(t.Context(), wsURL, opts) //nolint:bodyclose // Dial closes the body itself.
+	conn, _, err := websocket.Dial(t.Context(), serverURL, opts) //nolint:bodyclose // Dial closes the body itself.
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +370,7 @@ func TestWebSocketWriterStopsAfterLogout(t *testing.T) {
 	send := make(chan any, 1)
 	t.Cleanup(func() { close(send) })
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if conn, err := serverpkg.UpgradeConnection(w, r); err == nil {
+		if conn, err := websocket.Accept(w, r, nil); err == nil {
 			s.runWebSocketWriter(conn, r, send)
 		}
 	}))
@@ -352,9 +379,12 @@ func TestWebSocketWriterStopsAfterLogout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
-	send <- rawWSMessage(`"live"`)
-	if _, msg, err := conn.Read(ctx); err != nil || string(msg) != `"live"` {
-		t.Fatalf("message during session = %q, %v", msg, err)
+	for _, msg := range []any{rawWSMessage(`"live"`), "live"} {
+		send <- msg
+		typ, got, err := conn.Read(ctx)
+		if err != nil || typ != websocket.MessageText || strings.TrimSpace(string(got)) != `"live"` {
+			t.Fatalf("%T during session = %v %q, %v", msg, typ, got, err)
+		}
 	}
 	s.sessions.Delete(session)
 	send <- rawWSMessage(`"after logout"`)
@@ -375,7 +405,7 @@ func TestWebSocketWriterGivesUpOnStalledClient(t *testing.T) {
 	t.Cleanup(func() { close(send) })
 	returned := make(chan struct{})
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if conn, err := serverpkg.UpgradeConnection(w, r); err == nil {
+		if conn, err := websocket.Accept(w, r, nil); err == nil {
 			s.runWebSocketWriter(conn, r, send)
 			close(returned)
 		}
@@ -398,7 +428,7 @@ func TestWebSocketReaderDiscardsMessagesUntilDisconnect(t *testing.T) {
 	done := make(chan struct{})
 	s := newRouteTestServer(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if conn, err := serverpkg.UpgradeConnection(w, r); err == nil {
+		if conn, err := websocket.Accept(w, r, nil); err == nil {
 			s.runWebSocketReader(conn, done)
 			_ = conn.CloseNow()
 		}
@@ -409,13 +439,11 @@ func TestWebSocketReaderDiscardsMessagesUntilDisconnect(t *testing.T) {
 	defer cancel()
 	conn.CloseRead(ctx) // Receives the pong.
 
-	for range 2 {
-		if err := conn.Write(ctx, websocket.MessageText, []byte("ignored")); err != nil {
-			t.Fatal(err)
-		}
-		if err := conn.Ping(ctx); err != nil {
-			t.Fatalf("no pong after a message: %v", err)
-		}
+	if err := conn.Write(ctx, websocket.MessageText, []byte("ignored")); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Ping(ctx); err != nil {
+		t.Fatalf("no pong after a message: %v", err)
 	}
 	_ = conn.CloseNow()
 	select {
