@@ -8,8 +8,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.21.3
 	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.5.11
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.116.0
+	github.com/coder/websocket v1.8.15
 	github.com/datarhei/gosrt v0.13.0
-	github.com/gorilla/websocket v1.5.4-0.20240701034025-d67f41855da4
 	github.com/oszuidwest/zw-graphmail v0.0.3
 	golang.org/x/mod v0.43.0
 	golang.org/x/net v0.63.0

@@ -6,14 +6,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gorilla/websocket"
+	"github.com/coder/websocket"
 )
 
 func TestUpgradeConnectionRequiresSameOrigin(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if conn, err := UpgradeConnection(w, r); err == nil {
-			_ = conn.Close()
+			_ = conn.CloseNow()
 		}
 	}))
 	t.Cleanup(srv.Close)
@@ -28,15 +28,12 @@ func TestUpgradeConnectionRequiresSameOrigin(t *testing.T) {
 		if origin != "" {
 			header.Set("Origin", origin)
 		}
-		conn, resp, err := websocket.DefaultDialer.Dial("ws://"+host, header)
+		conn, resp, err := websocket.Dial(t.Context(), "ws://"+host, &websocket.DialOptions{HTTPHeader: header}) //nolint:bodyclose // Dial closes the body itself.
 		if err == nil {
-			_ = conn.Close()
+			_ = conn.CloseNow()
 		}
 		if resp == nil || resp.StatusCode != want {
 			t.Errorf("origin %q: response %v, want status %d", origin, resp, want)
-		}
-		if resp != nil {
-			_ = resp.Body.Close()
 		}
 	}
 }

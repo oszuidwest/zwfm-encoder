@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"go/ast"
 	"go/parser"
@@ -16,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gorilla/websocket"
+	"github.com/coder/websocket"
 	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
 	serverpkg "github.com/oszuidwest/zwfm-encoder/internal/server"
 )
@@ -322,6 +323,18 @@ func setupRoutePatterns(t *testing.T) []string {
 	return patterns
 }
 
+// dialWebSocket connects to wsURL with the session cookie.
+func dialWebSocket(t *testing.T, wsURL, session string) *websocket.Conn {
+	t.Helper()
+	opts := &websocket.DialOptions{HTTPHeader: http.Header{"Cookie": {"encoder_session=" + session}}}
+	conn, _, err := websocket.Dial(t.Context(), wsURL, opts) //nolint:bodyclose // Dial closes the body itself.
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.CloseNow() })
+	return conn
+}
+
 func TestWebSocketWriterStopsAfterLogout(t *testing.T) {
 	t.Parallel()
 
@@ -335,23 +348,17 @@ func TestWebSocketWriterStopsAfterLogout(t *testing.T) {
 		}
 	}))
 	t.Cleanup(ts.Close)
-	header := http.Header{"Cookie": {"encoder_session=" + session}}
-	conn, resp, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(ts.URL, "http"), header)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = resp.Body.Close()
-	t.Cleanup(func() { _ = conn.Close() })
-	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	conn := dialWebSocket(t, ts.URL, session)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
 
 	send <- rawWSMessage(`"live"`)
-	if _, msg, err := conn.ReadMessage(); err != nil || string(msg) != `"live"` {
+	if _, msg, err := conn.Read(ctx); err != nil || string(msg) != `"live"` {
 		t.Fatalf("message during session = %q, %v", msg, err)
 	}
 	s.sessions.Delete(session)
 	send <- rawWSMessage(`"after logout"`)
-	var closed *websocket.CloseError
-	if _, msg, err := conn.ReadMessage(); !errors.As(err, &closed) {
+	if _, msg, err := conn.Read(ctx); !errors.Is(err, io.EOF) {
 		t.Fatalf("after logout got %q, %v; want closed connection", msg, err)
 	}
 }
@@ -374,13 +381,7 @@ func TestWebSocketWriterGivesUpOnStalledClient(t *testing.T) {
 		}
 	}))
 	t.Cleanup(ts.Close)
-	header := http.Header{"Cookie": {"encoder_session=" + session}}
-	conn, resp, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(ts.URL, "http"), header)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = resp.Body.Close()
-	t.Cleanup(func() { _ = conn.Close() })
+	dialWebSocket(t, ts.URL, session)
 
 	// The client never reads, so a message far beyond the socket buffers blocks.
 	send <- make(rawWSMessage, 64<<20)
@@ -388,5 +389,38 @@ func TestWebSocketWriterGivesUpOnStalledClient(t *testing.T) {
 	case <-returned:
 	case <-time.After(5 * time.Second):
 		t.Fatal("writer still blocked on a client that stopped reading")
+	}
+}
+
+func TestWebSocketReaderDiscardsMessagesUntilDisconnect(t *testing.T) {
+	t.Parallel()
+
+	done := make(chan struct{})
+	s := newRouteTestServer(t)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if conn, err := serverpkg.UpgradeConnection(w, r); err == nil {
+			s.runWebSocketReader(conn, done)
+			_ = conn.CloseNow()
+		}
+	}))
+	t.Cleanup(ts.Close)
+	conn := dialWebSocket(t, ts.URL, s.sessions.Create())
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	conn.CloseRead(ctx) // Receives the pong.
+
+	for range 2 {
+		if err := conn.Write(ctx, websocket.MessageText, []byte("ignored")); err != nil {
+			t.Fatal(err)
+		}
+		if err := conn.Ping(ctx); err != nil {
+			t.Fatalf("no pong after a message: %v", err)
+		}
+	}
+	_ = conn.CloseNow()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatal("reader did not notice the disconnect")
 	}
 }
