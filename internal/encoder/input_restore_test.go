@@ -21,7 +21,7 @@ func TestInputOutageRestoredFromPreparedLog(t *testing.T) {
 				t.Fatal(err)
 			}
 			cfg.Audio.Input = "test-device"
-			e, err := newEncoder(cfg, "ffmpeg", path)
+			e, err := New(cfg, "ffmpeg", path)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -117,9 +117,9 @@ func TestUnreadableInputHistoryDoesNotBlockStartup(t *testing.T) {
 	if err := cfg.Load(); err != nil {
 		t.Fatal(err)
 	}
-	e, err := newEncoder(cfg, "ffmpeg", path)
+	e, err := New(cfg, "ffmpeg", path)
 	if err != nil {
-		t.Fatalf("newEncoder() with an unreadable event log = %v, want a running encoder", err)
+		t.Fatalf("New() with an unreadable event log = %v, want a running encoder", err)
 	}
 	t.Cleanup(func() { _ = e.Close() })
 	if !e.inputLostAt.IsZero() {
@@ -145,7 +145,7 @@ func TestTruncatedLogDoesNotRepeatInputRecoveryAfterReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	for attempt := range 2 {
-		e, err := newEncoder(cfg, "ffmpeg", path)
+		e, err := New(cfg, "ffmpeg", path)
 		if err != nil {
 			t.Fatal(err)
 		}
