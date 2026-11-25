@@ -246,7 +246,7 @@ encoder.example.com {
 }
 ```
 
-Keep the proxy restricted to your management network too; with a proxy on another host, bind the encoder to a private address and firewall its port to that proxy. The proxy must preserve the original `Host` and pass WebSockets. List only exact proxy addresses in `trusted_proxies`, never a client subnet; without it, all clients behind the proxy share one login limit.
+Keep the proxy restricted to your management network too; with a proxy on another host, bind the encoder to a private address and firewall its port to that proxy. The proxy must preserve the original `Host` and pass WebSockets over HTTP/1.1. List only exact proxy addresses in `trusted_proxies`, never a client subnet; without it, all clients behind the proxy share one login limit.
 
 ### Login limits and API clients
 

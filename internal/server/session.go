@@ -1,4 +1,4 @@
-// Package server provides the HTTP server and WebSocket handler for the web interface.
+// Package server provides sessions and login limits for the web interface.
 package server
 
 import (
