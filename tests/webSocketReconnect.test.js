@@ -4,54 +4,83 @@ import { runInNewContext } from 'node:vm';
 
 const source = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
 
-// Drops the socket while the API gives `respond`, and returns what the dashboard does next.
-async function afterDisconnect(respond) {
+const away = async () => { throw new TypeError('Failed to fetch'); };
+const status = code => async () => ({ status: code });
+
+// Connects, and lets the test drop the socket and answer the session check that follows.
+function dashboard() {
     let init;
     let factory;
-    const sockets = [];
-    const visited = [];
-    const timers = [];
+    const page = { sockets: [], visited: [], timers: [], checks: [] };
     runInNewContext(source, {
         location: { protocol: 'https:', host: 'encoder.example' },
-        window: { location: { assign: path => visited.push(path) } },
+        window: { location: { assign: path => page.visited.push(path) } },
         document: {
             documentElement: {},
             addEventListener: (type, listener) => { if (type === 'alpine:init') init = listener; },
         },
         getComputedStyle: () => ({ getPropertyValue: () => '' }),
         Alpine: { data: (_name, create) => { factory = create; } },
-        WebSocket: class { constructor() { sockets.push(this); } },
-        setTimeout: callback => { timers.push(callback); },
-        AbortSignal,
-        fetch: (url, { signal }) => {
-            expect(url).toBe('/api/streams');
-            expect(signal).toBeInstanceOf(AbortSignal); // A hung check must not pile up.
-            return respond();
+        WebSocket: class { constructor() { page.sockets.push(this); } },
+        AbortSignal: { timeout: ms => `${ms} ms` },
+        setTimeout: (callback, ms) => { page.timers.push({ callback, ms }); },
+        fetch: async (url, options) => {
+            page.checks.push({ url, ...options });
+            return page.respond();
         },
     });
     init();
-    const app = factory();
-    app.encoder.state = 'running';
-    app.connectWebSocket();
-    sockets[0].onclose();
-    await Bun.sleep(0);
-    for (const callback of timers) callback();
-    return { visited, sockets: sockets.length, state: app.encoder.state };
+    page.app = factory();
+    page.app.encoder.state = 'running';
+    page.app.connectWebSocket();
+    // Runs the next timer. Its promise rejects when the code under test lets an error escape.
+    page.tick = async () => {
+        const { callback, ms } = page.timers.shift();
+        expect(ms).toBe(1000);
+        await callback();
+    };
+    page.drop = (respond) => {
+        page.respond = respond;
+        page.sockets.at(-1).onclose();
+        return page.tick();
+    };
+    return page;
 }
 
-test('a tab without a session goes to the login page', async () => {
-    const { visited } = await afterDisconnect(async () => ({ status: 401 }));
-    expect(visited).toEqual(['/login']);
+test('a tab without a session goes to the login page once and stops reconnecting', async () => {
+    const page = dashboard();
+    await page.drop(status(401));
+    expect(page.visited).toEqual(['/login']);
+    expect(page.sockets).toHaveLength(1);
+    expect(page.timers).toEqual([]);
 });
 
-test('a tab reconnects when the server is away, failing, slow or only dropped the socket', async () => {
-    const responses = {
-        away: async () => { throw new TypeError('Failed to fetch'); },
-        failing: async () => ({ status: 502 }),
-        slow: () => new Promise(() => {}),
-        fine: async () => ({ status: 200 }),
-    };
-    for (const respond of Object.values(responses)) {
-        expect(await afterDisconnect(respond)).toEqual({ visited: [], sockets: 2, state: 'connecting' });
+test('a tab reconnects when the server is away, failing or only dropped the socket', async () => {
+    for (const respond of [away, status(502), status(200)]) {
+        const page = dashboard();
+        await page.drop(respond);
+        await page.drop(respond);
+        expect(page.visited).toEqual([]);
+        expect(page.sockets).toHaveLength(3);
+        expect(page.app.encoder.state).toBe('connecting');
     }
+});
+
+test('the session check is one small request with a time limit', async () => {
+    const page = dashboard();
+    await page.drop(away);
+    expect(page.checks).toEqual([{ url: '/api/streams', method: 'HEAD', signal: '5000 ms' }]);
+});
+
+test('a slow session check holds back the next one', async () => {
+    const page = dashboard();
+    const { promise, resolve } = Promise.withResolvers();
+    const tick = page.drop(() => promise);
+    await Bun.sleep(0);
+    expect(page.timers).toEqual([]);
+    expect(page.checks).toHaveLength(1);
+    expect(page.sockets).toHaveLength(1);
+    resolve({ status: 200 });
+    await tick;
+    expect(page.sockets).toHaveLength(2);
 });

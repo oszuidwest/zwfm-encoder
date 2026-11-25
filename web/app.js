@@ -650,17 +650,24 @@ document.addEventListener('alpine:init', () => {
             this.ws.onclose = () => {
                 this.encoder.state = 'connecting';
                 this.resetVuMeter();
-                setTimeout(() => this.connectWebSocket(), WS_RECONNECT_MS);
-                // A refused handshake hides its status; only an API request tells that the session is gone.
-                fetch(API.STREAMS, { method: 'HEAD', signal: AbortSignal.timeout(SESSION_CHECK_TIMEOUT_MS) })
-                    .then(response => {
-                        if (response.status === 401) window.location.assign('/login');
-                    })
-                    .catch(() => {}); // Server away: the reconnect goes on.
+                setTimeout(() => this.reconnect(), WS_RECONNECT_MS);
             };
 
             // onclose owns reconnection, including after errors.
             this.ws.onerror = () => {};
+        },
+
+        // A refused handshake hides its status, so ask the API first whether the session is gone.
+        async reconnect() {
+            const check = await fetch(API.STREAMS, {
+                method: 'HEAD',
+                signal: AbortSignal.timeout(SESSION_CHECK_TIMEOUT_MS)
+            }).catch(() => null); // Server away: try the socket anyway.
+            if (check?.status === 401) {
+                window.location.assign('/login');
+                return;
+            }
+            this.connectWebSocket();
         },
 
         // Apply PPM ballistics; server clip counts retrigger the clip indicator.
