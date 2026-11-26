@@ -417,6 +417,8 @@ document.addEventListener('alpine:init', () => {
             recorders: []
         },
         configLoaded: false,
+        configRequests: 0, // Configuration loads started
+        configApplied: 0, // The newest load whose answer was applied
 
         // Form state for settings (copied from config when entering settings view)
         settingsForm: {
@@ -542,8 +544,12 @@ document.addEventListener('alpine:init', () => {
 
         // Shared refresh for startup, config_changed, form entry and successful saves.
         async loadConfig() {
+            const request = ++this.configRequests;
             try {
                 const data = await requestJSON(API.CONFIG);
+                // Loads can finish out of order; an older answer never replaces a newer one.
+                if (request < this.configApplied) return;
+                this.configApplied = request;
                 this.config = data;
                 this.configLoaded = true;
 

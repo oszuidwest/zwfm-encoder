@@ -112,3 +112,17 @@ test('the first socket loads the configuration when the startup load failed', as
     await Bun.sleep(0);
     expect(page.app.streams).toEqual([{ id: 'late' }]);
 });
+
+test('an older configuration answer cannot replace a newer one', async () => {
+    const page = dashboard();
+    const answers = [];
+    page.respond = () => new Promise((resolve) => answers.push(resolve));
+    const config = (id) => ({ status: 200, ok: true, json: async () => ({ streams: [{ id }] }) });
+    const older = page.app.loadConfig();
+    const newer = page.app.loadConfig();
+    answers[1](config('newer'));
+    await newer;
+    answers[0](config('older'));
+    await older;
+    expect(page.app.streams).toEqual([{ id: 'newer' }]);
+});
