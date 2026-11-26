@@ -367,7 +367,7 @@ func TestWebSocketWriterStopsAfterLogout(t *testing.T) {
 
 	s := newRouteTestServer(t)
 	session := s.sessions.Create()
-	send := make(chan any, 1)
+	send := make(chan []byte, 1)
 	t.Cleanup(func() { close(send) })
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if conn, err := websocket.Accept(w, r, nil); err == nil {
@@ -379,15 +379,12 @@ func TestWebSocketWriterStopsAfterLogout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
-	for _, msg := range []any{rawWSMessage(`"live"`), "live"} {
-		send <- msg
-		typ, got, err := conn.Read(ctx)
-		if err != nil || typ != websocket.MessageText || strings.TrimSpace(string(got)) != `"live"` {
-			t.Fatalf("%T during session = %v %q, %v", msg, typ, got, err)
-		}
+	send <- []byte(`"live"`)
+	if typ, msg, err := conn.Read(ctx); err != nil || typ != websocket.MessageText || string(msg) != `"live"` {
+		t.Fatalf("message during session = %v %q, %v", typ, msg, err)
 	}
 	s.sessions.Delete(session)
-	send <- rawWSMessage(`"after logout"`)
+	send <- []byte(`"after logout"`)
 	if _, msg, err := conn.Read(ctx); !errors.Is(err, io.EOF) {
 		t.Fatalf("after logout got %q, %v; want closed connection", msg, err)
 	}
@@ -401,7 +398,7 @@ func TestWebSocketWriterGivesUpOnStalledClient(t *testing.T) {
 
 	s := newRouteTestServer(t)
 	session := s.sessions.Create()
-	send := make(chan any, 1)
+	send := make(chan []byte, 1)
 	t.Cleanup(func() { close(send) })
 	returned := make(chan struct{})
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -414,7 +411,7 @@ func TestWebSocketWriterGivesUpOnStalledClient(t *testing.T) {
 	dialWebSocket(t, ts.URL, session)
 
 	// The client never reads, so a message far beyond the socket buffers blocks.
-	send <- make(rawWSMessage, 64<<20)
+	send <- make([]byte, 64<<20)
 	select {
 	case <-returned:
 	case <-time.After(5 * time.Second):

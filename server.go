@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/coder/websocket/wsjson"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
 	"github.com/oszuidwest/zwfm-encoder/internal/server"
@@ -53,14 +52,10 @@ type Server struct {
 	httpServer *http.Server
 
 	// WebSocket broadcast channels
-	wsClients       map[chan any]struct{}
+	wsClients       map[chan []byte]struct{}
 	wsClientsMu     sync.RWMutex
 	wsBroadcastOnce sync.Once
 }
-
-// rawWSMessage carries pre-marshaled JSON so the broadcaster serializes each
-// periodic payload once instead of once per connected client.
-type rawWSMessage []byte
 
 // NewServer creates a Server with the given configuration and encoder.
 func NewServer(cfg *config.Config, enc *encoder.Encoder) *Server {
@@ -69,7 +64,7 @@ func NewServer(cfg *config.Config, enc *encoder.Encoder) *Server {
 		encoder:   enc,
 		sessions:  server.NewSessionManager(),
 		version:   NewVersionChecker(),
-		wsClients: make(map[chan any]struct{}),
+		wsClients: make(map[chan []byte]struct{}),
 	}
 }
 
@@ -84,12 +79,12 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	// Create buffered send channel for thread-safe writes.
 	// Only the writer goroutine writes to the connection, preventing race conditions.
-	send := make(chan any, 16)
+	send := make(chan []byte, 16)
 	done := make(chan struct{})
 
 	// Register this client for broadcasts.
 	// Cleanup: unregister before closing so the channel is removed from the map
-	// while broadcastConfigChanged holds RLock during sends, preventing send-on-closed-channel.
+	// while broadcastShared holds RLock during sends, preventing send-on-closed-channel.
 	s.registerWSClient(send)
 	defer func() {
 		s.unregisterWSClient(send)
@@ -107,20 +102,25 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	// Send an initial status snapshot, then block until the reader detects
 	// disconnect; the broadcaster delivers all further periodic updates.
+	snapshot, err := json.Marshal(s.buildWSRuntime())
+	if err != nil {
+		slog.Error("failed to marshal WebSocket payload", "error", err)
+		return
+	}
 	select {
-	case send <- s.buildWSRuntime():
+	case send <- snapshot:
 	case <-done:
 	}
 	<-done
 }
 
-func (s *Server) registerWSClient(send chan any) {
+func (s *Server) registerWSClient(send chan []byte) {
 	s.wsClientsMu.Lock()
 	s.wsClients[send] = struct{}{}
 	s.wsClientsMu.Unlock()
 }
 
-func (s *Server) unregisterWSClient(send chan any) {
+func (s *Server) unregisterWSClient(send chan []byte) {
 	s.wsClientsMu.Lock()
 	delete(s.wsClients, send)
 	s.wsClientsMu.Unlock()
@@ -128,17 +128,7 @@ func (s *Server) unregisterWSClient(send chan any) {
 
 // broadcastConfigChanged notifies all connected WebSocket clients that config has changed.
 func (s *Server) broadcastConfigChanged() {
-	s.wsClientsMu.RLock()
-	defer s.wsClientsMu.RUnlock()
-
-	msg := map[string]string{"type": "config_changed"}
-	for ch := range s.wsClients {
-		select {
-		case ch <- msg:
-		default:
-			// Channel full, skip this client
-		}
-	}
+	s.broadcastShared(func() any { return map[string]string{"type": "config_changed"} })
 }
 
 // wsWriteTimeout bounds one write, so a client that stops reading cannot keep
@@ -146,7 +136,7 @@ func (s *Server) broadcastConfigChanged() {
 var wsWriteTimeout = 10 * time.Second
 
 // runWebSocketWriter is the sole writer goroutine for a WebSocket connection.
-func (s *Server) runWebSocketWriter(conn *websocket.Conn, r *http.Request, send <-chan any) {
+func (s *Server) runWebSocketWriter(conn *websocket.Conn, r *http.Request, send <-chan []byte) {
 	defer func() { _ = conn.CloseNow() }()
 	for msg := range send {
 		// The upgrade checked the session once; stop when it is logged out or expired.
@@ -154,12 +144,7 @@ func (s *Server) runWebSocketWriter(conn *websocket.Conn, r *http.Request, send 
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), wsWriteTimeout)
-		var err error
-		if raw, ok := msg.(rawWSMessage); ok {
-			err = conn.Write(ctx, websocket.MessageText, raw)
-		} else {
-			err = wsjson.Write(ctx, conn, msg)
-		}
+		err := conn.Write(ctx, websocket.MessageText, msg)
 		cancel()
 		if err != nil {
 			return
@@ -205,7 +190,7 @@ func (s *Server) runWSBroadcaster() {
 
 // broadcastShared marshals the payload once and queues the bytes on every
 // client channel. The payload is only built when at least one client is
-// connected. Full client channels are skipped, matching broadcastConfigChanged.
+// connected. Full client channels are skipped.
 func (s *Server) broadcastShared(build func() any) {
 	s.wsClientsMu.RLock()
 	clientCount := len(s.wsClients)
@@ -224,7 +209,7 @@ func (s *Server) broadcastShared(build func() any) {
 	defer s.wsClientsMu.RUnlock()
 	for ch := range s.wsClients {
 		select {
-		case ch <- rawWSMessage(data):
+		case ch <- data:
 		default:
 			// Channel full, skip this client
 		}

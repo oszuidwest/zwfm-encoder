@@ -53,8 +53,8 @@ func TestCommittedSaveReportsSavedState(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			updates := make(chan any, 1)
-			s := &Server{config: cfg, wsClients: map[chan any]struct{}{updates: {}}}
+			updates := make(chan []byte, 1)
+			s := &Server{config: cfg, wsClients: map[chan []byte]struct{}{updates: {}}}
 			handler := s.handleAPISettings
 			if tt.name == "regenerate-key" {
 				handler = s.handleAPIRegenerateKey
@@ -74,7 +74,10 @@ func TestCommittedSaveReportsSavedState(t *testing.T) {
 				t.Fatalf("committed save response = %s, want saved state and recovery guidance", rec.Body.String())
 			}
 			select {
-			case <-updates:
+			case msg := <-updates:
+				if string(msg) != `{"type":"config_changed"}` {
+					t.Fatalf("dashboard message = %s, want config_changed", msg)
+				}
 			default:
 				t.Fatal("committed configuration did not notify dashboard clients to reload")
 			}
