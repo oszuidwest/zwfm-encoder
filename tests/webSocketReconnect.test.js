@@ -84,3 +84,14 @@ test('a slow session check holds back the next one', async () => {
     await tick;
     expect(page.sockets).toHaveLength(2);
 });
+
+test('a reconnected tab reloads the configuration, unless a form holds edits', async () => {
+    for (const [view, loads] of [['dashboard', 1], ['settings', 0]]) {
+        const page = dashboard();
+        page.sockets[0].onopen(); // The page loaded the configuration just before.
+        await page.drop(status(200));
+        page.app.view = view;
+        page.sockets[1].onopen();
+        expect(page.checks.filter(({ url }) => url === '/api/config')).toHaveLength(loads);
+    }
+});

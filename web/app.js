@@ -618,7 +618,16 @@ document.addEventListener('alpine:init', () => {
         },
 
         // Establishes WebSocket connection with auto-reconnect
-        connectWebSocket() {
+        // Reloads the saved configuration, unless a form holds unsaved edits.
+        refreshConfig() {
+            if (this.view !== 'settings' && this.view !== 'stream-form' && this.view !== 'recorder-form') {
+                this.loadConfig();
+            }
+        },
+
+        // A reconnected socket reloads the configuration: changes made while
+        // it was closed sent no config_changed to this tab.
+        connectWebSocket(reconnected = false) {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
             this.ws = new WebSocket(`${protocol}//${location.host}/ws`);
 
@@ -635,16 +644,14 @@ document.addEventListener('alpine:init', () => {
                 } else if (msg.type === 'status') {
                     this.handleStatus(msg);
                 } else if (msg.type === 'config_changed') {
-                    // Preserve unsaved form edits.
-                    if (this.view !== 'settings' && this.view !== 'stream-form' && this.view !== 'recorder-form') {
-                        this.loadConfig();
-                    }
+                    this.refreshConfig();
                 }
             };
 
             this.ws.onopen = () => {
                 // Clear stale toasts from before disconnect
                 this.clearToasts();
+                if (reconnected) this.refreshConfig();
             };
 
             this.ws.onclose = () => {
@@ -667,7 +674,7 @@ document.addEventListener('alpine:init', () => {
                 window.location.assign('/login');
                 return;
             }
-            this.connectWebSocket();
+            this.connectWebSocket(true);
         },
 
         // Apply PPM ballistics; server clip counts retrigger the clip indicator.
