@@ -359,7 +359,7 @@ document.addEventListener('alpine:init', () => {
         levels: { ...DEFAULT_LEVELS },
         vuMode: readStorage(STORAGE_KEYS.VU_MODE, 'peak'),
         // The mode button cycles through these in key order.
-        vuModeLabels: { peak: 'Peak', rms: 'RMS', wave: '10 s' },
+        vuModeLabels: { peak: 'Peak', rms: 'RMS', wave: 'Wave' },
         clipActive: false,
         clipTimeout: null,
 

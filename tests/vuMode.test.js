@@ -55,7 +55,7 @@ test('the mode button cycles peak, RMS and the waveform, and remembers the mode'
         state.toggleVuMode();
         seen.push(state.vuModeLabels[state.vuMode]);
     }
-    expect(seen).toEqual(['Peak', 'RMS', '10 s', 'Peak']);
+    expect(seen).toEqual(['Peak', 'RMS', 'Wave', 'Peak']);
     expect(storage.get('vuMode')).toBe('peak');
 
     state.toggleVuMode();

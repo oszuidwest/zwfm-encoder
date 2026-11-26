@@ -834,6 +834,8 @@
             font-size: 0.625rem;
             font-family: var(--font-mono);
             font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.01em;
             padding: 0.1875rem 0.3125rem;
             min-width: 2.5rem;
             text-align: center;
@@ -1003,17 +1005,21 @@
         .mark[data-s="-6"] { left: 40%; }
         .mark[data-s="-4"] { left: 60%; }
         .mark[data-s="-2"] { left: 80%; }
-        .mark[data-s="0"] { left: 100%; }
+        .mark[data-s="0"] { left: 100%; transform: translateX(-100%); }
 
         /* Live waveform: takes the place of the two meter rows in its mode, at
            the same height, so switching modes does not move the page. The canvas
            is two tracks and the gap between the rows; the bottom margin stands
            in for the second row's (.channel:last-of-type never matches, a scale
-           follows). The right margin is the .db column and its gap. */
+           follows). It runs to the right edge: this mode has no .db column. */
         .waveform {
             display: flex;
             gap: 0.5rem;
-            margin: 0 4rem 0.375rem 0;
+            margin-bottom: 0.375rem;
+        }
+
+        .waveform + .scale {
+            margin-right: 0;
         }
 
         .labels {
