@@ -1006,8 +1006,10 @@
         .mark[data-s="0"] { left: 100%; }
 
         /* Live waveform: takes the place of the two meter rows in its mode, at
-           the same height (two tracks and the row margin), so switching modes
-           does not move the page. */
+           the same height, so switching modes does not move the page. The canvas
+           is two tracks and the gap between the rows; the bottom margin stands
+           in for the second row's (.channel:last-of-type never matches, a scale
+           follows). The right margin is the .db column and its gap. */
         .waveform {
             display: flex;
             gap: 0.5rem;
@@ -1024,7 +1026,7 @@
             flex: 1;
             min-width: 0;
             height: calc(2 * var(--track-height) + 0.375rem);
-            color: var(--brand);
+            color: var(--brand); /* draw() paints audio in this color, clipping in --danger */
         }
     }
 

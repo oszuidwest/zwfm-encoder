@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 
 import '../web/waveform.js';
 
-const { create, merge, span } = globalThis.liveWaveform;
+const { create, merge, span, draw } = globalThis.liveWaveform;
 
 // msg builds a server message whose points end at sequence number end.
 const msg = (end, points) => ({
@@ -29,4 +29,36 @@ test('gap points draw nothing and clipping is per channel', () => {
     expect(span(wave, 0, 0, 1)).toBeNull();
     expect(span(wave, 0, -1, 2)).toEqual({ lo: -128, hi: 127, clip: false });
     expect(span(wave, 1, 0, 2)).toEqual({ lo: -5, hi: 5, clip: true });
+});
+
+test('draw puts the left channel on top, the newest point at the right and clipping in red', () => {
+    const points = Array(1000).fill([0, 0, 0, 0, 4]); // Gaps draw nothing.
+    points[0] = [0, 0, -64, 64, 0]; // Oldest: silent left, audio right.
+    points[999] = [-64, 64, 0, 0, 1]; // Newest: clipped left, silent right.
+    const wave = create();
+    merge(wave, msg(1000, points));
+
+    const rects = [];
+    const ctx = {
+        clearRect() {},
+        fillRect(x, y, w, h) {
+            rects.push([x, y, h, this.fillStyle]);
+        },
+    };
+    globalThis.devicePixelRatio = 1;
+    globalThis.getComputedStyle = () => ({ color: 'audio', getPropertyValue: () => 'danger' });
+    try {
+        draw(wave, { clientWidth: 1000, clientHeight: 8, getContext: () => ctx });
+    } finally {
+        delete globalThis.devicePixelRatio;
+        delete globalThis.getComputedStyle;
+    }
+
+    // Lanes are centred at 2 (left) and 6 (right); full scale is 2 px.
+    expect(rects).toEqual([
+        [0, 2, 1, 'audio'],
+        [0, 5, 2, 'audio'],
+        [999, 1, 2, 'danger'],
+        [999, 6, 1, 'audio'],
+    ]);
 });

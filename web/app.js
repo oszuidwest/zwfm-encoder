@@ -358,6 +358,7 @@ document.addEventListener('alpine:init', () => {
         devices: [],
         levels: { ...DEFAULT_LEVELS },
         vuMode: readStorage(STORAGE_KEYS.VU_MODE, 'peak'),
+        // The mode button cycles through these in key order.
         vuModeLabels: { peak: 'Peak', rms: 'RMS', wave: '10 s' },
         clipActive: false,
         clipTimeout: null,
@@ -635,7 +636,6 @@ document.addEventListener('alpine:init', () => {
                 }
                 if (msg.type === 'levels') {
                     this.handleLevels(msg.levels);
-                } else if (msg.type === 'waveform') {
                     liveWave ??= WAVEFORM.create();
                     WAVEFORM.merge(liveWave, msg);
                     WAVEFORM.draw(liveWave, this.$refs.waveform);
@@ -657,8 +657,10 @@ document.addEventListener('alpine:init', () => {
             this.ws.onclose = () => {
                 this.encoder.state = 'connecting';
                 this.resetVuMeter();
-                // The server sends the whole waveform again on connect.
-                liveWave = null;
+                // The server sends the whole waveform again on connect. Drawing
+                // the empty one clears the old trace, so it cannot pass for live.
+                liveWave = WAVEFORM.create();
+                WAVEFORM.draw(liveWave, this.$refs.waveform);
                 setTimeout(() => this.connectWebSocket(), WS_RECONNECT_MS);
             };
 

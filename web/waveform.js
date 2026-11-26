@@ -31,12 +31,12 @@
             found = true;
             lo = Math.min(lo, wave.data[off + channel * 2]);
             hi = Math.max(hi, wave.data[off + channel * 2 + 1]);
-            clip ||= (wave.data[off + 4] & (1 << channel)) !== 0;
+            clip ||= (wave.data[off + 4] & (1 << channel)) !== 0; // Flags 1 and 2: clip left, right.
         }
         return found ? { lo, hi, clip } : null;
     };
 
-    // Draws the last 10 seconds, left channel on top. Each pixel column takes the
+    // Draws the whole ring, newest at the right, left channel on top. Each pixel column takes the
     // min and max of its points, so short peaks survive on a narrow screen.
     const draw = (wave, canvas) => {
         const width = Math.round(canvas.clientWidth * devicePixelRatio);

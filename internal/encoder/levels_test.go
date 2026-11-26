@@ -40,9 +40,11 @@ func TestRunDistributorKeepsFramesWhole(t *testing.T) {
 	pcm := bytes.Repeat([]byte{0xff, 0x7f, 0, 0}, LevelUpdateSamples) // Left loud, right silent.
 	reads := [][]byte{pcm[:2], pcm[2:]}
 	var levels audio.AudioLevels
+	var waveformEnd int
 	e.sourceStdout = inputReadFunc(func(p []byte) (int, error) {
 		if len(reads) == 0 {
 			levels = e.AudioLevels()
+			waveformEnd, _ = e.Waveform(0)
 			return 0, io.EOF
 		}
 		n := copy(p, reads[0])
@@ -54,5 +56,8 @@ func TestRunDistributorKeepsFramesWhole(t *testing.T) {
 	e.runDistributor(1)
 	if levels.Left <= levels.Right {
 		t.Fatalf("levels = %+v, want the left channel loud", levels)
+	}
+	if want := LevelUpdateSamples / (audio.SampleRate / 100); waveformEnd != want {
+		t.Fatalf("waveform end = %d, want %d points from the same audio", waveformEnd, want)
 	}
 }

@@ -130,7 +130,7 @@
                 <!-- VU meter -->
                 <div class="vu">
                     <div class="meter-header">
-                        <button class="mode-btn" type="button" tabindex="0" @click="toggleVuMode()" x-text="vuModeLabels[vuMode]"></button>
+                        <button class="mode-btn" type="button" tabindex="0" @click="toggleVuMode()" :aria-label="`Meter mode: ${vuModeLabels[vuMode]}`" x-text="vuModeLabels[vuMode]"></button>
                         <div class="indicators">
                             <span class="indicator" aria-label="Silence indicator"><span class="dot" :class="getSilenceStateClass()"></span>Silence</span>
                             <span class="indicator" aria-label="Channel imbalance indicator"><span class="dot" :class="getChannelImbalanceStateClass()"></span>Imbalance</span>

@@ -4,13 +4,31 @@ import { runInNewContext } from 'node:vm';
 
 const source = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
 
-// appState runs app.js and returns the Alpine data of the dashboard.
+// appState runs app.js and returns the Alpine data of the dashboard, the
+// sockets it opens, and the waveforms it creates and draws.
 function appState(stored) {
     const storage = new Map(stored ? [['vuMode', stored]] : []);
+    const sockets = [];
+    const waves = [];
+    const drawn = [];
     let init;
     const context = {
         URL,
-        window: { location: { href: 'https://encoder.example/', origin: 'https://encoder.example' } },
+        location: { protocol: 'https:', host: 'encoder.example' },
+        WebSocket: class {
+            constructor() {
+                sockets.push(this);
+            }
+        },
+        setTimeout: (fn) => fn(),
+        window: {
+            location: { href: 'https://encoder.example/', origin: 'https://encoder.example' },
+            liveWaveform: {
+                create: () => waves[waves.push({}) - 1],
+                merge() {},
+                draw: (wave) => drawn.push(wave),
+            },
+        },
         document: {
             documentElement: {},
             addEventListener(type, listener) {
@@ -27,7 +45,7 @@ function appState(stored) {
     let factory;
     context.Alpine = { data: (_name, fn) => { factory = fn; } };
     init();
-    return { state: factory(), storage };
+    return { state: factory(), storage, sockets, waves, drawn };
 }
 
 test('the mode button cycles peak, RMS and the waveform, and remembers the mode', () => {
@@ -43,4 +61,20 @@ test('the mode button cycles peak, RMS and the waveform, and remembers the mode'
     state.toggleVuMode();
     state.toggleVuMode();
     expect(appState(storage.get('vuMode')).state.vuMode).toBe('wave');
+});
+
+test('a closed socket clears the waveform, because the server numbers its points again', () => {
+    const { state, sockets, waves, drawn } = appState();
+    state.$refs = { waveform: {} };
+    const levels = { data: JSON.stringify({ type: 'levels', levels: {}, end: 0, points: '' }) };
+
+    state.connectWebSocket();
+    sockets[0].onmessage(levels);
+    sockets[0].onmessage(levels);
+    expect(waves).toHaveLength(1);
+
+    sockets[0].onclose();
+    expect(drawn.at(-1)).toBe(waves[1]); // The empty waveform, so the old trace is gone.
+    sockets[1].onmessage(levels);
+    expect(waves).toHaveLength(2);
 });

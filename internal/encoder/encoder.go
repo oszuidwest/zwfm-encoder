@@ -392,9 +392,9 @@ func (e *Encoder) AudioLevels() audio.AudioLevels {
 }
 
 // Waveform returns the sequence number after the newest waveform point and
-// up to n of the newest points; see audio.Waveform.Read.
-func (e *Encoder) Waveform(n int) (end int, points []byte) {
-	return e.waveform.Read(n)
+// the points from sequence number from on; see audio.Waveform.Read.
+func (e *Encoder) Waveform(from int) (end int, points []byte) {
+	return e.waveform.Read(from)
 }
 
 // Status returns the current encoder status.

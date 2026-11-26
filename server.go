@@ -16,7 +16,6 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
-	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
 	"github.com/oszuidwest/zwfm-encoder/internal/server"
@@ -89,9 +88,10 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	done := make(chan struct{})
 
 	// The initial status and the whole waveform go first, so every broadcast
-	// follows them; the empty buffer takes both without blocking.
+	// follows them: the browser ignores waveform points older than the newest
+	// it has. The empty buffer takes both without blocking.
 	send <- s.buildWSRuntime()
-	send <- s.waveformMessage(audio.WaveformPoints)
+	send <- s.levelsMessage(0)
 
 	// Register this client for broadcasts.
 	// Cleanup: unregister before closing so the channel is removed from the map
@@ -193,13 +193,18 @@ func (s *Server) runWSBroadcaster() {
 	defer levelsTicker.Stop()
 	defer statusTicker.Stop()
 
+	// Each levels message carries the waveform points since the end of the
+	// message three before it, so a client that missed two in a row still gets
+	// every point, also after a burst of audio.
+	var waveformEnds [3]int // ends of the last three messages, oldest first
 	for {
 		select {
 		case <-levelsTicker.C:
 			s.broadcastShared(func() any {
-				return types.WSLevelsResponse{Type: "levels", Levels: s.encoder.AudioLevels()}
+				msg := s.levelsMessage(waveformEnds[0])
+				waveformEnds = [3]int{waveformEnds[1], waveformEnds[2], msg.End}
+				return msg
 			})
-			s.broadcastShared(func() any { return s.waveformMessage(waveformBroadcastPoints) })
 		case <-statusTicker.C:
 			s.broadcastShared(func() any { return s.buildWSRuntime() })
 		}
@@ -234,13 +239,11 @@ func (s *Server) broadcastShared(build func() any) {
 	}
 }
 
-// waveformBroadcastPoints is 300 ms of points, so one or two dropped
-// broadcasts heal; points a client still misses draw as a gap.
-const waveformBroadcastPoints = 30
-
-func (s *Server) waveformMessage(n int) types.WSWaveformResponse {
-	end, points := s.encoder.Waveform(n)
-	return types.WSWaveformResponse{Type: "waveform", End: end, Points: points}
+// levelsMessage returns the audio levels and the waveform points from
+// sequence number from on.
+func (s *Server) levelsMessage(from int) types.WSLevelsResponse {
+	end, points := s.encoder.Waveform(from)
+	return types.WSLevelsResponse{Type: "levels", Levels: s.encoder.AudioLevels(), End: end, Points: points}
 }
 
 func (s *Server) buildWSRuntime() types.WSRuntimeStatus {
