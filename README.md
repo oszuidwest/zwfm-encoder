@@ -9,7 +9,7 @@ Audio streaming software for [ZuidWest FM](https://www.zuidwestfm.nl/) (Linux), 
 - **Multi-output streaming** - Push to SRT servers or expose local SRT listeners
 - **Multi-recorder support** - Hourly or on-demand recording to local disk and/or S3, with retention cleanup
 - **VU meters** - Peak/RMS metering with configurable peak hold and clip detection
-- **Live waveform** - The last minute of audio under the VU meters, with clipping in red and input outages as gaps
+- **Live waveform** - A third meter mode that shows the last 10 seconds of audio, with clipping in red and input outages as gaps
 - **Silence and channel imbalance detection** - Alerts via webhook, email or Zabbix, with MP3 incident dumps
 - **Input recovery** - Reopens a lost audio input automatically and alerts on the outage
 - **Multiple codecs** - MP3, Opus, or uncompressed PCM per output

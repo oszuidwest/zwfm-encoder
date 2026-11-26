@@ -1,6 +1,6 @@
 (function initWaveform(root) {
     // Keep in sync with internal/audio/waveform.go.
-    const POINTS = 6000;
+    const POINTS = 1000;
     const POINT_SIZE = 5;
     const GAP = 4;
     const GAP_POINT = Int8Array.of(0, 0, 0, 0, GAP);
@@ -36,7 +36,7 @@
         return found ? { lo, hi, clip } : null;
     };
 
-    // Draws the last minute, left channel on top. Each pixel column takes the
+    // Draws the last 10 seconds, left channel on top. Each pixel column takes the
     // min and max of its points, so short peaks survive on a narrow screen.
     const draw = (wave, canvas) => {
         const width = Math.round(canvas.clientWidth * devicePixelRatio);

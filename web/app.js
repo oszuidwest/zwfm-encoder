@@ -18,6 +18,8 @@ const EVENT_PAGE_SIZE = 50;
 const MAX_TOASTS = 3;
 const CONNECT_CONFIRM_MS = readCSSDuration('--duration-attention', 400);
 
+const VU_MODE_LABELS = { peak: 'Peak', rms: 'RMS', wave: '10 s' };
+
 const STORAGE_KEYS = {
     SETTINGS_CARDS: 'settingsCardsOpen',
     VU_MODE: 'vuMode',
@@ -358,6 +360,7 @@ document.addEventListener('alpine:init', () => {
         devices: [],
         levels: { ...DEFAULT_LEVELS },
         vuMode: readStorage(STORAGE_KEYS.VU_MODE, 'peak'),
+        vuModeLabels: VU_MODE_LABELS,
         clipActive: false,
         clipTimeout: null,
 
@@ -1601,7 +1604,8 @@ document.addEventListener('alpine:init', () => {
         },
 
         toggleVuMode() {
-            this.vuMode = this.vuMode === 'peak' ? 'rms' : 'peak';
+            const modes = Object.keys(VU_MODE_LABELS);
+            this.vuMode = modes[(modes.indexOf(this.vuMode) + 1) % modes.length];
             writeStorage(STORAGE_KEYS.VU_MODE, this.vuMode);
         },
 

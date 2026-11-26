@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// WaveformPoints is the number of 10 ms points the waveform keeps (60 s).
-const WaveformPoints = 60 * 100
+// WaveformPoints is the number of 10 ms points the waveform keeps (10 s).
+const WaveformPoints = 10 * 100
 
 const (
 	waveformBucketFrames = SampleRate / 100
@@ -31,7 +31,7 @@ const (
 var gapPoint = [waveformPointSize]byte{4: gapFlag}
 
 // Waveform keeps the min and max sample per channel per 10 ms of the last
-// minute. Values are signed 8-bit: the 16-bit sample divided by 256, like
+// 10 seconds. Values are signed 8-bit: the 16-bit sample divided by 256, like
 // audiowaveform -b 8. It is safe for concurrent use; a Write holds the lock
 // throughout, so a Read never sees half of one.
 type Waveform struct {

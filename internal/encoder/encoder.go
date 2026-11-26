@@ -116,7 +116,7 @@ type Encoder struct {
 	lastAudioAt         time.Time                         // latest PCM of audioRunID
 	audioEnded          bool                              // audioRunID's distributor has stopped reading
 	audioLevels         atomic.Pointer[audio.AudioLevels] // published lock-free; see AudioLevels
-	waveform            audio.Waveform                    // last minute of audio; outages show as gaps
+	waveform            audio.Waveform                    // last 10 seconds of audio; outages show as gaps
 	silenceDetect       *audio.SilenceDetector
 	imbalanceDetect     *audio.ImbalanceDetector
 	alertOrchestrator   *notify.AlertOrchestrator

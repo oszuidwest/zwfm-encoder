@@ -63,11 +63,12 @@ func TestWaveformPauseReadsAsGapAndKeepsSequenceNumbers(t *testing.T) {
 
 	// An outage longer than the ring still advances by its full length; the
 	// window then holds gap points up to the newest point, across the ring end.
-	*now = now.Add(61 * time.Second)
+	const outage = WaveformPoints + 100
+	*now = now.Add(outage * waveformBucket)
 	w.Write(framesPCM(waveformBucketFrames, 256, 256))
 	want = bytes.Join([][]byte{bytes.Repeat(gap, WaveformPoints-1), point(1)}, nil)
-	if end, points := w.Read(WaveformPoints); end != 56+6100+1 || !bytes.Equal(points, want) {
-		t.Fatalf("Read after long outage = %d, %d bytes; want %d, %d bytes", end, len(points), 56+6100+1, len(want))
+	if end, points := w.Read(WaveformPoints); end != 56+outage+1 || !bytes.Equal(points, want) {
+		t.Fatalf("Read after long outage = %d, %d bytes; want %d, %d bytes", end, len(points), 56+outage+1, len(want))
 	}
 }
 

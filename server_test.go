@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
 	serverpkg "github.com/oszuidwest/zwfm-encoder/internal/server"
 )
@@ -450,5 +451,21 @@ func TestWebSocketReaderDiscardsMessagesUntilDisconnect(t *testing.T) {
 	case <-done:
 	case <-ctx.Done():
 		t.Fatal("reader did not notice the disconnect")
+	}
+}
+
+// The browser ring must hold exactly the points the server sends on connect,
+// and the time axis and label must name the window they span.
+func TestWaveformPageKeepsTheServerWindow(t *testing.T) {
+	t.Parallel()
+	seconds := strconv.Itoa(audio.WaveformPoints / 100)
+	for _, c := range []struct{ file, page, want string }{
+		{"web/waveform.js", waveformJS, "const POINTS = " + strconv.Itoa(audio.WaveformPoints) + ";"},
+		{"web/index.html", indexHTML, ">-" + seconds + " s<"},
+		{"web/index.html", indexHTML, "Waveform of the last " + seconds + " seconds"},
+	} {
+		if !strings.Contains(c.page, c.want) {
+			t.Errorf("%s lacks %q", c.file, c.want)
+		}
 	}
 }
