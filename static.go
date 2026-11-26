@@ -27,6 +27,11 @@ var appJS string
 //go:embed web/eventHelpers.js
 var eventHelpersJS string
 
+// waveformJS is the embedded live waveform code.
+//
+//go:embed web/waveform.js
+var waveformJS string
+
 // iconsJS is the embedded SVG icons module.
 //
 //go:embed web/icons.js

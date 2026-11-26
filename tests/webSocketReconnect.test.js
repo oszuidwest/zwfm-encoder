@@ -14,7 +14,10 @@ function dashboard() {
     const page = { sockets: [], visited: [], timers: [], checks: [] };
     runInNewContext(source, {
         location: { protocol: 'https:', host: 'encoder.example' },
-        window: { location: { assign: path => page.visited.push(path) } },
+        window: {
+            location: { assign: path => page.visited.push(path) },
+            liveWaveform: { create: () => ({}), draw() {} },
+        },
         document: {
             documentElement: {},
             addEventListener: (type, listener) => { if (type === 'alpine:init') init = listener; },
@@ -31,6 +34,7 @@ function dashboard() {
     });
     init();
     page.app = factory();
+    page.app.$refs = { vu: { querySelectorAll: () => [] } };
     page.app.encoder.state = 'running';
     page.app.connectWebSocket();
     // Runs the next timer. Its promise rejects when the code under test lets an error escape.

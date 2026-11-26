@@ -116,6 +116,7 @@ type Encoder struct {
 	lastAudioAt         time.Time                         // latest PCM of audioRunID
 	audioEnded          bool                              // audioRunID's distributor has stopped reading
 	audioLevels         atomic.Pointer[audio.AudioLevels] // published lock-free; see AudioLevels
+	waveform            audio.Waveform                    // last 10 seconds of audio; outages show as gaps
 	silenceDetect       *audio.SilenceDetector
 	imbalanceDetect     *audio.ImbalanceDetector
 	alertOrchestrator   *notify.AlertOrchestrator
@@ -384,6 +385,12 @@ func (e *Encoder) AudioLevels() audio.AudioLevels {
 		return *levels
 	}
 	return silentAudioLevels
+}
+
+// Waveform returns the sequence number after the newest waveform point and
+// the points from sequence number from on; see audio.Waveform.Read.
+func (e *Encoder) Waveform(from int) (end int, points []byte) {
+	return e.waveform.Read(from)
 }
 
 // Status returns the current encoder status.
@@ -1243,6 +1250,7 @@ func (e *Encoder) runDistributor(runID uint64) {
 		chunk := buf[:n-held]
 
 		distributor.ProcessSamples(chunk)
+		e.waveform.Write(chunk)
 
 		// Queue consumers share one immutable clone of the reused capture buffer.
 		var shared []byte

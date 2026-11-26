@@ -57,6 +57,9 @@ const API = {
 };
 
 const EVENT_HELPERS = window.eventUIHelpers;
+const WAVEFORM = window.liveWaveform;
+// Outside Alpine's reactive state: every wave.data read in draw() would go through a proxy.
+let liveWave = null;
 
 // Keys must match eventGroups() and the status filter pills.
 const EVENT_GROUP_FILTERS = [
@@ -356,6 +359,8 @@ document.addEventListener('alpine:init', () => {
         devices: [],
         levels: { ...DEFAULT_LEVELS },
         vuMode: readStorage(STORAGE_KEYS.VU_MODE, 'peak'),
+        // The mode button cycles through these in key order.
+        vuModeLabels: { peak: 'Peak', rms: 'RMS', wave: 'Wave' },
         clipActive: false,
         clipTimeout: null,
 
@@ -632,6 +637,9 @@ document.addEventListener('alpine:init', () => {
                 }
                 if (msg.type === 'levels') {
                     this.handleLevels(msg.levels);
+                    liveWave ??= WAVEFORM.create();
+                    WAVEFORM.merge(liveWave, msg);
+                    this.drawWaveform();
                 } else if (msg.type === 'status') {
                     this.handleStatus(msg);
                 } else if (msg.type === 'config_changed') {
@@ -650,6 +658,10 @@ document.addEventListener('alpine:init', () => {
             this.ws.onclose = () => {
                 this.encoder.state = 'connecting';
                 this.resetVuMeter();
+                // The server sends the whole waveform again on connect. Drawing
+                // the empty one clears the old trace, so it cannot pass for live.
+                liveWave = WAVEFORM.create();
+                this.drawWaveform();
                 setTimeout(() => this.reconnect(), WS_RECONNECT_MS);
             };
 
@@ -1605,8 +1617,16 @@ document.addEventListener('alpine:init', () => {
             };
         },
 
+        // Draws each channel's waveform in its meter track.
+        drawWaveform() {
+            this.$refs.vu.querySelectorAll('canvas').forEach((canvas, channel) => {
+                WAVEFORM.draw(liveWave, canvas, channel);
+            });
+        },
+
         toggleVuMode() {
-            this.vuMode = this.vuMode === 'peak' ? 'rms' : 'peak';
+            const modes = Object.keys(this.vuModeLabels);
+            this.vuMode = modes[(modes.indexOf(this.vuMode) + 1) % modes.length];
             writeStorage(STORAGE_KEYS.VU_MODE, this.vuMode);
         },
 
