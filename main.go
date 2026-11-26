@@ -21,6 +21,7 @@ import (
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
+	"github.com/oszuidwest/zwfm-encoder/internal/eventlog"
 	"github.com/oszuidwest/zwfm-encoder/internal/notify"
 	"github.com/oszuidwest/zwfm-encoder/internal/util"
 )
@@ -93,7 +94,7 @@ func startApp(configPath string) (*app, error) {
 	}
 	audio.SetFFmpegPath(ffmpegPath)
 
-	enc, err := encoder.New(cfg, ffmpegPath)
+	enc, err := encoder.New(cfg, ffmpegPath, eventlog.DefaultLogPath(cfg.Snapshot().WebPort))
 	if err != nil {
 		return nil, err
 	}

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
 	serverpkg "github.com/oszuidwest/zwfm-encoder/internal/server"
 )
@@ -360,6 +361,55 @@ func dialWebSocket(t *testing.T, serverURL, session string) *websocket.Conn {
 	}
 	t.Cleanup(func() { _ = conn.CloseNow() })
 	return conn
+}
+
+func TestWebSocketRouteServesSessionUntilDisconnect(t *testing.T) {
+	t.Parallel()
+
+	cfg := freshServer(t).config
+	enc, err := encoder.New(cfg, "", filepath.Join(t.TempDir(), "encoder.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = enc.Close() })
+	s := NewServer(cfg, enc)
+	t.Cleanup(s.version.Stop)
+	s.wsBroadcastOnce.Do(func() {}) // No periodic messages between the ones below.
+	routes := s.SetupRoutes()
+	returned := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(returned)
+		routes.ServeHTTP(w, r)
+	}))
+	t.Cleanup(ts.Close)
+	conn := dialWebSocket(t, ts.URL+"/ws", s.sessions.Create())
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	readType := func(want string) {
+		t.Helper()
+		var msg struct {
+			Type string `json:"type"`
+		}
+		if err := wsjson.Read(ctx, conn, &msg); err != nil || msg.Type != want {
+			t.Fatalf("message type = %q, %v; want %q", msg.Type, err, want)
+		}
+	}
+	readType("status")
+	s.broadcastConfigChanged()
+	readType("config_changed")
+
+	_ = conn.CloseNow()
+	select {
+	case <-returned:
+	case <-ctx.Done():
+		t.Fatal("handler still running after the disconnect")
+	}
+	s.wsClientsMu.RLock()
+	defer s.wsClientsMu.RUnlock()
+	if n := len(s.wsClients); n != 0 {
+		t.Fatalf("%d clients registered after the disconnect, want 0", n)
+	}
 }
 
 func TestWebSocketWriterStopsAfterLogout(t *testing.T) {

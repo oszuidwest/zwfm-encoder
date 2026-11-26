@@ -144,12 +144,8 @@ func (p *captureProcess) Wait() error {
 	return err
 }
 
-// New creates a new Encoder with the given configuration and FFmpeg binary path.
-func New(cfg *config.Config, ffmpegPath string) (*Encoder, error) {
-	return newEncoder(cfg, ffmpegPath, eventlog.DefaultLogPath(cfg.Snapshot().WebPort))
-}
-
-func newEncoder(cfg *config.Config, ffmpegPath, eventLogPath string) (*Encoder, error) {
+// New creates a new Encoder with the given configuration, FFmpeg binary path and event log path.
+func New(cfg *config.Config, ffmpegPath, eventLogPath string) (*Encoder, error) {
 	graphCfg := cfg.GraphConfig()
 	snap := cfg.Snapshot()
 	logger, err := eventlog.NewLogger(eventLogPath)
