@@ -3,6 +3,7 @@ package audio
 
 import (
 	"encoding/binary"
+	"iter"
 	"math"
 )
 
@@ -32,11 +33,7 @@ type LevelData struct {
 // encoder's distributor passes whole frames only; a trailing partial one is
 // ignored.
 func ProcessSamples(buf []byte, data *LevelData) {
-	for i := 0; i+bytesPerFrame <= len(buf); i += bytesPerFrame {
-		//nolint:gosec // Intentional reinterpretation of unsigned PCM to signed
-		leftSample := int16(binary.LittleEndian.Uint16(buf[i:]))
-		//nolint:gosec // Intentional reinterpretation of unsigned PCM to signed
-		rightSample := int16(binary.LittleEndian.Uint16(buf[i+2:]))
+	for leftSample, rightSample := range stereoFrames(buf) {
 		left := float64(leftSample)
 		right := float64(rightSample)
 
@@ -58,6 +55,22 @@ func ProcessSamples(buf []byte, data *LevelData) {
 		}
 
 		data.SampleCount++
+	}
+}
+
+// stereoFrames yields the left and right sample of each whole S16LE stereo
+// frame in buf; a trailing partial frame is skipped.
+func stereoFrames(buf []byte) iter.Seq2[int16, int16] {
+	return func(yield func(int16, int16) bool) {
+		for i := 0; i+bytesPerFrame <= len(buf); i += bytesPerFrame {
+			//nolint:gosec // Intentional reinterpretation of unsigned PCM to signed
+			left := int16(binary.LittleEndian.Uint16(buf[i:]))
+			//nolint:gosec // Intentional reinterpretation of unsigned PCM to signed
+			right := int16(binary.LittleEndian.Uint16(buf[i+2:]))
+			if !yield(left, right) {
+				return
+			}
+		}
 	}
 }
 

@@ -455,7 +455,8 @@ func TestWebSocketReaderDiscardsMessagesUntilDisconnect(t *testing.T) {
 }
 
 // The browser ring must hold exactly the points the server sends on connect,
-// and the time axis and label must name the window they span.
+// and the time axis, the label and the mode button must name the window they
+// span.
 func TestWaveformPageKeepsTheServerWindow(t *testing.T) {
 	t.Parallel()
 	seconds := strconv.Itoa(audio.WaveformPoints / 100)
@@ -463,6 +464,7 @@ func TestWaveformPageKeepsTheServerWindow(t *testing.T) {
 		{"web/waveform.js", waveformJS, "const POINTS = " + strconv.Itoa(audio.WaveformPoints) + ";"},
 		{"web/index.html", indexHTML, ">-" + seconds + " s<"},
 		{"web/index.html", indexHTML, "Waveform of the last " + seconds + " seconds"},
+		{"web/app.js", appJS, "wave: '" + seconds + " s'"},
 	} {
 		if !strings.Contains(c.page, c.want) {
 			t.Errorf("%s lacks %q", c.file, c.want)

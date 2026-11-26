@@ -816,6 +816,7 @@
     /* VU meter: live levels, clip/silence indicators, and dB scale. */
     @scope (.vu) {
         :scope {
+            --track-height: 1.125rem;
             background: color-mix(in srgb, var(--vu-bg) 68%, var(--surface-card) 32%);
             border-radius: var(--radius-md);
             padding: 0.875rem;
@@ -911,7 +912,7 @@
         }
 
         .track {
-            height: 1.125rem;
+            height: var(--track-height);
             border-radius: var(--radius-sm);
             overflow: hidden;
             position: relative;
@@ -1004,8 +1005,9 @@
         .mark[data-s="-2"] { left: 80%; }
         .mark[data-s="0"] { left: 100%; }
 
-        /* Live waveform: takes the place of the meter tracks in its mode, at
-           the same height, so switching modes does not move the page. */
+        /* Live waveform: takes the place of the two meter rows in its mode, at
+           the same height (two tracks and the row margin), so switching modes
+           does not move the page. */
         .waveform {
             display: flex;
             gap: 0.5rem;
@@ -1021,7 +1023,7 @@
         canvas {
             flex: 1;
             min-width: 0;
-            height: 2.625rem;
+            height: calc(2 * var(--track-height) + 0.375rem);
             color: var(--brand);
         }
     }

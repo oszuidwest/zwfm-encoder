@@ -1,7 +1,6 @@
 package audio
 
 import (
-	"encoding/binary"
 	"sync"
 	"time"
 )
@@ -44,7 +43,6 @@ type Waveform struct {
 	ring   [WaveformPoints][waveformPointSize]byte
 	end    int       // sequence number after the newest point
 	lastAt time.Time // when audio last arrived
-	clock  func() time.Time
 }
 
 // Write adds whole S16LE stereo frames; a point can span several writes.
@@ -52,8 +50,9 @@ func (w *Waveform) Write(buf []byte) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	// Store the gap that Read has been reporting, so sequence numbers that
-	// clients saw during the pause keep their meaning.
-	now := w.now()
+	// clients saw during the pause keep their meaning. Taking the time under
+	// the lock keeps it at or after the time of any earlier Read.
+	now := time.Now()
 	if gap := w.pendingGap(now); gap > 0 {
 		w.frames = 0 // The unfinished point is from before the pause.
 		w.end += max(gap-WaveformPoints, 0)
@@ -63,12 +62,7 @@ func (w *Waveform) Write(buf []byte) {
 	}
 	w.lastAt = now
 
-	for i := 0; i+bytesPerFrame <= len(buf); i += bytesPerFrame {
-		//nolint:gosec // Intentional reinterpretation of unsigned PCM to signed
-		left := int16(binary.LittleEndian.Uint16(buf[i:]))
-		//nolint:gosec // Intentional reinterpretation of unsigned PCM to signed
-		right := int16(binary.LittleEndian.Uint16(buf[i+2:]))
-
+	for left, right := range stereoFrames(buf) {
 		if w.frames == 0 {
 			w.minL, w.maxL, w.minR, w.maxR, w.flags = left, left, right, right, 0
 		} else {
@@ -108,13 +102,6 @@ func (w *Waveform) pendingGap(now time.Time) int {
 	return int(pause / waveformBucket)
 }
 
-func (w *Waveform) now() time.Time {
-	if w.clock != nil {
-		return w.clock()
-	}
-	return time.Now()
-}
-
 func (w *Waveform) put(point [waveformPointSize]byte) {
 	w.ring[w.end%WaveformPoints] = point
 	w.end++
@@ -126,7 +113,7 @@ func (w *Waveform) put(point [waveformPointSize]byte) {
 func (w *Waveform) Read(n int) (end int, points []byte) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	end = w.end + w.pendingGap(w.now())
+	end = w.end + w.pendingGap(time.Now())
 	points = make([]byte, 0, min(n, end)*waveformPointSize)
 	for seq := max(end-n, 0); seq < end; seq++ {
 		point := gapPoint
