@@ -604,10 +604,17 @@ type RecorderResponse struct {
 	CreatedAt     int64 `json:"created_at"`     // Unix ms
 }
 
-// WSLevelsResponse contains audio level data sent to clients.
+// WSLevelsResponse contains audio level data and the newest live waveform
+// points sent to clients.
 type WSLevelsResponse struct {
 	Type   string            `json:"type"` // Always "levels"
 	Levels audio.AudioLevels `json:"levels"`
+	// End is the waveform sequence number after the last point: one per 10 ms
+	// of audio, and a pause over 500 ms advances it too, as gap points.
+	End int `json:"end"`
+	// Points is base64; per point int8 min L, max L, min R, max R, then flags
+	// (1 clip L, 2 clip R, 4 gap); oldest first.
+	Points []byte `json:"points"`
 }
 
 // GraphConfig holds credentials for Microsoft Graph email notifications.

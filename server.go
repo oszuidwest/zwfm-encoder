@@ -80,9 +80,9 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Create buffered send channel for thread-safe writes.
 	// Only the writer goroutine writes to the connection, preventing race conditions.
 	send := make(chan []byte, 16)
-	done := make(chan struct{})
 
-	// Register this client for broadcasts.
+	// Register this client for broadcasts, with its status and the whole
+	// waveform queued first.
 	// Cleanup: unregister before closing so the channel is removed from the map
 	// while broadcastShared holds RLock during sends, preventing send-on-closed-channel.
 	s.registerWSClient(send)
@@ -94,30 +94,31 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Writer goroutine - sole writer to the connection
 	go s.runWebSocketWriter(conn, r, send)
 
-	// Reader goroutine - keeps connection alive
-	go s.runWebSocketReader(conn, done)
-
 	// One process-wide broadcaster feeds all clients; started on first use.
 	s.wsBroadcastOnce.Do(func() { go s.runWSBroadcaster() })
 
-	// Send an initial status snapshot, then block until the reader detects
-	// disconnect; the broadcaster delivers all further periodic updates.
-	snapshot, err := json.Marshal(s.buildWSRuntime())
-	if err != nil {
-		slog.Error("failed to marshal WebSocket payload", "error", err)
-		return
-	}
-	select {
-	case send <- snapshot:
-	case <-done:
-	}
-	<-done
+	// Read until the client disconnects; the broadcaster delivers all further
+	// periodic updates.
+	s.runWebSocketReader(conn)
 }
 
+// registerWSClient adds send to the broadcast list with the status and the
+// whole waveform queued first. It builds them while it holds the lock, so no
+// broadcast can come before them (the browser ignores waveform points older
+// than the newest it has) and a config change made meanwhile still reaches the
+// client. The new channel has room for both.
 func (s *Server) registerWSClient(send chan []byte) {
 	s.wsClientsMu.Lock()
+	defer s.wsClientsMu.Unlock()
+	for _, msg := range []any{s.buildWSRuntime(), s.levelsMessage(0)} {
+		data, err := json.Marshal(msg)
+		if err != nil {
+			slog.Error("failed to marshal WebSocket payload", "error", err)
+			continue
+		}
+		send <- data
+	}
 	s.wsClients[send] = struct{}{}
-	s.wsClientsMu.Unlock()
 }
 
 func (s *Server) unregisterWSClient(send chan []byte) {
@@ -152,9 +153,7 @@ func (s *Server) runWebSocketWriter(conn *websocket.Conn, r *http.Request, send 
 	}
 }
 
-func (s *Server) runWebSocketReader(conn *websocket.Conn, done chan<- struct{}) {
-	defer close(done)
-
+func (s *Server) runWebSocketReader(conn *websocket.Conn) {
 	for {
 		// Read messages to keep connection alive and detect disconnects.
 		// Not CloseRead: it closes the connection on any data message, and may
@@ -176,11 +175,17 @@ func (s *Server) runWSBroadcaster() {
 	defer levelsTicker.Stop()
 	defer statusTicker.Stop()
 
+	// Each levels message carries the waveform points since the end of the
+	// message three before it, so a client that missed two in a row still gets
+	// every point, also after a burst of audio.
+	var waveformEnds [3]int // ends of the last three messages, oldest first
 	for {
 		select {
 		case <-levelsTicker.C:
 			s.broadcastShared(func() any {
-				return types.WSLevelsResponse{Type: "levels", Levels: s.encoder.AudioLevels()}
+				msg := s.levelsMessage(waveformEnds[0])
+				waveformEnds = [3]int{waveformEnds[1], waveformEnds[2], msg.End}
+				return msg
 			})
 		case <-statusTicker.C:
 			s.broadcastShared(func() any { return s.buildWSRuntime() })
@@ -214,6 +219,13 @@ func (s *Server) broadcastShared(build func() any) {
 			// Channel full, skip this client
 		}
 	}
+}
+
+// levelsMessage returns the audio levels and the waveform points from
+// sequence number from on.
+func (s *Server) levelsMessage(from int) types.WSLevelsResponse {
+	end, points := s.encoder.Waveform(from)
+	return types.WSLevelsResponse{Type: "levels", Levels: s.encoder.AudioLevels(), End: end, Points: points}
 }
 
 func (s *Server) buildWSRuntime() types.WSRuntimeStatus {
@@ -449,6 +461,7 @@ var staticFiles = map[string]staticFile{
 	"/style.css":       {contentType: "text/css", content: []byte(styleCSS)},
 	"/app.js":          {contentType: "application/javascript", content: []byte(appJS)},
 	"/eventHelpers.js": {contentType: "application/javascript", content: []byte(eventHelpersJS)},
+	"/waveform.js":     {contentType: "application/javascript", content: []byte(waveformJS)},
 	"/icons.js":        {contentType: "application/javascript", content: []byte(iconsJS)},
 	"/alpine.min.js":   {contentType: "application/javascript", content: []byte(alpineJS)},
 	// favicon.svg is served dynamically via handleFavicon

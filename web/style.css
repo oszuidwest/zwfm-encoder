@@ -816,6 +816,7 @@
     /* VU meter: live levels, clip/silence indicators, and dB scale. */
     @scope (.vu) {
         :scope {
+            --track-empty: color-mix(in srgb, var(--surface-card) 92%, var(--vu-bg) 8%);
             background: color-mix(in srgb, var(--vu-bg) 68%, var(--surface-card) 32%);
             border-radius: var(--radius-md);
             padding: 0.875rem;
@@ -939,7 +940,7 @@
             right: 0;
             height: 100%;
             width: 100%;
-            background: color-mix(in srgb, var(--surface-card) 92%, var(--vu-bg) 8%);
+            background: var(--track-empty);
             transition: width var(--transition-meter);
         }
 
@@ -998,6 +999,28 @@
         .mark[data-db="-12"] { left: 80%; }
         .mark[data-db="-6"] { left: 90%; }
         .mark[data-db="0"] { left: 100%; }
+
+        .mark[data-s="-10"] { left: 0%; }
+        .mark[data-s="-8"] { left: 20%; }
+        .mark[data-s="-6"] { left: 40%; }
+        .mark[data-s="-4"] { left: 60%; }
+        .mark[data-s="-2"] { left: 80%; }
+        .mark[data-s="0"] { left: 100%; transform: translateX(-100%); }
+
+        /* Wave mode: each channel's waveform fills its track, on the color of
+           an empty meter, and runs to the right edge without the .db column. */
+        .track canvas {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            background: var(--track-empty);
+            color: var(--brand); /* draw() paints audio in this color, clipping in --danger */
+        }
+
+        .scale.time {
+            margin-right: 0;
+        }
     }
 
 
