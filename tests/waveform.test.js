@@ -34,6 +34,7 @@ test('gap points draw nothing and clipping is per channel', () => {
 test('draw puts the left channel on top, the newest point at the right and clipping in red', () => {
     const points = Array(1000).fill([0, 0, 0, 0, 4]); // Gaps draw nothing.
     points[0] = [0, 0, -64, 64, 0]; // Oldest: silent left, audio right.
+    points[500] = [0, 0, -128, -128, 2]; // Right pinned at negative full scale.
     points[999] = [-64, 64, 0, 0, 1]; // Newest: clipped left, silent right.
     const wave = create();
     merge(wave, msg(1000, points));
@@ -54,10 +55,13 @@ test('draw puts the left channel on top, the newest point at the right and clipp
         delete globalThis.getComputedStyle;
     }
 
-    // Lanes are centred at 2 (left) and 6 (right); full scale is 2 px.
+    // Lanes are centred at 2 (left) and 6 (right); full scale is 2 px, and a
+    // pinned point stays on the last row of its lane.
     expect(rects).toEqual([
         [0, 2, 1, 'audio'],
         [0, 5, 2, 'audio'],
+        [500, 2, 1, 'audio'],
+        [500, 7, 1, 'danger'],
         [999, 1, 2, 'danger'],
         [999, 6, 1, 'audio'],
     ]);

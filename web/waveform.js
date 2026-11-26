@@ -59,7 +59,9 @@
                 if (!s) continue;
                 const center = (height / 4) * (1 + channel * 2);
                 ctx.fillStyle = colors[s.clip ? 1 : 0];
-                ctx.fillRect(x, center - s.hi * scale, 1, Math.max((s.hi - s.lo) * scale, 1));
+                // A point pinned at -128 would start on the lane's bottom edge; keep it in.
+                const top = Math.min(center - s.hi * scale, center + height / 4 - 1);
+                ctx.fillRect(x, top, 1, Math.max((s.hi - s.lo) * scale, 1));
             }
         }
     };
