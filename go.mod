@@ -5,14 +5,14 @@ go 1.27.4
 require (
 	fyne.io/systray v1.12.2
 	github.com/aws/aws-sdk-go-v2 v1.48.0
-	github.com/aws/aws-sdk-go-v2/credentials v1.21.0
-	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.5.7
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.10
+	github.com/aws/aws-sdk-go-v2/credentials v1.21.3
+	github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager v0.5.11
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.116.0
+	github.com/coder/websocket v1.8.15
 	github.com/datarhei/gosrt v0.13.0
-	github.com/gorilla/websocket v1.5.3
 	github.com/oszuidwest/zw-graphmail v0.0.3
 	golang.org/x/mod v0.43.0
-	golang.org/x/net v0.62.0
+	golang.org/x/net v0.63.0
 	golang.org/x/sys v0.50.0
 )
 

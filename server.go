@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"log/slog"
 	"net"
@@ -13,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 	"github.com/oszuidwest/zwfm-encoder/internal/audio"
 	"github.com/oszuidwest/zwfm-encoder/internal/config"
 	"github.com/oszuidwest/zwfm-encoder/internal/encoder"
@@ -72,9 +75,11 @@ func NewServer(cfg *config.Config, enc *encoder.Encoder) *Server {
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	conn, err := server.UpgradeConnection(w, r)
+	// The default origin check applies: Origin must match Host, including the port.
+	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
-		slog.Error("WebSocket upgrade failed", "error", err)
+		// The error repeats request headers, so cap it.
+		slog.Error("WebSocket upgrade failed", "error", fmt.Sprintf("%.200s", err))
 		return
 	}
 
@@ -143,36 +148,35 @@ func (s *Server) broadcastConfigChanged() {
 var wsWriteTimeout = 10 * time.Second
 
 // runWebSocketWriter is the sole writer goroutine for a WebSocket connection.
-func (s *Server) runWebSocketWriter(conn server.WebSocketConn, r *http.Request, send <-chan any) {
-	defer func() {
-		if err := conn.Close(); err != nil {
-			slog.Debug("WebSocket close error", "error", err)
-		}
-	}()
+func (s *Server) runWebSocketWriter(conn *websocket.Conn, r *http.Request, send <-chan any) {
+	defer func() { _ = conn.CloseNow() }()
 	for msg := range send {
 		// The upgrade checked the session once; stop when it is logged out or expired.
 		if s.sessions.CSRFToken(r) == "" {
 			return
 		}
-		_ = conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) // Gorilla always returns nil.
+		ctx, cancel := context.WithTimeout(r.Context(), wsWriteTimeout)
 		var err error
 		if raw, ok := msg.(rawWSMessage); ok {
-			err = conn.WriteMessage(server.TextMessage, raw)
+			err = conn.Write(ctx, websocket.MessageText, raw)
 		} else {
-			err = conn.WriteJSON(msg)
+			err = wsjson.Write(ctx, conn, msg)
 		}
+		cancel()
 		if err != nil {
 			return
 		}
 	}
 }
 
-func (s *Server) runWebSocketReader(conn server.WebSocketConn, done chan<- struct{}) {
+func (s *Server) runWebSocketReader(conn *websocket.Conn, done chan<- struct{}) {
 	defer close(done)
 
 	for {
-		// Read messages to keep connection alive and detect disconnects
-		if _, _, err := conn.ReadMessage(); err != nil {
+		// Read messages to keep connection alive and detect disconnects.
+		// Not CloseRead: it closes the connection on any data message, and may
+		// then wait on the client without a deadline.
+		if _, _, err := conn.Read(context.Background()); err != nil {
 			return
 		}
 	}

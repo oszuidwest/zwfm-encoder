@@ -9,7 +9,10 @@
     "test:js": "bun test tests/*.test.js"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.7",
+    "@biomejs/biome": "2.6.8",
     "htmlhint": "1.9.2"
+  },
+  "overrides": {
+    "glob": "^14.0.6"
   }
 }
