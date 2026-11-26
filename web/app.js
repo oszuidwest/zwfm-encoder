@@ -631,7 +631,8 @@ document.addEventListener('alpine:init', () => {
         },
 
         // A reconnected socket reloads the configuration: changes made while
-        // it was closed sent no config_changed to this tab.
+        // it was closed sent no config_changed to this tab. So does the first
+        // socket when the configuration failed to load at startup.
         connectWebSocket(reconnected = false) {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
             this.ws = new WebSocket(`${protocol}//${location.host}/ws`);
@@ -659,7 +660,7 @@ document.addEventListener('alpine:init', () => {
             this.ws.onopen = () => {
                 // Clear stale toasts from before disconnect
                 this.clearToasts();
-                if (reconnected) this.refreshConfig();
+                if (reconnected || !this.configLoaded) this.refreshConfig();
             };
 
             this.ws.onclose = () => {

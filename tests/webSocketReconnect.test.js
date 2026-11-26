@@ -90,12 +90,25 @@ test('a slow session check holds back the next one', async () => {
 });
 
 test('a reconnected tab reloads the configuration, unless a form holds edits', async () => {
-    for (const [view, loads] of [['dashboard', 1], ['settings', 0]]) {
+    const saved = async () => ({ status: 200, ok: true, json: async () => ({ streams: [{ id: 'added' }] }) });
+    for (const [view, streams] of [['dashboard', [{ id: 'added' }]], ['settings', []]]) {
         const page = dashboard();
-        page.sockets[0].onopen(); // The page loaded the configuration just before.
-        await page.drop(status(200));
+        page.app.configLoaded = true; // The page loaded the configuration just before.
+        page.respond = saved;
+        page.sockets[0].onopen();
+        await page.drop(saved);
         page.app.view = view;
         page.sockets[1].onopen();
-        expect(page.checks.filter(({ url }) => url === '/api/config')).toHaveLength(loads);
+        await Bun.sleep(0);
+        expect(page.app.streams).toEqual(streams);
+        expect(page.checks.filter(({ url }) => url === '/api/config')).toHaveLength(streams.length);
     }
+});
+
+test('the first socket loads the configuration when the startup load failed', async () => {
+    const page = dashboard();
+    page.respond = async () => ({ status: 200, ok: true, json: async () => ({ streams: [{ id: 'late' }] }) });
+    page.sockets[0].onopen();
+    await Bun.sleep(0);
+    expect(page.app.streams).toEqual([{ id: 'late' }]);
 });
