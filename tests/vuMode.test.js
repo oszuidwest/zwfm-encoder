@@ -24,9 +24,9 @@ function appState(stored) {
         window: {
             location: { href: 'https://encoder.example/', origin: 'https://encoder.example' },
             liveWaveform: {
-                create: () => waves[waves.push({}) - 1],
+                create: () => waves[waves.push({ id: waves.length }) - 1],
                 merge() {},
-                draw: (wave) => drawn.push(wave),
+                draw: (wave, _canvas, channel) => drawn.push([wave, channel]),
             },
         },
         document: {
@@ -65,7 +65,7 @@ test('the mode button cycles peak, RMS and the waveform, and remembers the mode'
 
 test('a closed socket clears the waveform, because the server numbers its points again', () => {
     const { state, sockets, waves, drawn } = appState();
-    state.$refs = { waveform: {} };
+    state.$refs = { vu: { querySelectorAll: () => [{}, {}] } };
     const levels = { data: JSON.stringify({ type: 'levels', levels: {}, end: 0, points: '' }) };
 
     state.connectWebSocket();
@@ -74,7 +74,8 @@ test('a closed socket clears the waveform, because the server numbers its points
     expect(waves).toHaveLength(1);
 
     sockets[0].onclose();
-    expect(drawn.at(-1)).toBe(waves[1]); // The empty waveform, so the old trace is gone.
+    // Both tracks get the empty waveform, so the old trace is gone.
+    expect(drawn.slice(-2)).toEqual([[waves[1], 0], [waves[1], 1]]);
     sockets[1].onmessage(levels);
     expect(waves).toHaveLength(2);
 });

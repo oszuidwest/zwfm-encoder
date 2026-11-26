@@ -128,7 +128,7 @@
                 </div>
 
                 <!-- VU meter -->
-                <div class="vu">
+                <div class="vu" x-ref="vu">
                     <div class="meter-header">
                         <button class="mode-btn" type="button" tabindex="0" @click="toggleVuMode()" :aria-label="`Meter mode: ${vuModeLabels[vuMode]}`" x-text="vuModeLabels[vuMode]"></button>
                         <div class="indicators">
@@ -138,16 +138,17 @@
                         </div>
                     </div>
                     <template x-for="ch in vuChannels" :key="ch.label">
-                        <div class="channel" x-show="vuMode !== 'wave'">
+                        <div class="channel">
                             <span class="label" x-text="ch.label"></span>
                             <div class="track-wrapper">
                                 <div class="track">
                                     <div class="gradient"></div>
                                     <div class="cover" :style="{ width: `${100 - dbToPercent(vuMode === 'peak' ? levels[ch.display] : levels[ch.level])}%` }"></div>
+                                    <canvas x-show="vuMode === 'wave'" x-cloak role="img" :aria-label="`Waveform of the last 10 seconds, channel ${ch.label}`"></canvas>
                                 </div>
                                 <div class="peak" :style="{ left: `${dbToPercent(levels[ch.hold])}%` }" :data-visible="vuMode === 'peak' && levels[ch.hold] > -59 ? true : null"></div>
                             </div>
-                            <span class="db" x-text="`${(vuMode === 'peak' ? levels[ch.hold] : levels[ch.level]).toFixed(1)} dB`"></span>
+                            <span class="db" x-show="vuMode !== 'wave'" x-text="`${(vuMode === 'peak' ? levels[ch.hold] : levels[ch.level]).toFixed(1)} dB`"></span>
                         </div>
                     </template>
                     <div class="scale" x-show="vuMode !== 'wave'">
@@ -158,11 +159,7 @@
                         <span class="mark" data-db="-6">-6</span>
                         <span class="mark" data-db="0">0</span>
                     </div>
-                    <div class="waveform" x-show="vuMode === 'wave'" x-cloak>
-                        <div class="labels" aria-hidden="true"><span class="label">L</span><span class="label">R</span></div>
-                        <canvas x-ref="waveform" role="img" aria-label="Waveform of the last 10 seconds, left channel above right"></canvas>
-                    </div>
-                    <div class="scale" x-show="vuMode === 'wave'" x-cloak aria-hidden="true">
+                    <div class="scale time" x-show="vuMode === 'wave'" x-cloak aria-hidden="true">
                         <span class="mark" data-s="-10">-10 s</span>
                         <span class="mark" data-s="-8">-8</span>
                         <span class="mark" data-s="-6">-6</span>

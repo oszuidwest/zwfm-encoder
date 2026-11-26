@@ -816,7 +816,7 @@
     /* VU meter: live levels, clip/silence indicators, and dB scale. */
     @scope (.vu) {
         :scope {
-            --track-height: 1.125rem;
+            --track-empty: color-mix(in srgb, var(--surface-card) 92%, var(--vu-bg) 8%);
             background: color-mix(in srgb, var(--vu-bg) 68%, var(--surface-card) 32%);
             border-radius: var(--radius-md);
             padding: 0.875rem;
@@ -914,7 +914,7 @@
         }
 
         .track {
-            height: var(--track-height);
+            height: 1.125rem;
             border-radius: var(--radius-sm);
             overflow: hidden;
             position: relative;
@@ -940,7 +940,7 @@
             right: 0;
             height: 100%;
             width: 100%;
-            background: color-mix(in srgb, var(--surface-card) 92%, var(--vu-bg) 8%);
+            background: var(--track-empty);
             transition: width var(--transition-meter);
         }
 
@@ -1007,32 +1007,19 @@
         .mark[data-s="-2"] { left: 80%; }
         .mark[data-s="0"] { left: 100%; transform: translateX(-100%); }
 
-        /* Live waveform: takes the place of the two meter rows in its mode, at
-           the same height, so switching modes does not move the page. The canvas
-           is two tracks and the gap between the rows; the bottom margin stands
-           in for the second row's (.channel:last-of-type never matches, a scale
-           follows). It runs to the right edge: this mode has no .db column. */
-        .waveform {
-            display: flex;
-            gap: 0.5rem;
-            margin-bottom: 0.375rem;
-        }
-
-        .waveform + .scale {
-            margin-right: 0;
-        }
-
-        .labels {
-            display: flex;
-            flex-direction: column;
-            justify-content: space-around;
-        }
-
-        canvas {
-            flex: 1;
-            min-width: 0;
-            height: calc(2 * var(--track-height) + 0.375rem);
+        /* Wave mode: each channel's waveform fills its track, on the color of
+           an empty meter, and runs to the right edge without the .db column. */
+        .track canvas {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            background: var(--track-empty);
             color: var(--brand); /* draw() paints audio in this color, clipping in --danger */
+        }
+
+        .scale.time {
+            margin-right: 0;
         }
     }
 

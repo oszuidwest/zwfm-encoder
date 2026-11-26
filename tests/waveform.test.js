@@ -31,7 +31,7 @@ test('gap points draw nothing and clipping is per channel', () => {
     expect(span(wave, 1, 0, 2)).toEqual({ lo: -5, hi: 5, clip: true });
 });
 
-test('draw puts the left channel on top, the newest point at the right and clipping in red', () => {
+test('draw puts one channel in its track, the newest point at the right and clipping in red', () => {
     const points = Array(1000).fill([0, 0, 0, 0, 4]); // Gaps draw nothing.
     points[0] = [0, 0, -64, 64, 0]; // Oldest: silent left, audio right.
     points[500] = [0, 0, -128, -128, 2]; // Right pinned at negative full scale.
@@ -39,30 +39,36 @@ test('draw puts the left channel on top, the newest point at the right and clipp
     const wave = create();
     merge(wave, msg(1000, points));
 
-    const rects = [];
-    const ctx = {
-        clearRect() {},
-        fillRect(x, y, w, h) {
-            rects.push([x, y, h, this.fillStyle]);
-        },
-    };
+    const rects = [[], []];
     globalThis.devicePixelRatio = 1;
     globalThis.getComputedStyle = () => ({ color: 'audio', getPropertyValue: () => 'danger' });
     try {
-        draw(wave, { clientWidth: 1000, clientHeight: 8, getContext: () => ctx });
+        for (const channel of [0, 1]) {
+            const ctx = {
+                clearRect() {},
+                fillRect(x, y, w, h) {
+                    rects[channel].push([x, y, h, this.fillStyle]);
+                },
+            };
+            draw(wave, { clientWidth: 1000, clientHeight: 8, getContext: () => ctx }, channel);
+        }
     } finally {
         delete globalThis.devicePixelRatio;
         delete globalThis.getComputedStyle;
     }
 
-    // Lanes are centred at 2 (left) and 6 (right); full scale is 2 px, and a
-    // pinned point stays on the last row of its lane.
+    // The centre is row 4 and full scale is 4 px; a pinned point stays on the
+    // last row.
     expect(rects).toEqual([
-        [0, 2, 1, 'audio'],
-        [0, 5, 2, 'audio'],
-        [500, 2, 1, 'audio'],
-        [500, 7, 1, 'danger'],
-        [999, 1, 2, 'danger'],
-        [999, 6, 1, 'audio'],
+        [
+            [0, 4, 1, 'audio'],
+            [500, 4, 1, 'audio'],
+            [999, 2, 4, 'danger'],
+        ],
+        [
+            [0, 2, 4, 'audio'],
+            [500, 7, 1, 'danger'],
+            [999, 4, 1, 'audio'],
+        ],
     ]);
 });

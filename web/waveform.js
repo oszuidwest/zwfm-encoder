@@ -36,9 +36,10 @@
         return found ? { lo, hi, clip } : null;
     };
 
-    // Draws the whole ring, newest at the right, left channel on top. Each pixel column takes the
-    // min and max of its points, so short peaks survive on a narrow screen.
-    const draw = (wave, canvas) => {
+    // Draws one channel (0 left, 1 right) of the whole ring, newest at the
+    // right. Each pixel column takes the min and max of its points, so short
+    // peaks survive on a narrow screen.
+    const draw = (wave, canvas, channel) => {
         const width = Math.round(canvas.clientWidth * devicePixelRatio);
         const height = Math.round(canvas.clientHeight * devicePixelRatio);
         if (canvas.width !== width) canvas.width = width;
@@ -49,20 +50,18 @@
         ctx.clearRect(0, 0, width, height);
         const style = getComputedStyle(canvas);
         const colors = [style.color, style.getPropertyValue('--danger')];
-        const scale = height / 4 / 128;
+        const center = height / 2;
+        const scale = center / 128;
         const start = wave.end - POINTS;
         for (let x = 0; x < width; x++) {
             const from = start + Math.floor((x * POINTS) / width);
             const to = Math.max(start + Math.floor(((x + 1) * POINTS) / width), from + 1);
-            for (const channel of [0, 1]) {
-                const s = span(wave, channel, from, to);
-                if (!s) continue;
-                const center = (height / 4) * (1 + channel * 2);
-                ctx.fillStyle = colors[s.clip ? 1 : 0];
-                // A point pinned at -128 would start on the lane's bottom edge; keep it in.
-                const top = Math.min(center - s.hi * scale, center + height / 4 - 1);
-                ctx.fillRect(x, top, 1, Math.max((s.hi - s.lo) * scale, 1));
-            }
+            const s = span(wave, channel, from, to);
+            if (!s) continue;
+            ctx.fillStyle = colors[s.clip ? 1 : 0];
+            // A point pinned at -128 would start on the bottom edge; keep it in.
+            const top = Math.min(center - s.hi * scale, height - 1);
+            ctx.fillRect(x, top, 1, Math.max((s.hi - s.lo) * scale, 1));
         }
     };
 

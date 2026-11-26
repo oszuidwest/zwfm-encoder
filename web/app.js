@@ -638,7 +638,7 @@ document.addEventListener('alpine:init', () => {
                     this.handleLevels(msg.levels);
                     liveWave ??= WAVEFORM.create();
                     WAVEFORM.merge(liveWave, msg);
-                    WAVEFORM.draw(liveWave, this.$refs.waveform);
+                    this.drawWaveform();
                 } else if (msg.type === 'status') {
                     this.handleStatus(msg);
                 } else if (msg.type === 'config_changed') {
@@ -660,7 +660,7 @@ document.addEventListener('alpine:init', () => {
                 // The server sends the whole waveform again on connect. Drawing
                 // the empty one clears the old trace, so it cannot pass for live.
                 liveWave = WAVEFORM.create();
-                WAVEFORM.draw(liveWave, this.$refs.waveform);
+                this.drawWaveform();
                 setTimeout(() => this.connectWebSocket(), WS_RECONNECT_MS);
             };
 
@@ -1601,6 +1601,13 @@ document.addEventListener('alpine:init', () => {
                 showError,
                 lastError: status.error || ''
             };
+        },
+
+        // Draws each channel's waveform in its meter track.
+        drawWaveform() {
+            this.$refs.vu.querySelectorAll('canvas').forEach((canvas, channel) => {
+                WAVEFORM.draw(liveWave, canvas, channel);
+            });
         },
 
         toggleVuMode() {
