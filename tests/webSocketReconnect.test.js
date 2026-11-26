@@ -88,3 +88,41 @@ test('a slow session check holds back the next one', async () => {
     await tick;
     expect(page.sockets).toHaveLength(2);
 });
+
+test('a reconnected tab reloads the configuration, unless a form holds edits', async () => {
+    const saved = async () => ({ status: 200, ok: true, json: async () => ({ streams: [{ id: 'added' }] }) });
+    for (const [view, streams] of [['dashboard', [{ id: 'added' }]], ['settings', []]]) {
+        const page = dashboard();
+        page.app.configLoaded = true; // The page loaded the configuration just before.
+        page.respond = saved;
+        page.sockets[0].onopen();
+        await page.drop(saved);
+        page.app.view = view;
+        page.sockets[1].onopen();
+        await Bun.sleep(0);
+        expect(page.app.streams).toEqual(streams);
+        expect(page.checks.filter(({ url }) => url === '/api/config')).toHaveLength(streams.length);
+    }
+});
+
+test('the first socket loads the configuration when the startup load failed', async () => {
+    const page = dashboard();
+    page.respond = async () => ({ status: 200, ok: true, json: async () => ({ streams: [{ id: 'late' }] }) });
+    page.sockets[0].onopen();
+    await Bun.sleep(0);
+    expect(page.app.streams).toEqual([{ id: 'late' }]);
+});
+
+test('an older configuration answer cannot replace a newer one', async () => {
+    const page = dashboard();
+    const answers = [];
+    page.respond = () => new Promise((resolve) => answers.push(resolve));
+    const config = (id) => ({ status: 200, ok: true, json: async () => ({ streams: [{ id }] }) });
+    const older = page.app.loadConfig();
+    const newer = page.app.loadConfig();
+    answers[1](config('newer'));
+    await newer;
+    answers[0](config('older'));
+    await older;
+    expect(page.app.streams).toEqual([{ id: 'newer' }]);
+});

@@ -417,6 +417,8 @@ document.addEventListener('alpine:init', () => {
             recorders: []
         },
         configLoaded: false,
+        configRequests: 0, // Configuration loads started
+        configApplied: 0, // The newest load whose answer was applied
 
         // Form state for settings (copied from config when entering settings view)
         settingsForm: {
@@ -542,8 +544,12 @@ document.addEventListener('alpine:init', () => {
 
         // Shared refresh for startup, config_changed, form entry and successful saves.
         async loadConfig() {
+            const request = ++this.configRequests;
             try {
                 const data = await requestJSON(API.CONFIG);
+                // Loads can finish out of order; an older answer never replaces a newer one.
+                if (request < this.configApplied) return;
+                this.configApplied = request;
                 this.config = data;
                 this.configLoaded = true;
 
@@ -623,7 +629,17 @@ document.addEventListener('alpine:init', () => {
         },
 
         // Establishes WebSocket connection with auto-reconnect
-        connectWebSocket() {
+        // Reloads the saved configuration, unless a form holds unsaved edits.
+        refreshConfig() {
+            if (this.view !== 'settings' && this.view !== 'stream-form' && this.view !== 'recorder-form') {
+                this.loadConfig();
+            }
+        },
+
+        // A reconnected socket reloads the configuration: changes made while
+        // it was closed sent no config_changed to this tab. So does the first
+        // socket when the configuration failed to load at startup.
+        connectWebSocket(reconnected = false) {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
             this.ws = new WebSocket(`${protocol}//${location.host}/ws`);
 
@@ -643,16 +659,14 @@ document.addEventListener('alpine:init', () => {
                 } else if (msg.type === 'status') {
                     this.handleStatus(msg);
                 } else if (msg.type === 'config_changed') {
-                    // Preserve unsaved form edits.
-                    if (this.view !== 'settings' && this.view !== 'stream-form' && this.view !== 'recorder-form') {
-                        this.loadConfig();
-                    }
+                    this.refreshConfig();
                 }
             };
 
             this.ws.onopen = () => {
                 // Clear stale toasts from before disconnect
                 this.clearToasts();
+                if (reconnected || !this.configLoaded) this.refreshConfig();
             };
 
             this.ws.onclose = () => {
@@ -679,7 +693,7 @@ document.addEventListener('alpine:init', () => {
                 window.location.assign('/login');
                 return;
             }
-            this.connectWebSocket();
+            this.connectWebSocket(true);
         },
 
         // Apply PPM ballistics; server clip counts retrigger the clip indicator.
