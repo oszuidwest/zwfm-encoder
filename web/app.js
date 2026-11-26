@@ -10,6 +10,7 @@ const MS_PER_MINUTE = 60 * MS_PER_SECOND;
 const MS_PER_DAY = 24 * 60 * MS_PER_MINUTE;
 const CLIP_TIMEOUT_MS = 1500;
 const WS_RECONNECT_MS = 1000;
+const SESSION_CHECK_TIMEOUT_MS = 5000;
 const TEST_FEEDBACK_MS = 2000;
 const TOAST_DURATION_SUCCESS = 3000;
 const TOAST_DURATION_ERROR = 5000;
@@ -661,11 +662,24 @@ document.addEventListener('alpine:init', () => {
                 // the empty one clears the old trace, so it cannot pass for live.
                 liveWave = WAVEFORM.create();
                 this.drawWaveform();
-                setTimeout(() => this.connectWebSocket(), WS_RECONNECT_MS);
+                setTimeout(() => this.reconnect(), WS_RECONNECT_MS);
             };
 
             // onclose owns reconnection, including after errors.
             this.ws.onerror = () => {};
+        },
+
+        // A refused handshake hides its status, so ask the API first whether the session is gone.
+        async reconnect() {
+            const check = await fetch(API.STREAMS, {
+                method: 'HEAD',
+                signal: AbortSignal.timeout(SESSION_CHECK_TIMEOUT_MS)
+            }).catch(() => null); // Server away: try the socket anyway.
+            if (check?.status === 401) {
+                window.location.assign('/login');
+                return;
+            }
+            this.connectWebSocket();
         },
 
         // Apply PPM ballistics; server clip counts retrigger the clip indicator.

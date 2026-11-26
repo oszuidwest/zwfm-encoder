@@ -21,6 +21,8 @@ function appState(stored) {
             }
         },
         setTimeout: (fn) => fn(),
+        fetch: async () => ({ status: 200 }), // The session check before a reconnect.
+        AbortSignal: { timeout: () => undefined },
         window: {
             location: { href: 'https://encoder.example/', origin: 'https://encoder.example' },
             liveWaveform: {
@@ -63,7 +65,7 @@ test('the mode button cycles peak, RMS and the waveform, and remembers the mode'
     expect(appState(storage.get('vuMode')).state.vuMode).toBe('wave');
 });
 
-test('a closed socket clears the waveform, because the server numbers its points again', () => {
+test('a closed socket clears the waveform, because the server numbers its points again', async () => {
     const { state, sockets, waves, drawn } = appState();
     state.$refs = { vu: { querySelectorAll: () => [{}, {}] } };
     const levels = { data: JSON.stringify({ type: 'levels', levels: {}, end: 0, points: '' }) };
@@ -74,6 +76,7 @@ test('a closed socket clears the waveform, because the server numbers its points
     expect(waves).toHaveLength(1);
 
     sockets[0].onclose();
+    await Bun.sleep(0); // The reconnect waits for the session check.
     // Both tracks get the empty waveform, so the old trace is gone.
     expect(drawn.slice(-2)).toEqual([[waves[1], 0], [waves[1], 1]]);
     sockets[1].onmessage(levels);
