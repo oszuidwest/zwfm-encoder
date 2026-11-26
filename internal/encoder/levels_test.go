@@ -40,11 +40,11 @@ func TestRunDistributorKeepsFramesWhole(t *testing.T) {
 	pcm := bytes.Repeat([]byte{0xff, 0x7f, 0, 0}, LevelUpdateSamples) // Left loud, right silent.
 	reads := [][]byte{pcm[:2], pcm[2:]}
 	var levels audio.AudioLevels
-	var waveformEnd int
+	var waveform []byte
 	e.sourceStdout = inputReadFunc(func(p []byte) (int, error) {
 		if len(reads) == 0 {
 			levels = e.AudioLevels()
-			waveformEnd, _ = e.Waveform(0)
+			_, waveform = e.Waveform(0)
 			return 0, io.EOF
 		}
 		n := copy(p, reads[0])
@@ -57,7 +57,15 @@ func TestRunDistributorKeepsFramesWhole(t *testing.T) {
 	if levels.Left <= levels.Right {
 		t.Fatalf("levels = %+v, want the left channel loud", levels)
 	}
-	if want := LevelUpdateSamples / (audio.SampleRate / 100); waveformEnd != want {
-		t.Fatalf("waveform end = %d, want %d points from the same audio", waveformEnd, want)
+	// Count points with audio: a slow machine may already report a pause as
+	// gap points (flag 4) after them.
+	audioPoints := 0
+	for i := 4; i < len(waveform); i += 5 {
+		if waveform[i]&4 == 0 {
+			audioPoints++
+		}
+	}
+	if want := LevelUpdateSamples / (audio.SampleRate / 100); audioPoints != want {
+		t.Fatalf("waveform has %d points with audio, want %d from the same audio", audioPoints, want)
 	}
 }
