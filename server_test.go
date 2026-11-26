@@ -476,8 +476,9 @@ func TestWebSocketReaderDiscardsMessagesUntilDisconnect(t *testing.T) {
 	s := newRouteTestServer(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if conn, err := websocket.Accept(w, r, nil); err == nil {
-			s.runWebSocketReader(conn, done)
+			s.runWebSocketReader(conn)
 			_ = conn.CloseNow()
+			close(done)
 		}
 	}))
 	t.Cleanup(ts.Close)

@@ -80,7 +80,6 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Create buffered send channel for thread-safe writes.
 	// Only the writer goroutine writes to the connection, preventing race conditions.
 	send := make(chan []byte, 16)
-	done := make(chan struct{})
 
 	// Register this client for broadcasts.
 	// Cleanup: unregister before closing so the channel is removed from the map
@@ -94,14 +93,12 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Writer goroutine - sole writer to the connection
 	go s.runWebSocketWriter(conn, r, send)
 
-	// Reader goroutine - keeps connection alive
-	go s.runWebSocketReader(conn, done)
-
 	// One process-wide broadcaster feeds all clients; started on first use.
 	s.wsBroadcastOnce.Do(func() { go s.runWSBroadcaster() })
 
-	// Send an initial status snapshot, then block until the reader detects
-	// disconnect; the broadcaster delivers all further periodic updates.
+	// Send an initial status snapshot, then read until the client disconnects;
+	// the broadcaster delivers all further periodic updates. A full channel may
+	// no longer have a writer, so never wait for room.
 	snapshot, err := json.Marshal(s.buildWSRuntime())
 	if err != nil {
 		slog.Error("failed to marshal WebSocket payload", "error", err)
@@ -109,9 +106,9 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	select {
 	case send <- snapshot:
-	case <-done:
+	default:
 	}
-	<-done
+	s.runWebSocketReader(conn)
 }
 
 func (s *Server) registerWSClient(send chan []byte) {
@@ -152,9 +149,7 @@ func (s *Server) runWebSocketWriter(conn *websocket.Conn, r *http.Request, send 
 	}
 }
 
-func (s *Server) runWebSocketReader(conn *websocket.Conn, done chan<- struct{}) {
-	defer close(done)
-
+func (s *Server) runWebSocketReader(conn *websocket.Conn) {
 	for {
 		// Read messages to keep connection alive and detect disconnects.
 		// Not CloseRead: it closes the connection on any data message, and may
